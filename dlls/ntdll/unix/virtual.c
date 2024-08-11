@@ -3489,12 +3489,12 @@ NTSTATUS virtual_map_builtin_module( HANDLE mapping, void **module, SIZE_T *size
 
     if (!image_info->wine_builtin) /* ignore non-builtins */
     {
-        WARN( "%s found in WINEDLLPATH but not a builtin, ignoring\n", debugstr_w(filename) );
+        WARN_(module)( "%s found in WINEDLLPATH but not a builtin, ignoring\n", debugstr_w(filename) );
         status = STATUS_DLL_NOT_FOUND;
     }
     else if (prefer_native && (image_info->dll_charact & IMAGE_DLLCHARACTERISTICS_PREFER_NATIVE))
     {
-        TRACE( "%s has prefer-native flag, ignoring builtin\n", debugstr_w(filename) );
+        TRACE_(module)( "%s has prefer-native flag, ignoring builtin\n", debugstr_w(filename) );
         status = STATUS_IMAGE_ALREADY_LOADED;
     }
     else
@@ -6199,7 +6199,26 @@ NTSTATUS WINAPI NtReadVirtualMemory( HANDLE process, const void *addr, void *buf
 {
     unsigned int status;
 
-    if (virtual_check_buffer_for_write( buffer, size ))
+    if (!virtual_check_buffer_for_write( buffer, size ))
+    {
+        status = STATUS_ACCESS_VIOLATION;
+        size = 0;
+    }
+    else if (process == GetCurrentProcess())
+    {
+        __TRY
+        {
+            memmove( buffer, addr, size );
+            status = STATUS_SUCCESS;
+        }
+        __EXCEPT
+        {
+            status = STATUS_PARTIAL_COPY;
+            size = 0;
+        }
+        __ENDTRY
+    }
+    else
     {
         SERVER_START_REQ( read_process_memory )
         {
@@ -6209,11 +6228,6 @@ NTSTATUS WINAPI NtReadVirtualMemory( HANDLE process, const void *addr, void *buf
             if ((status = wine_server_call( req ))) size = 0;
         }
         SERVER_END_REQ;
-    }
-    else
-    {
-        status = STATUS_ACCESS_VIOLATION;
-        size = 0;
     }
     if (bytes_read) *bytes_read = size;
     return status;

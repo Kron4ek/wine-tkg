@@ -401,7 +401,7 @@ static HRESULT WINAPI HTMLFormElement_get_elements(IHTMLFormElement *iface, IDis
         return E_FAIL;
     }
 
-    *p = (IDispatch*)create_collection_from_htmlcol(elements, dispex_compat_mode(&This->element.node.event_target.dispex));
+    *p = (IDispatch*)create_collection_from_htmlcol(elements, &This->element.node.event_target.dispex);
     nsIDOMHTMLCollection_Release(elements);
     return S_OK;
 }
@@ -908,12 +908,13 @@ static const tid_t HTMLFormElement_iface_tids[] = {
     0
 };
 
-static dispex_static_data_t HTMLFormElement_dispex = {
-    "HTMLFormElement",
-    &HTMLFormElement_event_target_vtbl.dispex_vtbl,
-    DispHTMLFormElement_tid,
-    HTMLFormElement_iface_tids,
-    HTMLElement_init_dispex_info
+dispex_static_data_t HTMLFormElement_dispex = {
+    .id           = PROT_HTMLFormElement,
+    .prototype_id = PROT_HTMLElement,
+    .vtbl         = &HTMLFormElement_event_target_vtbl.dispex_vtbl,
+    .disp_tid     = DispHTMLFormElement_tid,
+    .iface_tids   = HTMLFormElement_iface_tids,
+    .init_info    = HTMLElement_init_dispex_info,
 };
 
 HRESULT HTMLFormElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)

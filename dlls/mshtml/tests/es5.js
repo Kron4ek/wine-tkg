@@ -1151,7 +1151,6 @@ sync_test("toString", function() {
     todo_wine.
     ok(tmp === "[object Arguments]", "toString.call(arguments) = " + tmp);
     tmp = Object.prototype.toString.call(this);
-    todo_wine.
     ok(tmp === "[object Window]", "toString.call(null) = " + tmp);
     tmp = Object.prototype.toString.call(null);
     ok(tmp === "[object Null]", "toString.call(null) = " + tmp);
@@ -2297,7 +2296,6 @@ sync_test("substituted this", function() {
     ok(r === "[object Undefined]", "detached scope Object.toString returned " + r);
 
     var r = (function() { this.f = Object.prototype.toString; return this.f(); })();
-    todo_wine.
     ok(r === "[object Window]", "Object.toString returned " + r);
 
     var r = (function() { var f = Object.prototype.toString; return f(); })();
@@ -2724,4 +2722,75 @@ sync_test("form_as_prop", function() {
     ok(!("testname" in document), "testname is in document");
     ok(!document.hasOwnProperty("testid"), 'document.hasOwnProperty("testid") = ' + document.hasOwnProperty("testid"));
     ok(!document.hasOwnProperty("testname"), 'document.hasOwnProperty("testname") = ' + document.hasOwnProperty("testname"));
+});
+
+sync_test("prototypes", function() {
+    var constr = DOMImplementation;
+    test_own_data_prop_desc(window, "DOMImplementation", true, false, true);
+    ok(Object.getPrototypeOf(DOMImplementation) === Object.prototype,
+       "Object.getPrototypeOf(DOMImplementation) = " + Object.getPrototypeOf(DOMImplementation));
+    todo_wine.
+    ok(DOMImplementation == "[object DOMImplementation]", "DOMImplementation = " + DOMImplementation);
+
+    var proto = constr.prototype;
+    ok(proto == "[object DOMImplementationPrototype]", "DOMImplementation.prototype = " + proto);
+    ok(Object.getPrototypeOf(document.implementation) === proto,
+       "Object.getPrototypeOf(document.implementation) = " + Object.getPrototypeOf(document.implementation));
+    ok(Object.getPrototypeOf(proto) === Object.prototype, "Object.getPrototypeOf(proto) = " + Object.getPrototypeOf(proto));
+
+    test_own_data_prop_desc(constr, "prototype", false, false, false);
+    test_own_data_prop_desc(proto, "constructor", true, false, true);
+    ok(proto.hasOwnProperty("createHTMLDocument"), "prototype has no own createHTMLDocument property");
+    ok(!document.implementation.hasOwnProperty("createHTMLDocument"),
+       "prototype has own createHTMLDocument property");
+
+    ok(proto.constructor === constr, "proto.constructor = " + proto.constructor);
+    proto.constructor = 1;
+    ok(proto.constructor === 1, "proto.constructor = " + proto.constructor + " expected 1");
+    proto.constructor = constr;
+
+    DOMImplementation = 1;
+    ok(DOMImplementation === 1, "DOMImplementation = " + DOMImplementation + " expected 1");
+    DOMImplementation = constr;
+
+    ok(!HTMLBodyElement.prototype.hasOwnProperty("click"), "HTMLBodyElement prototype has own click property");
+    ok(HTMLElement.prototype.hasOwnProperty("click"), "HTMLElement prototype does not have own click property");
+
+    ok(!HTMLBodyElement.prototype.hasOwnProperty("removeChild"), "HTMLBodyElement prototype has own removeChild property");
+    ok(!HTMLElement.prototype.hasOwnProperty("removeChild"), "HTMLElement prototype has own removeChild property");
+    ok(!Element.prototype.hasOwnProperty("removeChild"), "Element prototype has own removeChild property");
+    ok(Node.prototype.hasOwnProperty("removeChild"), "Node prototype does not have own removeChild property");
+
+    test_own_data_prop_desc(window, "XMLHttpRequest", true, false, true);
+    ok(typeof(XMLHttpRequest) === "function", "typeof(XMLHttpRequest) = " + typeof(XMLHttpRequest));
+    ok(XMLHttpRequest.hasOwnProperty("create"), "XMLHttpRequest does not have create property");
+    ok(Object.getPrototypeOf(XMLHttpRequest) === Function.prototype,
+       "Object.getPrototypeOf(XMLHttpRequest) = " + Object.getPrototypeOf(XMLHttpRequest));
+    ok(XMLHttpRequest.prototype.constructor === XMLHttpRequest,
+       "XMLHttpRequest.prototype.constructor !== XMLHttpRequest");
+    var xhr = new XMLHttpRequest();
+    ok(Object.getPrototypeOf(xhr) === XMLHttpRequest.prototype,
+       "Object.getPrototypeOf(xhr) = " + Object.getPrototypeOf(xhr));
+    constr = XMLHttpRequest;
+    XMLHttpRequest = 1;
+    ok(XMLHttpRequest === 1, "XMLHttpRequest = " + XMLHttpRequest);
+    XMLHttpRequest = constr;
+
+    ok(Image != HTMLImageElement, "Image == HTMLImageElement");
+    ok(typeof(HTMLImageElement) === "object", "typeof(HTMLImageElement) = " + typeof(HTMLImageElement));
+    ok(typeof(Image) === "function", "typeof(Image) = " + typeof(Image));
+    ok(Image.prototype === HTMLImageElement.prototype, "Image.prototype != HTMLImageElement.prototype");
+
+    ok(Option != HTMLOptionElement, "Option == HTMLOptionElement");
+    ok(typeof(HTMLOptionElement) === "object", "typeof(HTMLOptionElement) = " + typeof(HTMLOptionElement));
+    ok(typeof(Option) === "function", "typeof(Option) = " + typeof(Option));
+    ok(Option.prototype === HTMLOptionElement.prototype, "Option.prototype != HTMLOptionElement.prototype");
+
+    ok(document.implementation instanceof DOMImplementation, "document.implementation is not an instance of DOMImplementation");
+    ok(navigator instanceof Navigator, "navigator is not an instance of Navigator");
+    ok(!(navigator instanceof DOMImplementation), "navigator is an instance of DOMImplementation");
+    ok(document.body instanceof HTMLBodyElement, "body is not an instance of HTMLBodyElement");
+    ok(document.body instanceof HTMLElement, "body is not an instance of HTMLElement");
+    ok(document.body instanceof Element, "body is not an instance of Element");
+    ok(document.body instanceof Node, "body is not an instance of Node");
 });

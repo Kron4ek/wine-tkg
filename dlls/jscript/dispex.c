@@ -2362,7 +2362,8 @@ static HRESULT WINAPI WineJSDispatch_GetScriptGlobal(IWineJSDispatch *iface, IWi
    if(!(disp = lookup_global_host(This->ctx)))
        return E_NOINTERFACE;
 
-   return IDispatch_QueryInterface(disp, &IID_IWineJSDispatchHost, (void **)ret);
+   *ret = get_host_dispatch(disp);
+   return S_OK;
 }
 
 static IWineJSDispatchVtbl DispatchExVtbl = {
@@ -2412,6 +2413,7 @@ HRESULT init_dispex(jsdisp_t *dispex, script_ctx_t *ctx, const builtin_info_t *b
     dispex->ref = 1;
     dispex->builtin_info = builtin_info;
     dispex->extensible = TRUE;
+    dispex->is_constructor = builtin_info->class == JSCLASS_FUNCTION;
     dispex->prop_cnt = 0;
 
     dispex->props = calloc(1, sizeof(dispex_prop_t)*(dispex->buf_size=4));
@@ -3033,6 +3035,12 @@ HRESULT jsdisp_next_prop(jsdisp_t *obj, DISPID id, enum jsdisp_enum_type enum_ty
     }
 
     for(iter = &obj->props[idx]; iter < obj->props + obj->prop_cnt; iter++) {
+        if(iter->type == PROP_EXTERN) {
+            dispex_prop_t *prop;
+            hres = find_external_prop(obj, iter->name, FALSE, iter, &prop);
+            if(FAILED(hres) || prop != iter)
+                iter->type = PROP_DELETED;
+        }
         if(iter->type == PROP_DELETED)
             continue;
         if(enum_type != JSDISP_ENUM_ALL && iter->type == PROP_PROTREF)
@@ -3488,27 +3496,36 @@ static const builtin_info_t HostObject_info = {
     .to_string   = HostObject_to_string,
 };
 
-HRESULT init_host_object(script_ctx_t *ctx, IWineJSDispatchHost *host_iface, IWineJSDispatch **ret)
+HRESULT init_host_object(script_ctx_t *ctx, IWineJSDispatchHost *host_iface, IWineJSDispatch *prototype_iface,
+                         UINT32 flags, IWineJSDispatch **ret)
 {
     HostObject *host_obj;
+    jsdisp_t *prototype;
     HRESULT hres;
 
     if(!(host_obj = calloc(1, sizeof(*host_obj))))
         return E_OUTOFMEMORY;
 
-    hres = init_dispex(&host_obj->jsdisp, ctx, &HostObject_info, ctx->object_prototype);
+    if(prototype_iface)
+        prototype = impl_from_IWineJSDispatch(prototype_iface);
+    else
+        prototype = ctx->object_prototype;
+    hres = init_dispex(&host_obj->jsdisp, ctx, &HostObject_info, prototype);
     if(FAILED(hres)) {
         free(host_obj);
         return hres;
     }
 
     host_obj->host_iface = host_iface;
+    if(flags & HOSTOBJ_CONSTRUCTOR)
+        host_obj->jsdisp.is_constructor = TRUE;
     *ret = &host_obj->jsdisp.IWineJSDispatch_iface;
     return S_OK;
 }
 
 IWineJSDispatchHost *get_host_dispatch(IDispatch *disp)
 {
+    IWineJSDispatchHost *ret;
     HostObject *host_obj;
     jsdisp_t *jsdisp;
 
@@ -3518,6 +3535,6 @@ IWineJSDispatchHost *get_host_dispatch(IDispatch *disp)
         return NULL;
 
     host_obj = HostObject_from_jsdisp(jsdisp);
-    IWineJSDispatchHost_AddRef(host_obj->host_iface);
-    return host_obj->host_iface;
+    IWineJSDispatchHost_GetOuterDispatch(host_obj->host_iface, &ret);
+    return ret;
 }

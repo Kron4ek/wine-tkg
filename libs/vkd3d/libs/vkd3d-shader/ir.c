@@ -469,7 +469,9 @@ static enum vkd3d_result vsir_program_lower_instructions(struct vsir_program *pr
                     return ret;
                 break;
 
+            case VKD3DSIH_DCL:
             case VKD3DSIH_DCL_CONSTANT_BUFFER:
+            case VKD3DSIH_DCL_SAMPLER:
             case VKD3DSIH_DCL_TEMPS:
                 vkd3d_shader_instruction_make_nop(ins);
                 break;
@@ -917,7 +919,7 @@ static void shader_dst_param_normalise_outpointid(struct vkd3d_shader_dst_param 
     if (control_point_normaliser_is_in_control_point_phase(normaliser) && reg->type == VKD3DSPR_OUTPUT)
     {
         /* The TPF reader validates idx_count. */
-        assert(reg->idx_count == 1);
+        VKD3D_ASSERT(reg->idx_count == 1);
         reg->idx[1] = reg->idx[0];
         /* The control point id param is implicit here. Avoid later complications by inserting it. */
         reg->idx[0].offset = 0;
@@ -1139,16 +1141,16 @@ static void range_map_set_register_range(uint8_t range_map[][VKD3D_VEC4_SIZE], u
 {
     unsigned int i, j, r, c, component_idx, component_count;
 
-    assert(write_mask <= VKD3DSP_WRITEMASK_ALL);
+    VKD3D_ASSERT(write_mask <= VKD3DSP_WRITEMASK_ALL);
     component_idx = vsir_write_mask_get_component_idx(write_mask);
     component_count = vsir_write_mask_component_count(write_mask);
 
-    assert(register_idx < MAX_REG_OUTPUT && MAX_REG_OUTPUT - register_idx >= register_count);
+    VKD3D_ASSERT(register_idx < MAX_REG_OUTPUT && MAX_REG_OUTPUT - register_idx >= register_count);
 
     if (range_map[register_idx][component_idx] > register_count && is_dcl_indexrange)
     {
         /* Validated in the TPF reader. */
-        assert(range_map[register_idx][component_idx] != UINT8_MAX);
+        VKD3D_ASSERT(range_map[register_idx][component_idx] != UINT8_MAX);
         return;
     }
     if (range_map[register_idx][component_idx] == register_count)
@@ -1168,7 +1170,7 @@ static void range_map_set_register_range(uint8_t range_map[][VKD3D_VEC4_SIZE], u
             /* A synthetic patch constant range which overlaps an existing range can start upstream of it
              * for fork/join phase instancing, but ranges declared by dcl_indexrange should not overlap.
              * The latter is validated in the TPF reader. */
-            assert(!range_map[r][c] || !is_dcl_indexrange);
+            VKD3D_ASSERT(!range_map[r][c] || !is_dcl_indexrange);
             range_map[r][c] = UINT8_MAX;
         }
     }
@@ -1371,7 +1373,7 @@ static bool shader_signature_merge(struct shader_signature *s, uint8_t range_map
 
             TRACE("Merging %s, reg %u, mask %#x, sysval %#x with %s, mask %#x, sysval %#x.\n", e->semantic_name,
                     e->register_index, e->mask, e->sysval_semantic, f->semantic_name, f->mask, f->sysval_semantic);
-            assert(!(e->mask & f->mask));
+            VKD3D_ASSERT(!(e->mask & f->mask));
 
             e->mask |= f->mask;
             e->used_mask |= f->used_mask;
@@ -1405,7 +1407,7 @@ static bool shader_signature_merge(struct shader_signature *s, uint8_t range_map
             continue;
 
         register_count = range_map_get_register_count(range_map, e->register_index, e->mask);
-        assert(register_count != UINT8_MAX);
+        VKD3D_ASSERT(register_count != UINT8_MAX);
         register_count += !register_count;
 
         if (register_count > 1)
@@ -1428,7 +1430,7 @@ static bool shader_signature_merge(struct shader_signature *s, uint8_t range_map
 static unsigned int shader_register_normalise_arrayed_addressing(struct vkd3d_shader_register *reg,
         unsigned int id_idx, unsigned int register_index)
 {
-    assert(id_idx < ARRAY_SIZE(reg->idx) - 1);
+    VKD3D_ASSERT(id_idx < ARRAY_SIZE(reg->idx) - 1);
 
     /* For a relative-addressed register index, move the id up a slot to separate it from the address,
      * because rel_addr can be replaced with a constant offset in some cases. */
@@ -1535,7 +1537,7 @@ static bool shader_dst_param_io_normalise(struct vkd3d_shader_dst_param *dst_par
     if (is_io_dcl)
     {
         /* Validated in the TPF reader. */
-        assert(element_idx < ARRAY_SIZE(normaliser->input_dcl_params));
+        VKD3D_ASSERT(element_idx < ARRAY_SIZE(normaliser->input_dcl_params));
 
         if (dcl_params[element_idx])
         {
@@ -1560,7 +1562,7 @@ static bool shader_dst_param_io_normalise(struct vkd3d_shader_dst_param *dst_par
         else
         {
             /* The control point id param. */
-            assert(reg->idx[0].rel_addr);
+            VKD3D_ASSERT(reg->idx[0].rel_addr);
         }
         id_idx = 1;
     }
@@ -1799,7 +1801,7 @@ static enum vkd3d_result vsir_program_normalise_io_registers(struct vsir_program
                     normaliser.input_range_map[i][j] = normaliser.output_range_map[i][j];
                 else if (normaliser.input_range_map[i][j] && !normaliser.output_range_map[i][j])
                     normaliser.output_range_map[i][j] = normaliser.input_range_map[i][j];
-                else assert(normaliser.input_range_map[i][j] == normaliser.output_range_map[i][j]);
+                else VKD3D_ASSERT(normaliser.input_range_map[i][j] == normaliser.output_range_map[i][j]);
             }
         }
     }
@@ -2815,7 +2817,7 @@ static enum vkd3d_result vsir_program_flatten_control_flow_constructs(struct vsi
 
 static unsigned int label_from_src_param(const struct vkd3d_shader_src_param *param)
 {
-    assert(param->reg.type == VKD3DSPR_LABEL);
+    VKD3D_ASSERT(param->reg.type == VKD3DSPR_LABEL);
     return param->reg.idx[0].offset;
 }
 
@@ -3084,7 +3086,7 @@ static enum vkd3d_result vsir_program_materialise_phi_ssas_to_temps(struct vsir_
             unsigned int label;
 
             label = label_from_src_param(&ins->src[j + 1]);
-            assert(label);
+            VKD3D_ASSERT(label);
 
             info = &block_info[label - 1];
 
@@ -3241,7 +3243,7 @@ static enum vkd3d_result vsir_block_init(struct vsir_block *block, unsigned int 
 
     byte_count = VKD3D_BITMAP_SIZE(block_count) * sizeof(*block->dominates);
 
-    assert(label);
+    VKD3D_ASSERT(label);
     memset(block, 0, sizeof(*block));
     block->label = label;
     vsir_block_list_init(&block->predecessors);
@@ -3525,7 +3527,7 @@ static enum vkd3d_result vsir_cfg_add_edge(struct vsir_cfg *cfg, struct vsir_blo
     struct vsir_block *successor = &cfg->blocks[target - 1];
     enum vkd3d_result ret;
 
-    assert(successor->label != 0);
+    VKD3D_ASSERT(successor->label != 0);
 
     if ((ret = vsir_block_list_add(&block->successors, successor)) < 0)
         return ret;
@@ -3702,11 +3704,11 @@ static enum vkd3d_result vsir_cfg_init(struct vsir_cfg *cfg, struct vsir_program
             {
                 unsigned int label = label_from_src_param(&instruction->src[0]);
 
-                assert(!current_block);
-                assert(label > 0);
-                assert(label <= cfg->block_count);
+                VKD3D_ASSERT(!current_block);
+                VKD3D_ASSERT(label > 0);
+                VKD3D_ASSERT(label <= cfg->block_count);
                 current_block = &cfg->blocks[label - 1];
-                assert(current_block->label == 0);
+                VKD3D_ASSERT(current_block->label == 0);
                 if ((ret = vsir_block_init(current_block, label, program->block_count)) < 0)
                     goto fail;
                 current_block->begin = &program->instructions.elements[i + 1];
@@ -3717,7 +3719,7 @@ static enum vkd3d_result vsir_cfg_init(struct vsir_cfg *cfg, struct vsir_program
 
             case VKD3DSIH_BRANCH:
             case VKD3DSIH_RET:
-                assert(current_block);
+                VKD3D_ASSERT(current_block);
                 current_block->end = instruction;
                 current_block = NULL;
                 break;
@@ -3725,7 +3727,7 @@ static enum vkd3d_result vsir_cfg_init(struct vsir_cfg *cfg, struct vsir_program
             case VKD3DSIH_HS_CONTROL_POINT_PHASE:
             case VKD3DSIH_HS_FORK_PHASE:
             case VKD3DSIH_HS_JOIN_PHASE:
-                assert(!current_block);
+                VKD3D_ASSERT(!current_block);
                 finish = true;
                 break;
 
@@ -3795,7 +3797,7 @@ static void vsir_cfg_compute_dominators_recurse(struct vsir_block *current, stru
 {
     size_t i;
 
-    assert(current->label != 0);
+    VKD3D_ASSERT(current->label != 0);
 
     if (current == reference)
         return;
@@ -4010,7 +4012,7 @@ static enum vkd3d_result vsir_cfg_sort_nodes(struct vsir_cfg *cfg)
         /* Do not count back edges. */
         if (cfg->loops_by_header[i] != SIZE_MAX)
         {
-            assert(in_degrees[i] > 0);
+            VKD3D_ASSERT(in_degrees[i] > 0);
             in_degrees[i] -= 1;
         }
 
@@ -4096,7 +4098,7 @@ static enum vkd3d_result vsir_cfg_sort_nodes(struct vsir_cfg *cfg)
 
             inner_stack_item->seen_count += new_seen_count;
 
-            assert(inner_stack_item->seen_count <= inner_stack_item->loop->count);
+            VKD3D_ASSERT(inner_stack_item->seen_count <= inner_stack_item->loop->count);
             if (inner_stack_item->seen_count != inner_stack_item->loop->count)
                 break;
 
@@ -4116,7 +4118,7 @@ static enum vkd3d_result vsir_cfg_sort_nodes(struct vsir_cfg *cfg)
             if (vsir_block_dominates(successor, block))
                 continue;
 
-            assert(in_degrees[successor->label - 1] > 0);
+            VKD3D_ASSERT(in_degrees[successor->label - 1] > 0);
             --in_degrees[successor->label - 1];
 
             if (in_degrees[successor->label - 1] == 0)
@@ -4137,7 +4139,7 @@ static enum vkd3d_result vsir_cfg_sort_nodes(struct vsir_cfg *cfg)
         goto fail;
     }
 
-    assert(sorter.stack_count == 0);
+    VKD3D_ASSERT(sorter.stack_count == 0);
 
     vkd3d_free(in_degrees);
     vkd3d_free(sorter.stack);
@@ -4207,7 +4209,7 @@ static enum vkd3d_result vsir_cfg_generate_synthetic_loop_intervals(struct vsir_
             if (vsir_block_dominates(successor, block))
                 continue;
 
-            assert(block->order_pos < successor->order_pos);
+            VKD3D_ASSERT(block->order_pos < successor->order_pos);
 
             /* Jumping from a block to the following one is always
              * possible, so nothing to do. */
@@ -4280,7 +4282,7 @@ static enum vkd3d_result vsir_cfg_generate_synthetic_loop_intervals(struct vsir_
                 {
                     if (interval->synthetic)
                         interval->begin = min(begin, interval->begin);
-                    assert(begin >= interval->begin);
+                    VKD3D_ASSERT(begin >= interval->begin);
                 }
             }
 
@@ -4333,7 +4335,7 @@ static void vsir_cfg_compute_edge_action(struct vsir_cfg *cfg, struct vsir_block
                 break;
         }
 
-        assert(action->target != UINT_MAX);
+        VKD3D_ASSERT(action->target != UINT_MAX);
         action->jump_type = JUMP_CONTINUE;
     }
     else
@@ -4355,7 +4357,7 @@ static void vsir_cfg_compute_edge_action(struct vsir_cfg *cfg, struct vsir_block
 
         if (action->target == UINT_MAX)
         {
-            assert(successor->order_pos == block->order_pos + 1);
+            VKD3D_ASSERT(successor->order_pos == block->order_pos + 1);
             action->jump_type = JUMP_NONE;
         }
         else
@@ -4382,7 +4384,7 @@ static enum vkd3d_result vsir_cfg_build_structured_program(struct vsir_cfg *cfg)
         struct vsir_block *block = cfg->order.blocks[i];
         struct vsir_cfg_structure *structure;
 
-        assert(stack_depth > 0);
+        VKD3D_ASSERT(stack_depth > 0);
 
         /* Open loop intervals. */
         while (open_interval_idx < cfg->loop_interval_count)
@@ -4441,7 +4443,7 @@ static enum vkd3d_result vsir_cfg_build_structured_program(struct vsir_cfg *cfg)
                  * selection ladders. */
                 if (action_true.successor == action_false.successor)
                 {
-                    assert(action_true.jump_type == action_false.jump_type);
+                    VKD3D_ASSERT(action_true.jump_type == action_false.jump_type);
                 }
                 else
                 {
@@ -4457,7 +4459,7 @@ static enum vkd3d_result vsir_cfg_build_structured_program(struct vsir_cfg *cfg)
                         struct vsir_cfg_structure_list *inner_loop_frame = stack[stack_depth - 2];
                         struct vsir_cfg_structure *inner_loop = &inner_loop_frame->structures[inner_loop_frame->count - 1];
 
-                        assert(inner_loop->type == STRUCTURE_TYPE_LOOP);
+                        VKD3D_ASSERT(inner_loop->type == STRUCTURE_TYPE_LOOP);
 
                         /* Otherwise, if one of the branches is
                          * continueing the inner loop we're inside,
@@ -4474,7 +4476,7 @@ static enum vkd3d_result vsir_cfg_build_structured_program(struct vsir_cfg *cfg)
                         action_false = tmp;
                     }
 
-                    assert(action_true.jump_type != JUMP_NONE);
+                    VKD3D_ASSERT(action_true.jump_type != JUMP_NONE);
 
                     if (!(structure = vsir_cfg_structure_list_append(stack[stack_depth - 1], STRUCTURE_TYPE_JUMP)))
                         goto fail;
@@ -4514,8 +4516,8 @@ static enum vkd3d_result vsir_cfg_build_structured_program(struct vsir_cfg *cfg)
         }
     }
 
-    assert(stack_depth == 0);
-    assert(open_interval_idx == cfg->loop_interval_count);
+    VKD3D_ASSERT(stack_depth == 0);
+    VKD3D_ASSERT(open_interval_idx == cfg->loop_interval_count);
 
     if (TRACE_ON())
         vsir_cfg_dump_structured_program(cfg);
@@ -4539,7 +4541,7 @@ static void vsir_cfg_remove_trailing_continue(struct vsir_cfg *cfg,
             && !last->u.jump.condition && last->u.jump.target == target)
     {
         --list->count;
-        assert(cfg->loop_intervals[target].target_count > 0);
+        VKD3D_ASSERT(cfg->loop_intervals[target].target_count > 0);
         --cfg->loop_intervals[target].target_count;
     }
 }
@@ -4580,7 +4582,7 @@ static enum vkd3d_result vsir_cfg_move_breaks_out_of_selections(struct vsir_cfg 
     size_t pos = list->count - 1;
 
     selection = &list->structures[pos];
-    assert(selection->type == STRUCTURE_TYPE_SELECTION);
+    VKD3D_ASSERT(selection->type == STRUCTURE_TYPE_SELECTION);
 
     if_break = vsir_cfg_get_trailing_break(&selection->u.selection.if_body);
     else_break = vsir_cfg_get_trailing_break(&selection->u.selection.else_body);
@@ -4601,19 +4603,19 @@ static enum vkd3d_result vsir_cfg_move_breaks_out_of_selections(struct vsir_cfg 
     /* Pointer `selection' could have been invalidated by the append
      * operation. */
     selection = &list->structures[pos];
-    assert(selection->type == STRUCTURE_TYPE_SELECTION);
+    VKD3D_ASSERT(selection->type == STRUCTURE_TYPE_SELECTION);
 
     if (if_target == max_target)
     {
         --selection->u.selection.if_body.count;
-        assert(cfg->loop_intervals[if_target].target_count > 0);
+        VKD3D_ASSERT(cfg->loop_intervals[if_target].target_count > 0);
         --cfg->loop_intervals[if_target].target_count;
     }
 
     if (else_target == max_target)
     {
         --selection->u.selection.else_body.count;
-        assert(cfg->loop_intervals[else_target].target_count > 0);
+        VKD3D_ASSERT(cfg->loop_intervals[else_target].target_count > 0);
         --cfg->loop_intervals[else_target].target_count;
     }
 
@@ -4721,7 +4723,7 @@ static enum vkd3d_result vsir_cfg_append_loop(struct vsir_cfg *cfg,
     }
 
     target = trailing_break->u.jump.target;
-    assert(cfg->loop_intervals[target].target_count > 0);
+    VKD3D_ASSERT(cfg->loop_intervals[target].target_count > 0);
 
     /* If the loop is not targeted by any jump, we can remove it. The
      * trailing `break' then targets another loop, so we have to keep
@@ -4888,7 +4890,7 @@ static void vsir_cfg_mark_trampolines(struct vsir_cfg *cfg, struct vsir_cfg_stru
                     break;
                 for (l = loop; l && l->u.loop.idx != structure->u.jump.target; l = l->u.loop.outer_loop)
                 {
-                    assert(l->type == STRUCTURE_TYPE_LOOP);
+                    VKD3D_ASSERT(l->type == STRUCTURE_TYPE_LOOP);
                     l->u.loop.needs_trampoline = true;
                 }
                 break;
@@ -4928,7 +4930,7 @@ static void vsir_cfg_mark_launchers(struct vsir_cfg *cfg, struct vsir_cfg_struct
             case STRUCTURE_TYPE_JUMP:
                 if (structure->u.jump.type != JUMP_BREAK && structure->u.jump.type != JUMP_CONTINUE)
                     break;
-                assert(loop && loop->type == STRUCTURE_TYPE_LOOP);
+                VKD3D_ASSERT(loop && loop->type == STRUCTURE_TYPE_LOOP);
                 if (loop->u.loop.needs_trampoline)
                     structure->u.jump.needs_launcher = true;
                 break;
@@ -5126,7 +5128,7 @@ static enum vkd3d_result vsir_cfg_structure_list_emit_jump(struct vsir_cfg *cfg,
             break;
 
         case JUMP_RET:
-            assert(!jump->condition);
+            VKD3D_ASSERT(!jump->condition);
             opcode = VKD3DSIH_RET;
             break;
 
@@ -5266,18 +5268,18 @@ static enum vkd3d_result vsir_program_structurize(struct vsir_program *program,
         switch (ins->opcode)
         {
             case VKD3DSIH_LABEL:
-                assert(program->shader_version.type != VKD3D_SHADER_TYPE_HULL);
+                VKD3D_ASSERT(program->shader_version.type != VKD3D_SHADER_TYPE_HULL);
                 TRACE("Structurizing a non-hull shader.\n");
                 if ((ret = vsir_program_structurize_function(program, message_context,
                         &target, &i)) < 0)
                     goto fail;
-                assert(i == program->instructions.count);
+                VKD3D_ASSERT(i == program->instructions.count);
                 break;
 
             case VKD3DSIH_HS_CONTROL_POINT_PHASE:
             case VKD3DSIH_HS_FORK_PHASE:
             case VKD3DSIH_HS_JOIN_PHASE:
-                assert(program->shader_version.type == VKD3D_SHADER_TYPE_HULL);
+                VKD3D_ASSERT(program->shader_version.type == VKD3D_SHADER_TYPE_HULL);
                 TRACE("Structurizing phase %u of a hull shader.\n", ins->opcode);
                 target.instructions[target.ins_count++] = *ins;
                 ++i;
@@ -5439,18 +5441,18 @@ static enum vkd3d_result vsir_program_materialize_undominated_ssas_to_temps(stru
         switch (ins->opcode)
         {
             case VKD3DSIH_LABEL:
-                assert(program->shader_version.type != VKD3D_SHADER_TYPE_HULL);
+                VKD3D_ASSERT(program->shader_version.type != VKD3D_SHADER_TYPE_HULL);
                 TRACE("Materializing undominated SSAs in a non-hull shader.\n");
                 if ((ret = vsir_program_materialize_undominated_ssas_to_temps_in_function(
                         program, message_context, &i)) < 0)
                     return ret;
-                assert(i == program->instructions.count);
+                VKD3D_ASSERT(i == program->instructions.count);
                 break;
 
             case VKD3DSIH_HS_CONTROL_POINT_PHASE:
             case VKD3DSIH_HS_FORK_PHASE:
             case VKD3DSIH_HS_JOIN_PHASE:
-                assert(program->shader_version.type == VKD3D_SHADER_TYPE_HULL);
+                VKD3D_ASSERT(program->shader_version.type == VKD3D_SHADER_TYPE_HULL);
                 TRACE("Materializing undominated SSAs in phase %u of a hull shader.\n", ins->opcode);
                 ++i;
                 if ((ret = vsir_program_materialize_undominated_ssas_to_temps_in_function(
@@ -6097,8 +6099,8 @@ static const char *name_from_cf_type(enum cf_type type)
 static void vsir_validate_cf_type(struct validation_context *ctx,
         const struct vkd3d_shader_instruction *instruction, enum cf_type expected_type)
 {
-    assert(ctx->cf_type != CF_TYPE_UNKNOWN);
-    assert(expected_type != CF_TYPE_UNKNOWN);
+    VKD3D_ASSERT(ctx->cf_type != CF_TYPE_UNKNOWN);
+    VKD3D_ASSERT(expected_type != CF_TYPE_UNKNOWN);
     if (ctx->cf_type != expected_type)
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_CONTROL_FLOW, "Invalid instruction %#x in %s shader.",
                 instruction->opcode, name_from_cf_type(ctx->cf_type));

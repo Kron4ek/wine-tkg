@@ -56,32 +56,32 @@ static void release_surface_readback(struct surface_readback *rb)
     IDirect3DSurface9_Release(rb->surface);
 }
 
-static void get_surface_decompressed_readback(IDirect3DDevice9 *device, IDirect3DSurface9 *compressed_surface,
+static void get_surface_readback(IDirect3DDevice9 *device, IDirect3DSurface9 *src_surface, D3DFORMAT rb_format,
         struct surface_readback *rb)
 {
     D3DSURFACE_DESC desc;
     HRESULT hr;
 
     memset(rb, 0, sizeof(*rb));
-    hr = IDirect3DSurface9_GetDesc(compressed_surface, &desc);
+    hr = IDirect3DSurface9_GetDesc(src_surface, &desc);
     if (FAILED(hr))
     {
-        trace("Failed to get compressed surface description, hr %#lx.\n", hr);
+        trace("Failed to get source surface description, hr %#lx.\n", hr);
         return;
     }
 
-    hr = IDirect3DDevice9_CreateOffscreenPlainSurface(device, desc.Width, desc.Height, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM,
+    hr = IDirect3DDevice9_CreateOffscreenPlainSurface(device, desc.Width, desc.Height, rb_format, D3DPOOL_SYSTEMMEM,
             &rb->surface, NULL);
     if (FAILED(hr))
     {
-        trace("Can't create the decompressed surface, hr %#lx.\n", hr);
+        trace("Can't create the readback surface, hr %#lx.\n", hr);
         return;
     }
 
-    hr = D3DXLoadSurfaceFromSurface(rb->surface, NULL, NULL, compressed_surface, NULL, NULL, D3DX_FILTER_NONE, 0);
+    hr = D3DXLoadSurfaceFromSurface(rb->surface, NULL, NULL, src_surface, NULL, NULL, D3DX_FILTER_NONE, 0);
     if (FAILED(hr))
     {
-        trace("Can't load the decompressed surface, hr %#lx.\n", hr);
+        trace("Can't load the readback surface, hr %#lx.\n", hr);
         IDirect3DSurface9_Release(rb->surface);
         rb->surface = NULL;
         return;
@@ -94,6 +94,12 @@ static void get_surface_decompressed_readback(IDirect3DDevice9 *device, IDirect3
         IDirect3DSurface9_Release(rb->surface);
         rb->surface = NULL;
     }
+}
+
+static void get_surface_decompressed_readback(IDirect3DDevice9 *device, IDirect3DSurface9 *compressed_surface,
+        struct surface_readback *rb)
+{
+    return get_surface_readback(device, compressed_surface, D3DFMT_A8R8G8B8, rb);
 }
 
 static HRESULT create_file(const char *filename, const unsigned char *data, const unsigned int size)
@@ -433,6 +439,7 @@ static void test_dds_header_handling(void)
         dds->header.pixel_format = tests[i].pixel_format;
 
         hr = D3DXGetImageInfoFromFileInMemory(dds, file_size, &info);
+        todo_wine_if(i == 16)
         ok(hr == tests[i].expected.hr, "%d: D3DXGetImageInfoFromFileInMemory returned %#lx, expected %#lx\n",
                 i, hr, tests[i].expected.hr);
         if (SUCCEEDED(hr))
@@ -687,10 +694,10 @@ static void test_D3DXGetImageInfo(void)
     check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_DXT3, 0, 0, 0, 0, 0, D3DFMT_DXT3);
     check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_DXT4, 0, 0, 0, 0, 0, D3DFMT_DXT4);
     check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_DXT5, 0, 0, 0, 0, 0, D3DFMT_DXT5);
-    check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_R8G8_B8G8, 0, 0, 0, 0, 0, D3DFMT_R8G8_B8G8);
-    check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_G8R8_G8B8, 0, 0, 0, 0, 0, D3DFMT_G8R8_G8B8);
-    check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_UYVY, 0, 0, 0, 0, 0, D3DFMT_UYVY);
-    check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_YUY2, 0, 0, 0, 0, 0, D3DFMT_YUY2);
+    todo_wine check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_R8G8_B8G8, 0, 0, 0, 0, 0, D3DFMT_R8G8_B8G8);
+    todo_wine check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_G8R8_G8B8, 0, 0, 0, 0, 0, D3DFMT_G8R8_G8B8);
+    todo_wine check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_UYVY, 0, 0, 0, 0, 0, D3DFMT_UYVY);
+    todo_wine check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_YUY2, 0, 0, 0, 0, 0, D3DFMT_YUY2);
     check_dds_pixel_format(DDS_PF_RGB, 0, 16, 0xf800, 0x07e0, 0x001f, 0, D3DFMT_R5G6B5);
     check_dds_pixel_format(DDS_PF_RGB | DDS_PF_ALPHA, 0, 16, 0x7c00, 0x03e0, 0x001f, 0x8000, D3DFMT_A1R5G5B5);
     check_dds_pixel_format(DDS_PF_RGB | DDS_PF_ALPHA, 0, 16, 0x0f00, 0x00f0, 0x000f, 0xf000, D3DFMT_A4R4G4B4);
@@ -710,9 +717,9 @@ static void test_D3DXGetImageInfo(void)
     check_dds_pixel_format(DDS_PF_LUMINANCE, 0, 16, 0xffff, 0, 0, 0, D3DFMT_L16);
     check_dds_pixel_format(DDS_PF_LUMINANCE | DDS_PF_ALPHA, 0, 16, 0x00ff, 0, 0, 0xff00, D3DFMT_A8L8);
     check_dds_pixel_format(DDS_PF_LUMINANCE | DDS_PF_ALPHA, 0, 8, 0x0f, 0, 0, 0xf0, D3DFMT_A4L4);
-    check_dds_pixel_format(DDS_PF_BUMPDUDV, 0, 16, 0x00ff, 0xff00, 0, 0, D3DFMT_V8U8);
-    check_dds_pixel_format(DDS_PF_BUMPDUDV, 0, 32, 0x0000ffff, 0xffff0000, 0, 0, D3DFMT_V16U16);
-    check_dds_pixel_format(DDS_PF_BUMPLUMINANCE, 0, 32, 0x0000ff, 0x00ff00, 0xff0000, 0, D3DFMT_X8L8V8U8);
+    todo_wine check_dds_pixel_format(DDS_PF_BUMPDUDV, 0, 16, 0x00ff, 0xff00, 0, 0, D3DFMT_V8U8);
+    todo_wine check_dds_pixel_format(DDS_PF_BUMPDUDV, 0, 32, 0x0000ffff, 0xffff0000, 0, 0, D3DFMT_V16U16);
+    todo_wine check_dds_pixel_format(DDS_PF_BUMPLUMINANCE, 0, 32, 0x0000ff, 0x00ff00, 0xff0000, 0, D3DFMT_X8L8V8U8);
 
     test_dds_header_handling();
 
@@ -771,7 +778,9 @@ static void test_D3DXLoadSurface(IDirect3DDevice9 *device)
     static const DWORD pixdata_g16r16[] = { 0x07d23fbe, 0xdc7f44a4, 0xe4d8976b, 0x9a84fe89 };
     static const DWORD pixdata_a8b8g8r8[] = { 0xc3394cf0, 0x235ae892, 0x09b197fd, 0x8dc32bf6 };
     static const DWORD pixdata_a2r10g10b10[] = { 0x57395aff, 0x5b7668fd, 0xb0d856b5, 0xff2c61d6 };
+    static const uint32_t pixdata_a8r8g8b8[] = { 0x00102030, 0x40506070, 0x8090a0b0, 0xc0d0e0ff };
     BYTE buffer[4 * 8 * 4];
+    uint32_t i;
 
     hr = create_file("testdummy.bmp", noimage, sizeof(noimage));  /* invalid image */
     testdummy_ok = SUCCEEDED(hr);
@@ -933,8 +942,60 @@ static void test_D3DXLoadSurface(IDirect3DDevice9 *device)
     hr = IDirect3DDevice9_CreateRenderTarget(device, 256, 256, D3DFMT_A8R8G8B8, D3DMULTISAMPLE_2_SAMPLES, 0, FALSE, &newsurf, NULL);
     if (SUCCEEDED(hr))
     {
-       hr = D3DXLoadSurfaceFromSurface(surf, NULL, NULL, newsurf, NULL, NULL, D3DX_FILTER_NONE, 0);
+       struct surface_readback surface_rb;
+
+       /* D3DXLoadSurfaceFromMemory should return success with a multisampled render target. */
+       SetRect(&rect, 0, 0, 2, 2);
+       hr = D3DXLoadSurfaceFromMemory(newsurf, NULL, &rect, pixdata_a8r8g8b8, D3DFMT_A8R8G8B8, 8, NULL, &rect, D3DX_FILTER_NONE, 0);
        ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+
+       /* The call succeeds, but the surface isn't actually written to. */
+       get_surface_readback(device, newsurf, D3DFMT_A8R8G8B8, &surface_rb);
+       check_readback_pixel_4bpp(&surface_rb, 0, 0, 0x00000000, FALSE);
+       check_readback_pixel_4bpp(&surface_rb, 1, 0, 0x00000000, FALSE);
+       check_readback_pixel_4bpp(&surface_rb, 0, 1, 0x00000000, FALSE);
+       check_readback_pixel_4bpp(&surface_rb, 1, 1, 0x00000000, FALSE);
+       release_surface_readback(&surface_rb);
+
+       /*
+        * Load the data into our non-multisampled render target, then load
+        * that into the multisampled render target.
+        */
+       SetRect(&rect, 0, 0, 2, 2);
+       hr = D3DXLoadSurfaceFromMemory(surf, NULL, &rect, pixdata_a8r8g8b8, D3DFMT_A8R8G8B8, 8, NULL, &rect, D3DX_FILTER_NONE, 0);
+       ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+
+       get_surface_readback(device, surf, D3DFMT_A8R8G8B8, &surface_rb);
+       check_readback_pixel_4bpp(&surface_rb, 0, 0, pixdata_a8r8g8b8[0], FALSE);
+       check_readback_pixel_4bpp(&surface_rb, 1, 0, pixdata_a8r8g8b8[1], FALSE);
+       check_readback_pixel_4bpp(&surface_rb, 0, 1, pixdata_a8r8g8b8[2], FALSE);
+       check_readback_pixel_4bpp(&surface_rb, 1, 1, pixdata_a8r8g8b8[3], FALSE);
+       release_surface_readback(&surface_rb);
+
+       /*
+        * Loading from a non-multisampled surface into a multisampled surface
+        * does change the surface contents.
+        */
+       hr = D3DXLoadSurfaceFromSurface(newsurf, NULL, &rect, surf, NULL, &rect, D3DX_FILTER_NONE, 0);
+       ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+
+       get_surface_readback(device, newsurf, D3DFMT_A8R8G8B8, &surface_rb);
+       check_readback_pixel_4bpp(&surface_rb, 0, 0, pixdata_a8r8g8b8[0], TRUE);
+       check_readback_pixel_4bpp(&surface_rb, 1, 0, pixdata_a8r8g8b8[1], TRUE);
+       check_readback_pixel_4bpp(&surface_rb, 0, 1, pixdata_a8r8g8b8[2], TRUE);
+       check_readback_pixel_4bpp(&surface_rb, 1, 1, pixdata_a8r8g8b8[3], TRUE);
+       release_surface_readback(&surface_rb);
+
+       /* Contents of the multisampled surface are preserved. */
+       hr = D3DXLoadSurfaceFromMemory(newsurf, NULL, NULL, pixdata, D3DFMT_A8R8G8B8, 8, NULL, &rect, D3DX_FILTER_POINT, 0);
+       ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+
+       get_surface_readback(device, newsurf, D3DFMT_A8R8G8B8, &surface_rb);
+       check_readback_pixel_4bpp(&surface_rb, 0, 0, pixdata_a8r8g8b8[0], TRUE);
+       check_readback_pixel_4bpp(&surface_rb, 1, 0, pixdata_a8r8g8b8[1], TRUE);
+       check_readback_pixel_4bpp(&surface_rb, 0, 1, pixdata_a8r8g8b8[2], TRUE);
+       check_readback_pixel_4bpp(&surface_rb, 1, 1, pixdata_a8r8g8b8[3], TRUE);
+       release_surface_readback(&surface_rb);
 
        IDirect3DSurface9_Release(newsurf);
     }
@@ -993,6 +1054,16 @@ static void test_D3DXLoadSurface(IDirect3DDevice9 *device)
     ok(hr == D3D_OK, "D3DXLoadSurfaceFromSurface returned %#lx, expected %#lx.\n", hr, D3D_OK);
     hr = D3DXLoadSurfaceFromSurface(surf, NULL, NULL, newsurf, NULL, &destrect, D3DX_FILTER_NONE, 0);
     ok(hr == D3D_OK, "D3DXLoadSurfaceFromSurface returned %#lx, expected %#lx.\n", hr, D3D_OK);
+
+    for (i = 0; i < ARRAY_SIZE(test_filter_values); ++i)
+    {
+        winetest_push_context("Filter %d (%#x)", i, test_filter_values[i].filter);
+
+        hr = D3DXLoadSurfaceFromSurface(surf, NULL, NULL, newsurf, NULL, NULL, test_filter_values[i].filter, 0);
+        ok(hr == test_filter_values[i].expected_hr, "Unexpected hr %#lx.\n", hr);
+
+        winetest_pop_context();
+    }
 
     IDirect3DSurface9_Release(newsurf);
 
@@ -1153,6 +1224,22 @@ static void test_D3DXLoadSurface(IDirect3DDevice9 *device)
         ok(*(DWORD*)lockrect.pBits == 0xfff3f2f1, "Pixel color mismatch: got %#lx, expected 0xfff3f2f1\n", *(DWORD*)lockrect.pBits);
         hr = IDirect3DSurface9_UnlockRect(surf);
         ok(SUCCEEDED(hr), "Failed to unlock surface, hr %#lx\n", hr);
+
+        SetRect(&rect, 0, 0, 2, 2);
+        for (i = 0; i < ARRAY_SIZE(test_filter_values); ++i)
+        {
+            winetest_push_context("Filter %d (%#x)", i, test_filter_values[i].filter);
+
+            hr = D3DXLoadSurfaceFromFileInMemory(surf, NULL, NULL, dds_24bit, sizeof(dds_24bit), NULL,
+                    test_filter_values[i].filter, 0, NULL);
+            ok(hr == test_filter_values[i].expected_hr, "Unexpected hr %#lx.\n", hr);
+
+            hr = D3DXLoadSurfaceFromMemory(surf, NULL, NULL, pixdata_a8b8g8r8, D3DFMT_A8B8G8R8, 8, NULL, &rect,
+                    test_filter_values[i].filter, 0);
+            ok(hr == test_filter_values[i].expected_hr, "Unexpected hr %#lx.\n", hr);
+
+            winetest_pop_context();
+        }
 
         check_release((IUnknown*)surf, 0);
     }

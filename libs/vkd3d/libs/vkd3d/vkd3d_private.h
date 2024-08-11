@@ -787,8 +787,8 @@ extern const enum vkd3d_vk_descriptor_set_index vk_descriptor_set_index_table[];
 static inline enum vkd3d_vk_descriptor_set_index vkd3d_vk_descriptor_set_index_from_vk_descriptor_type(
         VkDescriptorType type)
 {
-    assert(type <= VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    assert(vk_descriptor_set_index_table[type] < VKD3D_SET_INDEX_COUNT);
+    VKD3D_ASSERT(type <= VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    VKD3D_ASSERT(vk_descriptor_set_index_table[type] < VKD3D_SET_INDEX_COUNT);
 
     return vk_descriptor_set_index_table[type];
 }
@@ -1232,7 +1232,7 @@ enum vkd3d_pipeline_bind_point
 /* ID3D12CommandList */
 struct d3d12_command_list
 {
-    ID3D12GraphicsCommandList5 ID3D12GraphicsCommandList5_iface;
+    ID3D12GraphicsCommandList6 ID3D12GraphicsCommandList6_iface;
     unsigned int refcount;
 
     D3D12_COMMAND_LIST_TYPE type;
@@ -1768,7 +1768,7 @@ static inline void vkd3d_prepend_struct(void *header, void *structure)
         const void *next;
     } *vkd3d_header = header, *vkd3d_structure = structure;
 
-    assert(!vkd3d_structure->next);
+    VKD3D_ASSERT(!vkd3d_structure->next);
     vkd3d_structure->next = vkd3d_header->next;
     vkd3d_header->next = vkd3d_structure;
 }

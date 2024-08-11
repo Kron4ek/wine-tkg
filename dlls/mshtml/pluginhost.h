@@ -48,12 +48,18 @@ typedef struct {
     HTMLPluginContainer *element;
 } PluginHost;
 
+struct plugin_prop
+{
+    DISPID id;
+    WCHAR name[1];
+};
+
 struct HTMLPluginContainer {
     HTMLElement element;
 
     PluginHost *plugin_host;
 
-    DISPID *props;
+    struct plugin_prop **props;
     DWORD props_size;
     DWORD props_len;
 };
@@ -67,7 +73,11 @@ void update_plugin_window(PluginHost*,HWND,const RECT*);
 void detach_plugin_host(PluginHost*);
 
 HRESULT get_plugin_disp(HTMLPluginContainer*,IDispatch**);
-HRESULT get_plugin_dispid(HTMLPluginContainer*,const WCHAR*,DISPID*);
-HRESULT invoke_plugin_prop(HTMLPluginContainer*,DISPID,LCID,WORD,DISPPARAMS*,VARIANT*,EXCEPINFO*);
 void notif_container_change(HTMLPluginContainer*,DISPID);
 void bind_activex_event(HTMLDocumentNode*,HTMLPluginContainer*,WCHAR*,IDispatch*);
+
+void HTMLPluginContainer_destructor(DispatchEx *dispex);
+HRESULT HTMLPluginContainer_get_dispid(DispatchEx *dispex, const WCHAR *name, DWORD grfdex, DISPID *dispid);
+HRESULT HTMLPluginContainer_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params,
+                                   VARIANT *res, EXCEPINFO *ei, IServiceProvider *caller);
+HRESULT HTMLPluginContainer_get_prop_desc(DispatchEx *dispex, DISPID id, struct property_info *desc);

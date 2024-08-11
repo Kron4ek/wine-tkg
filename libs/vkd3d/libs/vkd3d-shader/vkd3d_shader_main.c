@@ -62,7 +62,7 @@ void vkd3d_string_buffer_init(struct vkd3d_string_buffer *buffer)
     buffer->buffer_size = 16;
     buffer->content_size = 0;
     buffer->buffer = vkd3d_malloc(buffer->buffer_size);
-    assert(buffer->buffer);
+    VKD3D_ASSERT(buffer->buffer);
     memset(buffer->buffer, 0, buffer->buffer_size);
 }
 
@@ -230,7 +230,7 @@ void vkd3d_string_buffer_release(struct vkd3d_string_buffer_cache *cache, struct
 {
     if (!buffer)
         return;
-    assert(cache->count + 1 <= cache->max_count);
+    VKD3D_ASSERT(cache->count + 1 <= cache->max_count);
     cache->buffers[cache->count++] = buffer;
 }
 
@@ -431,7 +431,7 @@ static void bytecode_set_bytes(struct vkd3d_bytecode_buffer *buffer, size_t offs
     if (buffer->status)
         return;
 
-    assert(vkd3d_bound_range(offset, size, buffer->size));
+    VKD3D_ASSERT(vkd3d_bound_range(offset, size, buffer->size));
     memcpy(buffer->data + offset, value, size);
 }
 
@@ -644,7 +644,7 @@ static bool vkd3d_shader_signature_from_shader_signature(struct vkd3d_shader_sig
     signature->element_count = src->element_count;
     if (!src->elements)
     {
-        assert(!signature->element_count);
+        VKD3D_ASSERT(!signature->element_count);
         signature->elements = NULL;
         return true;
     }
@@ -789,7 +789,7 @@ static struct vkd3d_shader_cf_info *vkd3d_shader_scan_push_cf_info(struct vkd3d_
 
 static void vkd3d_shader_scan_pop_cf_info(struct vkd3d_shader_scan_context *context)
 {
-    assert(context->cf_info_count);
+    VKD3D_ASSERT(context->cf_info_count);
 
     --context->cf_info_count;
 }
@@ -2067,7 +2067,7 @@ bool shader_instruction_array_reserve(struct vkd3d_shader_instruction_array *ins
 bool shader_instruction_array_insert_at(struct vkd3d_shader_instruction_array *instructions,
         unsigned int idx, unsigned int count)
 {
-    assert(idx <= instructions->count);
+    VKD3D_ASSERT(idx <= instructions->count);
 
     if (!shader_instruction_array_reserve(instructions, instructions->count + count))
         return false;

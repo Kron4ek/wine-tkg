@@ -150,8 +150,7 @@ static HRESULT WINAPI HTMLStyleElement_get_styleSheet(IHTMLStyleElement *iface, 
         assert(nsres == NS_OK);
 
         if(ss) {
-            HRESULT hres = create_style_sheet(ss, dispex_compat_mode(&This->element.node.event_target.dispex),
-                                              &This->style_sheet);
+            HRESULT hres = create_style_sheet(ss, &This->element.node.event_target.dispex, &This->style_sheet);
             nsIDOMStyleSheet_Release(ss);
             if(FAILED(hres))
                 return hres;
@@ -336,12 +335,13 @@ static const tid_t HTMLStyleElement_iface_tids[] = {
     HTMLELEMENT_TIDS,
     0
 };
-static dispex_static_data_t HTMLStyleElement_dispex = {
-    "HTMLStyleElement",
-    &HTMLStyleElement_event_target_vtbl.dispex_vtbl,
-    DispHTMLStyleElement_tid,
-    HTMLStyleElement_iface_tids,
-    HTMLStyleElement_init_dispex_info
+dispex_static_data_t HTMLStyleElement_dispex = {
+    .id           = PROT_HTMLStyleElement,
+    .prototype_id = PROT_HTMLElement,
+    .vtbl         = &HTMLStyleElement_event_target_vtbl.dispex_vtbl,
+    .disp_tid     = DispHTMLStyleElement_tid,
+    .iface_tids   = HTMLStyleElement_iface_tids,
+    .init_info    = HTMLStyleElement_init_dispex_info,
 };
 
 HRESULT HTMLStyleElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)

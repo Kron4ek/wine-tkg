@@ -1388,6 +1388,157 @@ static void test_invalid_hpropsheetpage(void)
     DestroyWindow(hdlg);
 }
 
+static int query_initial_focus = 0;
+static int edit_test_ID = IDC_PS_EDIT2;
+static LRESULT CALLBACK TestDlgProc(HWND hdlg, UINT uMessage, WPARAM wParam, LPARAM lParam)
+{
+    LPNMHDR lpnmhdr;
+
+    switch (uMessage)
+    {
+    case WM_NOTIFY:
+        lpnmhdr = (NMHDR *)lParam;
+        switch (lpnmhdr->code)
+        {
+        case PSN_QUERYINITIALFOCUS:
+        {
+            query_initial_focus++;
+            if (edit_test_ID == IDC_PS_EDIT1)
+                return 0;
+            SetWindowLongPtrA(hdlg, DWLP_MSGRESULT, (LONG_PTR)GetDlgItem(hdlg, IDC_PS_EDIT2));
+            return 1;
+        }
+        }
+    }
+
+    return FALSE;
+}
+
+static void test_QueryInitialFocus(void)
+{
+    PROPSHEETPAGEA psp[2];
+    PROPSHEETHEADERA psh;
+    HWND tab_ctrl = NULL;
+    HWND hp;
+    RECT rc;
+    LPARAM lp;
+
+    memset(&psh, 0, sizeof(psh));
+    memset(psp, 0, sizeof(psp));
+    psp[0].dwSize = sizeof(PROPSHEETPAGEA);
+    psp[0].dwFlags = PSP_USETITLE;
+    psp[0].hInstance = GetModuleHandleA(NULL);
+    psp[0].pszTemplate = (const char *)MAKEINTRESOURCE(IDD_PROP_PAGE_EDIT);
+    psp[0].pszIcon = NULL;
+    psp[0].pfnDlgProc = (DLGPROC) TestDlgProc;
+    psp[0].pszTitle = "Page1";
+    psp[0].lParam = 0;
+
+    psp[1].dwSize = sizeof(PROPSHEETPAGEA);
+    psp[1].dwFlags = PSP_USETITLE;
+    psp[1].hInstance = GetModuleHandleA(NULL);
+    psp[1].pszTemplate = (const char*)MAKEINTRESOURCE(IDD_PROP_PAGE_EDIT);
+    psp[1].pszIcon = NULL;
+    psp[1].pfnDlgProc = (DLGPROC) TestDlgProc;
+    psp[1].pszTitle = "Page2";
+    psp[1].lParam = 0;
+
+    psh.dwSize = sizeof(PROPSHEETHEADERA);
+    psh.dwFlags = PSH_PROPSHEETPAGE | PSH_MODELESS;
+    psh.hwndParent = GetDesktopWindow();
+    psh.pszCaption = "Modeless Property Sheet";
+    psh.nPages = sizeof(psp) / sizeof(PROPSHEETPAGEA);
+    psh.ppsp = (LPCPROPSHEETPAGEA)&psp;
+
+    hp = (HWND)pPropertySheetA(&psh);
+    tab_ctrl = (HWND)SendMessageA(hp, PSM_GETTABCONTROL, 0, 0);
+
+    /* Test PSN_QUERYINITIALFOCUS gets sent on start */
+    ok(query_initial_focus == 1, "Did not recieve PSN_QUERYINITIALFOCUS on start.\n");
+    ok(GetDlgCtrlID(GetFocus()) == IDC_PS_EDIT2, "Focus not set to IDC_PS_EDIT2.\n");
+
+    /* Test changing of tabs */
+    edit_test_ID = IDC_PS_EDIT1;
+    query_initial_focus = 0;
+    ok(tab_ctrl != 0, "Could not test changing tabs. No tab control found.\n");
+    SendMessageA(tab_ctrl, TCM_GETITEMRECT, 1, (LPARAM) &rc);
+    lp = MAKELPARAM(rc.left + ((rc.right - rc.left) / 2), rc.top + ((rc.bottom - rc.top) / 2));
+    SendMessageA(tab_ctrl, WM_LBUTTONDOWN, MK_LBUTTON, lp);
+    ok(query_initial_focus == 1, "Did not recieve PSN_QUERYINITIALFOCUS from changing tabs.\n");
+    ok(GetDlgCtrlID(GetFocus()) == IDC_PS_EDIT1, "Focus not set to IDC_PS_EDIT1.\n");
+
+    /* Test Apply Button */
+    edit_test_ID = IDC_PS_EDIT2;
+    query_initial_focus = 0;
+    SendMessageA(hp, PSM_PRESSBUTTON, PSBTN_APPLYNOW, 0);
+    ok(query_initial_focus == 1, "Did not recieve PSN_QUERYINITIALFOCUS from apply button.\n");
+    ok(GetDlgCtrlID(GetFocus()) == IDC_PS_EDIT2, "Focus not set to IDC_PS_EDIT2.\n");
+
+    DestroyWindow(hp);
+
+    edit_test_ID = IDC_PS_EDIT1;
+    query_initial_focus = 0;
+
+    psh.dwFlags = PSH_PROPSHEETPAGE | PSH_USECALLBACK | PSH_WIZARD | PSH_MODELESS;
+    hp = (HWND)pPropertySheetA(&psh);
+
+    /* Test PSN_QUERYINITIALFOCUS gets sent on start */
+    ok(query_initial_focus == 1, "Did not recieve PSN_QUERYINITIALFOCUS on start.\n");
+    ok(GetDlgCtrlID(GetFocus()) == IDC_PS_EDIT1, "Focus not set to IDC_PS_EDIT1.\n");
+
+    /* Test Next Button */
+    edit_test_ID = IDC_PS_EDIT2;
+    query_initial_focus = 0;
+    SendMessageA(hp, PSM_PRESSBUTTON, PSBTN_NEXT, 0);
+    ok(query_initial_focus == 1, "Did not recieve PSN_QUERYINITIALFOCUS from next button.\n");
+    ok(GetDlgCtrlID(GetFocus()) == IDC_PS_EDIT2, "Focus not set to IDC_PS_EDIT2.\n");
+
+    DestroyWindow(hp);
+}
+
+static void test_init_page_creation(void)
+{
+    PROPSHEETPAGEA psp[3];
+    PROPSHEETHEADERA psh;
+    HWND hp;
+    HWND page;
+
+    memset(&psh, 0, sizeof(psh));
+    memset(psp, 0, sizeof(psp));
+
+    for (int p = 0; p < 3; p++)
+    {
+        psp[p].dwSize = sizeof(PROPSHEETPAGEA);
+        psp[p].dwFlags = PSP_USETITLE | (p != 2 ? PSP_PREMATURE : 0);
+        psp[p].hInstance = GetModuleHandleA(NULL);
+        psp[p].pszTemplate = (const char *)MAKEINTRESOURCE(IDD_PROP_PAGE_EDIT);
+        psp[p].pszIcon = NULL;
+        psp[p].pfnDlgProc = (DLGPROC) page_dlg_proc;
+        psp[p].pszTitle = "page title";
+        psp[p].lParam = 0;
+    }
+
+    psh.dwSize = sizeof(PROPSHEETHEADERA);
+    psh.dwFlags = PSH_PROPSHEETPAGE | PSH_MODELESS;
+    psh.hwndParent = GetDesktopWindow();
+    psh.pszCaption = "test caption";
+    psh.nPages = sizeof(psp) / sizeof(PROPSHEETPAGEA);
+    psh.ppsp = (LPCPROPSHEETPAGEA)&psp;
+
+    hp = (HWND)pPropertySheetA(&psh);
+
+    for (int p = 0; p < 3; p++)
+    {
+        page = (HWND)SendMessageA(hp, PSM_INDEXTOHWND, p, 0);
+        if(p == 2)
+            ok(page == NULL, "Page %d created.\n", p);
+        else
+            ok(page != NULL, "Page %d not created.\n", p);
+    }
+
+    DestroyWindow(hp);
+}
+
 static void init_comctl32_functions(void)
 {
     HMODULE hComCtl32 = LoadLibraryA("comctl32.dll");
@@ -1442,6 +1593,8 @@ START_TEST(propsheet)
     test_CreatePropertySheetPage();
     test_page_dialog_texture();
     test_invalid_hpropsheetpage();
+    test_init_page_creation();
+    test_QueryInitialFocus();
 
     if (!load_v6_module(&ctx_cookie, &ctx))
         return;

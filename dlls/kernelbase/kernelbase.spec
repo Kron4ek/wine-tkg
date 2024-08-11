@@ -740,6 +740,8 @@
 # @ stub GetTargetPlatformContext
 @ stdcall GetTempFileNameA(str str long ptr)
 @ stdcall GetTempFileNameW(wstr wstr long ptr)
+@ stdcall GetTempPath2W(long ptr)
+@ stdcall GetTempPath2A(long ptr)
 @ stdcall GetTempPathA(long ptr)
 @ stdcall GetTempPathW(long ptr)
 @ stdcall GetThreadContext(long ptr)
@@ -1234,8 +1236,8 @@
 @ stdcall QueryFullProcessImageNameA(ptr long ptr ptr)
 @ stdcall QueryFullProcessImageNameW(ptr long ptr ptr)
 @ stdcall QueryIoRingCapabilities(ptr)
-# @ stub QueryIdleProcessorCycleTime
-# @ stub QueryIdleProcessorCycleTimeEx
+@ stdcall QueryIdleProcessorCycleTime(ptr ptr)
+@ stdcall QueryIdleProcessorCycleTimeEx(long ptr ptr)
 @ stdcall QueryInterruptTime(ptr)
 @ stdcall QueryInterruptTimePrecise(ptr)
 @ stdcall QueryMemoryResourceNotification(ptr ptr)

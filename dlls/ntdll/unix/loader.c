@@ -73,11 +73,13 @@
 # ifndef _POSIX_SPAWN_DISABLE_ASLR
 #  define _POSIX_SPAWN_DISABLE_ASLR 0x0100
 # endif
+# define environ (*_NSGetEnviron())
+#else
+  extern char **environ;
 #endif
 #ifdef __ANDROID__
 # include <jni.h>
 #endif
-extern char **environ;
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -2029,7 +2031,6 @@ static jstring wine_init_jni( JNIEnv *env, jobject obj, jobjectArray cmdline, jo
 
     main_argc = argc;
     main_argv = argv;
-    main_envp = environ;
 
     init_paths( argv );
     virtual_init();
@@ -2225,11 +2226,10 @@ static void check_command_line( int argc, char *argv[] )
  *
  * Main entry point called by the wine loader.
  */
-DECLSPEC_EXPORT void __wine_main( int argc, char *argv[], char *envp[] )
+DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
 {
     main_argc = argc;
     main_argv = argv;
-    main_envp = envp;
 
     init_paths( argv );
 

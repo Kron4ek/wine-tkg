@@ -267,15 +267,55 @@ static HRESULT WINAPI control_UnregisterAudioSessionNotification(IAudioSessionCo
 static HRESULT WINAPI control_GetSessionIdentifier(IAudioSessionControl2 *iface, WCHAR **id)
 {
     struct audio_session_wrapper *This = impl_from_IAudioSessionControl2(iface);
-    FIXME("(%p)->(%p) - stub\n", This, id);
-    return E_NOTIMPL;
+    WCHAR exe_path[MAX_PATH], session_guid[39], *dev_id;
+    DWORD len;
+    HRESULT hr;
+
+    TRACE("(%p)->(%p).\n", This, id);
+
+    if (!id)
+        return E_POINTER;
+    *id = NULL;
+
+    len = ARRAY_SIZE(exe_path);
+    if (!QueryFullProcessImageNameW(GetCurrentProcess(), PROCESS_NAME_NATIVE, exe_path, &len))
+        return E_FAIL;
+    if (!StringFromGUID2(&This->session->guid, session_guid, ARRAY_SIZE(session_guid)))
+        return E_FAIL;
+    if (FAILED(hr = IMMDevice_GetId(This->session->device, &dev_id)))
+        return hr;
+
+    len = wcslen(dev_id) + 1 + wcslen(exe_path) + 2 + wcslen(session_guid) + 1;
+    if (!(*id = CoTaskMemAlloc(len * sizeof(WCHAR)))) {
+        CoTaskMemFree(dev_id);
+        return E_OUTOFMEMORY;
+    }
+    swprintf(*id, len, L"%s|%s%%b%s", dev_id, exe_path, session_guid);
+    CoTaskMemFree(dev_id);
+    return S_OK;
 }
 
 static HRESULT WINAPI control_GetSessionInstanceIdentifier(IAudioSessionControl2 *iface, WCHAR **id)
 {
     struct audio_session_wrapper *This = impl_from_IAudioSessionControl2(iface);
-    FIXME("(%p)->(%p) - stub\n", This, id);
-    return E_NOTIMPL;
+    WCHAR *session_id, pid[16];
+    HRESULT hr;
+    DWORD len;
+
+    TRACE("(%p)->(%p).\n", This, id);
+
+    if (FAILED(hr = control_GetSessionIdentifier(iface, &session_id)))
+        return hr;
+
+    swprintf(pid, ARRAY_SIZE(pid), L"%lu", GetCurrentProcessId());
+    len = wcslen(session_id) + 4 + wcslen(pid) + 1;
+    if (!(*id = CoTaskMemAlloc(len * sizeof(WCHAR)))) {
+        CoTaskMemFree(session_id);
+        return E_OUTOFMEMORY;
+    }
+    swprintf(*id, len, L"%s|1%%b%s", session_id, pid);
+    CoTaskMemFree(session_id);
+    return S_OK;
 }
 
 static HRESULT WINAPI control_GetProcessId(IAudioSessionControl2 *iface, DWORD *pid)
@@ -726,5 +766,28 @@ HRESULT get_audio_session_wrapper(const GUID *guid, IMMDevice *device,
 
     (*out)->session = session;
 
+    return S_OK;
+}
+
+HRESULT get_audio_sessions(IMMDevice *device, GUID **ret, int *ret_count)
+{
+    struct audio_session *session;
+
+    *ret_count = 0;
+    *ret = NULL;
+    LIST_FOR_EACH_ENTRY(session, &sessions, struct audio_session, entry) {
+        if (session->device == device)
+            ++*ret_count;
+    }
+    if (!*ret_count)
+        return S_OK;
+
+    if (!(*ret = malloc(*ret_count * sizeof(**ret))))
+        return E_OUTOFMEMORY;
+    *ret_count = 0;
+    LIST_FOR_EACH_ENTRY(session, &sessions, struct audio_session, entry) {
+        if (session->device == device)
+            (*ret)[(*ret_count)++] = session->guid;
+    }
     return S_OK;
 }

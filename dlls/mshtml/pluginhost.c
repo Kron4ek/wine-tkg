@@ -704,12 +704,36 @@ HRESULT get_plugin_disp(HTMLPluginContainer *plugin_container, IDispatch **ret)
     return S_OK;
 }
 
-HRESULT get_plugin_dispid(HTMLPluginContainer *plugin_container, const WCHAR *name, DISPID *ret)
+static inline HTMLPluginContainer *impl_from_DispatchEx(DispatchEx *iface)
 {
+    return CONTAINING_RECORD(iface, HTMLPluginContainer, element.node.event_target.dispex);
+}
+
+void HTMLPluginContainer_destructor(DispatchEx *dispex)
+{
+    HTMLPluginContainer *This = impl_from_DispatchEx(dispex);
+    unsigned int i;
+
+    if(This->plugin_host)
+        detach_plugin_host(This->plugin_host);
+
+    for(i = 0; i < This->props_len; i++)
+        free(This->props[i]);
+    free(This->props);
+
+    HTMLElement_destructor(&This->element.node.event_target.dispex);
+}
+
+HRESULT HTMLPluginContainer_get_dispid(DispatchEx *dispex, const WCHAR *name, DWORD grfdex, DISPID *ret)
+{
+    HTMLPluginContainer *plugin_container = impl_from_DispatchEx(dispex);
+    struct plugin_prop *prop;
     IDispatch *disp;
     DISPID id;
-    DWORD i;
+    DWORD i, len;
     HRESULT hres;
+
+    TRACE("(%p)->(%s %lx %p)\n", plugin_container, debugstr_w(name), grfdex, ret);
 
     if(!plugin_container->plugin_host) {
         WARN("no plugin host\n");
@@ -727,21 +751,21 @@ HRESULT get_plugin_dispid(HTMLPluginContainer *plugin_container, const WCHAR *na
     }
 
     for(i=0; i < plugin_container->props_len; i++) {
-        if(id == plugin_container->props[i]) {
+        if(id == plugin_container->props[i]->id) {
             *ret = MSHTML_DISPID_CUSTOM_MIN+i;
             return S_OK;
         }
     }
 
     if(!plugin_container->props) {
-        plugin_container->props = malloc(8 * sizeof(DISPID));
+        plugin_container->props = malloc(8 * sizeof(*plugin_container->props));
         if(!plugin_container->props)
             return E_OUTOFMEMORY;
         plugin_container->props_size = 8;
     }else if(plugin_container->props_len == plugin_container->props_size) {
-        DISPID *new_props;
+        struct plugin_prop **new_props;
 
-        new_props = realloc(plugin_container->props, plugin_container->props_size * 2 * sizeof(DISPID));
+        new_props = realloc(plugin_container->props, plugin_container->props_size * 2 * sizeof(*new_props));
         if(!new_props)
             return E_OUTOFMEMORY;
 
@@ -749,16 +773,25 @@ HRESULT get_plugin_dispid(HTMLPluginContainer *plugin_container, const WCHAR *na
         plugin_container->props_size *= 2;
     }
 
-    plugin_container->props[plugin_container->props_len] = id;
+    len = wcslen(name);
+    if(!(prop = malloc(FIELD_OFFSET(struct plugin_prop, name[len + 1]))))
+        return E_OUTOFMEMORY;
+
+    prop->id = id;
+    wcscpy(prop->name, name);
+    plugin_container->props[plugin_container->props_len] = prop;
     *ret = MSHTML_DISPID_CUSTOM_MIN+plugin_container->props_len;
     plugin_container->props_len++;
     return S_OK;
 }
 
-HRESULT invoke_plugin_prop(HTMLPluginContainer *plugin_container, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params,
-        VARIANT *res, EXCEPINFO *ei)
+HRESULT HTMLPluginContainer_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params,
+                                   VARIANT *res, EXCEPINFO *ei, IServiceProvider *caller)
 {
+    HTMLPluginContainer *plugin_container = impl_from_DispatchEx(dispex);
     PluginHost *host;
+
+    TRACE("(%p)->(%ld)\n", plugin_container, id);
 
     host = plugin_container->plugin_host;
     if(!host || !host->disp) {
@@ -776,8 +809,34 @@ HRESULT invoke_plugin_prop(HTMLPluginContainer *plugin_container, DISPID id, LCI
         return E_FAIL;
     }
 
-    return IDispatch_Invoke(host->disp, plugin_container->props[id-MSHTML_DISPID_CUSTOM_MIN], &IID_NULL,
+    return IDispatch_Invoke(host->disp, plugin_container->props[id-MSHTML_DISPID_CUSTOM_MIN]->id, &IID_NULL,
             lcid, flags, params, res, ei, NULL);
+}
+
+HRESULT HTMLPluginContainer_get_prop_desc(DispatchEx *dispex, DISPID id, struct property_info *desc)
+{
+    HTMLPluginContainer *plugin_container = impl_from_DispatchEx(dispex);
+    PluginHost *host;
+
+    if(id >= MSHTML_DISPID_CUSTOM_MIN + plugin_container->props_len)
+        return DISP_E_MEMBERNOTFOUND;
+
+    host = plugin_container->plugin_host;
+    if(!host || !host->disp) {
+        WARN("Called with no disp\n");
+        return E_UNEXPECTED;
+    }
+
+    if(!check_script_safety(host)) {
+        FIXME("Insecure object\n");
+        return E_FAIL;
+    }
+
+    desc->id = id;
+    desc->flags = 0;
+    desc->name = plugin_container->props[id - MSHTML_DISPID_CUSTOM_MIN]->name;
+    desc->func_iid = 0;
+    return S_OK;
 }
 
 typedef struct {

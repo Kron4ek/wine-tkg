@@ -19,6 +19,8 @@
 var compat_version;
 var tests = [];
 
+var svg_ns = "http://www.w3.org/2000/svg";
+
 ok(performance.timing.navigationStart > 0, "navigationStart <= 0");
 ok(performance.timing.fetchStart == performance.timing.navigationStart, "fetchStart != navigationStart");
 ok(performance.timing.domainLookupStart >= performance.timing.fetchStart, "domainLookupStart < fetchStart");
@@ -150,7 +152,7 @@ sync_test("builtin_toString", function() {
         [ "font",            "Font", -1 ],
         [ "footer",          "" ],
         [ "form",            "Form" ],
-        [ "frame",           "Frame", -1 ],
+        [ "frame",           "Frame" ],
         [ "frameset",        "FrameSet", -1 ],
         [ "h1",              "Heading", -1 ],
         [ "h2",              "Heading", -1 ],
@@ -164,7 +166,7 @@ sync_test("builtin_toString", function() {
         [ "hr",              "HR", -1 ],
         [ "html",            "Html" ],
         [ "i",               "Phrase", -1 ],
-        [ "iframe",          "IFrame", -1 ],
+        [ "iframe",          "IFrame" ],
         [ "img",             "Image" ],
         [ "input",           "Input" ],
         [ "ins",             "Mod", -1 ],
@@ -181,7 +183,7 @@ sync_test("builtin_toString", function() {
         [ "nav",             "" ],
         [ "noframes",        "" ],
         [ "noscript",        "" ],
-        [ "object",          "Object", -1 ],
+        [ "object",          "Object" ],
         [ "ol",              "OList", -1 ],
         [ "optgroup",        "OptGroup", -1 ],
         [ "option",          "Option" ],
@@ -199,7 +201,7 @@ sync_test("builtin_toString", function() {
         [ "samp",            "Phrase", -1 ],
         [ "script",          "Script" ],
         [ "section",         "" ],
-        [ "select",          "Select", -1 ],
+        [ "select",          "Select" ],
         [ "small",           "Phrase", -1 ],
         [ "source",          "Source", -1 ],
         [ "span",            "Span", -1 ],
@@ -292,15 +294,15 @@ sync_test("builtin_toString", function() {
 
     test("attribute", document.createAttribute("class"), "Attr");
     if(false /* todo_wine */) test("attributes", e.attributes, "NamedNodeMap");
-    test("childNodes", document.body.childNodes, "NodeList", null, true);
-    if(clientRects) test("clientRect", clientRects[0], "ClientRect", null, true);
+    test("childNodes", document.body.childNodes, "NodeList");
+    if(clientRects) test("clientRect", clientRects[0], "ClientRect");
     if(clientRects) test("clientRects", clientRects, "ClientRectList");
-    if(currentStyle) test("currentStyle", currentStyle, "MSCurrentStyleCSSProperties", null, true);
+    if(currentStyle) test("currentStyle", currentStyle, "MSCurrentStyleCSSProperties");
     if(v >= 11 /* todo_wine */) test("document", document, v < 11 ? "Document" : "HTMLDocument");
-    test("elements", document.getElementsByTagName("body"), "HTMLCollection", null, true);
+    test("elements", document.getElementsByTagName("body"), "HTMLCollection");
     test("history", window.history, "History");
     test("implementation", document.implementation, "DOMImplementation");
-    if(localStorage) test("localStorage", localStorage, "Storage", null, true);
+    if(localStorage) test("localStorage", localStorage, "Storage");
     test("location", window.location, "Object", window.location.href, null, true);
     if(v >= 11 /* todo_wine */) test("mimeTypes", window.navigator.mimeTypes, v < 11 ? "MSMimeTypesCollection" : "MimeTypeArray");
     test("navigator", window.navigator, "Navigator");
@@ -309,15 +311,15 @@ sync_test("builtin_toString", function() {
     test("performanceTiming", window.performance.timing, "PerformanceTiming");
     if(v >= 11 /* todo_wine */) test("plugins", window.navigator.plugins, v < 11 ? "MSPluginsCollection" : "PluginArray");
     test("screen", window.screen, "Screen");
-    test("sessionStorage", window.sessionStorage, "Storage", null, true);
-    test("style", document.body.style, "MSStyleCSSProperties", null, true);
-    test("styleSheet", sheet, "CSSStyleSheet", null, true);
-    test("styleSheetRule", sheet.rules[0], "CSSStyleRule", null, true);
-    test("styleSheetRules", sheet.rules, "MSCSSRuleList", null, true);
-    test("styleSheets", document.styleSheets, "StyleSheetList", null, true);
+    test("sessionStorage", window.sessionStorage, "Storage");
+    test("style", document.body.style, "MSStyleCSSProperties");
+    test("styleSheet", sheet, "CSSStyleSheet");
+    test("styleSheetRule", sheet.rules[0], "CSSStyleRule");
+    test("styleSheetRules", sheet.rules, "MSCSSRuleList");
+    test("styleSheets", document.styleSheets, "StyleSheetList");
     test("textNode", document.createTextNode("testNode"), "Text", v < 9 ? "testNode" : null);
     test("textRange", txtRange, "TextRange");
-    test("window", window, "Window", "[object Window]", true);
+    test("window", window, "Window", "[object Window]");
     test("xmlHttpRequest", new XMLHttpRequest(), "XMLHttpRequest");
     if(v < 10) {
         test("namespaces", document.namespaces, "MSNamespaceInfoCollection");
@@ -327,7 +329,7 @@ sync_test("builtin_toString", function() {
         test("selection", document.selection, "MSSelection");
     }
     if(v >= 9) {
-        test("computedStyle", window.getComputedStyle(e), "CSSStyleDeclaration", null, true);
+        test("computedStyle", window.getComputedStyle(e), "CSSStyleDeclaration");
         test("doctype", document.doctype, "DocumentType");
 
         test("Event", document.createEvent("Event"), "Event");
@@ -337,16 +339,20 @@ sync_test("builtin_toString", function() {
         test("UIEvent", document.createEvent("UIEvent"), "UIEvent");
     }
     if(v >= 10) {
-        test("classList", e.classList, "DOMTokenList", "testclass    another ", true);
+        test("classList", e.classList, "DOMTokenList", "testclass    another ");
         test("console", window.console, "Console");
         test("mediaQueryList", window.matchMedia("(hover:hover)"), "MediaQueryList");
     }
     if(v >= 11) {
-        test("MutationObserver", new window.MutationObserver(function() {}), "MutationObserver", null, true);
+        test("MutationObserver", new window.MutationObserver(function() {}), "MutationObserver");
     }
     if(v >= 9) {
         document.body.innerHTML = "<!--...-->";
         test("comment", document.body.firstChild, "Comment");
+
+        test("SVGSVGElement", document.createElementNS(svg_ns, "svg"), "SVGSVGElement");
+        test("SVGCircleElement", document.createElementNS(svg_ns, "circle"), "SVGCircleElement");
+        test("SVGCircleElement", document.createElementNS(svg_ns, "tspan"), "SVGTSpanElement");
     }
 });
 
@@ -892,18 +898,33 @@ sync_test("for..in", function() {
 });
 
 sync_test("function caller", function() {
+    var v = document.documentMode;
+
     ok(Function.prototype.hasOwnProperty("caller"), "caller not prop of Function.prototype");
+    if(v < 9)
+        ok(arguments.hasOwnProperty("caller"), "caller not prop of arguments");
+    else
+        ok(!("caller" in arguments), "caller in arguments");
 
     function test_caller(expected_caller, stop) {
         ok(test_caller.caller === expected_caller, "caller = " + test_caller.caller);
+        if(v < 9)
+            ok(arguments.caller === expected_caller.arguments, "arguments.caller = " + arguments.caller);
+
         if(stop) return;
         function nested() {
             ok(nested.caller === test_caller, "nested caller = " + nested.caller);
+            if(v < 9)
+                ok(arguments.caller === test_caller.arguments, "nested arguments.caller = " + arguments.caller);
             test_caller(nested, true);
             ok(test_caller.caller === expected_caller, "caller within nested = " + test_caller.caller);
+            if(v < 9)
+                ok(test_caller.arguments.caller === expected_caller.arguments, "arguments.caller within nested = " + test_caller.arguments.caller);
         }
         nested();
         ok(test_caller.caller === expected_caller, "caller after nested = " + test_caller.caller);
+        if(v < 9)
+            ok(arguments.caller === expected_caller.arguments, "arguments.caller after nested = " + arguments.caller);
     }
     ok(test_caller.hasOwnProperty("caller"), "caller not prop of test_caller");
     ok(test_caller.caller === null, "test_caller.caller = " + test_caller.caller);
@@ -2213,7 +2234,6 @@ sync_test("elem_attrNS", function() {
     if(v < 9) return;  /* not available */
 
     var specialspace_ns = "http://www.mozilla.org/ns/specialspace";
-    var svg_ns = "http://www.w3.org/2000/svg";
 
     var elem = document.createElement("div"), r;
 
@@ -3092,4 +3112,129 @@ sync_test("form", function() {
     ok(typeof(form[1]) === "object", "form[1] = " + form[1]);
     form.innerHTML = "";
     ok(form[0] === "test", "form[0] = " + form[0]);
+});
+
+sync_test("prototypes", function() {
+    var v = document.documentMode;
+    if(v < 9)
+        return;
+
+    function check(obj, proto, name) {
+        ok(Object.getPrototypeOf(obj) === proto, "unexpected " + name + " prototype object");
+    }
+
+    check(document.implementation, DOMImplementation.prototype, "implementation");
+    check(DOMImplementation.prototype, Object.prototype, "implementation prototype");
+    check(window.navigator, Navigator.prototype, "navigator");
+    check(Navigator.prototype, Object.prototype, "navigator prototype");
+    check(document.body, HTMLBodyElement.prototype, "body element");
+    check(HTMLBodyElement.prototype, HTMLElement.prototype, "body prototype");
+    check(HTMLElement.prototype, Element.prototype, "html element prototype");
+    check(Element.prototype, Node.prototype, "element prototype");
+    check(Node.prototype, Object.prototype, "node prototype");
+    check(sessionStorage, Storage.prototype, "storage");
+    check(Storage.prototype, Object.prototype, "storage prototype");
+    if(v >= 11) {
+        check(document, HTMLDocument.prototype, "html document");
+        check(HTMLDocument.prototype, Document.prototype, "html document prototype");
+        check(Document.prototype, Node.prototype, "document prototype");
+    }
+    check(window, Window.prototype, "window");
+    check(Window.prototype, Object.prototype, "window prototype");
+    check(new XMLHttpRequest(), XMLHttpRequest.prototype, "xhr");
+    check(XMLHttpRequest.prototype, Object.prototype, "xhr prototype");
+    check(XMLHttpRequest, Function.prototype, "xhr constructor");
+    check(document.createElement("img"), HTMLImageElement.prototype, "img elem");
+    check(HTMLImageElement.prototype, HTMLElement.prototype, "img elem prototype");
+    check(Image, Function.prototype, "Image constructor");
+    check(document.createElement("option"), HTMLOptionElement.prototype, "option elem");
+    check(HTMLOptionElement.prototype, HTMLElement.prototype, "option elem prototype");
+    check(Option, Function.prototype, "Option constructor");
+    if(v >= 11) {
+        check(new MutationObserver(function() {}), MutationObserver.prototype, "mutation observer");
+        check(MutationObserver.prototype, Object.prototype, "mutation observer prototype");
+        check(MutationObserver, Function.prototype, "mutation observer constructor");
+    }
+    check(document.createElement("a"), HTMLAnchorElement.prototype, "anchor element");
+    check(HTMLAnchorElement.prototype, HTMLElement.prototype, "anchor element prototype");
+    check(document.createElement("area"), HTMLAreaElement.prototype, "area element");
+    check(HTMLAreaElement.prototype, HTMLElement.prototype, "area element prototype");
+    check(document.createElement("form"), HTMLFormElement.prototype, "form element");
+    check(HTMLFormElement.prototype, HTMLElement.prototype, "form element prototype");
+    check(document.createElement("frame"), HTMLFrameElement.prototype, "frame element");
+    check(HTMLFrameElement.prototype, HTMLElement.prototype, "frame element prototype");
+    check(document.createElement("iframe"), HTMLIFrameElement.prototype, "iframe element");
+    check(HTMLIFrameElement.prototype, HTMLElement.prototype, "iframe element prototype");
+    check(document.createElement("title"), HTMLTitleElement.prototype, "title element");
+    check(HTMLTitleElement.prototype, HTMLElement.prototype, "title element prototype");
+    check(document.documentElement, HTMLHtmlElement.prototype, "html element");
+    check(HTMLHtmlElement.prototype, HTMLElement.prototype, "html element prototype");
+    check(document.head, HTMLHeadElement.prototype, "head element");
+    check(HTMLHeadElement.prototype, HTMLElement.prototype, "head element prototype");
+    check(document.createElement("meta"), HTMLMetaElement.prototype, "meta element");
+    check(HTMLMetaElement.prototype, HTMLElement.prototype, "meta element prototype");
+    check(document.createElement("input"), HTMLInputElement.prototype, "input element");
+    check(HTMLInputElement.prototype, HTMLElement.prototype, "input element prototype");
+    check(document.createElement("label"), HTMLLabelElement.prototype, "label element");
+    check(HTMLLabelElement.prototype, HTMLElement.prototype, "label element prototype");
+    check(document.createElement("button"), HTMLButtonElement.prototype, "button element");
+    check(HTMLButtonElement.prototype, HTMLElement.prototype, "button element prototype");
+    check(document.createElement("link"), HTMLLinkElement.prototype, "link element");
+    check(HTMLLinkElement.prototype, HTMLElement.prototype, "link element prototype");
+    check(document.createElement("object"), HTMLObjectElement.prototype, "object element");
+    check(HTMLObjectElement.prototype, HTMLElement.prototype, "object element prototype");
+    check(document.createElement("embed"), HTMLEmbedElement.prototype, "embed element");
+    check(HTMLEmbedElement.prototype, HTMLElement.prototype, "embed element prototype");
+    check(document.createElement("script"), HTMLScriptElement.prototype, "script element");
+    check(HTMLScriptElement.prototype, HTMLElement.prototype, "script element prototype");
+    check(document.createElement("select"), HTMLSelectElement.prototype, "select element");
+    check(HTMLSelectElement.prototype, HTMLElement.prototype, "select element prototype");
+    check(document.createElement("style"), HTMLStyleElement.prototype, "style element");
+    check(HTMLStyleElement.prototype, HTMLElement.prototype, "style element prototype");
+    check(document.createElement("table"), HTMLTableElement.prototype, "table element");
+    check(HTMLTableElement.prototype, HTMLElement.prototype, "table element prototype");
+    check(document.createElement("tr"), HTMLTableRowElement.prototype, "tr element");
+    check(HTMLTableRowElement.prototype, HTMLElement.prototype, "tr element prototype");
+    check(document.createElement("td"), HTMLTableDataCellElement.prototype, "td element");
+    check(HTMLTableDataCellElement.prototype, HTMLTableCellElement.prototype, "td element prototype");
+    check(HTMLTableCellElement.prototype, HTMLElement.prototype, "table cell prototype");
+    check(document.createElement("textarea"), HTMLTextAreaElement.prototype, "textarea element");
+    check(HTMLTextAreaElement.prototype, HTMLElement.prototype, "textarea element prototype");
+    check(document.createElementNS(svg_ns, "svg"), SVGSVGElement.prototype, "svg:svg element");
+    check(SVGSVGElement.prototype, SVGElement.prototype, "svg:svg element prototype");
+    check(SVGElement.prototype, Element.prototype, "svg element prototype");
+    check(document.createElementNS(svg_ns, "circle"), SVGCircleElement.prototype, "svg:circle element");
+    check(SVGCircleElement.prototype, SVGElement.prototype, "svg:circle element prototype");
+    check(document.createElementNS(svg_ns, "tspan"), SVGTSpanElement.prototype, "svg:tspan element");
+    check(SVGTSpanElement.prototype, SVGTextPositioningElement.prototype, "svg:tspan element prototype");
+    check(SVGTextPositioningElement.prototype, SVGTextContentElement.prototype, "SVGTextPositioningElement prototype");
+    check(SVGTextContentElement.prototype, SVGElement.prototype, "SVGTextPositioningElement prototype");
+    check(document.doctype, DocumentType.prototype, "doctype");
+    check(DocumentType.prototype, Node.prototype, "doctype prototype");
+    check(document.createTextNode(""), Text.prototype, "text");
+    check(Text.prototype, CharacterData.prototype, "text prototype");
+    check(CharacterData.prototype, Node.prototype, "character data prototype");
+    check(window.getComputedStyle(document.body), CSSStyleDeclaration.prototype, "computed style");
+    check(CSSStyleDeclaration.prototype, Object.prototype, "CSSStyleDeclaration");
+    check(document.body.style, MSStyleCSSProperties.prototype, "style");
+    check(MSStyleCSSProperties.prototype, MSCSSProperties.prototype, "MSStyleCSSProperties");
+    check(MSCSSProperties.prototype, CSSStyleDeclaration.prototype, "MSCSSProperties");
+    check(CSSStyleDeclaration.prototype, Object.prototype, "CSSStyleDeclaration");
+    check(document.body.currentStyle, MSCurrentStyleCSSProperties.prototype, "current style");
+    check(MSCurrentStyleCSSProperties.prototype, MSCSSProperties.prototype, "MSCurrentStyleCSSProperties");
+    var e = document.createElement("style");
+    document.body.appendChild(e);
+    check(e.sheet, CSSStyleSheet.prototype, "stylesheet");
+    check(CSSStyleSheet.prototype, StyleSheet.prototype, "css stylesheet prototype");
+    check(StyleSheet.prototype, Object.prototype, "stylesheet prototype");
+    check(document.styleSheets, StyleSheetList.prototype, "stylesheets list");
+    check(StyleSheetList.prototype, Object.prototype, "stylesheets list prototype");
+    check(e.sheet.rules, MSCSSRuleList.prototype, "css rule list");
+    check(MSCSSRuleList.prototype, Object.prototype, "css rule list prototype");
+    e.sheet.insertRule("div { border: none }", 0);
+    check(e.sheet.rules[0], CSSStyleRule.prototype, "css rule");
+    check(CSSStyleRule.prototype, CSSRule.prototype, "css rule prototype");
+    check(CSSRule.prototype, Object.prototype, "css rule prototype");
+    check(document.body.getBoundingClientRect(), ClientRect.prototype, "rect");
+    check(ClientRect.prototype, Object.prototype, "rect prototype");
 });

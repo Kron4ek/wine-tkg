@@ -22,11 +22,11 @@
 #pragma makedep unix
 #endif
 
+#include "config.h"
+
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
-
-#include "config.h"
 
 #include <assert.h>
 #include <errno.h>

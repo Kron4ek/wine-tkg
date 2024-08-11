@@ -2706,14 +2706,11 @@ BOOL X11DRV_WindowPosChanging( HWND hwnd, UINT swp_flags, BOOL shaped, const REC
     }
 
     X11DRV_window_to_X_rect( data, visible_rect, window_rect, client_rect );
+    TRACE( "visible_rect %s -> %s\n", wine_dbgstr_rect(window_rect), wine_dbgstr_rect(visible_rect) );
 
-    if (!data->whole_window && !data->embedded) goto done; /* use default surface */
-    if (data->use_alpha) goto done; /* use default surface */
-
-    ret = TRUE;
-
-done:
+    ret = !!data->whole_window; /* use default surface if we don't have a window */
     release_win_data( data );
+
     return ret;
 }
 
@@ -3030,8 +3027,7 @@ void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWO
 /***********************************************************************
  *              UpdateLayeredWindow   (X11DRV.@)
  */
-void X11DRV_UpdateLayeredWindow( HWND hwnd, const RECT *window_rect, COLORREF color_key,
-                                 BYTE alpha, UINT flags )
+void X11DRV_UpdateLayeredWindow( HWND hwnd, UINT flags )
 {
     struct x11drv_win_data *data;
     BOOL mapped;
@@ -3045,7 +3041,7 @@ void X11DRV_UpdateLayeredWindow( HWND hwnd, const RECT *window_rect, COLORREF co
     {
         DWORD style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
 
-        if ((style & WS_VISIBLE) && ((style & WS_MINIMIZE) || is_window_rect_mapped( window_rect )))
+        if ((style & WS_VISIBLE) && ((style & WS_MINIMIZE) || is_window_rect_mapped( &data->window_rect )))
             map_window( hwnd, style );
     }
 }

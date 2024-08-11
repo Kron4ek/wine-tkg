@@ -1919,7 +1919,7 @@ static void shader_dump_icb(struct vkd3d_d3d_asm_compiler *compiler,
     }
     else
     {
-        assert(icb->component_count == VKD3D_VEC4_SIZE);
+        VKD3D_ASSERT(icb->component_count == VKD3D_VEC4_SIZE);
         for (i = 0; i < icb->element_count; ++i)
         {
             shader_print_hex_literal(compiler, "    {", icb->data[4 * i + 0], "");

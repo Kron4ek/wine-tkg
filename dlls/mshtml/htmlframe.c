@@ -870,17 +870,15 @@ static HRESULT HTMLFrameElement_get_dispid(DispatchEx *dispex, const WCHAR *name
     return search_window_props(This->framebase.content_window->base.inner_window, name, grfdex, dispid);
 }
 
-static HRESULT HTMLFrameElement_get_name(DispatchEx *dispex, DISPID id, BSTR *name)
+static HRESULT HTMLFrameElement_get_prop_desc(DispatchEx *dispex, DISPID id, struct property_info *desc)
 {
     HTMLFrameElement *This = frame_from_DispatchEx(dispex);
-    DWORD idx = id - MSHTML_DISPID_CUSTOM_MIN;
 
-    if(!This->framebase.content_window ||
-       idx >= This->framebase.content_window->base.inner_window->global_prop_cnt)
+    if(!This->framebase.content_window)
         return DISP_E_MEMBERNOTFOUND;
 
-    *name = SysAllocString(This->framebase.content_window->base.inner_window->global_props[idx].name);
-    return *name ? S_OK : E_OUTOFMEMORY;
+    return HTMLWindow_get_prop_desc(&This->framebase.content_window->base.inner_window->event_target.dispex,
+                                    id, desc);
 }
 
 static HRESULT HTMLFrameElement_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params,
@@ -893,8 +891,8 @@ static HRESULT HTMLFrameElement_invoke(DispatchEx *dispex, DISPID id, LCID lcid,
         return E_FAIL;
     }
 
-    return IWineJSDispatchHost_InvokeEx(&This->framebase.content_window->IWineJSDispatchHost_iface, id, lcid,
-            flags, params, res, ei, caller);
+    return HTMLWindow_invoke(&This->framebase.content_window->base.inner_window->event_target.dispex,
+                             id, lcid, flags, params, res, ei, caller);
 }
 
 static const NodeImplVtbl HTMLFrameElementImplVtbl = {
@@ -915,7 +913,7 @@ static const event_target_vtbl_t HTMLFrameElement_event_target_vtbl = {
         .traverse       = HTMLFrameElement_traverse,
         .unlink         = HTMLFrameElement_unlink,
         .get_dispid     = HTMLFrameElement_get_dispid,
-        .get_name       = HTMLFrameElement_get_name,
+        .get_prop_desc  = HTMLFrameElement_get_prop_desc,
         .invoke         = HTMLFrameElement_invoke
     },
     HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
@@ -930,12 +928,13 @@ static const tid_t HTMLFrameElement_iface_tids[] = {
     0
 };
 
-static dispex_static_data_t HTMLFrameElement_dispex = {
-    "HTMLFrameElement",
-    &HTMLFrameElement_event_target_vtbl.dispex_vtbl,
-    DispHTMLFrameElement_tid,
-    HTMLFrameElement_iface_tids,
-    HTMLElement_init_dispex_info
+dispex_static_data_t HTMLFrameElement_dispex = {
+    .id           = PROT_HTMLFrameElement,
+    .prototype_id = PROT_HTMLElement,
+    .vtbl         = &HTMLFrameElement_event_target_vtbl.dispex_vtbl,
+    .disp_tid     = DispHTMLFrameElement_tid,
+    .iface_tids   = HTMLFrameElement_iface_tids,
+    .init_info    = HTMLElement_init_dispex_info,
 };
 
 HRESULT HTMLFrameElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
@@ -1307,17 +1306,15 @@ static HRESULT HTMLIFrame_get_dispid(DispatchEx *dispex, const WCHAR *name, DWOR
     return search_window_props(This->framebase.content_window->base.inner_window, name, grfdex, dispid);
 }
 
-static HRESULT HTMLIFrame_get_name(DispatchEx *dispex, DISPID id, BSTR *name)
+static HRESULT HTMLIFrame_get_prop_desc(DispatchEx *dispex, DISPID id, struct property_info *desc)
 {
     HTMLIFrame *This = iframe_from_DispatchEx(dispex);
-    DWORD idx = id - MSHTML_DISPID_CUSTOM_MIN;
 
-    if(!This->framebase.content_window ||
-       idx >= This->framebase.content_window->base.inner_window->global_prop_cnt)
+    if(!This->framebase.content_window)
         return DISP_E_MEMBERNOTFOUND;
 
-    *name = SysAllocString(This->framebase.content_window->base.inner_window->global_props[idx].name);
-    return *name ? S_OK : E_OUTOFMEMORY;
+    return HTMLWindow_get_prop_desc(&This->framebase.content_window->base.inner_window->event_target.dispex,
+                                    id, desc);
 }
 
 static HRESULT HTMLIFrame_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params,
@@ -1330,8 +1327,8 @@ static HRESULT HTMLIFrame_invoke(DispatchEx *dispex, DISPID id, LCID lcid, WORD 
         return E_FAIL;
     }
 
-    return IWineJSDispatchHost_InvokeEx(&This->framebase.content_window->IWineJSDispatchHost_iface, id, lcid,
-            flags, params, res, ei, caller);
+    return HTMLWindow_invoke(&This->framebase.content_window->base.inner_window->event_target.dispex,
+                             id, lcid, flags, params, res, ei, caller);
 }
 
 static const NodeImplVtbl HTMLIFrameImplVtbl = {
@@ -1344,7 +1341,7 @@ static const NodeImplVtbl HTMLIFrameImplVtbl = {
     .bind_to_tree          = HTMLIFrame_bind_to_tree,
 };
 
-static const event_target_vtbl_t HTMLIFrame_event_target_vtbl = {
+static const event_target_vtbl_t HTMLIFrameElement_event_target_vtbl = {
     {
         HTMLELEMENT_DISPEX_VTBL_ENTRIES,
         .query_interface= HTMLIFrame_query_interface,
@@ -1352,14 +1349,14 @@ static const event_target_vtbl_t HTMLIFrame_event_target_vtbl = {
         .traverse       = HTMLIFrame_traverse,
         .unlink         = HTMLIFrame_unlink,
         .get_dispid     = HTMLIFrame_get_dispid,
-        .get_name       = HTMLIFrame_get_name,
+        .get_prop_desc  = HTMLIFrame_get_prop_desc,
         .invoke         = HTMLIFrame_invoke
     },
     HTMLELEMENT_EVENT_TARGET_VTBL_ENTRIES,
     .handle_event       = HTMLElement_handle_event
 };
 
-static const tid_t HTMLIFrame_iface_tids[] = {
+static const tid_t HTMLIFrameElement_iface_tids[] = {
     HTMLELEMENT_TIDS,
     IHTMLFrameBase_tid,
     IHTMLFrameBase2_tid,
@@ -1369,12 +1366,13 @@ static const tid_t HTMLIFrame_iface_tids[] = {
     0
 };
 
-static dispex_static_data_t HTMLIFrame_dispex = {
-    "HTMLIFrameElement",
-    &HTMLIFrame_event_target_vtbl.dispex_vtbl,
-    DispHTMLIFrame_tid,
-    HTMLIFrame_iface_tids,
-    HTMLElement_init_dispex_info
+dispex_static_data_t HTMLIFrameElement_dispex = {
+    .id           = PROT_HTMLIFrameElement,
+    .prototype_id = PROT_HTMLElement,
+    .vtbl         = &HTMLIFrameElement_event_target_vtbl.dispex_vtbl,
+    .disp_tid     = DispHTMLIFrame_tid,
+    .iface_tids   = HTMLIFrameElement_iface_tids,
+    .init_info    = HTMLElement_init_dispex_info,
 };
 
 HRESULT HTMLIFrame_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
@@ -1390,7 +1388,7 @@ HRESULT HTMLIFrame_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElem
     ret->IHTMLIFrameElement3_iface.lpVtbl = &HTMLIFrameElement3Vtbl;
     ret->framebase.element.node.vtbl = &HTMLIFrameImplVtbl;
 
-    HTMLFrameBase_Init(&ret->framebase, doc, nselem, &HTMLIFrame_dispex);
+    HTMLFrameBase_Init(&ret->framebase, doc, nselem, &HTMLIFrameElement_dispex);
 
     *elem = &ret->framebase.element;
     return S_OK;

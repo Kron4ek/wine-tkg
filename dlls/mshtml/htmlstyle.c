@@ -2940,8 +2940,8 @@ static HRESULT WINAPI HTMLStyle_removeAttribute(IHTMLStyle *iface, BSTR strAttri
         DISPID dispid;
         unsigned i;
 
-        hres = IWineJSDispatchHost_GetDispID(&This->css_style.dispex.IWineJSDispatchHost_iface, strAttributeName,
-                (lFlags&1) ? fdexNameCaseSensitive : fdexNameCaseInsensitive, &dispid);
+        hres = dispex_get_id(&This->css_style.dispex, strAttributeName,
+                             (lFlags & 1) ? fdexNameCaseSensitive : fdexNameCaseInsensitive, &dispid);
         if(hres != S_OK) {
             *pfSuccess = VARIANT_FALSE;
             return S_OK;
@@ -9652,14 +9652,19 @@ void CSSStyle_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
         dispex_info_add_interface(info, IHTMLCSSStyleDeclaration2_tid, NULL);
 }
 
-static const dispex_static_data_vtbl_t HTMLStyle_dispex_vtbl = {
+dispex_static_data_t MSCSSProperties_dispex = {
+    .id           = PROT_MSCSSProperties,
+    .prototype_id = PROT_CSSStyleDeclaration,
+};
+
+static const dispex_static_data_vtbl_t MSStyleCSSProperties_dispex_vtbl = {
     CSSSTYLE_DISPEX_VTBL_ENTRIES,
     .query_interface   = HTMLStyle_query_interface,
     .traverse          = HTMLStyle_traverse,
     .unlink            = HTMLStyle_unlink
 };
 
-static const tid_t HTMLStyle_iface_tids[] = {
+static const tid_t MSStyleCSSProperties_iface_tids[] = {
     IHTMLStyle6_tid,
     IHTMLStyle5_tid,
     IHTMLStyle4_tid,
@@ -9668,12 +9673,13 @@ static const tid_t HTMLStyle_iface_tids[] = {
     IHTMLStyle_tid,
     0
 };
-static dispex_static_data_t HTMLStyle_dispex = {
-    "MSStyleCSSProperties",
-    &HTMLStyle_dispex_vtbl,
-    DispHTMLStyle_tid,
-    HTMLStyle_iface_tids,
-    CSSStyle_init_dispex_info
+dispex_static_data_t MSStyleCSSProperties_dispex = {
+    .id           = PROT_MSStyleCSSProperties,
+    .prototype_id = PROT_MSCSSProperties,
+    .vtbl         = &MSStyleCSSProperties_dispex_vtbl,
+    .disp_tid     = DispHTMLStyle_tid,
+    .iface_tids   = MSStyleCSSProperties_iface_tids,
+    .init_info    = CSSStyle_init_dispex_info,
 };
 
 static HRESULT get_style_from_elem(HTMLElement *elem, nsIDOMCSSStyleDeclaration **ret)
@@ -9714,14 +9720,14 @@ static HRESULT get_style_from_elem(HTMLElement *elem, nsIDOMCSSStyleDeclaration 
     return E_NOTIMPL;
 }
 
-void init_css_style(CSSStyle *style, nsIDOMCSSStyleDeclaration *nsstyle, dispex_static_data_t *dispex_info, compat_mode_t compat_mode)
+void init_css_style(CSSStyle *style, nsIDOMCSSStyleDeclaration *nsstyle, dispex_static_data_t *dispex_info, DispatchEx *owner)
 {
     style->IHTMLCSSStyleDeclaration_iface.lpVtbl = &HTMLCSSStyleDeclarationVtbl;
     style->IHTMLCSSStyleDeclaration2_iface.lpVtbl = &HTMLCSSStyleDeclaration2Vtbl;
     style->nsstyle = nsstyle;
     nsIDOMCSSStyleDeclaration_AddRef(nsstyle);
 
-    init_dispatch(&style->dispex, dispex_info, NULL, compat_mode);
+    init_dispatch_with_owner(&style->dispex, dispex_info, owner);
 }
 
 HRESULT HTMLStyle_Create(HTMLElement *elem, HTMLStyle **ret)
@@ -9750,39 +9756,35 @@ HRESULT HTMLStyle_Create(HTMLElement *elem, HTMLStyle **ret)
     style->elem = elem;
     IHTMLDOMNode_AddRef(&elem->node.IHTMLDOMNode_iface);
 
-    init_css_style(&style->css_style, nsstyle, &HTMLStyle_dispex, dispex_compat_mode(&elem->node.event_target.dispex));
+    init_css_style(&style->css_style, nsstyle, &MSStyleCSSProperties_dispex, &elem->node.event_target.dispex);
     nsIDOMCSSStyleDeclaration_Release(nsstyle);
 
     *ret = style;
     return S_OK;
 }
 
-static const dispex_static_data_vtbl_t HTMLW3CComputedStyle_dispex_vtbl = {
+static const dispex_static_data_vtbl_t CSSStyleDeclaration_dispex_vtbl = {
     CSSSTYLE_DISPEX_VTBL_ENTRIES,
     .query_interface   = CSSStyle_query_interface,
     .traverse          = CSSStyle_traverse,
     .unlink            = CSSStyle_unlink
 };
 
-static const tid_t HTMLW3CComputedStyle_iface_tids[] = {
-    0
-};
-static dispex_static_data_t HTMLW3CComputedStyle_dispex = {
-    "CSSStyleDeclaration",
-    &HTMLW3CComputedStyle_dispex_vtbl,
-    DispHTMLW3CComputedStyle_tid,
-    HTMLW3CComputedStyle_iface_tids,
-    CSSStyle_init_dispex_info
+dispex_static_data_t CSSStyleDeclaration_dispex = {
+    .id        = PROT_CSSStyleDeclaration,
+    .vtbl      = &CSSStyleDeclaration_dispex_vtbl,
+    .disp_tid  = DispHTMLW3CComputedStyle_tid,
+    .init_info = CSSStyle_init_dispex_info,
 };
 
-HRESULT create_computed_style(nsIDOMCSSStyleDeclaration *nsstyle, compat_mode_t compat_mode, IHTMLCSSStyleDeclaration **p)
+HRESULT create_computed_style(nsIDOMCSSStyleDeclaration *nsstyle, DispatchEx *owner, IHTMLCSSStyleDeclaration **p)
 {
     CSSStyle *style;
 
     if(!(style = calloc(1, sizeof(*style))))
         return E_OUTOFMEMORY;
 
-    init_css_style(style, nsstyle, &HTMLW3CComputedStyle_dispex, compat_mode);
+    init_css_style(style, nsstyle, &CSSStyleDeclaration_dispex, owner);
     *p = &style->IHTMLCSSStyleDeclaration_iface;
     return S_OK;
 }

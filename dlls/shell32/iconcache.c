@@ -1163,6 +1163,8 @@ HRESULT WINAPI SHGetStockIconInfo(SHSTOCKICONID id, UINT flags, SHSTOCKICONINFO 
     lstrcatW(sii->szPath, L"\\shell32.dll");
 
     sii->hIcon = NULL;
+    if (flags & SHGSI_ICON)
+        sii->hIcon = LoadIconW(GetModuleHandleW(sii->szPath), MAKEINTRESOURCEW(sii->iIcon));
     sii->iSysImageIndex = -1;
 
     /* this is not how windows does it, on windows picked mostly from imageres.dll !*/

@@ -5369,8 +5369,6 @@ const char *debug_d3dstate(uint32_t state)
         return "STATE_SCISSORRECT";
     if (STATE_IS_CLIPPLANE(state))
         return wine_dbg_sprintf("STATE_CLIPPLANE(%#x)", state - STATE_CLIPPLANE(0));
-    if (STATE_IS_MATERIAL(state))
-        return "STATE_MATERIAL";
     if (STATE_IS_RASTERIZER(state))
         return "STATE_RASTERIZER";
     if (STATE_IS_DEPTH_BOUNDS(state))
@@ -5591,98 +5589,9 @@ void get_identity_matrix(struct wined3d_matrix *mat)
     *mat = identity;
 }
 
-void get_modelview_matrix(const struct wined3d_context *context, const struct wined3d_state *state,
-        unsigned int index, struct wined3d_matrix *mat)
+void get_modelview_matrix(const struct wined3d_stateblock_state *state, unsigned int index, struct wined3d_matrix *mat)
 {
-    if (context->stream_info.position_transformed)
-        get_identity_matrix(mat);
-    else
-        multiply_matrix(mat, &state->transforms[WINED3D_TS_VIEW], &state->transforms[WINED3D_TS_WORLD_MATRIX(index)]);
-}
-
-void get_projection_matrix(const struct wined3d_context *context, const struct wined3d_state *state,
-        struct wined3d_matrix *mat)
-{
-    const struct wined3d_d3d_info *d3d_info = context->d3d_info;
-    BOOL clip_control, flip;
-    float center_offset;
-
-    /* There are a couple of additional things we have to take into account
-     * here besides the projection transformation itself:
-     *   - We need to flip along the y-axis in case of offscreen rendering.
-     *   - OpenGL Z range is {-Wc,...,Wc} while D3D Z range is {0,...,Wc}.
-     *   - <= D3D9 coordinates refer to pixel centers while GL coordinates
-     *     refer to pixel corners. D3D10 fixed this particular oddity.
-     *   - D3D has a top-left filling convention while GL does not specify
-     *     a particular behavior, other than that that the GL implementation
-     *     needs to be consistent.
-     *
-     * In order to handle the pixel center, we translate by 0.5 / VPw and
-     * 0.5 / VPh. We test the filling convention during adapter init and
-     * add a small offset to correct it if necessary. See
-     * wined3d_caps_gl_ctx_test_filling_convention() for more details on how
-     * we test GL and considerations regarding the added offset value.
-     *
-     * If we have GL_ARB_clip_control we take care of all this through
-     * viewport properties and don't have to translate geometry. */
-
-    /* Projection matrices are <= d3d9, which all have integer pixel centers. */
-    if (!(d3d_info->wined3d_creation_flags & WINED3D_PIXEL_CENTER_INTEGER))
-        ERR("Did not expect to enter this codepath without WINED3D_PIXEL_CENTER_INTEGER.\n");
-
-    clip_control = d3d_info->clip_control;
-    flip = !clip_control;
-    if (!clip_control)
-        center_offset = 1.0f + d3d_info->filling_convention_offset;
-    else
-        center_offset = 0.0f;
-
-    if (context->stream_info.position_transformed)
-    {
-        /* Transform D3D RHW coordinates to OpenGL clip coordinates. */
-        float x = state->viewports[0].x;
-        float y = state->viewports[0].y;
-        float w = state->viewports[0].width;
-        float h = state->viewports[0].height;
-        float x_scale = 2.0f / w;
-        float x_offset = (center_offset - (2.0f * x) - w) / w;
-        float y_scale = flip ? 2.0f / h : 2.0f / -h;
-        float y_offset = flip
-                ? (center_offset - (2.0f * y) - h) / h
-                : (center_offset - (2.0f * y) - h) / -h;
-        bool zenable = state->fb.depth_stencil ?
-                (state->depth_stencil_state ? state->depth_stencil_state->desc.depth : true) : false;
-        float z_scale = zenable ? clip_control ? 1.0f : 2.0f : 0.0f;
-        float z_offset = zenable ? clip_control ? 0.0f : -1.0f : 0.0f;
-        const struct wined3d_matrix projection =
-        {
-             x_scale,     0.0f,      0.0f, 0.0f,
-                0.0f,  y_scale,      0.0f, 0.0f,
-                0.0f,     0.0f,   z_scale, 0.0f,
-            x_offset, y_offset,  z_offset, 1.0f,
-        };
-
-        *mat = projection;
-    }
-    else
-    {
-        float y_scale = flip ? -1.0f : 1.0f;
-        float x_offset = center_offset / state->viewports[0].width;
-        float y_offset = flip
-                ? center_offset / state->viewports[0].height
-                : -center_offset / state->viewports[0].height;
-        float z_scale = clip_control ? 1.0f : 2.0f;
-        float z_offset = clip_control ? 0.0f : -1.0f;
-        const struct wined3d_matrix projection =
-        {
-                1.0f,     0.0f,     0.0f, 0.0f,
-                0.0f,  y_scale,     0.0f, 0.0f,
-                0.0f,     0.0f,  z_scale, 0.0f,
-            x_offset, y_offset, z_offset, 1.0f,
-        };
-
-        multiply_matrix(mat, &projection, &state->transforms[WINED3D_TS_PROJECTION]);
-    }
+    multiply_matrix(mat, &state->transforms[WINED3D_TS_VIEW], &state->transforms[WINED3D_TS_WORLD_MATRIX(index)]);
 }
 
 /* Setup this textures matrix according to the texture flags. */
@@ -5782,39 +5691,6 @@ void get_pointsize_minmax(const struct wined3d_context *context, const struct wi
 
     *out_min = min.f;
     *out_max = max.f;
-}
-
-void get_pointsize(const struct wined3d_context *context, const struct wined3d_state *state,
-        float *out_pointsize, float *out_att)
-{
-    /* POINTSCALEENABLE controls how point size value is treated. If set to
-     * true, the point size is scaled with respect to height of viewport.
-     * When set to false point size is in pixels. */
-    union
-    {
-        DWORD d;
-        float f;
-    } pointsize, a, b, c;
-
-    out_att[0] = 1.0f;
-    out_att[1] = 0.0f;
-    out_att[2] = 0.0f;
-
-    pointsize.d = state->render_states[WINED3D_RS_POINTSIZE];
-    a.d = state->render_states[WINED3D_RS_POINTSCALE_A];
-    b.d = state->render_states[WINED3D_RS_POINTSCALE_B];
-    c.d = state->render_states[WINED3D_RS_POINTSCALE_C];
-
-    /* Always use first viewport, this path does not apply to d3d10/11 multiple viewports case. */
-    if (state->render_states[WINED3D_RS_POINTSCALEENABLE])
-    {
-        float scale_factor = state->viewports[0].height * state->viewports[0].height;
-
-        out_att[0] = a.f / scale_factor;
-        out_att[1] = b.f / scale_factor;
-        out_att[2] = c.f / scale_factor;
-    }
-    *out_pointsize = pointsize.f;
 }
 
 void get_fog_start_end(const struct wined3d_context *context, const struct wined3d_state *state,
@@ -6255,8 +6131,8 @@ void multiply_matrix(struct wined3d_matrix *dst, const struct wined3d_matrix *sr
     *dst = tmp;
 }
 
-void wined3d_ffp_get_fs_settings(const struct wined3d_context *context,
-        const struct wined3d_state *state, struct ffp_frag_settings *settings)
+void wined3d_ffp_get_fs_settings(const struct wined3d_state *state,
+        const struct wined3d_d3d_info *d3d_info, struct ffp_frag_settings *settings)
 {
 #define ARG1 0x01
 #define ARG2 0x02
@@ -6294,7 +6170,6 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_context *context,
     unsigned int i;
     DWORD ttff;
     DWORD cop, aop, carg0, carg1, carg2, aarg0, aarg1, aarg2;
-    const struct wined3d_d3d_info *d3d_info = context->d3d_info;
     struct wined3d_texture *texture;
 
     settings->padding = 0;
@@ -6559,13 +6434,11 @@ int wined3d_ffp_frag_program_key_compare(const void *key, const struct wine_rb_e
     return memcmp(ka, kb, sizeof(*ka));
 }
 
-void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
-        const struct wined3d_state *state, struct wined3d_ffp_vs_settings *settings)
+void wined3d_ffp_get_vs_settings(const struct wined3d_state *state, const struct wined3d_stream_info *si,
+        const struct wined3d_d3d_info *d3d_info, struct wined3d_ffp_vs_settings *settings)
 {
     enum wined3d_material_color_source diffuse_source, emissive_source, ambient_source, specular_source;
     const struct wined3d_vertex_declaration *vdecl = state->vertex_declaration;
-    const struct wined3d_stream_info *si = &context->stream_info;
-    const struct wined3d_d3d_info *d3d_info = context->d3d_info;
     unsigned int coord_idx, i;
 
     memset(settings, 0, sizeof(*settings));
@@ -7159,11 +7032,10 @@ static BOOL invert_matrix_3d(struct wined3d_matrix *out, const struct wined3d_ma
     return TRUE;
 }
 
-void compute_normal_matrix(float *normal_matrix, BOOL legacy_lighting,
+void compute_normal_matrix(struct wined3d_matrix *normal_matrix, BOOL legacy_lighting,
         const struct wined3d_matrix *modelview)
 {
     struct wined3d_matrix mv;
-    unsigned int i, j;
 
     mv = *modelview;
     if (legacy_lighting)
@@ -7173,9 +7045,16 @@ void compute_normal_matrix(float *normal_matrix, BOOL legacy_lighting,
     /* Tests show that singular modelview matrices are used unchanged as normal
      * matrices on D3D3 and older. There seems to be no clearly consistent
      * behavior on newer D3D versions so always follow older ddraw behavior. */
-    for (i = 0; i < 3; ++i)
-        for (j = 0; j < 3; ++j)
-            normal_matrix[i * 3 + j] = (&mv._11)[j * 4 + i];
+
+    normal_matrix->_11 = mv._11;
+    normal_matrix->_12 = mv._21;
+    normal_matrix->_13 = mv._31;
+    normal_matrix->_21 = mv._12;
+    normal_matrix->_22 = mv._22;
+    normal_matrix->_23 = mv._32;
+    normal_matrix->_31 = mv._13;
+    normal_matrix->_32 = mv._23;
+    normal_matrix->_33 = mv._33;
 }
 
 static void wined3d_allocator_release_block(struct wined3d_allocator *allocator,

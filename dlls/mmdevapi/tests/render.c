@@ -2134,16 +2134,65 @@ static void test_volume_dependence(void)
     IAudioClient_Release(ac);
 }
 
+#define check_session_ids(a, b, c) check_session_ids_(__LINE__, a, b, c)
+static void check_session_ids_(unsigned int line, IMMDevice *dev, const GUID *session_guid, IAudioSessionControl *ctl)
+{
+    WCHAR exe_path[MAX_PATH], expected[MAX_PATH + 512], *dev_id, *str;
+    IAudioSessionControl2 *ctl2;
+    WCHAR guidstr[39];
+    HRESULT hr;
+    DWORD size;
+    BOOL bret;
+    int ret;
+
+    if (FAILED(IAudioSessionControl_QueryInterface(ctl, &IID_IAudioSessionControl2, (void **)&ctl2)))
+    {
+        win_skip("IAudioSessionControl2 not available.\n");
+        return;
+    }
+
+    ret = StringFromGUID2(session_guid, guidstr, ARRAY_SIZE(guidstr));
+    ok(ret == 39, "got %d.\n", ret);
+
+    size = ARRAY_SIZE(exe_path);
+    bret = QueryFullProcessImageNameW(GetCurrentProcess(), PROCESS_NAME_NATIVE, exe_path, &size);
+    ok(bret, "got error %ld.\n", GetLastError());
+
+    hr = IMMDevice_GetId(dev, &dev_id);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = IAudioSessionControl2_GetSessionIdentifier(ctl2, &str);
+    ok_(__FILE__, line)(hr == S_OK, "GetSessionIdentifier failed, hr %#lx.\n", hr);
+    wsprintfW(expected, L"%s|%s%%b%s", dev_id, exe_path, guidstr);
+    ok_(__FILE__, line)(!wcscmp(str, expected), "got %s, expected %s.\n", debugstr_w(str), debugstr_w(expected));
+    CoTaskMemFree(str);
+
+    hr = IAudioSessionControl2_GetSessionInstanceIdentifier(ctl2, &str);
+    ok_(__FILE__, line)(hr == S_OK, "GetSessionInstanceIdentifier failed, hr %#lx.\n", hr);
+    wsprintfW(expected, L"%s|%s%%b%s|1%%b%lu", dev_id, exe_path, guidstr, GetCurrentProcessId());
+    ok_(__FILE__, line)(!wcscmp(str, expected), "got %s, expected %s.\n", debugstr_w(str), debugstr_w(expected));
+    CoTaskMemFree(str);
+
+    CoTaskMemFree(dev_id);
+    IAudioSessionControl2_Release(ctl2);
+}
+
 static void test_session_creation(void)
 {
     IMMDevice *cap_dev;
     IAudioClient *ac;
+    IAudioSessionEnumerator *sess_enum, *sess_enum2;
+    IAudioSessionManager2 *sesm2;
     IAudioSessionManager *sesm;
     ISimpleAudioVolume *sav;
-    GUID session_guid;
+    GUID session_guid, session_guid2;
+    BOOL found_first, found_second;
+    IAudioSessionControl *ctl;
     float vol;
     HRESULT hr;
     WAVEFORMATEX *fmt;
+    int i, count;
+    WCHAR *name;
 
     CoCreateGuid(&session_guid);
 
@@ -2159,9 +2208,84 @@ static void test_session_creation(void)
     hr = ISimpleAudioVolume_SetMasterVolume(sav, 0.6f, NULL);
     ok(hr == S_OK, "SetMasterVolume failed: %08lx\n", hr);
 
+    hr = IAudioSessionManager_GetAudioSessionControl(sesm, &session_guid, 0, &ctl);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IAudioSessionControl_SetDisplayName(ctl, L"test_session1", NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    IAudioSessionControl_Release(ctl);
+
+    hr = IAudioSessionManager_QueryInterface(sesm, &IID_IAudioSessionManager2, (void **)&sesm2);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IAudioSessionManager2_GetSessionEnumerator((void *)sesm2, &sess_enum);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    /* create another session after getting the first enumerarot. */
+    CoCreateGuid(&session_guid2);
+    hr = IAudioSessionManager_GetAudioSessionControl(sesm, &session_guid2, 0, &ctl);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    hr = IAudioSessionControl_SetDisplayName(ctl, L"test_session2", NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    IAudioSessionControl_Release(ctl);
+
+    hr = IAudioSessionManager2_GetSessionEnumerator(sesm2, &sess_enum2);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(sess_enum != sess_enum2, "got the same interface.\n");
+
+    hr = IAudioSessionEnumerator_GetCount(sess_enum, &count);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(count, "got %d.\n", count);
+    found_first = found_second = FALSE;
+    for (i = 0; i < count; ++i)
+    {
+        hr = IAudioSessionEnumerator_GetSession(sess_enum, i, &ctl);
+        ok(hr == S_OK, "got %#lx.\n", hr);
+        hr = IAudioSessionControl_GetDisplayName(ctl, &name);
+        ok(hr == S_OK, "got %#lx.\n", hr);
+        if (!wcscmp(name, L"test_session1"))
+            found_first = TRUE;
+        if (!wcscmp(name, L"test_session2"))
+            found_second = TRUE;
+        CoTaskMemFree(name);
+        IAudioSessionControl_Release(ctl);
+    }
+    ok(found_first && !found_second, "got %d, %d.\n", found_first, found_second);
+    if (0)
+    {
+        /* random access violation on Win11. */
+        IAudioSessionEnumerator_GetSession(sess_enum, count, &ctl);
+    }
+
+    hr = IAudioSessionEnumerator_GetCount(sess_enum2, &count);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(count, "got %d.\n", count);
+    found_first = found_second = FALSE;
+    for (i = 0; i < count; ++i)
+    {
+        hr = IAudioSessionEnumerator_GetSession(sess_enum2, i, &ctl);
+        ok(hr == S_OK, "got %#lx.\n", hr);
+        hr = IAudioSessionControl_GetDisplayName(ctl, &name);
+        ok(hr == S_OK, "got %#lx.\n", hr);
+        if (!wcscmp(name, L"test_session1"))
+        {
+            found_first = TRUE;
+            check_session_ids(dev, &session_guid, ctl);
+        }
+        if (!wcscmp(name, L"test_session2"))
+        {
+            found_second = TRUE;
+            check_session_ids(dev, &session_guid2, ctl);
+        }
+        CoTaskMemFree(name);
+        IAudioSessionControl_Release(ctl);
+    }
+    ok(found_first && found_second, "got %d, %d.\n", found_first, found_second);
+    IAudioSessionEnumerator_Release(sess_enum);
+    IAudioSessionEnumerator_Release(sess_enum2);
+
     /* Release completely to show session persistence */
     ISimpleAudioVolume_Release(sav);
     IAudioSessionManager_Release(sesm);
+    IAudioSessionManager2_Release(sesm2);
 
     /* test if we can create a capture audioclient in the session we just
      * created from a SessionManager derived from a render device */

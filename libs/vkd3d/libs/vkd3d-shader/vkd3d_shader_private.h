@@ -1311,14 +1311,14 @@ void *shader_param_allocator_get(struct vkd3d_shader_param_allocator *allocator,
 static inline struct vkd3d_shader_src_param *shader_src_param_allocator_get(
         struct vkd3d_shader_param_allocator *allocator, unsigned int count)
 {
-    assert(allocator->stride == sizeof(struct vkd3d_shader_src_param));
+    VKD3D_ASSERT(allocator->stride == sizeof(struct vkd3d_shader_src_param));
     return shader_param_allocator_get(allocator, count);
 }
 
 static inline struct vkd3d_shader_dst_param *shader_dst_param_allocator_get(
         struct vkd3d_shader_param_allocator *allocator, unsigned int count)
 {
-    assert(allocator->stride == sizeof(struct vkd3d_shader_dst_param));
+    VKD3D_ASSERT(allocator->stride == sizeof(struct vkd3d_shader_dst_param));
     return shader_param_allocator_get(allocator, count);
 }
 
@@ -1678,7 +1678,7 @@ static inline unsigned int vsir_write_mask_get_component_idx(uint32_t write_mask
 {
     unsigned int i;
 
-    assert(write_mask);
+    VKD3D_ASSERT(write_mask);
     for (i = 0; i < VKD3D_VEC4_SIZE; ++i)
     {
         if (write_mask & (VKD3DSP_WRITEMASK_0 << i))
@@ -1692,13 +1692,13 @@ static inline unsigned int vsir_write_mask_get_component_idx(uint32_t write_mask
 static inline unsigned int vsir_write_mask_component_count(uint32_t write_mask)
 {
     unsigned int count = vkd3d_popcount(write_mask & VKD3DSP_WRITEMASK_ALL);
-    assert(1 <= count && count <= VKD3D_VEC4_SIZE);
+    VKD3D_ASSERT(1 <= count && count <= VKD3D_VEC4_SIZE);
     return count;
 }
 
 static inline unsigned int vkd3d_write_mask_from_component_count(unsigned int component_count)
 {
-    assert(component_count <= VKD3D_VEC4_SIZE);
+    VKD3D_ASSERT(component_count <= VKD3D_VEC4_SIZE);
     return (VKD3DSP_WRITEMASK_0 << component_count) - 1;
 }
 

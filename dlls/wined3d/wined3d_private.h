@@ -1758,10 +1758,7 @@ void dispatch_compute(struct wined3d_device *device, const struct wined3d_state 
 #define STATE_CLIPPLANE(a) (STATE_SCISSORRECT + 1 + (a))
 #define STATE_IS_CLIPPLANE(a) ((a) >= STATE_CLIPPLANE(0) && (a) <= STATE_CLIPPLANE(WINED3D_MAX_CLIP_DISTANCES - 1))
 
-#define STATE_MATERIAL (STATE_CLIPPLANE(WINED3D_MAX_CLIP_DISTANCES))
-#define STATE_IS_MATERIAL(a) ((a) == STATE_MATERIAL)
-
-#define STATE_RASTERIZER (STATE_MATERIAL + 1)
+#define STATE_RASTERIZER (STATE_CLIPPLANE(WINED3D_MAX_CLIP_DISTANCES))
 #define STATE_IS_RASTERIZER(a) ((a) == STATE_RASTERIZER)
 
 #define STATE_DEPTH_BOUNDS (STATE_RASTERIZER + 1)
@@ -2681,8 +2678,8 @@ int wined3d_ffp_vertex_program_key_compare(const void *key, const struct wine_rb
 
 extern const struct wined3d_parent_ops wined3d_null_parent_ops;
 
-void wined3d_ffp_get_fs_settings(const struct wined3d_context *context,
-        const struct wined3d_state *state, struct ffp_frag_settings *settings);
+void wined3d_ffp_get_fs_settings(const struct wined3d_state *state,
+        const struct wined3d_d3d_info *d3d_info, struct ffp_frag_settings *settings);
 const struct ffp_frag_desc *find_ffp_frag_shader(const struct wine_rb_tree *fragment_shaders,
         const struct ffp_frag_settings *settings);
 void add_ffp_frag_shader(struct wine_rb_tree *shaders, struct ffp_frag_desc *desc);
@@ -2741,8 +2738,8 @@ struct wined3d_ffp_vs_desc
     struct wined3d_ffp_vs_settings settings;
 };
 
-void wined3d_ffp_get_vs_settings(const struct wined3d_context *context,
-        const struct wined3d_state *state, struct wined3d_ffp_vs_settings *settings);
+void wined3d_ffp_get_vs_settings(const struct wined3d_state *state, const struct wined3d_stream_info *si,
+        const struct wined3d_d3d_info *d3d_info, struct wined3d_ffp_vs_settings *settings);
 
 struct wined3d
 {
@@ -2772,7 +2769,22 @@ BOOL wined3d_get_app_name(char *app_name, unsigned int app_name_size);
 
 struct wined3d_ffp_vs_constants
 {
+    union wined3d_ffp_vs_modelview_matrices
+    {
+        struct wined3d_matrix modelview_matrices[MAX_VERTEX_BLENDS];
+        struct
+        {
+            struct wined3d_matrix modelview_matrix;
+            struct wined3d_matrix normal_matrix;
+        } not_blended;
+    } modelview;
+    struct wined3d_matrix projection_matrix;
     struct wined3d_matrix texture_matrices[WINED3D_MAX_FFP_TEXTURES];
+    struct wined3d_ffp_point_constants
+    {
+        float scale_const, scale_linear, scale_quad;
+    } point;
+    struct wined3d_material material;
     struct wined3d_ffp_light_constants
     {
         struct wined3d_color ambient;
@@ -2890,7 +2902,6 @@ struct wined3d_state
 
     struct wined3d_matrix transforms[WINED3D_HIGHEST_TRANSFORM_STATE + 1];
     struct wined3d_vec4 clip_planes[WINED3D_MAX_CLIP_DISTANCES];
-    struct wined3d_material material;
     struct wined3d_viewport viewports[WINED3D_MAX_VIEWPORTS];
     unsigned int viewport_count;
     RECT scissor_rects[WINED3D_MAX_VIEWPORTS];
@@ -3703,8 +3714,6 @@ void wined3d_device_context_emit_set_light(struct wined3d_device_context *contex
         const struct wined3d_light_info *light);
 void wined3d_device_context_emit_set_light_enable(struct wined3d_device_context *context, unsigned int idx,
         BOOL enable);
-void wined3d_device_context_emit_set_material(struct wined3d_device_context *context,
-        const struct wined3d_material *material);
 void wined3d_device_context_emit_set_predication(struct wined3d_device_context *context,
         struct wined3d_query *predicate, BOOL value);
 void wined3d_device_context_emit_set_rasterizer_state(struct wined3d_device_context *context,
@@ -4327,7 +4336,7 @@ static inline void shader_get_position_fixup(const struct wined3d_context *conte
     float center_offset, x = 0.0f, y = 0.0f;
     unsigned int i;
 
-    /* See get_projection_matrix() in utils.c for a discussion of the position fixup.
+    /* See get_projection_matrix() in glsl_shader.c for a discussion of the position fixup.
      * This function here also applies to d3d10+ which does not need adjustment for
      * integer pixel centers, but it may need the filling convention offset. */
     if (context->d3d_info->wined3d_creation_flags & WINED3D_PIXEL_CENTER_INTEGER)
@@ -4380,16 +4389,11 @@ static inline BOOL shader_sampler_is_shadow(const struct wined3d_shader *shader,
 }
 
 void get_identity_matrix(struct wined3d_matrix *mat);
-void get_modelview_matrix(const struct wined3d_context *context, const struct wined3d_state *state,
-        unsigned int index, struct wined3d_matrix *mat);
-void get_projection_matrix(const struct wined3d_context *context, const struct wined3d_state *state,
-        struct wined3d_matrix *mat);
+void get_modelview_matrix(const struct wined3d_stateblock_state *state, unsigned int index, struct wined3d_matrix *mat);
 void get_texture_matrix(const struct wined3d_stream_info *si,
         const struct wined3d_stateblock_state *state, const unsigned int tex, struct wined3d_matrix *mat);
 void get_pointsize_minmax(const struct wined3d_context *context, const struct wined3d_state *state,
         float *out_min, float *out_max);
-void get_pointsize(const struct wined3d_context *context, const struct wined3d_state *state,
-        float *out_pointsize, float *out_att);
 void get_fog_start_end(const struct wined3d_context *context, const struct wined3d_state *state,
         float *start, float *end);
 
@@ -4721,7 +4725,7 @@ static inline void wined3d_vec4_transform(struct wined3d_vec4 *dst,
 
 BOOL invert_matrix(struct wined3d_matrix *out, const struct wined3d_matrix *m);
 
-void compute_normal_matrix(float *normal_matrix, BOOL legacy_lighting,
+void compute_normal_matrix(struct wined3d_matrix *normal_matrix, BOOL legacy_lighting,
         const struct wined3d_matrix *modelview);
 
 static inline struct wined3d_context *context_acquire(struct wined3d_device *device,

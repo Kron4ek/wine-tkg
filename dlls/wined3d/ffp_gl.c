@@ -759,8 +759,8 @@ static void depth(struct wined3d_context *context, const struct wined3d_state *s
         }
     }
 
-    if (context->stream_info.position_transformed && !isStateDirty(context, STATE_TRANSFORM(WINED3D_TS_PROJECTION)))
-        context_apply_state(context, state, STATE_TRANSFORM(WINED3D_TS_PROJECTION));
+    if (context->stream_info.position_transformed)
+        context->constant_update_mask |= WINED3D_SHADER_CONST_FFP_PROJ;
 }
 
 static void depth_stencil(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
@@ -1139,7 +1139,7 @@ static void viewport_miscpart_cc(struct wined3d_context *context,
         const struct wined3d_state *state, DWORD state_id)
 {
     const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
-    /* See get_projection_matrix() in utils.c for a discussion about those values. */
+    /* See get_projection_matrix() in glsl_shader.c for a discussion about those values. */
     float pixel_center_offset = context->d3d_info->wined3d_creation_flags
             & WINED3D_PIXEL_CENTER_INTEGER ? 0.5f : 0.0f;
     GLdouble depth_ranges[2 * WINED3D_MAX_VIEWPORTS];
@@ -1677,6 +1677,7 @@ static void validate_state_table(struct wined3d_state_entry *state_table)
         {144, 144},
         {149, 150},
         {153, 153},
+        {157, 160},
         {162, 165},
         {167, 193},
         {195, 209},
@@ -1684,7 +1685,6 @@ static void validate_state_table(struct wined3d_state_entry *state_table)
     };
     static const unsigned int simple_states[] =
     {
-        STATE_MATERIAL,
         STATE_VDECL,
         STATE_STREAMSRC,
         STATE_INDEXBUFFER,

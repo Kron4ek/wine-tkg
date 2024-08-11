@@ -683,12 +683,13 @@ static void HTMLImgElement_init_dispex_info(dispex_data_t *info, compat_mode_t m
     dispex_info_add_interface(info, IHTMLImgElement_tid, mode >= COMPAT_MODE_IE11 ? img_ie11_hooks : NULL);
 }
 
-static dispex_static_data_t HTMLImgElement_dispex = {
-    "HTMLImageElement",
-    &HTMLImgElement_event_target_vtbl.dispex_vtbl,
-    DispHTMLImg_tid,
-    HTMLImgElement_iface_tids,
-    HTMLImgElement_init_dispex_info
+dispex_static_data_t HTMLImageElement_dispex = {
+    .id           = PROT_HTMLImageElement,
+    .prototype_id = PROT_HTMLElement,
+    .vtbl         = &HTMLImgElement_event_target_vtbl.dispex_vtbl,
+    .disp_tid     = DispHTMLImg_tid,
+    .iface_tids   = HTMLImgElement_iface_tids,
+    .init_info    = HTMLImgElement_init_dispex_info,
 };
 
 HRESULT HTMLImgElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
@@ -703,7 +704,7 @@ HRESULT HTMLImgElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTML
     ret->IHTMLImgElement_iface.lpVtbl = &HTMLImgElementVtbl;
     ret->element.node.vtbl = &HTMLImgElementImplVtbl;
 
-    HTMLElement_Init(&ret->element, doc, nselem, &HTMLImgElement_dispex);
+    HTMLElement_Init(&ret->element, doc, nselem, &HTMLImageElement_dispex);
 
     nsres = nsIDOMElement_QueryInterface(nselem, &IID_nsIDOMHTMLImageElement, (void**)&ret->nsimg);
     assert(nsres == NS_OK);
@@ -883,10 +884,11 @@ static const dispex_static_data_vtbl_t HTMLImageElementFactory_dispex_vtbl = {
 };
 
 static dispex_static_data_t HTMLImageElementFactory_dispex = {
-    "Function",
-    &HTMLImageElementFactory_dispex_vtbl,
-    IHTMLImageElementFactory_tid,
-    HTMLImageElementFactory_iface_tids
+    .name           = "Function",
+    .constructor_id = PROT_HTMLImageElement,
+    .vtbl           = &HTMLImageElementFactory_dispex_vtbl,
+    .disp_tid       = IHTMLImageElementFactory_tid,
+    .iface_tids     = HTMLImageElementFactory_iface_tids,
 };
 
 HRESULT HTMLImageElementFactory_Create(HTMLInnerWindow *window, HTMLImageElementFactory **ret_val)
@@ -901,7 +903,7 @@ HRESULT HTMLImageElementFactory_Create(HTMLInnerWindow *window, HTMLImageElement
     ret->window = window;
     IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
 
-    init_dispatch(&ret->dispex, &HTMLImageElementFactory_dispex, NULL,
+    init_dispatch(&ret->dispex, &HTMLImageElementFactory_dispex, window,
                   dispex_compat_mode(&window->event_target.dispex));
 
     *ret_val = ret;

@@ -1422,13 +1422,55 @@ static int delete_files(FILE_OPERATION *op, const FILE_LIST *flFrom)
     return ERROR_SUCCESS;
 }
 
-/* moves a file or directory to another directory */
-static void move_to_dir(FILE_OPERATION *op, const FILE_ENTRY *feFrom, const FILE_ENTRY *feTo)
+/* move a directory to another directory */
+static void move_dir_to_dir(FILE_OPERATION *op, BOOL multidest, const FILE_ENTRY *feFrom, const FILE_ENTRY *feTo)
 {
-    WCHAR szDestPath[MAX_PATH];
+    WCHAR from[MAX_PATH], to[MAX_PATH];
 
-    PathCombineW(szDestPath, feTo->szFullPath, feFrom->szFilename);
-    SHNotifyMoveFileW(op, feFrom->szFullPath, szDestPath);
+    /* Windows doesn't combine path when FOF_MULTIDESTFILES is set */
+    if (op->req->fFlags & FOF_MULTIDESTFILES)
+        lstrcpyW(to, feTo->szFullPath);
+    else
+        PathCombineW(to, feTo->szFullPath, feFrom->szFilename);
+
+    to[lstrlenW(to) + 1] = '\0';
+
+    /* If destination directory already exists, append source directory
+       with wildcard and restart SHFileOperationW */
+    if (PathFileExistsW(to))
+    {
+        SHFILEOPSTRUCTW fileOp = {0};
+
+        PathCombineW(from, feFrom->szFullPath, L"*.*");
+        from[lstrlenW(from) + 1] = '\0';
+
+        fileOp.pFrom = from;
+        fileOp.pTo = to;
+        fileOp.fFlags = op->req->fFlags & ~FOF_MULTIDESTFILES; /* we know we're moving to one dir */
+
+        /* Don't ask the user about overwriting files when he accepted to overwrite the
+           folder. FIXME: this is not exactly what Windows does - e.g. there would be
+           an additional confirmation for a nested folder */
+        fileOp.fFlags |= FOF_NOCONFIRMATION;
+
+        if (!SHFileOperationW(&fileOp))
+            RemoveDirectoryW(feFrom->szFullPath);
+        return;
+    }
+    else
+    {
+        SHNotifyMoveFileW(op, feFrom->szFullPath, to);
+    }
+}
+
+/* move a file to another directory */
+static void move_file_to_dir(FILE_OPERATION *op, const FILE_ENTRY *feFrom, const FILE_ENTRY *feTo)
+{
+    WCHAR to[MAX_PATH];
+
+    PathCombineW(to, feTo->szFullPath, feFrom->szFilename);
+    to[lstrlenW(to) + 1] = '\0';
+    SHNotifyMoveFileW(op, feFrom->szFullPath, to);
 }
 
 /* the FO_MOVE operation */
@@ -1486,7 +1528,12 @@ static int move_files(FILE_OPERATION *op, BOOL multidest, const FILE_LIST *flFro
         }
 
         if (fileDest->bExists && IsAttribDir(fileDest->attributes))
-            move_to_dir(op, entryToMove, fileDest);
+        {
+            if (IsAttribDir(entryToMove->attributes))
+                move_dir_to_dir(op, multidest, entryToMove, fileDest);
+            else
+                move_file_to_dir(op, entryToMove, fileDest);
+        }
         else
             SHNotifyMoveFileW(op, entryToMove->szFullPath, fileDest->szFullPath);
 

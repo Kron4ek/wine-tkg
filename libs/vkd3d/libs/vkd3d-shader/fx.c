@@ -56,34 +56,78 @@ static void string_storage_destroy(struct rb_entry *entry, void *context)
     vkd3d_free(string_entry);
 }
 
-struct state_block_function_info
+struct function_component
+{
+    const char *name;
+    bool lhs_has_index;
+    unsigned int lhs_index;
+};
+
+static const struct state_block_function_info
 {
     const char *name;
     unsigned int min_args, max_args;
+    const struct function_component components[3];
+    unsigned int min_profile;
+}
+function_info[] =
+{
+    {"SetBlendState",        3, 3, { { "AB_BlendFactor" }, { "AB_SampleMask" }, { "BlendState" } }, 4 },
+    {"SetDepthStencilState", 2, 2, { { "DS_StencilRef" }, { "DepthStencilState" } }, 4 },
+    {"SetRasterizerState",   1, 1, { { "RasterizerState" } }, 4 },
+    {"SetVertexShader",      1, 1, { { "VertexShader" } }, 4 },
+    {"SetDomainShader",      1, 1, { { "DomainShader" } }, 5 },
+    {"SetHullShader",        1, 1, { { "HullShader" } }, 5 },
+    {"SetGeometryShader",    1, 1, { { "GeometryShader" } }, 4 },
+    {"SetPixelShader",       1, 1, { { "PixelShader" } }, 4 },
+    {"SetComputeShader",     1, 1, { { "ComputeShader" } }, 4 },
+    {"OMSetRenderTargets",   2, 9, { {0} }, 4 },
 };
 
 static const struct state_block_function_info *get_state_block_function_info(const char *name)
 {
-    static const struct state_block_function_info valid_functions[] =
+    for (unsigned int i = 0; i < ARRAY_SIZE(function_info); ++i)
     {
-        {"SetBlendState",        3, 3},
-        {"SetDepthStencilState", 2, 2},
-        {"SetRasterizerState",   1, 1},
-        {"SetVertexShader",      1, 1},
-        {"SetDomainShader",      1, 1},
-        {"SetHullShader",        1, 1},
-        {"SetGeometryShader",    1, 1},
-        {"SetPixelShader",       1, 1},
-        {"SetComputeShader",     1, 1},
-        {"OMSetRenderTargets",   2, 9},
-    };
-
-    for (unsigned int i = 0; i < ARRAY_SIZE(valid_functions); ++i)
-    {
-        if (!strcmp(name, valid_functions[i].name))
-            return &valid_functions[i];
+        if (!strcmp(name, function_info[i].name))
+            return &function_info[i];
     }
     return NULL;
+}
+
+static void add_function_component(struct function_component **components, const char *name,
+        bool lhs_has_index, unsigned int lhs_index)
+{
+    struct function_component *comp = *components;
+
+    comp->name = name;
+    comp->lhs_has_index = lhs_has_index;
+    comp->lhs_index = lhs_index;
+
+    *components = *components + 1;
+}
+
+static void get_state_block_function_components(const struct state_block_function_info *info,
+        struct function_component *components, unsigned int comp_count)
+{
+    unsigned int i;
+
+    assert(comp_count <= info->max_args);
+
+    if (info->min_args == info->max_args)
+    {
+        const struct function_component *c = info->components;
+        for (i = 0; i < comp_count; ++i, ++c)
+            add_function_component(&components, c->name, c->lhs_has_index, c->lhs_index);
+        return;
+    }
+
+    if (!strcmp(info->name, "OMSetRenderTargets"))
+    {
+        for (i = 0; i < comp_count - 2; ++i)
+            add_function_component(&components, "RenderTargetView", true, i + 1);
+        add_function_component(&components, "DepthStencilView", false, 0);
+        add_function_component(&components, "RenderTargetView", true, 0);
+    }
 }
 
 bool hlsl_validate_state_block_entry(struct hlsl_ctx *ctx, struct hlsl_state_block_entry *entry,
@@ -189,9 +233,6 @@ static uint32_t write_string(const char *string, struct fx_write_context *fx)
 
 static void write_pass(struct hlsl_ir_var *var, struct fx_write_context *fx)
 {
-    if (var->state_block_count && var->state_blocks[0]->count)
-        hlsl_fixme(fx->ctx, &var->loc, "Write pass assignments.");
-
     fx->ops->write_pass(var, fx);
 }
 
@@ -230,6 +271,8 @@ static void write_fx_4_annotations(struct hlsl_scope *scope, struct fx_write_con
 static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_context *fx);
 static const char * get_fx_4_type_name(const struct hlsl_type *type);
 static void write_fx_4_annotation(struct hlsl_ir_var *var, struct fx_write_context *fx);
+static void write_fx_4_state_block(struct hlsl_ir_var *var, unsigned int block_index,
+        uint32_t count_offset, struct fx_write_context *fx);
 
 static uint32_t write_type(const struct hlsl_type *type, struct fx_write_context *fx)
 {
@@ -238,7 +281,7 @@ static uint32_t write_type(const struct hlsl_type *type, struct fx_write_context
     unsigned int elements_count;
     const char *name;
 
-    assert(fx->ctx->profile->major_version >= 4);
+    VKD3D_ASSERT(fx->ctx->profile->major_version >= 4);
 
     if (type->class == HLSL_CLASS_ARRAY)
     {
@@ -374,15 +417,14 @@ static uint32_t write_fx_4_string(const char *string, struct fx_write_context *f
 static void write_fx_4_pass(struct hlsl_ir_var *var, struct fx_write_context *fx)
 {
     struct vkd3d_bytecode_buffer *buffer = &fx->structured;
-    uint32_t name_offset;
+    uint32_t name_offset, count_offset;
 
     name_offset = write_string(var->name, fx);
     put_u32(buffer, name_offset);
-    put_u32(buffer, 0); /* Assignment count. */
+    count_offset = put_u32(buffer, 0);
 
     write_fx_4_annotations(var->annotations, fx);
-
-    /* TODO: assignments */
+    write_fx_4_state_block(var, 0, count_offset, fx);
 }
 
 static void write_fx_2_pass(struct hlsl_ir_var *var, struct fx_write_context *fx)
@@ -397,6 +439,9 @@ static void write_fx_2_pass(struct hlsl_ir_var *var, struct fx_write_context *fx
 
     /* TODO: annotations */
     /* TODO: assignments */
+
+    if (var->state_block_count && var->state_blocks[0]->count)
+        hlsl_fixme(fx->ctx, &var->loc, "Write pass assignments.");
 
     /* For some reason every pass adds to the total shader object count. */
     fx->shader_count++;
@@ -587,6 +632,10 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
         case HLSL_CLASS_TEXTURE:
         case HLSL_CLASS_UAV:
         case HLSL_CLASS_VERTEX_SHADER:
+        case HLSL_CLASS_COMPUTE_SHADER:
+        case HLSL_CLASS_DOMAIN_SHADER:
+        case HLSL_CLASS_HULL_SHADER:
+        case HLSL_CLASS_GEOMETRY_SHADER:
             put_u32_unaligned(buffer, 2);
             break;
 
@@ -709,6 +758,18 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
     {
         numeric_desc = get_fx_4_numeric_type_description(type, fx);
         put_u32_unaligned(buffer, numeric_desc);
+    }
+    else if (type->class == HLSL_CLASS_COMPUTE_SHADER)
+    {
+        put_u32_unaligned(buffer, 28);
+    }
+    else if (type->class == HLSL_CLASS_HULL_SHADER)
+    {
+        put_u32_unaligned(buffer, 29);
+    }
+    else if (type->class == HLSL_CLASS_DOMAIN_SHADER)
+    {
+        put_u32_unaligned(buffer, 30);
     }
     else
     {
@@ -870,7 +931,7 @@ static uint32_t write_fx_2_parameter(const struct hlsl_type *type, const char *n
             const struct hlsl_struct_field *field = &type->e.record.fields[i];
 
             /* Validated in check_invalid_object_fields(). */
-            assert(hlsl_is_numeric_type(field->type));
+            VKD3D_ASSERT(hlsl_is_numeric_type(field->type));
             write_fx_2_parameter(field->type, field->name, &field->semantic, fx);
         }
     }
@@ -1013,6 +1074,10 @@ static bool is_type_supported_fx_2(struct hlsl_ctx *ctx, const struct hlsl_type 
         case HLSL_CLASS_RASTERIZER_STATE:
         case HLSL_CLASS_RENDER_TARGET_VIEW:
         case HLSL_CLASS_VOID:
+        case HLSL_CLASS_COMPUTE_SHADER:
+        case HLSL_CLASS_DOMAIN_SHADER:
+        case HLSL_CLASS_HULL_SHADER:
+        case HLSL_CLASS_GEOMETRY_SHADER:
             return false;
 
         case HLSL_CLASS_EFFECT_GROUP:
@@ -1330,11 +1395,8 @@ static void write_fx_4_state_assignment(const struct hlsl_ir_var *var, struct hl
     struct hlsl_ctx *ctx = fx->ctx;
     struct hlsl_ir_node *value = entry->args->node;
 
-    if (entry->lhs_has_index)
-        hlsl_fixme(ctx, &var->loc, "Unsupported assignment to array element.");
-
     put_u32(buffer, entry->name_id);
-    put_u32(buffer, 0); /* TODO: destination index */
+    put_u32(buffer, entry->lhs_index);
     type_offset = put_u32(buffer, 0);
     rhs_offset = put_u32(buffer, 0);
 
@@ -1346,6 +1408,17 @@ static void write_fx_4_state_assignment(const struct hlsl_ir_var *var, struct hl
 
             value_offset = write_fx_4_state_numeric_value(c, fx);
             assignment_type = 1;
+            break;
+        }
+        case HLSL_IR_LOAD:
+        {
+            struct hlsl_ir_load *l = hlsl_ir_load(value);
+
+            if (l->src.path_len)
+                hlsl_fixme(ctx, &var->loc, "Indexed access in RHS values is not implemented.");
+
+            value_offset = write_fx_4_string(l->src.var->name, fx);
+            assignment_type = 2;
             break;
         }
         default:
@@ -1424,7 +1497,58 @@ enum state_property_component_type
     FX_FLOAT,
     FX_UINT,
     FX_UINT8,
+    FX_DEPTHSTENCIL,
+    FX_RASTERIZER,
+    FX_DOMAINSHADER,
+    FX_HULLSHADER,
+    FX_COMPUTESHADER,
+    FX_TEXTURE,
+    FX_DEPTHSTENCILVIEW,
+    FX_RENDERTARGETVIEW,
 };
+
+static inline bool is_object_fx_type(enum state_property_component_type type)
+{
+    switch (type)
+    {
+        case FX_DEPTHSTENCIL:
+        case FX_RASTERIZER:
+        case FX_DOMAINSHADER:
+        case FX_HULLSHADER:
+        case FX_COMPUTESHADER:
+        case FX_TEXTURE:
+        case FX_RENDERTARGETVIEW:
+        case FX_DEPTHSTENCILVIEW:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static inline enum hlsl_type_class hlsl_type_class_from_fx_type(enum state_property_component_type type)
+{
+    switch (type)
+    {
+        case FX_DEPTHSTENCIL:
+            return HLSL_CLASS_DEPTH_STENCIL_STATE;
+        case FX_RASTERIZER:
+            return HLSL_CLASS_RASTERIZER_STATE;
+        case FX_DOMAINSHADER:
+            return HLSL_CLASS_DOMAIN_SHADER;
+        case FX_HULLSHADER:
+            return HLSL_CLASS_HULL_SHADER;
+        case FX_COMPUTESHADER:
+            return HLSL_CLASS_COMPUTE_SHADER;
+        case FX_TEXTURE:
+            return HLSL_CLASS_TEXTURE;
+        case FX_RENDERTARGETVIEW:
+            return HLSL_CLASS_RENDER_TARGET_VIEW;
+        case FX_DEPTHSTENCILVIEW:
+            return HLSL_CLASS_DEPTH_STENCIL_VIEW;
+        default:
+            vkd3d_unreachable();
+    }
+}
 
 static inline enum hlsl_base_type hlsl_type_from_fx_type(enum state_property_component_type type)
 {
@@ -1546,48 +1670,61 @@ static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl
         enum hlsl_type_class class;
         enum state_property_component_type type;
         unsigned int dimx;
+        unsigned int array_size;
         uint32_t id;
         const struct rhs_named_value *values;
     }
     states[] =
     {
-        { "FillMode",              HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 12, fill_values },
-        { "CullMode",              HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 13, cull_values },
-        { "FrontCounterClockwise", HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 14 },
-        { "DepthBias",             HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 15 },
-        { "DepthBiasClamp",        HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_FLOAT, 1, 16 },
-        { "SlopeScaledDepthBias",  HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_FLOAT, 1, 17 },
-        { "DepthClipEnable",       HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 18 },
-        { "ScissorEnable",         HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 19 },
-        { "MultisampleEnable",     HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 20 },
-        { "AntializedLineEnable",  HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 21 },
+        { "RasterizerState",       HLSL_CLASS_PASS, HLSL_CLASS_SCALAR, FX_RASTERIZER, 1, 1, 0 },
+        { "DepthStencilState",     HLSL_CLASS_PASS, HLSL_CLASS_SCALAR, FX_DEPTHSTENCIL, 1, 1, 1 },
 
-        { "DepthEnable",               HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 22 },
-        { "DepthWriteMask",            HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 23, depth_write_mask_values },
-        { "DepthFunc",                 HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 24, comparison_values },
-        { "StencilEnable",             HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 25 },
-        { "StencilReadMask",           HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT8, 1, 26 },
-        { "StencilWriteMask",          HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT8, 1, 27 },
-        { "FrontFaceStencilFail",      HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 28, stencil_op_values },
-        { "FrontFaceStencilDepthFail", HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 29, stencil_op_values },
-        { "FrontFaceStencilPass",      HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 30, stencil_op_values },
-        { "FrontFaceStencilFunc",      HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 31, comparison_values },
-        { "BackFaceStencilFail",       HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 32, stencil_op_values },
-        { "BackFaceStencilDepthFail",  HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 33, stencil_op_values },
-        { "BackFaceStencilPass",       HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 34, stencil_op_values },
-        { "BackFaceStencilFunc",       HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 35, comparison_values },
+        { "RenderTargetView",      HLSL_CLASS_PASS, HLSL_CLASS_SCALAR, FX_RENDERTARGETVIEW, 1, 8, 3 },
+        { "DepthStencilView",      HLSL_CLASS_PASS, HLSL_CLASS_SCALAR, FX_DEPTHSTENCILVIEW, 1, 1, 4 },
 
-        { "Filter",         HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 45, filter_values },
-        { "AddressU",       HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 46, address_values },
-        { "AddressV",       HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 47, address_values },
-        { "AddressW",       HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 48, address_values },
-        { "MipLODBias",     HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_FLOAT,   1, 49 },
-        { "MaxAnisotropy",  HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 50 },
-        { "ComparisonFunc", HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 51, compare_func_values },
-        { "BorderColor",    HLSL_CLASS_SAMPLER, HLSL_CLASS_VECTOR,  FX_FLOAT,   4, 52 },
-        { "MinLOD",         HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_FLOAT,   1, 53 },
-        { "MaxLOD",         HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_FLOAT,   1, 54 },
-        /* TODO: "Texture" field */
+        { "DS_StencilRef",         HLSL_CLASS_PASS, HLSL_CLASS_SCALAR, FX_UINT, 1, 1, 9 },
+
+        { "FillMode",              HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 12, fill_values },
+        { "CullMode",              HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 13, cull_values },
+        { "FrontCounterClockwise", HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 1, 14 },
+        { "DepthBias",             HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 15 },
+        { "DepthBiasClamp",        HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 16 },
+        { "SlopeScaledDepthBias",  HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 17 },
+        { "DepthClipEnable",       HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 1, 18 },
+        { "ScissorEnable",         HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 1, 19 },
+        { "MultisampleEnable",     HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 1, 20 },
+        { "AntializedLineEnable",  HLSL_CLASS_RASTERIZER_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 1, 21 },
+
+        { "DepthEnable",               HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 1, 22 },
+        { "DepthWriteMask",            HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 23, depth_write_mask_values },
+        { "DepthFunc",                 HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 24, comparison_values },
+        { "StencilEnable",             HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 1, 25 },
+        { "StencilReadMask",           HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT8, 1, 1, 26 },
+        { "StencilWriteMask",          HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT8, 1, 1, 27 },
+        { "FrontFaceStencilFail",      HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 28, stencil_op_values },
+        { "FrontFaceStencilDepthFail", HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 29, stencil_op_values },
+        { "FrontFaceStencilPass",      HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 30, stencil_op_values },
+        { "FrontFaceStencilFunc",      HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 31, comparison_values },
+        { "BackFaceStencilFail",       HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 32, stencil_op_values },
+        { "BackFaceStencilDepthFail",  HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 33, stencil_op_values },
+        { "BackFaceStencilPass",       HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 34, stencil_op_values },
+        { "BackFaceStencilFunc",       HLSL_CLASS_DEPTH_STENCIL_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 35, comparison_values },
+
+        { "Filter",         HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 1, 45, filter_values },
+        { "AddressU",       HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 1, 46, address_values },
+        { "AddressV",       HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 1, 47, address_values },
+        { "AddressW",       HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 1, 48, address_values },
+        { "MipLODBias",     HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_FLOAT,   1, 1, 49 },
+        { "MaxAnisotropy",  HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 1, 50 },
+        { "ComparisonFunc", HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_UINT,    1, 1, 51, compare_func_values },
+        { "BorderColor",    HLSL_CLASS_SAMPLER, HLSL_CLASS_VECTOR,  FX_FLOAT,   4, 1, 52 },
+        { "MinLOD",         HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_FLOAT,   1, 1, 53 },
+        { "MaxLOD",         HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_FLOAT,   1, 1, 54 },
+        { "Texture",        HLSL_CLASS_SAMPLER, HLSL_CLASS_SCALAR,  FX_TEXTURE, 1, 1, 55 },
+
+        { "HullShader",     HLSL_CLASS_PASS, HLSL_CLASS_SCALAR, FX_HULLSHADER,    1, 1, 56 },
+        { "DomainShader",   HLSL_CLASS_PASS, HLSL_CLASS_SCALAR, FX_DOMAINSHADER,  1, 1, 57 },
+        { "ComputeShader",  HLSL_CLASS_PASS, HLSL_CLASS_SCALAR, FX_COMPUTESHADER, 1, 1, 58 },
     };
     const struct hlsl_type *type = hlsl_get_multiarray_element_type(var->data_type);
     struct replace_state_context replace_context;
@@ -1596,6 +1733,7 @@ static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl
     const struct state *state = NULL;
     struct hlsl_ctx *ctx = fx->ctx;
     enum hlsl_base_type base_type;
+    struct hlsl_ir_load *load;
     unsigned int i;
 
     for (i = 0; i < ARRAY_SIZE(states); ++i)
@@ -1621,6 +1759,27 @@ static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl
         return;
     }
 
+    if (entry->lhs_has_index && state->array_size == 1)
+    {
+        hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Can't use array-style access for non-array state %s.",
+                entry->name);
+        return;
+    }
+
+    if (!entry->lhs_has_index && state->array_size > 1)
+    {
+        hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Expected array index for array state %s.",
+                entry->name);
+        return;
+    }
+
+    if (entry->lhs_has_index && (state->array_size <= entry->lhs_index))
+    {
+        hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Invalid element index %u for the state %s[%u].",
+                entry->lhs_index, state->name, state->array_size);
+        return;
+    }
+
     entry->name_id = state->id;
 
     replace_context.values = state->values;
@@ -1631,6 +1790,32 @@ static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl
     fold_state_value(ctx, entry);
 
     /* Now cast and run folding again. */
+
+    if (is_object_fx_type(state->type))
+    {
+        node = entry->args->node;
+
+        switch (node->type)
+        {
+            case HLSL_IR_LOAD:
+                load = hlsl_ir_load(node);
+
+                if (load->src.path_len)
+                    hlsl_fixme(ctx, &ctx->location, "Arrays are not supported for RHS.");
+
+                if (load->src.var->data_type->class != hlsl_type_class_from_fx_type(state->type))
+                {
+                    hlsl_error(ctx, &ctx->location, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Type mismatch for the %s state value",
+                            entry->name);
+                }
+
+                break;
+            default:
+                hlsl_fixme(ctx, &ctx->location, "Unhandled node type for object-typed field.");
+        }
+
+        return;
+    }
 
     base_type = hlsl_type_from_fx_type(state->type);
     switch (state->class)
@@ -1676,40 +1861,138 @@ static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl
     }
 }
 
+static unsigned int decompose_fx_4_state_block(struct hlsl_ir_var *var, struct hlsl_state_block *block,
+        unsigned int entry_index, struct fx_write_context *fx)
+{
+    struct hlsl_state_block_entry *entry = block->entries[entry_index];
+    const struct state_block_function_info *info;
+    struct function_component components[9];
+    struct hlsl_ctx *ctx = fx->ctx;
+    unsigned int i;
+
+    if (!entry->is_function_call)
+        return 1;
+
+    if (!(info = get_state_block_function_info(entry->name)))
+        return 1;
+
+    if (info->min_profile > ctx->profile->major_version)
+    {
+        hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_STATE_BLOCK_ENTRY,
+                "State %s is not supported for this profile.", entry->name);
+        return 1;
+    }
+
+    /* For single argument case simply replace the name. */
+    if (info->min_args == info->max_args && info->min_args == 1)
+    {
+        vkd3d_free(entry->name);
+        entry->name = hlsl_strdup(ctx, info->components[0].name);
+        return 1;
+    }
+
+    if (!vkd3d_array_reserve((void **)&block->entries, &block->capacity, block->count + entry->args_count - 1,
+            sizeof(*block->entries)))
+        return 1;
+    if (entry_index != block->count - 1)
+    {
+        memmove(&block->entries[entry_index + entry->args_count], &block->entries[entry_index + 1],
+                (block->count - entry_index - 1) * sizeof(*block->entries));
+    }
+    block->count += entry->args_count - 1;
+
+    get_state_block_function_components(info, components, entry->args_count);
+
+    for (i = 0; i < entry->args_count; ++i)
+    {
+        const struct function_component *comp = &components[i];
+        unsigned int arg_index = (i + 1) % entry->args_count;
+        block->entries[entry_index + i] = clone_stateblock_entry(ctx, entry, comp->name,
+                comp->lhs_has_index, comp->lhs_index, arg_index);
+    }
+    hlsl_free_state_block_entry(entry);
+
+    return entry->args_count;
+}
+
+static void write_fx_4_state_block(struct hlsl_ir_var *var, unsigned int block_index,
+        uint32_t count_offset, struct fx_write_context *fx)
+{
+    struct vkd3d_bytecode_buffer *buffer = &fx->structured;
+    struct hlsl_state_block *block;
+    uint32_t i, count = 0;
+
+    if (var->state_blocks)
+    {
+        block = var->state_blocks[block_index];
+
+        for (i = 0; i < block->count;)
+        {
+            i += decompose_fx_4_state_block(var, block, i, fx);
+        }
+
+        for (i = 0; i < block->count; ++i)
+        {
+            struct hlsl_state_block_entry *entry = block->entries[i];
+
+            /* Skip if property is reassigned later. This will use the last assignment. */
+            if (state_block_contains_state(entry->name, i + 1, block))
+                continue;
+
+            /* Resolve special constant names and property names. */
+            resolve_fx_4_state_block_values(var, entry, fx);
+
+            write_fx_4_state_assignment(var, entry, fx);
+            ++count;
+        }
+    }
+
+    set_u32(buffer, count_offset, count);
+}
+
 static void write_fx_4_state_object_initializer(struct hlsl_ir_var *var, struct fx_write_context *fx)
 {
-    uint32_t elements_count = hlsl_get_multiarray_size(var->data_type), i, j;
+    uint32_t elements_count = hlsl_get_multiarray_size(var->data_type), i;
     struct vkd3d_bytecode_buffer *buffer = &fx->structured;
-    uint32_t count_offset, count;
+    uint32_t count_offset;
 
     for (i = 0; i < elements_count; ++i)
     {
-        struct hlsl_state_block *block;
-
         count_offset = put_u32(buffer, 0);
 
-        count = 0;
-        if (var->state_blocks)
-        {
-            block = var->state_blocks[i];
+        write_fx_4_state_block(var, i, count_offset, fx);
+    }
+}
 
-            for (j = 0; j < block->count; ++j)
-            {
-                struct hlsl_state_block_entry *entry = block->entries[j];
+static void write_fx_4_shader_initializer(struct hlsl_ir_var *var, struct fx_write_context *fx)
+{
+    struct vkd3d_bytecode_buffer *buffer = &fx->structured;
+    uint32_t elements_count = hlsl_get_multiarray_size(var->data_type);
+    unsigned int i;
 
-                /* Skip if property is reassigned later. This will use the last assignment. */
-                if (state_block_contains_state(entry->name, j + 1, block))
-                    continue;
+    /* FIXME: write shader blobs, once parser support works. */
+    for (i = 0; i < elements_count; ++i)
+        put_u32(buffer, 0);
+}
 
-                /* Resolve special constant names and property names. */
-                resolve_fx_4_state_block_values(var, entry, fx);
+static void write_fx_5_shader_initializer(struct hlsl_ir_var *var, struct fx_write_context *fx)
+{
+    struct vkd3d_bytecode_buffer *buffer = &fx->structured;
+    uint32_t elements_count = hlsl_get_multiarray_size(var->data_type);
+    unsigned int i;
 
-                write_fx_4_state_assignment(var, entry, fx);
-                ++count;
-            }
-        }
-
-        set_u32(buffer, count_offset, count);
+    /* FIXME: write shader blobs, once parser support works. */
+    for (i = 0; i < elements_count; ++i)
+    {
+        put_u32(buffer, 0); /* Blob offset */
+        put_u32(buffer, 0); /* SODecl[0] offset */
+        put_u32(buffer, 0); /* SODecl[1] offset */
+        put_u32(buffer, 0); /* SODecl[2] offset */
+        put_u32(buffer, 0); /* SODecl[3] offset */
+        put_u32(buffer, 0); /* SODecl count */
+        put_u32(buffer, 0); /* Rasterizer stream */
+        put_u32(buffer, 0); /* Interface bindings count */
+        put_u32(buffer, 0); /* Interface initializer offset */
     }
 }
 
@@ -1719,7 +2002,7 @@ static void write_fx_4_object_variable(struct hlsl_ir_var *var, struct fx_write_
     uint32_t elements_count = hlsl_get_multiarray_size(var->data_type);
     struct vkd3d_bytecode_buffer *buffer = &fx->structured;
     uint32_t semantic_offset, bind_point = ~0u;
-    uint32_t name_offset, type_offset, i;
+    uint32_t name_offset, type_offset;
     struct hlsl_ctx *ctx = fx->ctx;
 
     if (var->reg_reservation.reg_type)
@@ -1756,9 +2039,14 @@ static void write_fx_4_object_variable(struct hlsl_ir_var *var, struct fx_write_
 
         case HLSL_CLASS_PIXEL_SHADER:
         case HLSL_CLASS_VERTEX_SHADER:
-            /* FIXME: write shader blobs, once parser support works. */
-            for (i = 0; i < elements_count; ++i)
-                put_u32(buffer, 0);
+            write_fx_4_shader_initializer(var, fx);
+            fx->shader_count += elements_count;
+            break;
+
+        case HLSL_CLASS_HULL_SHADER:
+        case HLSL_CLASS_COMPUTE_SHADER:
+        case HLSL_CLASS_DOMAIN_SHADER:
+            write_fx_5_shader_initializer(var, fx);
             fx->shader_count += elements_count;
             break;
 
@@ -1782,8 +2070,8 @@ static void write_fx_4_object_variable(struct hlsl_ir_var *var, struct fx_write_
             break;
 
         default:
-            hlsl_fixme(ctx, &ctx->location, "Writing initializer for object type %u is not implemented.",
-                    type->e.numeric.type);
+            hlsl_fixme(ctx, &ctx->location, "Writing initializer for object class %u is not implemented.",
+                    type->class);
     }
 
     write_fx_4_annotations(var->annotations, fx);
@@ -1882,6 +2170,12 @@ static bool is_supported_object_variable(const struct hlsl_ctx *ctx, const struc
         case HLSL_CLASS_RENDER_TARGET_VIEW:
         case HLSL_CLASS_SAMPLER:
         case HLSL_CLASS_TEXTURE:
+            return true;
+        case HLSL_CLASS_COMPUTE_SHADER:
+        case HLSL_CLASS_DOMAIN_SHADER:
+        case HLSL_CLASS_HULL_SHADER:
+            if (ctx->profile->major_version < 5)
+                return false;
             return true;
         case HLSL_CLASS_UAV:
             if (ctx->profile->major_version < 5)

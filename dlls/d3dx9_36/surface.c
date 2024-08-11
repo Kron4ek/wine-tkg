@@ -484,7 +484,8 @@ static uint32_t d3dx_calculate_layer_pixels_size(D3DFORMAT format, uint32_t widt
     layer_size = 0;
     for (i = 0; i < mip_levels; ++i)
     {
-        d3dx_calculate_pixels_size(format, dims.width, dims.height, &row_pitch, &slice_pitch);
+        if (FAILED(d3dx_calculate_pixels_size(format, dims.width, dims.height, &row_pitch, &slice_pitch)))
+            return 0;
         layer_size += slice_pitch * dims.depth;
         d3dx_get_next_mip_level_size(&dims);
     }
@@ -500,7 +501,8 @@ static UINT calculate_dds_file_size(D3DFORMAT format, UINT width, UINT height, U
     for (i = 0; i < miplevels; i++)
     {
         UINT pitch, size = 0;
-        d3dx_calculate_pixels_size(format, width, height, &pitch, &size);
+        if (FAILED(d3dx_calculate_pixels_size(format, width, height, &pitch, &size)))
+            return 0;
         size *= depth;
         file_size += size;
         width = max(1, width / 2);
@@ -539,6 +541,8 @@ static HRESULT save_dds_surface_to_memory(ID3DXBuffer **dst_buffer, IDirect3DSur
     if (pixel_format->type == FORMAT_UNKNOWN) return E_NOTIMPL;
 
     file_size = calculate_dds_file_size(src_desc.Format, src_desc.Width, src_desc.Height, 1, 1, 1);
+    if (!file_size)
+        return D3DERR_INVALIDCALL;
 
     hr = d3dx_calculate_pixels_size(src_desc.Format, src_desc.Width, src_desc.Height, &dst_pitch, &surface_size);
     if (FAILED(hr)) return hr;
@@ -588,6 +592,7 @@ static HRESULT d3dx_initialize_image_from_dds(const void *src_data, uint32_t src
 {
     const struct dds_header *header = src_data;
     uint32_t expected_src_data_size;
+    HRESULT hr;
 
     if (src_data_size < sizeof(*header) || header->pixel_format.size != sizeof(header->pixel_format))
         return D3DXERR_INVALIDDATA;
@@ -623,6 +628,8 @@ static HRESULT d3dx_initialize_image_from_dds(const void *src_data, uint32_t src
 
     image->layer_pitch = d3dx_calculate_layer_pixels_size(image->format, image->size.width, image->size.height,
             image->size.depth, image->mip_levels);
+    if (!image->layer_pitch)
+        return D3DXERR_INVALIDDATA;
     expected_src_data_size = (image->layer_pitch * image->layer_count) + sizeof(*header);
     if (src_data_size < expected_src_data_size)
     {
@@ -640,7 +647,9 @@ static HRESULT d3dx_initialize_image_from_dds(const void *src_data, uint32_t src
         initial_mip_levels = image->mip_levels;
         for (i = 0; i < starting_mip_level; i++)
         {
-            d3dx_calculate_pixels_size(image->format, image->size.width, image->size.height, &row_pitch, &slice_pitch);
+            hr = d3dx_calculate_pixels_size(image->format, image->size.width, image->size.height, &row_pitch, &slice_pitch);
+            if (FAILED(hr))
+                return hr;
 
             image->pixels += slice_pitch * image->size.depth;
             d3dx_get_next_mip_level_size(&image->size);
@@ -1257,6 +1266,9 @@ HRESULT WINAPI D3DXLoadSurfaceFromFileInMemory(IDirect3DSurface9 *pDestSurface,
 
     if (!pDestSurface || !pSrcData || !SrcDataSize)
         return D3DERR_INVALIDCALL;
+
+    if (FAILED(hr = d3dx9_handle_load_filter(&dwFilter)))
+        return hr;
 
     hr = d3dx_image_init(pSrcData, SrcDataSize, &image, 0, 0);
     if (FAILED(hr))
@@ -2174,6 +2186,12 @@ HRESULT WINAPI D3DXLoadSurfaceFromMemory(IDirect3DSurface9 *dst_surface,
     }
 
     IDirect3DSurface9_GetDesc(dst_surface, &surfdesc);
+    if (surfdesc.MultiSampleType != D3DMULTISAMPLE_NONE)
+    {
+        TRACE("Multisampled destination surface, doing nothing.\n");
+        return D3D_OK;
+    }
+
     destformatdesc = get_format_info(surfdesc.Format);
     if (!dst_rect)
     {
@@ -2199,8 +2217,8 @@ HRESULT WINAPI D3DXLoadSurfaceFromMemory(IDirect3DSurface9 *dst_surface,
         }
     }
 
-    if (filter == D3DX_DEFAULT)
-        filter = D3DX_FILTER_TRIANGLE | D3DX_FILTER_DITHER;
+    if (FAILED(hr = d3dx9_handle_load_filter(&filter)))
+        return hr;
 
     hr = d3dx_pixels_init(src_memory, src_pitch, 0, src_palette, srcformatdesc->format,
             src_rect->left, src_rect->top, src_rect->right, src_rect->bottom, 0, 1, &src_pixels);
@@ -2212,13 +2230,16 @@ HRESULT WINAPI D3DXLoadSurfaceFromMemory(IDirect3DSurface9 *dst_surface,
     if (FAILED(hr = lock_surface(dst_surface, &dst_rect_aligned, &lockrect, &surface, TRUE)))
         return hr;
 
-
     set_d3dx_pixels(&dst_pixels, lockrect.pBits, lockrect.Pitch, 0, dst_palette,
             (dst_rect_aligned.right - dst_rect_aligned.left), (dst_rect_aligned.bottom - dst_rect_aligned.top), 1,
             dst_rect);
     OffsetRect(&dst_pixels.unaligned_rect, -dst_rect_aligned.left, -dst_rect_aligned.top);
 
-    d3dx_load_pixels_from_pixels(&dst_pixels, destformatdesc, &src_pixels, srcformatdesc, filter, color_key);
+    if (FAILED(hr = d3dx_load_pixels_from_pixels(&dst_pixels, destformatdesc, &src_pixels, srcformatdesc, filter, color_key)))
+    {
+        unlock_surface(dst_surface, &dst_rect_aligned, surface, FALSE);
+        return hr;
+    }
 
     return unlock_surface(dst_surface, &dst_rect_aligned, surface, TRUE);
 }
@@ -2267,6 +2288,9 @@ HRESULT WINAPI D3DXLoadSurfaceFromSurface(IDirect3DSurface9 *dst_surface,
 
     if (!dst_surface || !src_surface)
         return D3DERR_INVALIDCALL;
+
+    if (FAILED(hr = d3dx9_handle_load_filter(&filter)))
+        return hr;
 
     IDirect3DSurface9_GetDesc(src_surface, &src_desc);
     src_format_desc = get_format_info(src_desc.Format);
