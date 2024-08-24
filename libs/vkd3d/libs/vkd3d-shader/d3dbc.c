@@ -1523,6 +1523,8 @@ D3DXPARAMETER_CLASS hlsl_sm1_class(const struct hlsl_type *type)
         case HLSL_CLASS_DOMAIN_SHADER:
         case HLSL_CLASS_HULL_SHADER:
         case HLSL_CLASS_GEOMETRY_SHADER:
+        case HLSL_CLASS_BLEND_STATE:
+        case HLSL_CLASS_NULL:
             break;
     }
 
@@ -1626,6 +1628,8 @@ D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
         case HLSL_CLASS_DOMAIN_SHADER:
         case HLSL_CLASS_HULL_SHADER:
         case HLSL_CLASS_GEOMETRY_SHADER:
+        case HLSL_CLASS_BLEND_STATE:
+        case HLSL_CLASS_NULL:
             break;
     }
 
@@ -1826,17 +1830,17 @@ void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buff
                                 break;
 
                             case HLSL_TYPE_INT:
-                                uni.f = var->default_values[k].value.i;
+                                uni.f = var->default_values[k].number.i;
                                 break;
 
                             case HLSL_TYPE_UINT:
                             case HLSL_TYPE_BOOL:
-                                uni.f = var->default_values[k].value.u;
+                                uni.f = var->default_values[k].number.u;
                                 break;
 
                             case HLSL_TYPE_HALF:
                             case HLSL_TYPE_FLOAT:
-                                uni.u = var->default_values[k].value.u;
+                                uni.u = var->default_values[k].number.u;
                                 break;
 
                             default:

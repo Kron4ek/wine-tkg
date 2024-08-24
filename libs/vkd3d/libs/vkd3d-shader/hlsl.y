@@ -304,6 +304,26 @@ static bool implicit_compatible_data_types(struct hlsl_ctx *ctx, struct hlsl_typ
         }
     }
 
+    if (src->class == HLSL_CLASS_NULL)
+    {
+        switch (dst->class)
+        {
+            case HLSL_CLASS_DEPTH_STENCIL_STATE:
+            case HLSL_CLASS_DEPTH_STENCIL_VIEW:
+            case HLSL_CLASS_PIXEL_SHADER:
+            case HLSL_CLASS_RASTERIZER_STATE:
+            case HLSL_CLASS_RENDER_TARGET_VIEW:
+            case HLSL_CLASS_SAMPLER:
+            case HLSL_CLASS_STRING:
+            case HLSL_CLASS_TEXTURE:
+            case HLSL_CLASS_UAV:
+            case HLSL_CLASS_VERTEX_SHADER:
+                return true;
+            default:
+                break;
+        }
+    }
+
     return hlsl_types_are_componentwise_equal(ctx, src, dst);
 }
 
@@ -329,6 +349,9 @@ static struct hlsl_ir_node *add_cast(struct hlsl_ctx *ctx, struct hlsl_block *bl
     struct hlsl_ir_node *cast;
 
     if (hlsl_types_are_equal(src_type, dst_type))
+        return node;
+
+    if (src_type->class == HLSL_CLASS_NULL)
         return node;
 
     if (src_type->class > HLSL_CLASS_VECTOR || dst_type->class > HLSL_CLASS_VECTOR)
@@ -575,11 +598,10 @@ static void check_loop_attributes(struct hlsl_ctx *ctx, const struct parse_attri
         hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Unroll attribute can't be used with 'fastopt' attribute.");
 }
 
-static union hlsl_constant_value_component evaluate_static_expression(struct hlsl_ctx *ctx,
+static struct hlsl_default_value evaluate_static_expression(struct hlsl_ctx *ctx,
         struct hlsl_block *block, struct hlsl_type *dst_type, const struct vkd3d_shader_location *loc)
 {
-    union hlsl_constant_value_component ret = {0};
-    struct hlsl_ir_constant *constant;
+    struct hlsl_default_value ret = {0};
     struct hlsl_ir_node *node;
     struct hlsl_block expr;
     struct hlsl_src src;
@@ -631,8 +653,16 @@ static union hlsl_constant_value_component evaluate_static_expression(struct hls
 
     if (node->type == HLSL_IR_CONSTANT)
     {
-        constant = hlsl_ir_constant(node);
-        ret = constant->value.u[0];
+        struct hlsl_ir_constant *constant = hlsl_ir_constant(node);
+
+        ret.number = constant->value.u[0];
+    }
+    else if (node->type == HLSL_IR_STRING_CONSTANT)
+    {
+        struct hlsl_ir_string_constant *string = hlsl_ir_string_constant(node);
+
+        if (!(ret.string = vkd3d_strdup(string->string)))
+            return ret;
     }
     else if (node->type == HLSL_IR_STRING_CONSTANT)
     {
@@ -652,10 +682,11 @@ static union hlsl_constant_value_component evaluate_static_expression(struct hls
 static unsigned int evaluate_static_expression_as_uint(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct vkd3d_shader_location *loc)
 {
-    union hlsl_constant_value_component res;
+    struct hlsl_default_value res;
 
     res = evaluate_static_expression(ctx, block, hlsl_get_scalar_type(ctx, HLSL_TYPE_UINT), loc);
-    return res.u;
+    VKD3D_ASSERT(!res.string);
+    return res.number.u;
 }
 
 static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
@@ -1868,6 +1899,41 @@ static struct hlsl_ir_node *add_binary_dot_expr(struct hlsl_ctx *ctx, struct hls
     return add_expr(ctx, instrs, op, args, ret_type, loc);
 }
 
+static struct hlsl_ir_node *add_binary_expr(struct hlsl_ctx *ctx, struct hlsl_block *block, enum hlsl_ir_expr_op op,
+        struct hlsl_ir_node *lhs, struct hlsl_ir_node *rhs, const struct vkd3d_shader_location *loc)
+{
+    switch (op)
+    {
+        case HLSL_OP2_ADD:
+        case HLSL_OP2_DIV:
+        case HLSL_OP2_MOD:
+        case HLSL_OP2_MUL:
+            return add_binary_arithmetic_expr(ctx, block, op, lhs, rhs, loc);
+
+        case HLSL_OP2_BIT_AND:
+        case HLSL_OP2_BIT_OR:
+        case HLSL_OP2_BIT_XOR:
+            return add_binary_bitwise_expr(ctx, block, op, lhs, rhs, loc);
+
+        case HLSL_OP2_LESS:
+        case HLSL_OP2_GEQUAL:
+        case HLSL_OP2_EQUAL:
+        case HLSL_OP2_NEQUAL:
+            return add_binary_comparison_expr(ctx, block, op, lhs, rhs, loc);
+
+        case HLSL_OP2_LOGIC_AND:
+        case HLSL_OP2_LOGIC_OR:
+            return add_binary_logical_expr(ctx, block, op, lhs, rhs, loc);
+
+        case HLSL_OP2_LSHIFT:
+        case HLSL_OP2_RSHIFT:
+            return add_binary_shift_expr(ctx, block, op, lhs, rhs, loc);
+
+        default:
+            vkd3d_unreachable();
+    }
+}
+
 static struct hlsl_block *add_binary_expr_merge(struct hlsl_ctx *ctx, struct hlsl_block *block1,
         struct hlsl_block *block2, enum hlsl_ir_expr_op op, const struct vkd3d_shader_location *loc)
 {
@@ -1876,41 +1942,8 @@ static struct hlsl_block *add_binary_expr_merge(struct hlsl_ctx *ctx, struct hls
     hlsl_block_add_block(block1, block2);
     destroy_block(block2);
 
-    switch (op)
-    {
-        case HLSL_OP2_ADD:
-        case HLSL_OP2_DIV:
-        case HLSL_OP2_MOD:
-        case HLSL_OP2_MUL:
-            add_binary_arithmetic_expr(ctx, block1, op, arg1, arg2, loc);
-            break;
-
-        case HLSL_OP2_BIT_AND:
-        case HLSL_OP2_BIT_OR:
-        case HLSL_OP2_BIT_XOR:
-            add_binary_bitwise_expr(ctx, block1, op, arg1, arg2, loc);
-            break;
-
-        case HLSL_OP2_LESS:
-        case HLSL_OP2_GEQUAL:
-        case HLSL_OP2_EQUAL:
-        case HLSL_OP2_NEQUAL:
-            add_binary_comparison_expr(ctx, block1, op, arg1, arg2, loc);
-            break;
-
-        case HLSL_OP2_LOGIC_AND:
-        case HLSL_OP2_LOGIC_OR:
-            add_binary_logical_expr(ctx, block1, op, arg1, arg2, loc);
-            break;
-
-        case HLSL_OP2_LSHIFT:
-        case HLSL_OP2_RSHIFT:
-            add_binary_shift_expr(ctx, block1, op, arg1, arg2, loc);
-            break;
-
-        default:
-            vkd3d_unreachable();
-    }
+    if (add_binary_expr(ctx, block1, op, arg1, arg2, loc) == NULL)
+        return NULL;
 
     return block1;
 }
@@ -2034,7 +2067,7 @@ static struct hlsl_ir_node *add_assignment(struct hlsl_ctx *ctx, struct hlsl_blo
         enum hlsl_ir_expr_op op = op_from_assignment(assign_op);
 
         VKD3D_ASSERT(op);
-        if (!(rhs = add_binary_arithmetic_expr(ctx, block, op, lhs, rhs, &rhs->loc)))
+        if (!(rhs = add_binary_expr(ctx, block, op, lhs, rhs, &rhs->loc)))
             return NULL;
     }
 
@@ -2350,7 +2383,7 @@ static void initialize_var_components(struct hlsl_ctx *ctx, struct hlsl_block *i
 
             if (!hlsl_clone_block(ctx, &block, instrs))
                 return;
-            default_value.value = evaluate_static_expression(ctx, &block, dst_comp_type, &src->loc);
+            default_value = evaluate_static_expression(ctx, &block, dst_comp_type, &src->loc);
 
             if (dst->is_param)
                 dst_index = *store_index;
@@ -2908,14 +2941,17 @@ static bool add_user_call(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *fu
             struct hlsl_ir_node *comp;
             struct hlsl_block store_block;
 
-            value.u[0] = param->default_values[j].value;
-            if (!(comp = hlsl_new_constant(ctx, type, &value, loc)))
-                return false;
-            hlsl_block_add_instr(args->instrs, comp);
+            if (!param->default_values[j].string)
+            {
+                value.u[0] = param->default_values[j].number;
+                if (!(comp = hlsl_new_constant(ctx, type, &value, loc)))
+                    return false;
+                hlsl_block_add_instr(args->instrs, comp);
 
-            if (!hlsl_new_store_component(ctx, &store_block, &param_deref, j, comp))
-                return false;
-            hlsl_block_add_block(args->instrs, &store_block);
+                if (!hlsl_new_store_component(ctx, &store_block, &param_deref, j, comp))
+                    return false;
+                hlsl_block_add_block(args->instrs, &store_block);
+            }
         }
     }
 
@@ -6050,6 +6086,7 @@ static bool state_block_add_entry(struct hlsl_state_block *state_block, struct h
 %token KW_NAMESPACE
 %token KW_NOINTERPOLATION
 %token KW_NOPERSPECTIVE
+%token KW_NULL
 %token KW_OUT
 %token KW_PACKOFFSET
 %token KW_PASS
@@ -7304,12 +7341,6 @@ type_no_void:
         {
             validate_texture_format_type(ctx, $3, &@3);
 
-            if (hlsl_version_lt(ctx, 4, 1))
-            {
-                hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                        "Multisampled texture object declaration needs sample count for profile %s.", ctx->profile->name);
-            }
-
             $$ = hlsl_new_texture_type(ctx, $1, $3, 0);
         }
     | texture_ms_type '<' type ',' shift_expr '>'
@@ -7432,6 +7463,10 @@ type_no_void:
     | KW_RASTERIZERSTATE
         {
             $$ = hlsl_get_type(ctx->cur_scope, "RasterizerState", true, true);
+        }
+    | KW_BLENDSTATE
+        {
+            $$ = hlsl_get_type(ctx->cur_scope, "BlendState", true, true);
         }
 
 type:
@@ -8317,6 +8352,18 @@ primary_expr:
             }
             vkd3d_free($1);
 
+            if (!($$ = make_block(ctx, c)))
+            {
+                hlsl_free_instr(c);
+                YYABORT;
+            }
+        }
+    | KW_NULL
+        {
+            struct hlsl_ir_node *c;
+
+            if (!(c = hlsl_new_null_constant(ctx, &@1)))
+                YYABORT;
             if (!($$ = make_block(ctx, c)))
             {
                 hlsl_free_instr(c);

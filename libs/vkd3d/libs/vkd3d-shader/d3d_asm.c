@@ -2251,7 +2251,7 @@ static const char *get_semantic_register_name(enum vkd3d_shader_sysval_semantic 
         case VKD3D_SHADER_SV_DEPTH_GREATER_EQUAL: return "oDepthGE";
         case VKD3D_SHADER_SV_DEPTH_LESS_EQUAL:    return "oDepthLE";
             /* SV_Coverage has name vCoverage when used as an input,
-             * but it doens't appear in the signature in that case. */
+             * but it doesn't appear in the signature in that case. */
         case VKD3D_SHADER_SV_COVERAGE:            return "oMask";
         case VKD3D_SHADER_SV_STENCIL_REF:         return "oStencilRef";
         default:                                  return "??";

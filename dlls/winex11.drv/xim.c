@@ -36,7 +36,6 @@
 #include "x11drv.h"
 #include "imm.h"
 #include "wine/debug.h"
-#include "wine/server.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(xim);
 
@@ -411,49 +410,6 @@ void xim_thread_attach( struct x11drv_thread_data *data )
     XRegisterIMInstantiateCallback( display, NULL, NULL, NULL, xim_open, (XPointer)data );
 }
 
-/***********************************************************************
- *           X11DRV_UpdateCandidatePos
- */
-void X11DRV_UpdateCandidatePos( HWND hwnd, const RECT *caret_rect )
-{
-    if (input_style & XIMPreeditPosition)
-    {
-        struct x11drv_win_data *data;
-        HWND parent;
-
-        for (parent = hwnd; parent && parent != NtUserGetDesktopWindow(); parent = NtUserGetAncestor( parent, GA_PARENT ))
-        {
-            if (!(data = get_win_data( parent ))) continue;
-            if (data->xic)
-            {
-                XVaNestedList preedit;
-                XPoint xpoint;
-                POINT pt;
-
-                pt.x = caret_rect->left;
-                pt.y = caret_rect->bottom;
-
-                if (hwnd != data->hwnd)
-                    NtUserMapWindowPoints( hwnd, data->hwnd, &pt, 1, 0 /* per-monitor DPI */ );
-
-                if (NtUserGetWindowLongW( data->hwnd, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL)
-                    pt.x = data->client_rect.right - data->client_rect.left - 1 - pt.x;
-
-                xpoint.x = pt.x + data->client_rect.left - data->whole_rect.left;
-                xpoint.y = pt.y + data->client_rect.top - data->whole_rect.top;
-
-                preedit = XVaCreateNestedList( 0, XNSpotLocation, &xpoint, NULL );
-                if (preedit)
-                {
-                    XSetICValues( data->xic, XNPreeditAttributes, preedit, NULL );
-                    XFree( preedit );
-                }
-            }
-            release_win_data( data );
-        }
-    }
-}
-
 static BOOL xic_destroy( XIC xic, XPointer user, XPointer arg )
 {
     struct x11drv_win_data *data;
@@ -507,32 +463,6 @@ static XIC xic_create( XIM xim, HWND hwnd, Window win )
     XFree( preedit );
     XFree( status );
 
-    if (xic != NULL && (input_style & XIMPreeditPosition))
-    {
-        SERVER_START_REQ( set_caret_info )
-        {
-            req->flags  = 0;  /* don't set anything */
-            req->handle = 0;
-            req->x      = 0;
-            req->y      = 0;
-            req->hide   = 0;
-            req->state  = 0;
-            if (!wine_server_call_err( req ))
-            {
-                HWND hwnd;
-                RECT r;
-
-                hwnd      = wine_server_ptr_handle( reply->full_handle );
-                r.left    = reply->old_rect.left;
-                r.top     = reply->old_rect.top;
-                r.right   = reply->old_rect.right;
-                r.bottom  = reply->old_rect.bottom;
-                X11DRV_UpdateCandidatePos( hwnd, &r );
-            }
-        }
-        SERVER_END_REQ;
-    }
-
     return xic;
 }
 
@@ -562,4 +492,37 @@ void xim_set_focus( HWND hwnd, BOOL focus )
     if (!(xic = X11DRV_get_ic( hwnd ))) return;
     if (focus) XSetICFocus( xic );
     else XUnsetICFocus( xic );
+}
+
+BOOL X11DRV_SetIMECompositionWindowPos( HWND hwnd, const POINT *point )
+{
+    struct x11drv_win_data *data = NULL;
+    XVaNestedList attr;
+    XPoint xpoint;
+    POINT pt;
+
+    if (!(input_style & XIMPreeditPosition))
+        return FALSE;
+
+    if (!(data = get_win_data( hwnd )) || !data->xic)
+    {
+        if (data) release_win_data( data );
+        return FALSE;
+    }
+
+    pt = *point;
+    if (NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL)
+        pt.x = data->rects.client.right - data->rects.client.left - 1 - pt.x;
+
+    xpoint.x = pt.x + data->rects.client.left - data->rects.visible.left;
+    xpoint.y = pt.y + data->rects.client.top - data->rects.visible.top;
+    attr = XVaCreateNestedList( 0, XNSpotLocation, &xpoint, NULL );
+    if (attr)
+    {
+        XSetICValues( data->xic, XNPreeditAttributes, attr, NULL );
+        XFree( attr );
+    }
+
+    release_win_data( data );
+    return TRUE;
 }

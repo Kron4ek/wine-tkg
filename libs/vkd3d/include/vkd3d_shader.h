@@ -1876,7 +1876,7 @@ enum vkd3d_shader_sysval_semantic
     VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX      = 0x05,
     /** Vertex ID; SV_VertexID in Direct3D. */
     VKD3D_SHADER_SV_VERTEX_ID                 = 0x06,
-    /** Primtive ID; SV_PrimitiveID in Direct3D. */
+    /** Primitive ID; SV_PrimitiveID in Direct3D. */
     VKD3D_SHADER_SV_PRIMITIVE_ID              = 0x07,
     /** Instance ID; SV_InstanceID in Direct3D. */
     VKD3D_SHADER_SV_INSTANCE_ID               = 0x08,

@@ -74,29 +74,29 @@ int do_esync(void)
 
 struct esync
 {
-    enum esync_type type;
+    LONG type;
     int fd;
     void *shm;
 };
 
 struct semaphore
 {
-    int max;
-    int count;
+    LONG max;
+    LONG count;
 };
 C_ASSERT(sizeof(struct semaphore) == 8);
 
 struct mutex
 {
-    DWORD tid;
-    int count;    /* recursion count */
+    LONG tid;
+    LONG count;    /* recursion count */
 };
 C_ASSERT(sizeof(struct mutex) == 8);
 
 struct event
 {
-    int signaled;
-    int locked;
+    LONG signaled;
+    LONG locked;
 };
 C_ASSERT(sizeof(struct event) == 8);
 
@@ -183,7 +183,7 @@ static struct esync *add_to_list( HANDLE handle, enum esync_type type, int fd, v
         }
     }
 
-    if (!InterlockedCompareExchange( (int *)&esync_list[entry][idx].type, type, 0 ))
+    if (!InterlockedCompareExchange( &esync_list[entry][idx].type, type, 0 ))
     {
         esync_list[entry][idx].fd = fd;
         esync_list[entry][idx].shm = shm;
@@ -207,7 +207,7 @@ static struct esync *get_cached_object( HANDLE handle )
  * message queue, etc.) */
 static NTSTATUS get_object( HANDLE handle, struct esync **obj )
 {
-    NTSTATUS ret = STATUS_SUCCESS;
+    int ret = STATUS_SUCCESS;
     enum esync_type type = 0;
     unsigned int shm_idx = 0;
     obj_handle_t fd_handle;
@@ -275,7 +275,7 @@ NTSTATUS esync_close( HANDLE handle )
 
     if (entry < ESYNC_LIST_ENTRIES && esync_list[entry])
     {
-        if (InterlockedExchange((int *)&esync_list[entry][idx].type, 0))
+        if (InterlockedExchange(&esync_list[entry][idx].type, 0))
         {
             close( esync_list[entry][idx].fd );
             return STATUS_SUCCESS;
@@ -371,7 +371,7 @@ static NTSTATUS open_esync( enum esync_type type, HANDLE *handle,
 }
 
 extern NTSTATUS esync_create_semaphore(HANDLE *handle, ACCESS_MASK access,
-    const OBJECT_ATTRIBUTES *attr, LONG initial, LONG max)
+    const OBJECT_ATTRIBUTES *attr, int initial, int max)
 {
     TRACE("name %s, initial %d, max %d.\n",
         attr ? debugstr_us(attr->ObjectName) : "<no name>", initial, max);
@@ -387,7 +387,7 @@ NTSTATUS esync_open_semaphore( HANDLE *handle, ACCESS_MASK access,
     return open_esync( ESYNC_SEMAPHORE, handle, access, attr );
 }
 
-NTSTATUS esync_release_semaphore( HANDLE handle, ULONG count, ULONG *prev )
+NTSTATUS esync_release_semaphore( HANDLE handle, unsigned int count, ULONG *prev )
 {
     struct esync *obj;
     struct semaphore *semaphore;
@@ -804,7 +804,7 @@ static BOOL update_grabbed_object( struct esync *obj )
 
 /* A value of STATUS_NOT_IMPLEMENTED returned from this function means that we
  * need to delegate to server_select(). */
-static NTSTATUS __esync_wait_objects( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
+static NTSTATUS __esync_wait_objects( unsigned int count, const HANDLE *handles, BOOLEAN wait_any,
                              BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
     static const LARGE_INTEGER zero;

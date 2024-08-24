@@ -4298,7 +4298,7 @@ static void sm6_parser_emit_binop(struct sm6_parser *sm6, const struct dxil_reco
             if (!(flags & FP_ALLOW_UNSAFE_ALGEBRA))
                 ins->flags |= VKD3DSI_PRECISE_X;
             flags &= ~FP_ALLOW_UNSAFE_ALGEBRA;
-            /* SPIR-V FPFastMathMode is only available in the Kernel executon model. */
+            /* SPIR-V FPFastMathMode is only available in the Kernel execution model. */
             silence_warning = !(flags & ~(FP_NO_NAN | FP_NO_INF | FP_NO_SIGNED_ZEROS | FP_ALLOW_RECIPROCAL));
             break;
         case VKD3DSIH_IADD:
@@ -5211,7 +5211,7 @@ static void sm6_parser_emit_dx_get_dimensions(struct sm6_parser *sm6, enum dx_in
             instruction_dst_param_init_temp_vector(ins++, sm6);
             state->temp_idx = 1;
 
-            /* DXIL does not have an instrinsic for sample info, and resinfo is expected to return
+            /* DXIL does not have an intrinsic for sample info, and resinfo is expected to return
              * the sample count in .w for MS textures. The result is always a struct of 4 x uint32. */
             vsir_instruction_init(ins, &sm6->p.location, VKD3DSIH_SAMPLE_INFO);
             ins->flags = VKD3DSI_SAMPLE_INFO_UINT;

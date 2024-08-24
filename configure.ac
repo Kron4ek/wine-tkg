@@ -798,6 +798,7 @@ AS_VAR_SET_IF([enable_archs],
 
 saved_CC=$CC
 saved_CFLAGS=$CFLAGS
+saved_CPPFLAGS=$CPPFLAGS
 saved_LDFLAGS=$LDFLAGS
 
 AS_UNSET(extra_arch)
@@ -836,6 +837,7 @@ do
         esac])
 
     CFLAGS=${CROSSCFLAGS:-"-g -O2"}
+    CPPFLAGS=""
     LDFLAGS=$CROSSLDFLAGS
     AS_VAR_COPY([CC],[${wine_arch}_CC])
     AS_VAR_COPY([${wine_arch}_CFLAGS],[CFLAGS])
@@ -1016,6 +1018,7 @@ done
 
 CC=$saved_CC
 CFLAGS=$saved_CFLAGS
+CPPFLAGS=$saved_CPPFLAGS
 LDFLAGS=$saved_LDFLAGS
 
 case $HOST_ARCH in
@@ -3732,7 +3735,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-9.15.r0.g92374493\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-9.16.r0.g6c5cb546\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

@@ -2156,6 +2156,8 @@ struct vkd3d_symbol_descriptor_array
     unsigned int set;
     unsigned int binding;
     unsigned int push_constant_index;
+    bool write_only;
+    bool coherent;
 };
 
 struct vkd3d_symbol_register_data
@@ -2511,6 +2513,8 @@ static void spirv_compiler_destroy(struct spirv_compiler *compiler)
 
     vkd3d_free(compiler->push_constants);
     vkd3d_free(compiler->descriptor_offset_ids);
+
+    vkd3d_free(compiler->spirv_parameter_info);
 
     vkd3d_spirv_builder_free(&compiler->spirv_builder);
 
@@ -6076,6 +6080,26 @@ static void spirv_compiler_emit_push_constant_buffers(struct spirv_compiler *com
     }
 }
 
+static const struct vkd3d_shader_descriptor_info1 *spirv_compiler_get_descriptor_info(
+        struct spirv_compiler *compiler, enum vkd3d_shader_descriptor_type type,
+        const struct vkd3d_shader_register_range *range)
+{
+    const struct vkd3d_shader_scan_descriptor_info1 *descriptor_info = compiler->scan_descriptor_info;
+    unsigned int register_last = (range->last == ~0u) ? range->first : range->last;
+    const struct vkd3d_shader_descriptor_info1 *d;
+    unsigned int i;
+
+    for (i = 0; i < descriptor_info->descriptor_count; ++i)
+    {
+        d = &descriptor_info->descriptors[i];
+        if (d->type == type && d->register_space == range->space && d->register_index <= range->first
+                    && (d->count == ~0u || d->count > register_last - d->register_index))
+            return d;
+    }
+
+    return NULL;
+}
+
 struct vkd3d_descriptor_variable_info
 {
     const struct vkd3d_symbol *array_symbol;
@@ -6085,12 +6109,14 @@ struct vkd3d_descriptor_variable_info
 static uint32_t spirv_compiler_build_descriptor_variable(struct spirv_compiler *compiler,
         SpvStorageClass storage_class, uint32_t type_id, const struct vkd3d_shader_register *reg,
         const struct vkd3d_shader_register_range *range, enum vkd3d_shader_resource_type resource_type,
-        bool is_uav_counter, struct vkd3d_descriptor_variable_info *var_info)
+        bool is_uav, bool is_uav_counter, struct vkd3d_descriptor_variable_info *var_info)
 {
     struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
     struct vkd3d_descriptor_binding_address binding_address;
     struct vkd3d_shader_descriptor_binding binding;
+    const struct vkd3d_shader_descriptor_info1 *d;
     uint32_t array_type_id, ptr_type_id, var_id;
+    bool write_only = false, coherent = false;
     struct vkd3d_symbol symbol;
     struct rb_entry *entry;
 
@@ -6116,6 +6142,14 @@ static uint32_t spirv_compiler_build_descriptor_variable(struct spirv_compiler *
     array_type_id = vkd3d_spirv_get_op_type_runtime_array(builder, type_id);
     ptr_type_id = vkd3d_spirv_get_op_type_pointer(builder, storage_class, array_type_id);
 
+    if (is_uav)
+    {
+        d = spirv_compiler_get_descriptor_info(compiler, VKD3D_SHADER_DESCRIPTOR_TYPE_UAV, range);
+        write_only = !(d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_UAV_READ);
+        /* ROVs are implicitly globally coherent. */
+        coherent = d->uav_flags & (VKD3DSUF_GLOBALLY_COHERENT | VKD3DSUF_RASTERISER_ORDERED_VIEW);
+    }
+
     /* Declare one array variable per Vulkan binding, and use it for
      * all array declarations which map to it. */
     symbol.type = VKD3D_SYMBOL_DESCRIPTOR_ARRAY;
@@ -6124,6 +6158,8 @@ static uint32_t spirv_compiler_build_descriptor_variable(struct spirv_compiler *
     symbol.key.descriptor_array.set = binding.set;
     symbol.key.descriptor_array.binding = binding.binding;
     symbol.key.descriptor_array.push_constant_index = binding_address.push_constant_index;
+    symbol.key.descriptor_array.write_only = write_only;
+    symbol.key.descriptor_array.coherent = coherent;
     if ((entry = rb_get(&compiler->symbol_table, &symbol)))
     {
         var_info->array_symbol = RB_ENTRY_VALUE(entry, struct vkd3d_symbol, entry);
@@ -6134,6 +6170,11 @@ static uint32_t spirv_compiler_build_descriptor_variable(struct spirv_compiler *
         ptr_type_id, storage_class, 0);
     spirv_compiler_emit_descriptor_binding(compiler, var_id, &binding);
     spirv_compiler_emit_register_debug_name(builder, var_id, reg);
+
+    if (write_only)
+        vkd3d_spirv_build_op_decorate(builder, var_id, SpvDecorationNonReadable, NULL, 0);
+    if (coherent)
+        vkd3d_spirv_build_op_decorate(builder, var_id, SpvDecorationCoherent, NULL, 0);
 
     symbol.id = var_id;
     symbol.descriptor_array = NULL;
@@ -6190,7 +6231,7 @@ static void spirv_compiler_emit_cbv_declaration(struct spirv_compiler *compiler,
     vkd3d_spirv_build_op_name(builder, struct_id, "cb%u_struct", size);
 
     var_id = spirv_compiler_build_descriptor_variable(compiler, storage_class, struct_id,
-            &reg, range, VKD3D_SHADER_RESOURCE_BUFFER, false, &var_info);
+            &reg, range, VKD3D_SHADER_RESOURCE_BUFFER, false, false, &var_info);
 
     vkd3d_symbol_make_register(&reg_symbol, &reg);
     vkd3d_symbol_set_register_info(&reg_symbol, var_id, storage_class,
@@ -6247,7 +6288,7 @@ static void spirv_compiler_emit_sampler_declaration(struct spirv_compiler *compi
 
     type_id = vkd3d_spirv_get_op_type_sampler(builder);
     var_id = spirv_compiler_build_descriptor_variable(compiler, storage_class, type_id, &reg,
-            range, VKD3D_SHADER_RESOURCE_NONE, false, &var_info);
+            range, VKD3D_SHADER_RESOURCE_NONE, false, false, &var_info);
 
     vkd3d_symbol_make_register(&reg_symbol, &reg);
     vkd3d_symbol_set_register_info(&reg_symbol, var_id, storage_class,
@@ -6292,26 +6333,6 @@ static SpvImageFormat image_format_for_image_read(enum vkd3d_shader_component_ty
             FIXME("Unhandled type %#x.\n", data_type);
             return SpvImageFormatUnknown;
     }
-}
-
-static const struct vkd3d_shader_descriptor_info1 *spirv_compiler_get_descriptor_info(
-        struct spirv_compiler *compiler, enum vkd3d_shader_descriptor_type type,
-        const struct vkd3d_shader_register_range *range)
-{
-    const struct vkd3d_shader_scan_descriptor_info1 *descriptor_info = compiler->scan_descriptor_info;
-    unsigned int register_last = (range->last == ~0u) ? range->first : range->last;
-    const struct vkd3d_shader_descriptor_info1 *d;
-    unsigned int i;
-
-    for (i = 0; i < descriptor_info->descriptor_count; ++i)
-    {
-        d = &descriptor_info->descriptors[i];
-        if (d->type == type && d->register_space == range->space && d->register_index <= range->first
-                    && (d->count == ~0u || d->count > register_last - d->register_index))
-            return d;
-    }
-
-    return NULL;
 }
 
 static uint32_t spirv_compiler_get_image_type_id(struct spirv_compiler *compiler,
@@ -6492,20 +6513,13 @@ static void spirv_compiler_emit_resource_declaration(struct spirv_compiler *comp
     }
 
     var_id = spirv_compiler_build_descriptor_variable(compiler, storage_class, type_id, &reg,
-            range, resource_type, false, &var_info);
+            range, resource_type, is_uav, false, &var_info);
 
     if (is_uav)
     {
         const struct vkd3d_shader_descriptor_info1 *d;
 
         d = spirv_compiler_get_descriptor_info(compiler, VKD3D_SHADER_DESCRIPTOR_TYPE_UAV, range);
-
-        if (!(d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_UAV_READ))
-            vkd3d_spirv_build_op_decorate(builder, var_id, SpvDecorationNonReadable, NULL, 0);
-
-        /* ROVs are implicitly globally coherent. */
-        if (d->uav_flags & (VKD3DSUF_GLOBALLY_COHERENT | VKD3DSUF_RASTERISER_ORDERED_VIEW))
-            vkd3d_spirv_build_op_decorate(builder, var_id, SpvDecorationCoherent, NULL, 0);
 
         if (d->uav_flags & VKD3DSUF_RASTERISER_ORDERED_VIEW)
         {
@@ -6549,7 +6563,7 @@ static void spirv_compiler_emit_resource_declaration(struct spirv_compiler *comp
             }
 
             counter_var_id = spirv_compiler_build_descriptor_variable(compiler, storage_class,
-                    type_id, &reg, range, resource_type, true, &counter_var_info);
+                    type_id, &reg, range, resource_type, false, true, &counter_var_info);
         }
     }
 

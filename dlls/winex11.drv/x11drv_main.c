@@ -78,7 +78,6 @@ BOOL grab_fullscreen = FALSE;
 int keyboard_layout = -1;
 BOOL keyboard_scancode_detect = FALSE;
 BOOL managed_mode = TRUE;
-BOOL decorated_mode = TRUE;
 BOOL private_color_map = FALSE;
 int primary_monitor = 0;
 BOOL client_side_graphics = TRUE;
@@ -530,9 +529,6 @@ static void setup_options(void)
 
     if (!get_config_key( hkey, appkey, "Managed", buffer, sizeof(buffer) ))
         managed_mode = IS_OPTION_TRUE( buffer[0] );
-
-    if (!get_config_key( hkey, appkey, "Decorated", buffer, sizeof(buffer) ))
-        decorated_mode = IS_OPTION_TRUE( buffer[0] );
 
     if (!get_config_key( hkey, appkey, "UseXVidMode", buffer, sizeof(buffer) ))
         usexvidmode = IS_OPTION_TRUE( buffer[0] );

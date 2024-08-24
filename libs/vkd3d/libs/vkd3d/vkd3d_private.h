@@ -37,7 +37,6 @@
 #include "vkd3d.h"
 #include "vkd3d_shader.h"
 
-#include <assert.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
@@ -679,7 +678,7 @@ static inline void *d3d12_desc_get_object_ref(const volatile struct d3d12_desc *
     void *view;
 
     /* Some games, e.g. Shadow of the Tomb Raider, GRID 2019, and Horizon Zero Dawn, write descriptors
-     * from multiple threads without syncronisation. This is apparently valid in Windows. */
+     * from multiple threads without synchronisation. This is apparently valid in Windows. */
     for (;;)
     {
         do

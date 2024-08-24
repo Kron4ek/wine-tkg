@@ -2703,7 +2703,7 @@ static NTSTATUS get_dll_load_path_search_flags( LPCWSTR module, DWORD flags, WCH
     if (flags & LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR)
     {
         DWORD type = RtlDetermineDosPathNameType_U( module );
-        if (type != ABSOLUTE_DRIVE_PATH && type != ABSOLUTE_PATH && type != DEVICE_PATH)
+        if (type != ABSOLUTE_DRIVE_PATH && type != ABSOLUTE_PATH && type != DEVICE_PATH && type != UNC_PATH)
             return STATUS_INVALID_PARAMETER;
         mod_end = get_module_path_end( module );
         len += (mod_end - module) + 1;
@@ -2934,10 +2934,6 @@ static WINE_MODREF *build_main_module(void)
     NTSTATUS status;
     RTL_USER_PROCESS_PARAMETERS *params = NtCurrentTeb()->Peb->ProcessParameters;
     void *module = NtCurrentTeb()->Peb->ImageBaseAddress;
-
-    default_load_path = params->DllPath.Buffer;
-    if (!default_load_path)
-        get_dll_load_path( params->ImagePathName.Buffer, NULL, dll_safe_mode, &default_load_path );
 
     NtQueryInformationProcess( GetCurrentProcess(), ProcessImageInformation, &info, sizeof(info), NULL );
     if (info.ImageCharacteristics & IMAGE_FILE_DLL)
@@ -4503,6 +4499,10 @@ void loader_init( CONTEXT *context, void **entry )
         load_global_options();
         version_init();
 
+        default_load_path = peb->ProcessParameters->DllPath.Buffer;
+        if (!default_load_path)
+            get_dll_load_path( peb->ProcessParameters->ImagePathName.Buffer, NULL, dll_safe_mode, &default_load_path );
+
         if (NtCurrentTeb()->WowTebOffset) init_wow64( context );
 
         wm = build_main_module();
@@ -4767,7 +4767,7 @@ NTSTATUS WINAPI LdrAddDllDirectory( const UNICODE_STRING *dir, void **cookie )
     struct dll_dir_entry *ptr;
     DOS_PATHNAME_TYPE type = RtlDetermineDosPathNameType_U( dir->Buffer );
 
-    if (type != ABSOLUTE_PATH && type != ABSOLUTE_DRIVE_PATH)
+    if (type != ABSOLUTE_PATH && type != ABSOLUTE_DRIVE_PATH && type != UNC_PATH)
         return STATUS_INVALID_PARAMETER;
 
     status = RtlDosPathNameToNtPathName_U_WithStatus( dir->Buffer, &nt_name, NULL, NULL );

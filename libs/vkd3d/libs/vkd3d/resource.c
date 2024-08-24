@@ -2184,7 +2184,7 @@ static HRESULT vkd3d_bind_heap_memory(struct d3d12_device *device,
         goto allocate_memory;
     }
 
-    /* Syncronisation is not required for binding, but vkMapMemory() may be called
+    /* Synchronisation is not required for binding, but vkMapMemory() may be called
      * from another thread and it requires exclusive access. */
     vkd3d_mutex_lock(&heap->mutex);
 

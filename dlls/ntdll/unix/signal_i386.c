@@ -719,7 +719,10 @@ static inline void *init_handler( const ucontext_t *sigcontext )
     {
         struct x86_thread_data *thread_data = (struct x86_thread_data *)&teb->GdiTebBatch;
         set_fs( thread_data->fs );
-        set_gs( thread_data->gs );
+        /* FIXME ZF: This is a bit of a hack, but it doesn't matter,
+         * since this patch set goes in the wrong direction anyway. */
+        if (thread_data->gs)
+            set_gs( thread_data->gs );
     }
 #endif
 
@@ -1884,30 +1887,6 @@ static BOOL handle_syscall_trap( ucontext_t *sigcontext )
 
 
 /**********************************************************************
- *    segv_handler_early
- *
- * Handler for SIGSEGV and related errors. Used only during the initialization
- * of the process to handle virtual faults.
- */
-static void segv_handler_early( int signal, siginfo_t *siginfo, void *sigcontext )
-{
-    ucontext_t *ucontext = sigcontext;
-
-    switch (TRAP_sig(ucontext))
-    {
-    case TRAP_x86_PAGEFLT:  /* Page fault */
-        if (!virtual_handle_fault( siginfo->si_addr, (ERROR_sig(ucontext) >> 1) & 0x09,
-                NULL))
-            return;
-        /* fall-through */
-    default:
-        WINE_ERR( "Got unexpected trap %d during process initialization\n", TRAP_sig(ucontext) );
-        abort_thread(1);
-        break;
-    }
-}
-
-/**********************************************************************
  *		segv_handler
  *
  * Handler for SIGSEGV and related errors.
@@ -1955,8 +1934,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         rec.NumberParameters = 2;
         rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
         rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
-        rec.ExceptionCode = virtual_handle_fault( siginfo->si_addr, rec.ExceptionInformation[0], stack );
-        if (!rec.ExceptionCode) return;
+        if (!virtual_handle_fault( &rec, stack )) return;
         if (rec.ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
             rec.ExceptionInformation[0] == EXCEPTION_EXECUTE_FAULT)
         {
@@ -2504,34 +2482,6 @@ void signal_init_process(void)
     exit(1);
 }
 
-/**********************************************************************
- *    signal_init_early
- */
-void signal_init_early(void)
-{
-    struct sigaction sig_act;
-
-    sig_act.sa_mask = server_block_set;
-    sig_act.sa_flags = SA_SIGINFO | SA_RESTART;
-#ifdef SA_ONSTACK
-    sig_act.sa_flags |= SA_ONSTACK;
-#endif
-#ifdef __ANDROID__
-    sig_act.sa_flags |= SA_RESTORER;
-    sig_act.sa_restorer = rt_sigreturn;
-#endif
-    sig_act.sa_sigaction = segv_handler_early;
-    if (sigaction( SIGSEGV, &sig_act, NULL ) == -1) goto error;
-    if (sigaction( SIGILL, &sig_act, NULL ) == -1) goto error;
-#ifdef SIGBUS
-    if (sigaction( SIGBUS, &sig_act, NULL ) == -1) goto error;
-#endif
-    return;
-
-error:
-    perror("sigaction");
-    exit(1);
-}
 
 /***********************************************************************
  *           call_init_thunk

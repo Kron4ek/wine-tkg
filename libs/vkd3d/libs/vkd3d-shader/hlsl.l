@@ -107,6 +107,7 @@ matrix                  {return KW_MATRIX;              }
 namespace               {return KW_NAMESPACE;           }
 nointerpolation         {return KW_NOINTERPOLATION;     }
 noperspective           {return KW_NOPERSPECTIVE;       }
+NULL                    {return KW_NULL;                }
 out                     {return KW_OUT;                 }
 packoffset              {return KW_PACKOFFSET;          }
 pass                    {return KW_PASS;                }
@@ -144,6 +145,7 @@ stateblock              {return KW_STATEBLOCK;          }
 stateblock_state        {return KW_STATEBLOCK_STATE;    }
 static                  {return KW_STATIC;              }
 string                  {return KW_STRING;              }
+String                  {return KW_STRING;              }
 struct                  {return KW_STRUCT;              }
 switch                  {return KW_SWITCH;              }
 tbuffer                 {return KW_TBUFFER;             }

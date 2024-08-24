@@ -22,7 +22,6 @@
 
 #include "vkd3d_common.h"
 
-#include <assert.h>
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>

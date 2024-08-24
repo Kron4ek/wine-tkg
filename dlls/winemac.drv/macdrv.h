@@ -43,7 +43,6 @@ extern BOOL skip_single_buffer_flushes;
 extern BOOL allow_vsync;
 extern BOOL allow_set_gamma;
 extern BOOL allow_software_rendering;
-extern BOOL disable_window_decorations;
 extern BOOL force_backing_store;
 
 extern const char* debugstr_cf(CFTypeRef t);
@@ -148,12 +147,11 @@ extern UINT macdrv_ShowWindow(HWND hwnd, INT cmd, RECT *rect, UINT swp);
 extern LRESULT macdrv_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam);
 extern void macdrv_UpdateLayeredWindow(HWND hwnd, UINT flags);
 extern LRESULT macdrv_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
-extern BOOL macdrv_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const RECT *window_rect,
-                                     const RECT *client_rect, RECT *visible_rect);
+extern BOOL macdrv_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const struct window_rects *rects);
+extern BOOL macdrv_GetWindowStyleMasks(HWND hwnd, UINT style, UINT ex_style, UINT *style_mask, UINT *ex_style_mask);
 extern BOOL macdrv_CreateWindowSurface(HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface);
-extern void macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags,
-                                    const RECT *window_rect, const RECT *client_rect,
-                                    const RECT *visible_rect, const RECT *valid_rects,
+extern void macdrv_MoveWindowBits(HWND hwnd, const struct window_rects *new_rects, const RECT *valid_rects);
+extern void macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags, const struct window_rects *new_rects,
                                     struct window_surface *surface);
 extern void macdrv_DestroyCursorIcon(HCURSOR cursor);
 extern BOOL macdrv_GetCursorPos(LPPOINT pos);
@@ -183,9 +181,7 @@ struct macdrv_win_data
     macdrv_window       cocoa_window;
     macdrv_view         cocoa_view;
     macdrv_view         client_cocoa_view;
-    RECT                window_rect;            /* USER window rectangle relative to parent */
-    RECT                whole_rect;             /* Mac window rectangle for the whole window relative to parent */
-    RECT                client_rect;            /* client area relative to parent */
+    struct window_rects rects;                  /* window rects in monitor DPI, relative to parent client area */
     int                 pixel_format;           /* pixel format for GL */
     HANDLE              drag_event;             /* event to signal that Cocoa-driven window dragging has ended */
     unsigned int        on_screen : 1;          /* is window ordered in? (minimized or not) */
@@ -195,8 +191,6 @@ struct macdrv_win_data
     unsigned int        per_pixel_alpha : 1;    /* is window using per-pixel alpha? */
     unsigned int        minimized : 1;          /* is window minimized? */
     unsigned int        swap_interval : 1;      /* GL swap interval for window */
-    struct window_surface *surface;
-    struct window_surface *unminimized_surface;
 };
 
 extern struct macdrv_win_data *get_win_data(HWND hwnd);
@@ -249,7 +243,7 @@ extern void macdrv_lost_pasteboard_ownership(HWND hwnd);
 
 extern struct opengl_funcs *macdrv_wine_get_wgl_driver(UINT version);
 extern UINT macdrv_VulkanInit(UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs);
-extern void sync_gl_view(struct macdrv_win_data* data, const RECT* old_whole_rect, const RECT* old_client_rect);
+extern void sync_gl_view(struct macdrv_win_data* data, const struct window_rects *old_rects);
 
 extern CGImageRef create_cgimage_from_icon_bitmaps(HDC hdc, HANDLE icon, HBITMAP hbmColor,
                                                    unsigned char *color_bits, int color_size, HBITMAP hbmMask,

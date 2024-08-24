@@ -2121,30 +2121,6 @@ static BOOL handle_syscall_trap( ucontext_t *sigcontext )
 
 
 /**********************************************************************
- *    segv_handler_early
- *
- * Handler for SIGSEGV and related errors. Used only during the initialization
- * of the process to handle virtual faults.
- */
-static void segv_handler_early( int signal, siginfo_t *siginfo, void *sigcontext )
-{
-    ucontext_t *ucontext = sigcontext;
-
-    switch(TRAP_sig(ucontext))
-    {
-    case TRAP_x86_PAGEFLT:  /* Page fault */
-        if (!virtual_handle_fault( siginfo->si_addr, (ERROR_sig(ucontext) >> 1) & 0x09,
-                NULL ))
-            return;
-        /* fall-through */
-    default:
-        WINE_ERR( "Got unexpected trap %lld during process initialization\n", TRAP_sig(ucontext) );
-        abort_thread(1);
-        break;
-    }
-}
-
-/**********************************************************************
  *		segv_handler
  *
  * Handler for SIGSEGV and related errors.
@@ -2188,9 +2164,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         rec.NumberParameters = 2;
         rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
         rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
-        rec.ExceptionCode = virtual_handle_fault( siginfo->si_addr, rec.ExceptionInformation[0],
-                                                  (void *)RSP_sig(ucontext) );
-        if (!rec.ExceptionCode)
+        if (!virtual_handle_fault( &rec, (void *)RSP_sig(ucontext) ))
         {
             leave_handler( ucontext );
             return;
@@ -2719,29 +2693,6 @@ void signal_init_process(void)
     exit(1);
 }
 
-/**********************************************************************
- *    signal_init_early
- */
-void signal_init_early(void)
-{
-    struct sigaction sig_act;
-
-    sig_act.sa_mask = server_block_set;
-    sig_act.sa_flags = SA_RESTART | SA_SIGINFO | SA_ONSTACK;
-
-    sig_act.sa_sigaction = segv_handler_early;
-    if (sigaction( SIGSEGV, &sig_act, NULL ) == -1) goto error;
-    if (sigaction( SIGILL, &sig_act, NULL ) == -1) goto error;
-#ifdef SIGBUS
-    if (sigaction( SIGBUS, &sig_act, NULL ) == -1) goto error;
-#endif
-
-    return;
-
- error:
-    perror("sigaction");
-    exit(1);
-}
 
 /***********************************************************************
  *           call_init_thunk

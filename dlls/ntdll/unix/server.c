@@ -1627,6 +1627,7 @@ size_t server_init_process(void)
         setsockopt( fd_socket, SOL_SOCKET, SO_PASSCRED, &enable, sizeof(enable) );
     }
 #endif
+    if (__wine_needs_override_large_address_aware()) virtual_set_large_address_space();
 
     if (version != SERVER_PROTOCOL_VERSION)
         server_protocol_error( "version mismatch %d/%d.\n"
@@ -1718,12 +1719,6 @@ void server_init_process_done(void)
 #ifdef __APPLE__
     send_server_task_port();
 #endif
-    if (__wine_needs_override_large_address_aware()) virtual_set_large_address_space();
-
-    /* Install signal handlers; this cannot be done earlier, since we cannot
-     * send exceptions to the debugger before the create process event that
-     * is sent by init_process_done */
-    signal_init_process();
 
     /* always send the native TEB */
     if (!(teb = NtCurrentTeb64())) teb = NtCurrentTeb();

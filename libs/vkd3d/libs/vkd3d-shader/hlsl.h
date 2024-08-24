@@ -96,7 +96,9 @@ enum hlsl_type_class
     HLSL_CLASS_HULL_SHADER,
     HLSL_CLASS_GEOMETRY_SHADER,
     HLSL_CLASS_CONSTANT_BUFFER,
+    HLSL_CLASS_BLEND_STATE,
     HLSL_CLASS_VOID,
+    HLSL_CLASS_NULL,
 };
 
 enum hlsl_base_type
@@ -408,7 +410,7 @@ struct hlsl_attribute
 
 /* Reservation of a register and/or an offset for objects inside constant buffers, to be used as a
  *   starting point of their allocation. They are available through the register(·) and the
- *   packoffset(·) syntaxes, respectivelly.
+ *   packoffset(·) syntaxes, respectively.
  * The constant buffer offset is measured register components. */
 struct hlsl_reg_reservation
 {
@@ -454,8 +456,10 @@ struct hlsl_ir_var
      * This pointer is NULL for others. */
     struct hlsl_default_value
     {
+        /* Default value, in case the component is a string, otherwise it is NULL. */
+        const char *string;
         /* Default value, in case the component is a numeric value. */
-        union hlsl_constant_value_component value;
+        union hlsl_constant_value_component number;
     } *default_values;
 
     /* A dynamic array containing the state block on the variable's declaration, if any.
@@ -998,6 +1002,7 @@ struct hlsl_ctx
         struct hlsl_type *sampler[HLSL_SAMPLER_DIM_LAST_SAMPLER + 1];
         struct hlsl_type *string;
         struct hlsl_type *Void;
+        struct hlsl_type *null;
     } builtin_types;
 
     /* List of the instruction nodes for initializing static variables. */
@@ -1450,6 +1455,7 @@ struct hlsl_type *hlsl_new_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim 
 struct hlsl_type *hlsl_new_cb_type(struct hlsl_ctx *ctx, struct hlsl_type *format);
 struct hlsl_ir_node *hlsl_new_uint_constant(struct hlsl_ctx *ctx, unsigned int n,
         const struct vkd3d_shader_location *loc);
+struct hlsl_ir_node *hlsl_new_null_constant(struct hlsl_ctx *ctx, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_unary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op, struct hlsl_ir_node *arg,
         const struct vkd3d_shader_location *loc);
 struct hlsl_ir_var *hlsl_new_var(struct hlsl_ctx *ctx, const char *name, struct hlsl_type *type,

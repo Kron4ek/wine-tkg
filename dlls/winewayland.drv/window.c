@@ -76,9 +76,7 @@ static struct rb_tree win_data_rb = { wayland_win_data_cmp_rb };
  *
  * Create a data window structure for an existing window.
  */
-static struct wayland_win_data *wayland_win_data_create(HWND hwnd,
-                                                        const RECT *window_rect,
-                                                        const RECT *client_rect)
+static struct wayland_win_data *wayland_win_data_create(HWND hwnd, const struct window_rects *rects)
 {
     struct wayland_win_data *data;
     struct rb_entry *rb_entry;
@@ -92,8 +90,7 @@ static struct wayland_win_data *wayland_win_data_create(HWND hwnd,
     if (!(data = calloc(1, sizeof(*data)))) return NULL;
 
     data->hwnd = hwnd;
-    data->window_rect = *window_rect;
-    data->client_rect = *client_rect;
+    data->rects = *rects;
 
     pthread_mutex_lock(&win_data_mutex);
 
@@ -167,8 +164,8 @@ static void wayland_win_data_get_config(struct wayland_win_data *data,
     enum wayland_surface_config_state window_state = 0;
     DWORD style;
 
-    conf->rect = data->window_rect;
-    conf->client_rect = data->client_rect;
+    conf->rect = data->rects.window;
+    conf->client_rect = data->rects.client;
     style = NtUserGetWindowLongW(data->hwnd, GWL_STYLE);
 
     TRACE("window=%s style=%#lx\n", wine_dbgstr_rect(&conf->rect), (long)style);
@@ -200,14 +197,14 @@ static void reapply_cursor_clipping(void)
     NtUserSetThreadDpiAwarenessContext(context);
 }
 
-static void wayland_win_data_update_wayland_surface(struct wayland_win_data *data, const RECT *visible_rect)
+static void wayland_win_data_update_wayland_surface(struct wayland_win_data *data)
 {
     struct wayland_surface *surface = data->wayland_surface;
     HWND parent = NtUserGetAncestor(data->hwnd, GA_PARENT);
     BOOL visible, xdg_visible;
     WCHAR text[1024];
 
-    TRACE("hwnd=%p, rect=%s\n", data->hwnd, wine_dbgstr_rect(visible_rect));
+    TRACE("hwnd=%p\n", data->hwnd);
 
     /* We don't want wayland surfaces for child windows. */
     if (parent != NtUserGetDesktopWindow() && parent != 0)
@@ -251,7 +248,8 @@ static void wayland_win_data_update_wayland_surface(struct wayland_win_data *dat
     pthread_mutex_unlock(&surface->mutex);
 
     if (data->window_surface)
-        wayland_window_surface_update_wayland_surface(data->window_surface, visible_rect, surface);
+        wayland_window_surface_update_wayland_surface(data->window_surface,
+                                                      &data->rects.visible, surface);
 
     /* Size/position changes affect the effective pointer constraint, so update
      * it as needed. */
@@ -427,16 +425,14 @@ void WAYLAND_DestroyWindow(HWND hwnd)
 /***********************************************************************
  *           WAYLAND_WindowPosChanging
  */
-BOOL WAYLAND_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const RECT *window_rect,
-                               const RECT *client_rect, RECT *visible_rect)
+BOOL WAYLAND_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const struct window_rects *rects)
 {
     struct wayland_win_data *data = wayland_win_data_get(hwnd);
 
-    TRACE("hwnd %p, swp_flags %04x, shaped %u, window_rect %s, client_rect %s, visible_rect %s\n",
-          hwnd, swp_flags, shaped, wine_dbgstr_rect(window_rect), wine_dbgstr_rect(client_rect),
-          wine_dbgstr_rect(visible_rect));
+    TRACE("hwnd %p, swp_flags %04x, shaped %u, rects %s\n", hwnd, swp_flags, shaped, debugstr_window_rects(rects));
 
-    if (!data && !(data = wayland_win_data_create(hwnd, window_rect, client_rect))) return FALSE; /* use default surface */
+    if (!data && !(data = wayland_win_data_create(hwnd, rects))) return FALSE;
+
     wayland_win_data_release(data);
 
     return TRUE;
@@ -446,34 +442,29 @@ BOOL WAYLAND_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const REC
 /***********************************************************************
  *           WAYLAND_WindowPosChanged
  */
-void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags,
-                              const RECT *window_rect, const RECT *client_rect,
-                              const RECT *visible_rect, const RECT *valid_rects,
+void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags, const struct window_rects *new_rects,
                               struct window_surface *surface)
 {
     struct wayland_win_data *data;
     BOOL managed;
 
-    TRACE("hwnd %p window %s client %s visible %s after %p flags %08x\n",
-          hwnd, wine_dbgstr_rect(window_rect), wine_dbgstr_rect(client_rect),
-          wine_dbgstr_rect(visible_rect), insert_after, swp_flags);
+    TRACE("hwnd %p new_rects %s after %p flags %08x\n", hwnd, debugstr_window_rects(new_rects), insert_after, swp_flags);
 
     /* Get the managed state with win_data unlocked, as is_window_managed
      * may need to query win_data information about other HWNDs and thus
      * acquire the lock itself internally. */
-    managed = is_window_managed(hwnd, swp_flags, window_rect);
+    managed = is_window_managed(hwnd, swp_flags, &new_rects->window);
 
     if (!(data = wayland_win_data_get(hwnd))) return;
 
-    data->window_rect = *window_rect;
-    data->client_rect = *client_rect;
+    data->rects = *new_rects;
     data->managed = managed;
 
     if (surface) window_surface_add_ref(surface);
     if (data->window_surface) window_surface_release(data->window_surface);
     data->window_surface = surface;
 
-    wayland_win_data_update_wayland_surface(data, visible_rect);
+    wayland_win_data_update_wayland_surface(data);
     if (data->wayland_surface) wayland_win_data_update_wayland_state(data);
 
     wayland_win_data_release(data);
@@ -701,23 +692,6 @@ LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 
     wl_display_flush(process_wayland.wl_display);
     return ret;
-}
-
-/**********************************************************************
- *           wayland_window_flush
- *
- *  Flush the window_surface associated with a HWND.
- */
-void wayland_window_flush(HWND hwnd)
-{
-    struct wayland_win_data *data = wayland_win_data_get(hwnd);
-
-    if (!data) return;
-
-    if (data->window_surface)
-        window_surface_flush(data->window_surface);
-
-    wayland_win_data_release(data);
 }
 
 /**********************************************************************

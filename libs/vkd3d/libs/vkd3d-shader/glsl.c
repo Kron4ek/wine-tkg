@@ -115,7 +115,7 @@ static void glsl_src_init(struct glsl_src *glsl_src, struct vkd3d_glsl_generator
 
     if (reg->non_uniform)
         vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
-                "Internal compiler error: Unhandled 'non-uniform' modifer.");
+                "Internal compiler error: Unhandled 'non-uniform' modifier.");
     if (vsir_src->modifiers)
         vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
                 "Internal compiler error: Unhandled source modifier(s) %#x.", vsir_src->modifiers);
@@ -138,10 +138,10 @@ static uint32_t glsl_dst_init(struct glsl_dst *glsl_dst, struct vkd3d_glsl_gener
 
     if (ins->flags & VKD3DSI_PRECISE_XYZW)
         vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
-                "Internal compiler error: Unhandled 'precise' modifer.");
+                "Internal compiler error: Unhandled 'precise' modifier.");
     if (vsir_dst->reg.non_uniform)
         vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
-                "Internal compiler error: Unhandled 'non-uniform' modifer.");
+                "Internal compiler error: Unhandled 'non-uniform' modifier.");
 
     glsl_dst->vsir = vsir_dst;
     glsl_dst->register_name = vkd3d_string_buffer_get(&gen->string_buffers);

@@ -167,7 +167,14 @@ void hlsl_free_var(struct hlsl_ir_var *decl)
     for (k = 0; k <= HLSL_REGSET_LAST_OBJECT; ++k)
         vkd3d_free((void *)decl->objects_usage[k]);
 
-    vkd3d_free(decl->default_values);
+    if (decl->default_values)
+    {
+        unsigned int component_count = hlsl_type_component_count(decl->data_type);
+
+        for (k = 0; k < component_count; ++k)
+            vkd3d_free((void *)decl->default_values[k].string);
+        vkd3d_free(decl->default_values);
+    }
 
     for (i = 0; i < decl->state_block_count; ++i)
         hlsl_free_state_block(decl->state_blocks[i]);
@@ -385,6 +392,8 @@ static void hlsl_type_calculate_reg_size(struct hlsl_ctx *ctx, struct hlsl_type 
         case HLSL_CLASS_DOMAIN_SHADER:
         case HLSL_CLASS_HULL_SHADER:
         case HLSL_CLASS_GEOMETRY_SHADER:
+        case HLSL_CLASS_BLEND_STATE:
+        case HLSL_CLASS_NULL:
             break;
     }
 }
@@ -459,6 +468,8 @@ static bool type_is_single_component(const struct hlsl_type *type)
         case HLSL_CLASS_DOMAIN_SHADER:
         case HLSL_CLASS_HULL_SHADER:
         case HLSL_CLASS_GEOMETRY_SHADER:
+        case HLSL_CLASS_BLEND_STATE:
+        case HLSL_CLASS_NULL:
             return true;
 
         case HLSL_CLASS_VECTOR:
@@ -615,6 +626,7 @@ unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_ty
             case HLSL_CLASS_DOMAIN_SHADER:
             case HLSL_CLASS_HULL_SHADER:
             case HLSL_CLASS_GEOMETRY_SHADER:
+            case HLSL_CLASS_BLEND_STATE:
                 VKD3D_ASSERT(idx == 0);
                 break;
 
@@ -624,6 +636,7 @@ unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_ty
             case HLSL_CLASS_VOID:
             case HLSL_CLASS_SCALAR:
             case HLSL_CLASS_CONSTANT_BUFFER:
+            case HLSL_CLASS_NULL:
                 vkd3d_unreachable();
         }
         type = next_type;
@@ -922,6 +935,7 @@ static const char * get_case_insensitive_typename(const char *name)
         "texture",
         "vector",
         "vertexshader",
+        "string",
     };
     unsigned int i;
 
@@ -1019,6 +1033,8 @@ unsigned int hlsl_type_component_count(const struct hlsl_type *type)
         case HLSL_CLASS_DOMAIN_SHADER:
         case HLSL_CLASS_HULL_SHADER:
         case HLSL_CLASS_GEOMETRY_SHADER:
+        case HLSL_CLASS_BLEND_STATE:
+        case HLSL_CLASS_NULL:
             return 1;
 
         case HLSL_CLASS_EFFECT_GROUP:
@@ -1110,6 +1126,8 @@ bool hlsl_types_are_equal(const struct hlsl_type *t1, const struct hlsl_type *t2
         case HLSL_CLASS_DOMAIN_SHADER:
         case HLSL_CLASS_HULL_SHADER:
         case HLSL_CLASS_GEOMETRY_SHADER:
+        case HLSL_CLASS_BLEND_STATE:
+        case HLSL_CLASS_NULL:
             return true;
     }
 
@@ -1459,7 +1477,7 @@ struct hlsl_ir_node *hlsl_new_constant(struct hlsl_ctx *ctx, struct hlsl_type *t
 {
     struct hlsl_ir_constant *c;
 
-    VKD3D_ASSERT(type->class <= HLSL_CLASS_VECTOR);
+    VKD3D_ASSERT(type->class <= HLSL_CLASS_VECTOR || type->class == HLSL_CLASS_NULL);
 
     if (!(c = hlsl_alloc(ctx, sizeof(*c))))
         return NULL;
@@ -1520,6 +1538,12 @@ struct hlsl_ir_node *hlsl_new_string_constant(struct hlsl_ctx *ctx, const char *
         return NULL;
     }
     return &s->node;
+}
+
+struct hlsl_ir_node *hlsl_new_null_constant(struct hlsl_ctx *ctx, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_constant_value value = { 0 };
+    return hlsl_new_constant(ctx, ctx->builtin_types.null, &value, loc);
 }
 
 struct hlsl_ir_node *hlsl_new_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
@@ -2562,6 +2586,8 @@ struct vkd3d_string_buffer *hlsl_type_to_string(struct hlsl_ctx *ctx, const stru
         case HLSL_CLASS_DOMAIN_SHADER:
         case HLSL_CLASS_HULL_SHADER:
         case HLSL_CLASS_GEOMETRY_SHADER:
+        case HLSL_CLASS_BLEND_STATE:
+        case HLSL_CLASS_NULL:
             break;
     }
 
@@ -3262,9 +3288,15 @@ void hlsl_dump_var_default_values(const struct hlsl_ir_var *var)
     vkd3d_string_buffer_printf(&buffer, "var \"%s\" default values:", var->name);
     for (k = 0; k < component_count; ++k)
     {
-        if (k % 4 == 0)
+        bool is_string = var->default_values[k].string;
+
+        if (k % 4 == 0 || is_string)
             vkd3d_string_buffer_printf(&buffer, "\n   ");
-        vkd3d_string_buffer_printf(&buffer, " 0x%08x", var->default_values[k].value.u);
+
+        if (is_string)
+            vkd3d_string_buffer_printf(&buffer, " %s", debugstr_a(var->default_values[k].string));
+        else
+            vkd3d_string_buffer_printf(&buffer, " 0x%08x", var->default_values[k].number.u);
     }
     vkd3d_string_buffer_printf(&buffer, "\n");
 
@@ -3922,8 +3954,10 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
         ctx->builtin_types.sampler[bt] = type;
     }
 
-    ctx->builtin_types.string = hlsl_new_simple_type(ctx, "STRING", HLSL_CLASS_STRING);
     ctx->builtin_types.Void = hlsl_new_simple_type(ctx, "void", HLSL_CLASS_VOID);
+    ctx->builtin_types.null = hlsl_new_type(ctx, "NULL", HLSL_CLASS_NULL, HLSL_TYPE_UINT, 1, 1);
+    ctx->builtin_types.string = hlsl_new_simple_type(ctx, "string", HLSL_CLASS_STRING);
+    hlsl_scope_add_type(ctx->globals, ctx->builtin_types.string);
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "DepthStencilView", HLSL_CLASS_DEPTH_STENCIL_VIEW));
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "DepthStencilState", HLSL_CLASS_DEPTH_STENCIL_STATE));
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "fxgroup", HLSL_CLASS_EFFECT_GROUP));
@@ -3937,6 +3971,7 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "DomainShader", HLSL_CLASS_DOMAIN_SHADER));
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "HullShader", HLSL_CLASS_HULL_SHADER));
     hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "GeometryShader", HLSL_CLASS_GEOMETRY_SHADER));
+    hlsl_scope_add_type(ctx->globals, hlsl_new_simple_type(ctx, "BlendState", HLSL_CLASS_BLEND_STATE));
 
     for (i = 0; i < ARRAY_SIZE(effect_types); ++i)
     {

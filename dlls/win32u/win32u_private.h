@@ -41,7 +41,7 @@ extern void release_clipboard_owner( HWND hwnd );
 extern BOOL process_wine_setcursor( HWND hwnd, HWND window, HCURSOR handle );
 extern HICON alloc_cursoricon_handle( BOOL is_icon );
 extern ULONG_PTR get_icon_param( HICON handle );
-extern ULONG_PTR set_icon_param( HICON handle, ULONG_PTR param );
+extern ULONG_PTR set_icon_param( HICON handle, const struct free_icon_params *params );
 
 /* dce.c */
 extern struct window_surface dummy_surface;
@@ -102,6 +102,7 @@ extern BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret );
 extern BOOL set_caret_blink_time( unsigned int time );
 extern BOOL set_caret_pos( int x, int y );
 extern BOOL set_foreground_window( HWND hwnd, BOOL mouse );
+extern BOOL set_ime_composition_window_pos( HWND hwnd, const POINT *point );
 extern void toggle_caret( HWND hwnd );
 extern void update_mouse_tracking_info( HWND hwnd );
 extern BOOL get_clip_cursor( RECT *rect, UINT dpi );
@@ -157,10 +158,12 @@ extern void set_standard_scroll_painted( HWND hwnd, int bar, BOOL painted );
 extern void track_scroll_bar( HWND hwnd, int scrollbar, POINT pt );
 
 /* sysparams.c */
-extern BOOL enable_thunk_lock;
+extern BOOL decorated_mode;
+extern UINT64 thunk_lock_callback;
 extern HBRUSH get_55aa_brush(void);
 extern DWORD get_dialog_base_units(void);
 extern LONG get_char_dimensions( HDC hdc, TEXTMETRICW *metric, int *height );
+extern HBITMAP get_display_bitmap(void);
 extern INT get_display_depth( UNICODE_STRING *name );
 extern RECT get_display_rect( const WCHAR *display );
 extern UINT get_monitor_dpi( HMONITOR monitor );
@@ -257,8 +260,10 @@ extern DWORD get_window_long( HWND hwnd, INT offset );
 extern ULONG_PTR get_window_long_ptr( HWND hwnd, INT offset, BOOL ansi );
 extern BOOL get_window_rect( HWND hwnd, RECT *rect, UINT dpi );
 enum coords_relative;
-extern BOOL get_window_rects( HWND hwnd, enum coords_relative relative, RECT *window_rect,
-                              RECT *client_rect, UINT dpi );
+extern BOOL get_window_rect_rel( HWND hwnd, enum coords_relative rel, RECT *rect, UINT dpi );
+extern BOOL get_client_rect_rel( HWND hwnd, enum coords_relative rel, RECT *rect, UINT dpi );
+extern BOOL get_window_rects( HWND hwnd, enum coords_relative relative,
+                              struct window_rects *rects, UINT dpi );
 extern HWND *list_window_children( HDESK desktop, HWND hwnd, UNICODE_STRING *class,
                                    DWORD tid );
 extern int map_window_points( HWND hwnd_from, HWND hwnd_to, POINT *points, UINT count,

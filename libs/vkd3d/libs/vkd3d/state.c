@@ -635,14 +635,18 @@ static HRESULT d3d12_root_signature_init_push_constants(struct d3d12_root_signat
     for (i = 0; i < desc->NumParameters; ++i)
     {
         const D3D12_ROOT_PARAMETER *p = &desc->pParameters[i];
+        D3D12_SHADER_VISIBILITY visibility;
+
         if (p->ParameterType != D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
             continue;
 
-        VKD3D_ASSERT(p->ShaderVisibility <= D3D12_SHADER_VISIBILITY_PIXEL);
-        push_constants[p->ShaderVisibility].stageFlags = use_vk_heaps ? VK_SHADER_STAGE_ALL
-                : stage_flags_from_visibility(p->ShaderVisibility);
-        push_constants[p->ShaderVisibility].size += align(p->u.Constants.Num32BitValues, 4) * sizeof(uint32_t);
+        visibility = use_vk_heaps ? D3D12_SHADER_VISIBILITY_ALL : p->ShaderVisibility;
+        VKD3D_ASSERT(visibility <= D3D12_SHADER_VISIBILITY_PIXEL);
+
+        push_constants[visibility].stageFlags = stage_flags_from_visibility(visibility);
+        push_constants[visibility].size += align(p->u.Constants.Num32BitValues, 4) * sizeof(uint32_t);
     }
+
     if (push_constants[D3D12_SHADER_VISIBILITY_ALL].size)
     {
         /* When D3D12_SHADER_VISIBILITY_ALL is used we use a single push
