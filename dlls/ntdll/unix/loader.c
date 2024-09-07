@@ -1055,7 +1055,6 @@ static const unixlib_entry_t unix_call_funcs[] =
     load_so_dll,
     unwind_builtin_dll,
     unixcall_wine_dbg_write,
-    unixcall_wine_needs_override_large_address_aware,
     unixcall_wine_server_call,
     unixcall_wine_server_fd_to_handle,
     unixcall_wine_server_handle_to_fd,

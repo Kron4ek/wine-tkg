@@ -1,4 +1,4 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Sep  7 07:34:33 AM UTC 2024 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Sep  7 11:40:39 AM UTC 2024 :
 
 Local cfg files used
 
@@ -13,13 +13,12 @@ Done applying reverting hotfixes (if any) - list available in prepare.log
 
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any:
+Staging overrides, if any: -W ntdll-Syscall_Emulation
 
 fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
 fsync_futex_waitv.patch -- ( Applied patches for fsync to support futex_waitv )
 
 childwindow-proton.patch -- ( Applied child window for vk patch )
-LAA-unix-staging.patch -- ( Applied large address aware override support (legacy) )
 
 proton-win10-default.patch -- ( Enforce win10 as default wine version )
 proton_battleye.patch -- ( Add support for Proton's Battleye runtime )

@@ -3430,19 +3430,6 @@ void virtual_init(void)
         anon_mmap_fixed( (void *)0x10000, size, PROT_READ | PROT_WRITE, 0 );
 }
 
-BOOL CDECL __wine_needs_override_large_address_aware(void)
-{
-    static int needs_override = -1;
-
-    if (needs_override == -1)
-    {
-        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
-
-        needs_override = !str || atoi(str) == 1;
-    }
-    return needs_override;
-}
-
 
 /***********************************************************************
  *           get_system_affinity_mask
@@ -3496,11 +3483,6 @@ void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 )
     info->NumberOfProcessors      = peb->NumberOfProcessors;
     if (wow64) info->HighestUserAddress = (char *)get_wow_user_space_limit() - 1;
     else info->HighestUserAddress = (char *)user_space_limit - 1;
-}
-
-NTSTATUS unixcall_wine_needs_override_large_address_aware( void *args )
-{
-    return __wine_needs_override_large_address_aware();
 }
 
 
