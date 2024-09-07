@@ -58,7 +58,6 @@ static BOOLEAN (WINAPI *pTryAcquireSRWLockShared)(PSRWLOCK);
 
 static NTSTATUS (WINAPI *pNtAllocateVirtualMemory)(HANDLE, PVOID *, ULONG_PTR, SIZE_T *, ULONG, ULONG);
 static NTSTATUS (WINAPI *pNtFreeVirtualMemory)(HANDLE, PVOID *, SIZE_T *, ULONG);
-static NTSTATUS (WINAPI *pNtQuerySystemTime)(LARGE_INTEGER *);
 static NTSTATUS (WINAPI *pNtWaitForSingleObject)(HANDLE, BOOLEAN, const LARGE_INTEGER *);
 static NTSTATUS (WINAPI *pNtWaitForMultipleObjects)(ULONG,const HANDLE*,BOOLEAN,BOOLEAN,const LARGE_INTEGER*);
 static PSLIST_ENTRY (__fastcall *pRtlInterlockedPushListSList)(PSLIST_HEADER list, PSLIST_ENTRY first,
@@ -229,23 +228,8 @@ static void test_temporary_objects(void)
     ok(GetLastError() == ERROR_FILE_NOT_FOUND, "wrong error %lu\n", GetLastError());
 }
 
-static HANDLE mutex, mutex2, mutices[2];
-
-static DWORD WINAPI mutex_thread( void *param )
-{
-    DWORD expect = (DWORD)(DWORD_PTR)param;
-    DWORD ret;
-
-    ret = WaitForSingleObject( mutex, 0 );
-    ok(ret == expect, "expected %lu, got %lu\n", expect, ret);
-
-    if (!ret) ReleaseMutex( mutex );
-    return 0;
-}
-
 static void test_mutex(void)
 {
-    HANDLE thread;
     DWORD wait_ret;
     BOOL ret;
     HANDLE hCreated;
@@ -285,8 +269,7 @@ static void test_mutex(void)
     SetLastError(0xdeadbeef);
     hOpened = OpenMutexA(GENERIC_READ | GENERIC_WRITE, FALSE, "WineTestMutex");
     ok(hOpened != NULL, "OpenMutex failed with error %ld\n", GetLastError());
-    wait_ret = WaitForSingleObject(hOpened, 0);
-todo_wine_if(getenv("WINEESYNC"))   /* XFAIL: validation is not implemented */
+    wait_ret = WaitForSingleObject(hOpened, INFINITE);
     ok(wait_ret == WAIT_FAILED, "WaitForSingleObject succeeded\n");
     CloseHandle(hOpened);
 
@@ -317,7 +300,6 @@ todo_wine_if(getenv("WINEESYNC"))   /* XFAIL: validation is not implemented */
 
     SetLastError(0xdeadbeef);
     ret = ReleaseMutex(hCreated);
-todo_wine_if(getenv("WINEESYNC"))   /* XFAIL: due to the above */
     ok(!ret && (GetLastError() == ERROR_NOT_OWNER),
         "ReleaseMutex should have failed with ERROR_NOT_OWNER instead of %ld\n", GetLastError());
 
@@ -356,85 +338,6 @@ todo_wine_if(getenv("WINEESYNC"))   /* XFAIL: due to the above */
     CloseHandle(hOpened);
 
     CloseHandle(hCreated);
-
-    mutex = CreateMutexA( NULL, FALSE, NULL );
-    ok(!!mutex, "got error %lu\n", GetLastError());
-
-    ret = ReleaseMutex( mutex );
-    ok(!ret, "got %d\n", ret);
-    ok(GetLastError() == ERROR_NOT_OWNER, "got error %lu\n", GetLastError());
-
-    for (i = 0; i < 100; i++)
-    {
-        ret = WaitForSingleObject( mutex, 0 );
-        ok(ret == 0, "got %u\n", ret);
-    }
-
-    for (i = 0; i < 100; i++)
-    {
-        ret = ReleaseMutex( mutex );
-        ok(ret, "got error %lu\n", GetLastError());
-    }
-
-    ret = ReleaseMutex( mutex );
-    ok(!ret, "got %d\n", ret);
-    ok(GetLastError() == ERROR_NOT_OWNER, "got error %lu\n", GetLastError());
-
-    thread = CreateThread( NULL, 0, mutex_thread, (void *)0, 0, NULL );
-    ret = WaitForSingleObject( thread, 2000 );
-    ok(ret == 0, "wait failed: %u\n", ret);
-
-    WaitForSingleObject( mutex, 0 );
-
-    thread = CreateThread( NULL, 0, mutex_thread, (void *)WAIT_TIMEOUT, 0, NULL );
-    ret = WaitForSingleObject( thread, 2000 );
-    ok(ret == 0, "wait failed: %u\n", ret);
-
-    ret = ReleaseMutex( mutex );
-        ok(ret, "got error %lu\n", GetLastError());
-
-    thread = CreateThread( NULL, 0, mutex_thread, (void *)0, 0, NULL );
-    ret = WaitForSingleObject( thread, 2000 );
-    ok(ret == 0, "wait failed: %u\n", ret);
-
-    mutex2 = CreateMutexA( NULL, TRUE, NULL );
-    ok(!!mutex2, "got error %lu\n", GetLastError());
-
-    ret = ReleaseMutex( mutex2 );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = ReleaseMutex( mutex2 );
-    ok(!ret, "got %d\n", ret);
-    ok(GetLastError() == ERROR_NOT_OWNER, "got error %lu\n", GetLastError());
-
-    mutices[0] = mutex;
-    mutices[1] = mutex2;
-
-    ret = WaitForMultipleObjects( 2, mutices, FALSE, 0 );
-    ok(ret == 0, "got %u\n", ret);
-
-    ret = ReleaseMutex( mutex );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = ReleaseMutex( mutex2 );
-    ok(!ret, "got %d\n", ret);
-    ok(GetLastError() == ERROR_NOT_OWNER, "got error %lu\n", GetLastError());
-
-    ret = WaitForMultipleObjects( 2, mutices, TRUE, 0 );
-    ok(ret == 0, "got %u\n", ret);
-
-    ret = ReleaseMutex( mutex );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = ReleaseMutex( mutex2 );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = CloseHandle( mutex );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = CloseHandle( mutex2 );
-    ok(ret, "got error %lu\n", GetLastError());
-
 }
 
 static void test_slist(void)
@@ -610,13 +513,12 @@ static void test_slist(void)
 
 static void test_event(void)
 {
-    HANDLE handle, handle2, handles[2];
+    HANDLE handle, handle2;
     SECURITY_ATTRIBUTES sa;
     SECURITY_DESCRIPTOR sd;
     ACL acl;
     DWORD ret;
     BOOL val;
-    int i;
 
     /* no sd */
     handle = CreateEventA(NULL, FALSE, FALSE, __FILE__ ": Test Event");
@@ -720,130 +622,11 @@ static void test_event(void)
     ok( ret, "QueryMemoryResourceNotification failed err %lu\n", GetLastError() );
     ok( val == FALSE || val == TRUE, "wrong value %u\n", val );
     CloseHandle( handle );
-
-    handle = CreateEventA( NULL, TRUE, FALSE, NULL );
-    ok(!!handle, "got error %lu\n", GetLastError());
-
-    ret = WaitForSingleObject( handle, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    ret = SetEvent( handle );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = SetEvent( handle );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    for (i = 0; i < 100; i++)
-    {
-        ret = WaitForSingleObject( handle, 0 );
-        ok(ret == 0, "got %lu\n", ret);
-    }
-
-    ret = ResetEvent( handle );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = ResetEvent( handle );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = WaitForSingleObject( handle, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    handle2 = CreateEventA( NULL, FALSE, TRUE, NULL );
-    ok(!!handle2, "got error %lu\n", GetLastError());
-
-    ret = WaitForSingleObject( handle2, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    ret = WaitForSingleObject( handle2, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    ret = SetEvent( handle2 );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = SetEvent( handle2 );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = ResetEvent( handle2 );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = ResetEvent( handle2 );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = WaitForSingleObject( handle2, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    handles[0] = handle;
-    handles[1] = handle2;
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    SetEvent( handle );
-    SetEvent( handle2 );
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    ret = WaitForSingleObject( handle2, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    ResetEvent( handle );
-    SetEvent( handle2 );
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == 1, "got %lu\n", ret);
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    SetEvent( handle );
-    SetEvent( handle2 );
-
-    ret = WaitForMultipleObjects( 2, handles, TRUE, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    ret = WaitForMultipleObjects( 2, handles, TRUE, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    SetEvent( handle2 );
-    ResetEvent( handle );
-
-    ret = WaitForMultipleObjects( 2, handles, TRUE, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    ret = WaitForSingleObject( handle2, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    handles[0] = handle2;
-    handles[1] = handle;
-    SetEvent( handle );
-    SetEvent( handle2 );
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == 1, "got %lu\n", ret);
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == 1, "got %lu\n", ret);
-
-    ret = CloseHandle( handle );
-    ok(ret, "got error %lu\n", GetLastError());
-
-    ret = CloseHandle( handle2 );
-    ok(ret, "got error %lu\n", GetLastError());
 }
 
 static void test_semaphore(void)
 {
-    HANDLE handle, handle2, handles[2];
-    DWORD ret;
-    LONG prev;
-    int i;
+    HANDLE handle, handle2;
 
     /* test case sensitivity */
 
@@ -885,99 +668,6 @@ static void test_semaphore(void)
     ok( GetLastError() == ERROR_INVALID_PARAMETER, "wrong error %lu\n", GetLastError());
 
     CloseHandle( handle );
-
-    handle = CreateSemaphoreA( NULL, 0, 5, NULL );
-    ok(!!handle, "CreateSemaphore failed: %lu\n", GetLastError());
-
-    ret = WaitForSingleObject( handle, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    ret = ReleaseSemaphore( handle, 1, &prev );
-    ok(ret, "got error %lu\n", GetLastError());
-    ok(prev == 0, "got prev %ld\n", prev);
-
-    ret = ReleaseSemaphore( handle, 1, &prev );
-    ok(ret, "got error %lu\n", GetLastError());
-    ok(prev == 1, "got prev %ld\n", prev);
-
-    ret = ReleaseSemaphore( handle, 5, &prev );
-    ok(!ret, "got %ld\n", ret);
-    ok(GetLastError() == ERROR_TOO_MANY_POSTS, "got error %lu\n", GetLastError());
-    ok(prev == 1, "got prev %ld\n", prev);
-
-    ret = ReleaseSemaphore( handle, 2, &prev );
-    ok(ret, "got error %lu\n", GetLastError());
-    ok(prev == 2, "got prev %ld\n", prev);
-
-    ret = ReleaseSemaphore( handle, 1, &prev );
-    ok(ret, "got error %lu\n", GetLastError());
-    ok(prev == 4, "got prev %ld\n", prev);
-
-    for (i = 0; i < 5; i++)
-    {
-        ret = WaitForSingleObject( handle, 0 );
-        ok(ret == 0, "got %lu\n", ret);
-    }
-
-    ret = WaitForSingleObject( handle, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    handle2 = CreateSemaphoreA( NULL, 3, 5, NULL );
-    ok(!!handle2, "CreateSemaphore failed: %lu\n", GetLastError());
-
-    ret = ReleaseSemaphore( handle2, 1, &prev );
-    ok(ret, "got error %lu\n", GetLastError());
-    ok(prev == 3, "got prev %ld\n", prev);
-
-    for (i = 0; i < 4; i++)
-    {
-        ret = WaitForSingleObject( handle2, 0 );
-        ok(ret == 0, "got %lu\n", ret);
-    }
-
-    ret = WaitForSingleObject( handle2, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    handles[0] = handle;
-    handles[1] = handle2;
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    ReleaseSemaphore( handle, 1, NULL );
-    ReleaseSemaphore( handle2, 1, NULL );
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == 1, "got %lu\n", ret);
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    ReleaseSemaphore( handle, 1, NULL );
-    ReleaseSemaphore( handle2, 1, NULL );
-
-    ret = WaitForMultipleObjects( 2, handles, TRUE, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    ret = WaitForMultipleObjects( 2, handles, FALSE, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    ReleaseSemaphore( handle, 1, NULL );
-
-    ret = WaitForMultipleObjects( 2, handles, TRUE, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    ret = WaitForSingleObject( handle, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    ret = CloseHandle( handle );
-    ok(ret, "got error %lu\n", ret);
-
-    ret = CloseHandle( handle2 );
-    ok(ret, "got error %lu\n", ret);
 }
 
 static void test_waitable_timer(void)
@@ -1532,15 +1222,11 @@ static HANDLE modify_handle(HANDLE handle, DWORD modify)
     return ULongToHandle(tmp);
 }
 
-#define TIMEOUT_INFINITE (((LONGLONG)0x7fffffff) << 32 | 0xffffffff)
-
 static void test_WaitForSingleObject(void)
 {
     HANDLE signaled, nonsignaled, invalid;
-    LARGE_INTEGER ntnow, ntthen;
     LARGE_INTEGER timeout;
     NTSTATUS status;
-    DWORD now, then;
     DWORD ret;
 
     signaled = CreateEventW(NULL, TRUE, TRUE, NULL);
@@ -1624,68 +1310,6 @@ static void test_WaitForSingleObject(void)
     timeout.QuadPart = -1000000;
     status = pNtWaitForSingleObject(GetCurrentThread(), FALSE, &timeout);
     ok(status == STATUS_TIMEOUT, "expected STATUS_TIMEOUT, got %08lx\n", status);
-
-    ret = WaitForSingleObject( signaled, 0 );
-    ok(ret == 0, "got %lu\n", ret);
-
-    ret = WaitForSingleObject( nonsignaled, 0 );
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-
-    /* test that a timed wait actually does wait */
-    now = GetTickCount();
-    ret = WaitForSingleObject( nonsignaled, 100 );
-    then = GetTickCount();
-    ok(ret == WAIT_TIMEOUT, "got %lu\n", ret);
-    ok(abs((then - now) - 100) < 5, "got %lu ms\n", then - now);
-
-    now = GetTickCount();
-    ret = WaitForSingleObject( signaled, 100 );
-    then = GetTickCount();
-    ok(ret == 0, "got %lu\n", ret);
-    ok(abs(then - now) < 5, "got %lu ms\n", then - now);
-
-    ret = WaitForSingleObject( signaled, INFINITE );
-    ok(ret == 0, "got %lu\n", ret);
-
-    /* test NT timeouts */
-    pNtQuerySystemTime( &ntnow );
-    timeout.QuadPart = ntnow.QuadPart + 100 * 10000;
-    status = pNtWaitForSingleObject( nonsignaled, FALSE, &timeout );
-    pNtQuerySystemTime( &ntthen );
-    ok(status == STATUS_TIMEOUT, "got %#lx\n", status);
-    ok(abs(((ntthen.QuadPart - ntnow.QuadPart) / 10000) - 100) < 5, "got %s ns\n",
-        wine_dbgstr_longlong((ntthen.QuadPart - ntnow.QuadPart) * 100));
-
-    pNtQuerySystemTime( &ntnow );
-    timeout.QuadPart = -100 * 10000;
-    status = pNtWaitForSingleObject( nonsignaled, FALSE, &timeout );
-    pNtQuerySystemTime( &ntthen );
-    ok(status == STATUS_TIMEOUT, "got %#lx\n", status);
-    ok(abs(((ntthen.QuadPart - ntnow.QuadPart) / 10000) - 100) < 5, "got %s ns\n",
-        wine_dbgstr_longlong((ntthen.QuadPart - ntnow.QuadPart) * 100));
-
-    status = pNtWaitForSingleObject( signaled, FALSE, NULL );
-    ok(status == 0, "got %#lx\n", status);
-
-    timeout.QuadPart = TIMEOUT_INFINITE;
-    status = pNtWaitForSingleObject( signaled, FALSE, &timeout );
-    ok(status == 0, "got %#lx\n", status);
-
-    pNtQuerySystemTime( &ntnow );
-    timeout.QuadPart = ntnow.QuadPart;
-    status = pNtWaitForSingleObject( nonsignaled, FALSE, &timeout );
-    pNtQuerySystemTime( &ntthen );
-    ok(status == STATUS_TIMEOUT, "got %#lx\n", status);
-    ok(abs((ntthen.QuadPart - ntnow.QuadPart) / 10000) < 5, "got %s ns\n",
-        wine_dbgstr_longlong((ntthen.QuadPart - ntnow.QuadPart) * 100));
-
-    pNtQuerySystemTime( &ntnow );
-    timeout.QuadPart = ntnow.QuadPart - 100 * 10000;
-    status = pNtWaitForSingleObject( nonsignaled, FALSE, &timeout );
-    pNtQuerySystemTime( &ntthen );
-    ok(status == STATUS_TIMEOUT, "got %#lx\n", status);
-    ok(abs((ntthen.QuadPart - ntnow.QuadPart) / 10000) < 5, "got %s ns\n",
-        wine_dbgstr_longlong((ntthen.QuadPart - ntnow.QuadPart) * 100));
 
     CloseHandle(signaled);
     CloseHandle(nonsignaled);
@@ -3384,7 +3008,6 @@ START_TEST(sync)
     pTryAcquireSRWLockShared = (void *)GetProcAddress(hdll, "TryAcquireSRWLockShared");
     pNtAllocateVirtualMemory = (void *)GetProcAddress(hntdll, "NtAllocateVirtualMemory");
     pNtFreeVirtualMemory = (void *)GetProcAddress(hntdll, "NtFreeVirtualMemory");
-    pNtQuerySystemTime = (void *)GetProcAddress(hntdll, "NtQuerySystemTime");
     pNtWaitForSingleObject = (void *)GetProcAddress(hntdll, "NtWaitForSingleObject");
     pNtWaitForMultipleObjects = (void *)GetProcAddress(hntdll, "NtWaitForMultipleObjects");
     pRtlInterlockedPushListSList = (void *)GetProcAddress(hntdll, "RtlInterlockedPushListSList");

@@ -5803,6 +5803,7 @@ struct resume_process_reply
 };
 
 
+
 struct get_next_thread_request
 {
     struct request_header __header;
@@ -5819,75 +5820,70 @@ struct get_next_thread_reply
     char __pad_12[4];
 };
 
-enum esync_type
+
+enum fast_sync_type
 {
-    ESYNC_SEMAPHORE = 1,
-    ESYNC_AUTO_EVENT,
-    ESYNC_MANUAL_EVENT,
-    ESYNC_MUTEX,
-    ESYNC_AUTO_SERVER,
-    ESYNC_MANUAL_SERVER,
-    ESYNC_QUEUE,
+    FAST_SYNC_SEMAPHORE = 1,
+    FAST_SYNC_MUTEX,
+    FAST_SYNC_AUTO_EVENT,
+    FAST_SYNC_MANUAL_EVENT,
+    FAST_SYNC_AUTO_SERVER,
+    FAST_SYNC_MANUAL_SERVER,
+    FAST_SYNC_QUEUE,
 };
 
 
-struct create_esync_request
+
+struct get_linux_sync_device_request
 {
     struct request_header __header;
-    unsigned int access;
-    int          initval;
-    int          type;
-    int          max;
-    /* VARARG(objattr,object_attributes); */
-    char __pad_28[4];
+    char __pad_12[4];
 };
-struct create_esync_reply
+struct get_linux_sync_device_reply
+{
+    struct reply_header __header;
+    obj_handle_t handle;
+    char __pad_12[4];
+};
+
+
+
+struct get_linux_sync_obj_request
+{
+    struct request_header __header;
+    obj_handle_t handle;
+};
+struct get_linux_sync_obj_reply
 {
     struct reply_header __header;
     obj_handle_t handle;
     int          type;
-    unsigned int shm_idx;
-    char __pad_20[4];
-};
-
-struct open_esync_request
-{
-    struct request_header __header;
     unsigned int access;
-    unsigned int attributes;
-    obj_handle_t rootdir;
-    int          type;
-    /* VARARG(name,unicode_str); */
-    char __pad_28[4];
-};
-struct open_esync_reply
-{
-    struct reply_header __header;
-    obj_handle_t handle;
-    int          type;
-    unsigned int shm_idx;
     char __pad_20[4];
 };
 
 
-struct get_esync_fd_request
+
+struct fast_select_queue_request
 {
     struct request_header __header;
     obj_handle_t handle;
 };
-struct get_esync_fd_reply
+struct fast_select_queue_reply
 {
     struct reply_header __header;
-    int          type;
-    unsigned int shm_idx;
 };
 
-struct esync_msgwait_request
+
+
+struct fast_unselect_queue_request
 {
     struct request_header __header;
-    int          in_msgwait;
+    obj_handle_t handle;
+    int          signaled;
+    char __pad_20[4];
 };
-struct esync_msgwait_reply
+struct fast_unselect_queue_reply
 {
     struct reply_header __header;
 };
@@ -5908,99 +5904,16 @@ struct set_keyboard_repeat_reply
 };
 
 
-struct get_esync_apc_fd_request
+
+struct get_fast_alert_event_request
 {
     struct request_header __header;
     char __pad_12[4];
 };
-struct get_esync_apc_fd_reply
-{
-    struct reply_header __header;
-};
-
-enum fsync_type
-{
-    FSYNC_SEMAPHORE = 1,
-    FSYNC_AUTO_EVENT,
-    FSYNC_MANUAL_EVENT,
-    FSYNC_MUTEX,
-    FSYNC_AUTO_SERVER,
-    FSYNC_MANUAL_SERVER,
-    FSYNC_QUEUE,
-};
-
-
-struct create_fsync_request
-{
-    struct request_header __header;
-    unsigned int access;
-    int low;
-    int high;
-    int type;
-    /* VARARG(objattr,object_attributes); */
-    char __pad_28[4];
-};
-struct create_fsync_reply
+struct get_fast_alert_event_reply
 {
     struct reply_header __header;
     obj_handle_t handle;
-    int type;
-    unsigned int shm_idx;
-    char __pad_20[4];
-};
-
-
-struct open_fsync_request
-{
-    struct request_header __header;
-    unsigned int access;
-    unsigned int attributes;
-    obj_handle_t rootdir;
-    int          type;
-    /* VARARG(name,unicode_str); */
-    char __pad_28[4];
-};
-struct open_fsync_reply
-{
-    struct reply_header __header;
-    obj_handle_t handle;
-    int          type;
-    unsigned int shm_idx;
-    char __pad_20[4];
-};
-
-
-struct get_fsync_idx_request
-{
-    struct request_header __header;
-    obj_handle_t handle;
-};
-struct get_fsync_idx_reply
-{
-    struct reply_header __header;
-    int          type;
-    unsigned int shm_idx;
-};
-
-struct fsync_msgwait_request
-{
-    struct request_header __header;
-    int          in_msgwait;
-};
-struct fsync_msgwait_reply
-{
-    struct reply_header __header;
-};
-
-struct get_fsync_apc_idx_request
-{
-    struct request_header __header;
-    char __pad_12[4];
-};
-struct get_fsync_apc_idx_reply
-{
-    struct reply_header __header;
-    unsigned int shm_idx;
     char __pad_12[4];
 };
 
@@ -6295,17 +6208,12 @@ enum request
     REQ_suspend_process,
     REQ_resume_process,
     REQ_get_next_thread,
-    REQ_create_esync,
-    REQ_open_esync,
-    REQ_get_esync_fd,
-    REQ_esync_msgwait,
+    REQ_get_linux_sync_device,
+    REQ_get_linux_sync_obj,
+    REQ_fast_select_queue,
+    REQ_fast_unselect_queue,
     REQ_set_keyboard_repeat,
-    REQ_get_esync_apc_fd,
-    REQ_create_fsync,
-    REQ_open_fsync,
-    REQ_get_fsync_idx,
-    REQ_fsync_msgwait,
-    REQ_get_fsync_apc_idx,
+    REQ_get_fast_alert_event,
     REQ_NB_REQUESTS
 };
 
@@ -6601,17 +6509,12 @@ union generic_request
     struct suspend_process_request suspend_process_request;
     struct resume_process_request resume_process_request;
     struct get_next_thread_request get_next_thread_request;
-    struct create_esync_request create_esync_request;
-    struct open_esync_request open_esync_request;
-    struct get_esync_fd_request get_esync_fd_request;
-    struct esync_msgwait_request esync_msgwait_request;
+    struct get_linux_sync_device_request get_linux_sync_device_request;
+    struct get_linux_sync_obj_request get_linux_sync_obj_request;
+    struct fast_select_queue_request fast_select_queue_request;
+    struct fast_unselect_queue_request fast_unselect_queue_request;
     struct set_keyboard_repeat_request set_keyboard_repeat_request;
-    struct get_esync_apc_fd_request get_esync_apc_fd_request;
-    struct create_fsync_request create_fsync_request;
-    struct open_fsync_request open_fsync_request;
-    struct get_fsync_idx_request get_fsync_idx_request;
-    struct fsync_msgwait_request fsync_msgwait_request;
-    struct get_fsync_apc_idx_request get_fsync_apc_idx_request;
+    struct get_fast_alert_event_request get_fast_alert_event_request;
 };
 union generic_reply
 {
@@ -6905,17 +6808,12 @@ union generic_reply
     struct suspend_process_reply suspend_process_reply;
     struct resume_process_reply resume_process_reply;
     struct get_next_thread_reply get_next_thread_reply;
-    struct create_esync_reply create_esync_reply;
-    struct open_esync_reply open_esync_reply;
-    struct get_esync_fd_reply get_esync_fd_reply;
-    struct esync_msgwait_reply esync_msgwait_reply;
+    struct get_linux_sync_device_reply get_linux_sync_device_reply;
+    struct get_linux_sync_obj_reply get_linux_sync_obj_reply;
+    struct fast_select_queue_reply fast_select_queue_reply;
+    struct fast_unselect_queue_reply fast_unselect_queue_reply;
     struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
-    struct get_esync_apc_fd_reply get_esync_apc_fd_reply;
-    struct create_fsync_reply create_fsync_reply;
-    struct open_fsync_reply open_fsync_reply;
-    struct get_fsync_idx_reply get_fsync_idx_reply;
-    struct fsync_msgwait_reply fsync_msgwait_reply;
-    struct get_fsync_apc_idx_reply get_fsync_apc_idx_reply;
+    struct get_fast_alert_event_reply get_fast_alert_event_reply;
 };
 
 /* ### protocol_version begin ### */

@@ -372,12 +372,12 @@ AC_CHECK_HEADERS(\
 	link.h \
 	linux/cdrom.h \
 	linux/filter.h \
-	linux/futex.h \
 	linux/hdreg.h \
 	linux/hidraw.h \
 	linux/input.h \
 	linux/ioctl.h \
 	linux/major.h \
+	linux/ntsync.h \
 	linux/param.h \
 	linux/seccomp.h \
 	linux/serial.h \
@@ -408,7 +408,6 @@ AC_CHECK_HEADERS(\
 	sys/cdio.h \
 	sys/epoll.h \
 	sys/event.h \
-	sys/eventfd.h \
 	sys/extattr.h \
 	sys/filio.h \
 	sys/ipc.h \
@@ -2081,7 +2080,6 @@ AC_CHECK_FUNCS(\
 	port_create \
 	posix_fadvise \
 	posix_fallocate \
-	ppoll \
 	prctl \
 	sched_yield \
 	renameat \
@@ -2105,12 +2103,6 @@ case $host_os in
     LIBS=$ac_save_LIBS
     ;;
 esac
-
-ac_save_LIBS=$LIBS
-AC_SEARCH_LIBS(shm_open, rt,
-               [AC_DEFINE(HAVE_SHM_OPEN, 1, [Define to 1 if you have the `shm_open' function.])
-                test "$ac_res" = "none required" || AC_SUBST(RT_LIBS,"$ac_res")])
-LIBS=$ac_save_LIBS
 
 AC_CACHE_CHECK([for sched_setaffinity],wine_cv_have_sched_setaffinity,
                 AC_LINK_IFELSE([AC_LANG_PROGRAM(
@@ -3712,7 +3704,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-9.17.r0.g27b121f2\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-9.17.r0.g27b121f2\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:
