@@ -55,6 +55,7 @@ enum vkd3d_shader_api_version
     VKD3D_SHADER_API_VERSION_1_10,
     VKD3D_SHADER_API_VERSION_1_11,
     VKD3D_SHADER_API_VERSION_1_12,
+    VKD3D_SHADER_API_VERSION_1_13,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_API_VERSION),
 };
@@ -583,7 +584,7 @@ enum vkd3d_shader_parameter_name
 
 /**
  * The value of an immediate constant parameter, used in
- * struct vkd3d_shader_parameter and struct vkd3d_shader_parameter1.
+ * struct vkd3d_shader_parameter.
  */
 struct vkd3d_shader_parameter_immediate_constant
 {
@@ -601,6 +602,31 @@ struct vkd3d_shader_parameter_immediate_constant
          * \since 1.13
          */
         float f32;
+    } u;
+};
+
+/**
+ * The value of an immediate constant parameter, used in
+ * struct vkd3d_shader_parameter1.
+ *
+ * \since 1.13
+ */
+struct vkd3d_shader_parameter_immediate_constant1
+{
+    union
+    {
+        /**
+         * The value if the parameter's data type is
+         * VKD3D_SHADER_PARAMETER_DATA_TYPE_UINT32.
+         */
+        uint32_t u32;
+        /**
+         * The value if the parameter's data type is
+         * VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32.
+         */
+        float f32;
+        void *_pointer_pad;
+        uint32_t _pad[4];
     } u;
 };
 
@@ -689,7 +715,7 @@ struct vkd3d_shader_parameter1
          * Additional information if \a type is
          * VKD3D_SHADER_PARAMETER_TYPE_IMMEDIATE_CONSTANT.
          */
-        struct vkd3d_shader_parameter_immediate_constant immediate_constant;
+        struct vkd3d_shader_parameter_immediate_constant1 immediate_constant;
         /**
          * Additional information if \a type is
          * VKD3D_SHADER_PARAMETER_TYPE_SPECIALIZATION_CONSTANT.

@@ -2782,8 +2782,8 @@ bool hlsl_sm4_register_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_sem
     return false;
 }
 
-bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semantic *semantic,
-        bool output, D3D_NAME *usage)
+bool sysval_semantic_from_hlsl(enum vkd3d_shader_sysval_semantic *semantic,
+        struct hlsl_ctx *ctx, const struct hlsl_semantic *hlsl_semantic, bool output)
 {
     unsigned int i;
 
@@ -2792,7 +2792,7 @@ bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semant
         const char *name;
         bool output;
         enum vkd3d_shader_type shader_type;
-        D3D_NAME usage;
+        enum vkd3d_shader_sysval_semantic semantic;
     }
     semantics[] =
     {
@@ -2800,46 +2800,46 @@ bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semant
         {"sv_groupid",                  false, VKD3D_SHADER_TYPE_COMPUTE,   ~0u},
         {"sv_groupthreadid",            false, VKD3D_SHADER_TYPE_COMPUTE,   ~0u},
 
-        {"position",                    false, VKD3D_SHADER_TYPE_GEOMETRY,  D3D_NAME_POSITION},
-        {"sv_position",                 false, VKD3D_SHADER_TYPE_GEOMETRY,  D3D_NAME_POSITION},
-        {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_GEOMETRY,  D3D_NAME_PRIMITIVE_ID},
+        {"position",                    false, VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_POSITION},
+        {"sv_position",                 false, VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_POSITION},
+        {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_PRIMITIVE_ID},
 
-        {"position",                    true,  VKD3D_SHADER_TYPE_GEOMETRY,  D3D_NAME_POSITION},
-        {"sv_position",                 true,  VKD3D_SHADER_TYPE_GEOMETRY,  D3D_NAME_POSITION},
-        {"sv_primitiveid",              true,  VKD3D_SHADER_TYPE_GEOMETRY,  D3D_NAME_PRIMITIVE_ID},
+        {"position",                    true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_POSITION},
+        {"sv_position",                 true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_POSITION},
+        {"sv_primitiveid",              true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_PRIMITIVE_ID},
 
-        {"position",                    false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_POSITION},
-        {"sv_position",                 false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_POSITION},
-        {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_PRIMITIVE_ID},
-        {"sv_isfrontface",              false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_IS_FRONT_FACE},
-        {"sv_rendertargetarrayindex",   false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_RENDER_TARGET_ARRAY_INDEX},
-        {"sv_viewportarrayindex",       false, VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_VIEWPORT_ARRAY_INDEX},
+        {"position",                    false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_POSITION},
+        {"sv_position",                 false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_POSITION},
+        {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_PRIMITIVE_ID},
+        {"sv_isfrontface",              false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_IS_FRONT_FACE},
+        {"sv_rendertargetarrayindex",   false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
+        {"sv_viewportarrayindex",       false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
 
-        {"color",                       true,  VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_TARGET},
-        {"depth",                       true,  VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_DEPTH},
-        {"sv_target",                   true,  VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_TARGET},
-        {"sv_depth",                    true,  VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_DEPTH},
-        {"sv_coverage",                 true,  VKD3D_SHADER_TYPE_PIXEL,     D3D_NAME_COVERAGE},
+        {"color",                       true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_TARGET},
+        {"depth",                       true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_DEPTH},
+        {"sv_target",                   true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_TARGET},
+        {"sv_depth",                    true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_DEPTH},
+        {"sv_coverage",                 true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_COVERAGE},
 
-        {"sv_position",                 false, VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_UNDEFINED},
-        {"sv_vertexid",                 false, VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_VERTEX_ID},
-        {"sv_instanceid",               false, VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_INSTANCE_ID},
+        {"sv_position",                 false, VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_NONE},
+        {"sv_vertexid",                 false, VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_VERTEX_ID},
+        {"sv_instanceid",               false, VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_INSTANCE_ID},
 
-        {"position",                    true,  VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_POSITION},
-        {"sv_position",                 true,  VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_POSITION},
-        {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_RENDER_TARGET_ARRAY_INDEX},
-        {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_VERTEX,    D3D_NAME_VIEWPORT_ARRAY_INDEX},
+        {"position",                    true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_POSITION},
+        {"sv_position",                 true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_POSITION},
+        {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
+        {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
     };
-    bool needs_compat_mapping = ascii_strncasecmp(semantic->name, "sv_", 3);
+    bool needs_compat_mapping = ascii_strncasecmp(hlsl_semantic->name, "sv_", 3);
 
     for (i = 0; i < ARRAY_SIZE(semantics); ++i)
     {
-        if (!ascii_strcasecmp(semantic->name, semantics[i].name)
+        if (!ascii_strcasecmp(hlsl_semantic->name, semantics[i].name)
                 && output == semantics[i].output
                 && (ctx->semantic_compat_mapping == needs_compat_mapping || !needs_compat_mapping)
                 && ctx->profile->type == semantics[i].shader_type)
         {
-            *usage = semantics[i].usage;
+            *semantic = semantics[i].semantic;
             return true;
         }
     }
@@ -2847,7 +2847,7 @@ bool hlsl_sm4_usage_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semant
     if (!needs_compat_mapping)
         return false;
 
-    *usage = D3D_NAME_UNDEFINED;
+    *semantic = VKD3D_SHADER_SV_NONE;
     return true;
 }
 
@@ -2880,16 +2880,16 @@ static void write_sm4_signature(struct hlsl_ctx *ctx, struct dxbc_writer *dxbc, 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
         unsigned int width = (1u << var->data_type->dimx) - 1, use_mask;
+        enum vkd3d_shader_sysval_semantic semantic;
         uint32_t usage_idx, reg_idx;
-        D3D_NAME usage;
         bool has_idx;
 
         if ((output && !var->is_output_semantic) || (!output && !var->is_input_semantic))
             continue;
 
-        ret = hlsl_sm4_usage_from_semantic(ctx, &var->semantic, output, &usage);
+        ret = sysval_semantic_from_hlsl(&semantic, ctx, &var->semantic, output);
         VKD3D_ASSERT(ret);
-        if (usage == ~0u)
+        if (semantic == ~0u)
             continue;
         usage_idx = var->semantic.index;
 
@@ -2908,26 +2908,26 @@ static void write_sm4_signature(struct hlsl_ctx *ctx, struct dxbc_writer *dxbc, 
             use_mask = 0xf ^ use_mask;
 
         /* Special pixel shader semantics (TARGET, DEPTH, COVERAGE). */
-        if (usage >= 64)
-            usage = 0;
+        if (semantic >= VKD3D_SHADER_SV_TARGET)
+            semantic = VKD3D_SHADER_SV_NONE;
 
         put_u32(&buffer, 0); /* name */
         put_u32(&buffer, usage_idx);
-        put_u32(&buffer, usage);
+        put_u32(&buffer, semantic);
         switch (var->data_type->e.numeric.type)
         {
             case HLSL_TYPE_FLOAT:
             case HLSL_TYPE_HALF:
-                put_u32(&buffer, D3D_REGISTER_COMPONENT_FLOAT32);
+                put_u32(&buffer, VKD3D_SHADER_COMPONENT_FLOAT);
                 break;
 
             case HLSL_TYPE_INT:
-                put_u32(&buffer, D3D_REGISTER_COMPONENT_SINT32);
+                put_u32(&buffer, VKD3D_SHADER_COMPONENT_INT);
                 break;
 
             case HLSL_TYPE_BOOL:
             case HLSL_TYPE_UINT:
-                put_u32(&buffer, D3D_REGISTER_COMPONENT_UINT32);
+                put_u32(&buffer, VKD3D_SHADER_COMPONENT_UINT);
                 break;
 
             default:
@@ -2935,7 +2935,7 @@ static void write_sm4_signature(struct hlsl_ctx *ctx, struct dxbc_writer *dxbc, 
                     hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                             "Invalid data type %s for semantic variable %s.", string->buffer, var->name);
                 hlsl_release_string_buffer(ctx, string);
-                put_u32(&buffer, D3D_REGISTER_COMPONENT_UNKNOWN);
+                put_u32(&buffer, VKD3D_SHADER_COMPONENT_VOID);
         }
         put_u32(&buffer, reg_idx);
         put_u32(&buffer, vkd3d_make_u16(width, use_mask));
@@ -2944,25 +2944,25 @@ static void write_sm4_signature(struct hlsl_ctx *ctx, struct dxbc_writer *dxbc, 
     i = 0;
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
-        const char *semantic = var->semantic.name;
+        enum vkd3d_shader_sysval_semantic semantic;
+        const char *name = var->semantic.name;
         size_t string_offset;
-        D3D_NAME usage;
 
         if ((output && !var->is_output_semantic) || (!output && !var->is_input_semantic))
             continue;
 
-        hlsl_sm4_usage_from_semantic(ctx, &var->semantic, output, &usage);
-        if (usage == ~0u)
+        sysval_semantic_from_hlsl(&semantic, ctx, &var->semantic, output);
+        if (semantic == ~0u)
             continue;
 
-        if (usage == D3D_NAME_TARGET && !ascii_strcasecmp(semantic, "color"))
+        if (semantic == VKD3D_SHADER_SV_TARGET && !ascii_strcasecmp(name, "color"))
             string_offset = put_string(&buffer, "SV_Target");
-        else if (usage == D3D_NAME_DEPTH && !ascii_strcasecmp(semantic, "depth"))
+        else if (semantic == VKD3D_SHADER_SV_DEPTH && !ascii_strcasecmp(name, "depth"))
             string_offset = put_string(&buffer, "SV_Depth");
-        else if (usage == D3D_NAME_POSITION && !ascii_strcasecmp(semantic, "position"))
+        else if (semantic == VKD3D_SHADER_SV_POSITION && !ascii_strcasecmp(name, "position"))
             string_offset = put_string(&buffer, "SV_Position");
         else
-            string_offset = put_string(&buffer, semantic);
+            string_offset = put_string(&buffer, name);
         set_u32(&buffer, (2 + i++ * 6) * sizeof(uint32_t), string_offset);
     }
 
@@ -3123,24 +3123,24 @@ static D3D_SHADER_INPUT_TYPE sm4_resource_type(const struct hlsl_type *type)
     vkd3d_unreachable();
 }
 
-static D3D_RESOURCE_RETURN_TYPE sm4_resource_format(const struct hlsl_type *type)
+static enum vkd3d_sm4_data_type sm4_data_type(const struct hlsl_type *type)
 {
     switch (type->e.resource.format->e.numeric.type)
     {
         case HLSL_TYPE_DOUBLE:
-            return D3D_RETURN_TYPE_DOUBLE;
+            return VKD3D_SM4_DATA_DOUBLE;
 
         case HLSL_TYPE_FLOAT:
         case HLSL_TYPE_HALF:
-            return D3D_RETURN_TYPE_FLOAT;
+            return VKD3D_SM4_DATA_FLOAT;
 
         case HLSL_TYPE_INT:
-            return D3D_RETURN_TYPE_SINT;
+            return VKD3D_SM4_DATA_INT;
             break;
 
         case HLSL_TYPE_BOOL:
         case HLSL_TYPE_UINT:
-            return D3D_RETURN_TYPE_UINT;
+            return VKD3D_SM4_DATA_UINT;
 
         default:
             vkd3d_unreachable();
@@ -3471,7 +3471,7 @@ static void write_sm4_rdef(struct hlsl_ctx *ctx, struct dxbc_writer *dxbc)
         {
             unsigned int dimx = resource->component_type->e.resource.format->dimx;
 
-            put_u32(&buffer, sm4_resource_format(resource->component_type));
+            put_u32(&buffer, sm4_data_type(resource->component_type));
             put_u32(&buffer, sm4_rdef_resource_dimension(resource->component_type));
             put_u32(&buffer, ~0u); /* FIXME: multisample count */
             flags |= (dimx - 1) << VKD3D_SM4_SIF_TEXTURE_COMPONENTS_SHIFT;
@@ -4348,7 +4348,7 @@ static void write_sm4_dcl_textures(const struct tpf_writer *tpf, const struct ex
             .dsts[0].reg.idx_count = 1,
             .dst_count = 1,
 
-            .idx[0] = sm4_resource_format(component_type) * 0x1111,
+            .idx[0] = sm4_data_type(component_type) * 0x1111,
             .idx_count = 1,
         };
 
@@ -4412,7 +4412,7 @@ static void write_sm4_dcl_semantic(const struct tpf_writer *tpf, const struct hl
 {
     const struct hlsl_profile_info *profile = tpf->ctx->profile;
     const bool output = var->is_output_semantic;
-    D3D_NAME usage;
+    enum vkd3d_shader_sysval_semantic semantic;
     bool has_idx;
 
     struct sm4_instruction instr =
@@ -4445,22 +4445,22 @@ static void write_sm4_dcl_semantic(const struct tpf_writer *tpf, const struct hl
     if (instr.dsts[0].reg.type == VKD3DSPR_DEPTHOUT)
         instr.dsts[0].reg.dimension = VSIR_DIMENSION_SCALAR;
 
-    hlsl_sm4_usage_from_semantic(tpf->ctx, &var->semantic, output, &usage);
-    if (usage == ~0u)
-        usage = D3D_NAME_UNDEFINED;
+    sysval_semantic_from_hlsl(&semantic, tpf->ctx, &var->semantic, output);
+    if (semantic == ~0u)
+        semantic = VKD3D_SHADER_SV_NONE;
 
     if (var->is_input_semantic)
     {
-        switch (usage)
+        switch (semantic)
         {
-            case D3D_NAME_UNDEFINED:
+            case VKD3D_SHADER_SV_NONE:
                 instr.opcode = (profile->type == VKD3D_SHADER_TYPE_PIXEL)
                         ? VKD3D_SM4_OP_DCL_INPUT_PS : VKD3D_SM4_OP_DCL_INPUT;
                 break;
 
-            case D3D_NAME_INSTANCE_ID:
-            case D3D_NAME_PRIMITIVE_ID:
-            case D3D_NAME_VERTEX_ID:
+            case VKD3D_SHADER_SV_INSTANCE_ID:
+            case VKD3D_SHADER_SV_PRIMITIVE_ID:
+            case VKD3D_SHADER_SV_VERTEX_ID:
                 instr.opcode = (profile->type == VKD3D_SHADER_TYPE_PIXEL)
                         ? VKD3D_SM4_OP_DCL_INPUT_PS_SGV : VKD3D_SM4_OP_DCL_INPUT_SGV;
                 break;
@@ -4510,25 +4510,25 @@ static void write_sm4_dcl_semantic(const struct tpf_writer *tpf, const struct hl
     }
     else
     {
-        if (usage == D3D_NAME_UNDEFINED || profile->type == VKD3D_SHADER_TYPE_PIXEL)
+        if (semantic == VKD3D_SHADER_SV_NONE || profile->type == VKD3D_SHADER_TYPE_PIXEL)
             instr.opcode = VKD3D_SM4_OP_DCL_OUTPUT;
         else
             instr.opcode = VKD3D_SM4_OP_DCL_OUTPUT_SIV;
     }
 
-    switch (usage)
+    switch (semantic)
     {
-        case D3D_NAME_COVERAGE:
-        case D3D_NAME_DEPTH:
-        case D3D_NAME_DEPTH_GREATER_EQUAL:
-        case D3D_NAME_DEPTH_LESS_EQUAL:
-        case D3D_NAME_TARGET:
-        case D3D_NAME_UNDEFINED:
+        case VKD3D_SHADER_SV_COVERAGE:
+        case VKD3D_SHADER_SV_DEPTH:
+        case VKD3D_SHADER_SV_DEPTH_GREATER_EQUAL:
+        case VKD3D_SHADER_SV_DEPTH_LESS_EQUAL:
+        case VKD3D_SHADER_SV_TARGET:
+        case VKD3D_SHADER_SV_NONE:
             break;
 
         default:
             instr.idx_count = 1;
-            instr.idx[0] = usage;
+            instr.idx[0] = semantic;
             break;
     }
 
@@ -6110,7 +6110,7 @@ static void write_sm4_sfi0(struct hlsl_ctx *ctx, struct dxbc_writer *dxbc)
     /* FIXME: We also emit code that should require UAVS_AT_EVERY_STAGE,
      * STENCIL_REF, and TYPED_UAV_LOAD_ADDITIONAL_FORMATS. */
 
-    if (flags)
+    if (*flags)
         dxbc_writer_add_section(dxbc, TAG_SFI0, flags, sizeof(*flags));
     else
         vkd3d_free(flags);

@@ -575,6 +575,12 @@ static const char * get_fx_4_type_name(const struct hlsl_type *type)
     }
 }
 
+static bool is_numeric_fx_4_type(const struct hlsl_type *type)
+{
+    type = hlsl_get_multiarray_element_type(type);
+    return type->class == HLSL_CLASS_STRUCT || hlsl_is_numeric_type(type);
+}
+
 static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_context *fx)
 {
     struct field_offsets
@@ -584,43 +590,41 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
         uint32_t offset;
         uint32_t type;
     };
-    uint32_t name_offset, offset, total_size, packed_size, stride, numeric_desc;
+    uint32_t name_offset, offset, unpacked_size, packed_size, stride, numeric_desc;
     struct vkd3d_bytecode_buffer *buffer = &fx->unstructured;
     struct field_offsets *field_offsets = NULL;
+    const struct hlsl_type *element_type;
     struct hlsl_ctx *ctx = fx->ctx;
     uint32_t elements_count = 0;
     const char *name;
     size_t i;
 
-    /* Resolve arrays to element type and number of elements. */
     if (type->class == HLSL_CLASS_ARRAY)
-    {
         elements_count = hlsl_get_multiarray_size(type);
-        type = hlsl_get_multiarray_element_type(type);
-    }
+    element_type = hlsl_get_multiarray_element_type(type);
 
-    name = get_fx_4_type_name(type);
+    name = get_fx_4_type_name(element_type);
 
     name_offset = write_string(name, fx);
-    if (type->class == HLSL_CLASS_STRUCT)
+    if (element_type->class == HLSL_CLASS_STRUCT)
     {
-        if (!(field_offsets = hlsl_calloc(ctx, type->e.record.field_count, sizeof(*field_offsets))))
+        if (!(field_offsets = hlsl_calloc(ctx, element_type->e.record.field_count, sizeof(*field_offsets))))
             return 0;
 
-        for (i = 0; i < type->e.record.field_count; ++i)
+        for (i = 0; i < element_type->e.record.field_count; ++i)
         {
-            const struct hlsl_struct_field *field = &type->e.record.fields[i];
+            const struct hlsl_struct_field *field = &element_type->e.record.fields[i];
 
             field_offsets[i].name = write_string(field->name, fx);
             field_offsets[i].semantic = write_string(field->semantic.raw_name, fx);
-            field_offsets[i].offset = field->reg_offset[HLSL_REGSET_NUMERIC];
+            field_offsets[i].offset = field->reg_offset[HLSL_REGSET_NUMERIC] * sizeof(float);
             field_offsets[i].type = write_type(field->type, fx);
         }
     }
 
     offset = put_u32_unaligned(buffer, name_offset);
 
-    switch (type->class)
+    switch (element_type->class)
     {
         case HLSL_CLASS_SCALAR:
         case HLSL_CLASS_VECTOR:
@@ -659,32 +663,32 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
             vkd3d_unreachable();
 
         case HLSL_CLASS_VOID:
-            FIXME("Writing type class %u is not implemented.\n", type->class);
+            FIXME("Writing type class %u is not implemented.\n", element_type->class);
             set_status(fx, VKD3D_ERROR_NOT_IMPLEMENTED);
             return 0;
     }
 
     /* Structures can only contain numeric fields, this is validated during variable declaration. */
-    total_size = stride = type->reg_size[HLSL_REGSET_NUMERIC] * sizeof(float);
+    unpacked_size = type->reg_size[HLSL_REGSET_NUMERIC] * sizeof(float);
+
     packed_size = 0;
-    if (type->class == HLSL_CLASS_STRUCT || hlsl_is_numeric_type(type))
-        packed_size = hlsl_type_component_count(type) * sizeof(float);
+    if (is_numeric_fx_4_type(element_type))
+        packed_size = hlsl_type_component_count(element_type) * sizeof(float);
     if (elements_count)
-    {
-        total_size *= elements_count;
         packed_size *= elements_count;
-    }
+
+    stride = element_type->reg_size[HLSL_REGSET_NUMERIC] * sizeof(float);
     stride = align(stride, 4 * sizeof(float));
 
     put_u32_unaligned(buffer, elements_count);
-    put_u32_unaligned(buffer, total_size);
+    put_u32_unaligned(buffer, unpacked_size);
     put_u32_unaligned(buffer, stride);
     put_u32_unaligned(buffer, packed_size);
 
-    if (type->class == HLSL_CLASS_STRUCT)
+    if (element_type->class == HLSL_CLASS_STRUCT)
     {
-        put_u32_unaligned(buffer, type->e.record.field_count);
-        for (i = 0; i < type->e.record.field_count; ++i)
+        put_u32_unaligned(buffer, element_type->e.record.field_count);
+        for (i = 0; i < element_type->e.record.field_count; ++i)
         {
             const struct field_offsets *field = &field_offsets[i];
 
@@ -700,7 +704,7 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
             put_u32_unaligned(buffer, 0); /* Interface count */
         }
     }
-    else if (type->class == HLSL_CLASS_TEXTURE)
+    else if (element_type->class == HLSL_CLASS_TEXTURE)
     {
         static const uint32_t texture_type[] =
         {
@@ -716,13 +720,13 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
             [HLSL_SAMPLER_DIM_CUBEARRAY] = 23,
         };
 
-        put_u32_unaligned(buffer, texture_type[type->sampler_dim]);
+        put_u32_unaligned(buffer, texture_type[element_type->sampler_dim]);
     }
-    else if (type->class == HLSL_CLASS_SAMPLER)
+    else if (element_type->class == HLSL_CLASS_SAMPLER)
     {
         put_u32_unaligned(buffer, 21);
     }
-    else if (type->class == HLSL_CLASS_UAV)
+    else if (element_type->class == HLSL_CLASS_UAV)
     {
         static const uint32_t uav_type[] =
         {
@@ -735,60 +739,60 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
             [HLSL_SAMPLER_DIM_STRUCTURED_BUFFER] = 40,
         };
 
-        put_u32_unaligned(buffer, uav_type[type->sampler_dim]);
+        put_u32_unaligned(buffer, uav_type[element_type->sampler_dim]);
     }
-    else if (type->class == HLSL_CLASS_DEPTH_STENCIL_VIEW)
+    else if (element_type->class == HLSL_CLASS_DEPTH_STENCIL_VIEW)
     {
         put_u32_unaligned(buffer, 20);
     }
-    else if (type->class == HLSL_CLASS_RENDER_TARGET_VIEW)
+    else if (element_type->class == HLSL_CLASS_RENDER_TARGET_VIEW)
     {
         put_u32_unaligned(buffer, 19);
     }
-    else if (type->class == HLSL_CLASS_PIXEL_SHADER)
+    else if (element_type->class == HLSL_CLASS_PIXEL_SHADER)
     {
         put_u32_unaligned(buffer, 5);
     }
-    else if (type->class == HLSL_CLASS_VERTEX_SHADER)
+    else if (element_type->class == HLSL_CLASS_VERTEX_SHADER)
     {
         put_u32_unaligned(buffer, 6);
     }
-    else if (type->class == HLSL_CLASS_RASTERIZER_STATE)
+    else if (element_type->class == HLSL_CLASS_RASTERIZER_STATE)
     {
         put_u32_unaligned(buffer, 4);
     }
-    else if (type->class == HLSL_CLASS_DEPTH_STENCIL_STATE)
+    else if (element_type->class == HLSL_CLASS_DEPTH_STENCIL_STATE)
     {
         put_u32_unaligned(buffer, 3);
     }
-    else if (type->class == HLSL_CLASS_BLEND_STATE)
+    else if (element_type->class == HLSL_CLASS_BLEND_STATE)
     {
         put_u32_unaligned(buffer, 2);
     }
-    else if (type->class == HLSL_CLASS_STRING)
+    else if (element_type->class == HLSL_CLASS_STRING)
     {
         put_u32_unaligned(buffer, 1);
     }
-    else if (hlsl_is_numeric_type(type))
+    else if (hlsl_is_numeric_type(element_type))
     {
-        numeric_desc = get_fx_4_numeric_type_description(type, fx);
+        numeric_desc = get_fx_4_numeric_type_description(element_type, fx);
         put_u32_unaligned(buffer, numeric_desc);
     }
-    else if (type->class == HLSL_CLASS_COMPUTE_SHADER)
+    else if (element_type->class == HLSL_CLASS_COMPUTE_SHADER)
     {
         put_u32_unaligned(buffer, 28);
     }
-    else if (type->class == HLSL_CLASS_HULL_SHADER)
+    else if (element_type->class == HLSL_CLASS_HULL_SHADER)
     {
         put_u32_unaligned(buffer, 29);
     }
-    else if (type->class == HLSL_CLASS_DOMAIN_SHADER)
+    else if (element_type->class == HLSL_CLASS_DOMAIN_SHADER)
     {
         put_u32_unaligned(buffer, 30);
     }
     else
     {
-        FIXME("Type %u is not supported.\n", type->class);
+        FIXME("Type %u is not supported.\n", element_type->class);
         set_status(fx, VKD3D_ERROR_NOT_IMPLEMENTED);
     }
 
@@ -2126,7 +2130,7 @@ static unsigned int decompose_fx_4_state_function_call(struct hlsl_ir_var *var, 
 }
 
 /* For some states assignment sets all of the elements. This behaviour is limited to certain states of BlendState
-   object, and only when fx_5_0 profile is used. */
+   object, and only when fx_4_1 or fx_5_0 profile is used. */
 static unsigned int decompose_fx_4_state_block_expand_array(struct hlsl_ir_var *var, struct hlsl_state_block *block,
         unsigned int entry_index, struct fx_write_context *fx)
 {
@@ -2140,7 +2144,7 @@ static unsigned int decompose_fx_4_state_block_expand_array(struct hlsl_ir_var *
 
     if (type->class != HLSL_CLASS_BLEND_STATE)
         return 1;
-    if (ctx->profile->major_version != 5)
+    if (hlsl_version_lt(ctx, 4, 1))
         return 1;
     if (entry->lhs_has_index)
         return 1;
@@ -2401,6 +2405,9 @@ static void write_fx_4_buffer(struct hlsl_buffer *b, struct fx_write_context *fx
     size = 0;
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
+        if (!is_numeric_fx_4_type(var->data_type))
+            continue;
+
         if (var->buffer != b)
             continue;
 

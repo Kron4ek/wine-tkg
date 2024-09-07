@@ -20,6 +20,19 @@
 
 #include "vkd3d_shader_private.h"
 
+#define DXBC_CHECKSUM_SKIP_BYTE_COUNT 20
+
+static void compute_dxbc_checksum(const void *dxbc, size_t size, uint32_t checksum[4])
+{
+    const uint8_t *ptr = dxbc;
+
+    VKD3D_ASSERT(size > DXBC_CHECKSUM_SKIP_BYTE_COUNT);
+    ptr += DXBC_CHECKSUM_SKIP_BYTE_COUNT;
+    size -= DXBC_CHECKSUM_SKIP_BYTE_COUNT;
+
+    vkd3d_compute_md5(ptr, size, checksum, VKD3D_MD5_DXBC);
+}
+
 void dxbc_writer_init(struct dxbc_writer *dxbc)
 {
     memset(dxbc, 0, sizeof(*dxbc));
@@ -72,7 +85,7 @@ int vkd3d_shader_serialize_dxbc(size_t section_count, const struct vkd3d_shader_
     }
     set_u32(&buffer, size_position, bytecode_get_size(&buffer));
 
-    vkd3d_compute_dxbc_checksum(buffer.data, buffer.size, checksum);
+    compute_dxbc_checksum(buffer.data, buffer.size, checksum);
     for (i = 0; i < 4; ++i)
         set_u32(&buffer, checksum_position + i * sizeof(uint32_t), checksum[i]);
 
@@ -188,7 +201,7 @@ static int parse_dxbc(const struct vkd3d_shader_code *dxbc, struct vkd3d_shader_
     checksum[3] = read_u32(&ptr);
     if (!(flags & VKD3D_SHADER_PARSE_DXBC_IGNORE_CHECKSUM))
     {
-        vkd3d_compute_dxbc_checksum(data, data_size, calculated_checksum);
+        compute_dxbc_checksum(data, data_size, calculated_checksum);
         if (memcmp(checksum, calculated_checksum, sizeof(checksum)))
         {
             WARN("Checksum {0x%08x, 0x%08x, 0x%08x, 0x%08x} does not match "
@@ -1488,7 +1501,7 @@ int vkd3d_shader_serialize_root_signature(const struct vkd3d_shader_versioned_ro
     dxbc->code = context.buffer.data;
     dxbc->size = total_size;
 
-    vkd3d_compute_dxbc_checksum(dxbc->code, dxbc->size, checksum);
+    compute_dxbc_checksum(dxbc->code, dxbc->size, checksum);
     for (i = 0; i < 4; ++i)
         set_u32(&context.buffer, (i + 1) * sizeof(uint32_t), checksum[i]);
 

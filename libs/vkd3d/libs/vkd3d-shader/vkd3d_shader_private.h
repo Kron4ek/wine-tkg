@@ -152,6 +152,12 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_HLSL_UNKNOWN_MODIFIER            = 5030,
     VKD3D_SHADER_ERROR_HLSL_INVALID_STATE_BLOCK_ENTRY   = 5031,
     VKD3D_SHADER_ERROR_HLSL_FAILED_FORCED_UNROLL        = 5032,
+    VKD3D_SHADER_ERROR_HLSL_INVALID_PROFILE             = 5033,
+    VKD3D_SHADER_ERROR_HLSL_MISPLACED_COMPILE           = 5034,
+    VKD3D_SHADER_ERROR_HLSL_INVALID_DOMAIN              = 5035,
+    VKD3D_SHADER_ERROR_HLSL_INVALID_CONTROL_POINT_COUNT = 5036,
+    VKD3D_SHADER_ERROR_HLSL_INVALID_OUTPUT_PRIMITIVE    = 5037,
+    VKD3D_SHADER_ERROR_HLSL_INVALID_PARTITIONING        = 5038,
 
     VKD3D_SHADER_WARNING_HLSL_IMPLICIT_TRUNCATION       = 5300,
     VKD3D_SHADER_WARNING_HLSL_DIVISION_BY_ZERO          = 5301,
@@ -169,6 +175,10 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_D3DBC_OUT_OF_MEMORY              = 7004,
     VKD3D_SHADER_ERROR_D3DBC_INVALID_REGISTER_INDEX     = 7005,
     VKD3D_SHADER_ERROR_D3DBC_UNDECLARED_SEMANTIC        = 7006,
+    VKD3D_SHADER_ERROR_D3DBC_INVALID_REGISTER_TYPE      = 7007,
+    VKD3D_SHADER_ERROR_D3DBC_INVALID_REGISTER_COUNT     = 7008,
+    VKD3D_SHADER_ERROR_D3DBC_NOT_IMPLEMENTED            = 7009,
+    VKD3D_SHADER_ERROR_D3DBC_INVALID_PROFILE            = 7010,
 
     VKD3D_SHADER_WARNING_D3DBC_IGNORED_INSTRUCTION_FLAGS= 7300,
 
@@ -1389,6 +1399,9 @@ enum vkd3d_result vsir_program_normalise(struct vsir_program *program, uint64_t 
         const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_message_context *message_context);
 enum vkd3d_result vsir_program_validate(struct vsir_program *program, uint64_t config_flags,
         const char *source_name, struct vkd3d_shader_message_context *message_context);
+bool vsir_instruction_init_with_params(struct vsir_program *program,
+        struct vkd3d_shader_instruction *ins, const struct vkd3d_shader_location *location,
+        enum vkd3d_shader_opcode opcode, unsigned int dst_count, unsigned int src_count);
 
 static inline struct vkd3d_shader_dst_param *vsir_program_get_dst_params(
         struct vsir_program *program, unsigned int count)
@@ -1549,7 +1562,6 @@ void vkd3d_shader_warning(struct vkd3d_shader_message_context *context, const st
 void vkd3d_shader_vwarning(struct vkd3d_shader_message_context *context, const struct vkd3d_shader_location *location,
         enum vkd3d_shader_error error, const char *format, va_list args);
 
-void vkd3d_shader_dump_shader(const struct vkd3d_shader_compile_info *compile_info);
 uint64_t vkd3d_shader_init_config_flags(void);
 void vkd3d_shader_trace_text_(const char *text, size_t size, const char *function);
 #define vkd3d_shader_trace_text(text, size) \
@@ -1580,7 +1592,13 @@ int spirv_compile(struct vsir_program *program, uint64_t config_flags,
         const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context);
 
-void vkd3d_compute_dxbc_checksum(const void *dxbc, size_t size, uint32_t checksum[4]);
+enum vkd3d_md5_variant
+{
+    VKD3D_MD5_STANDARD,
+    VKD3D_MD5_DXBC,
+};
+
+void vkd3d_compute_md5(const void *dxbc, size_t size, uint32_t checksum[4], enum vkd3d_md5_variant variant);
 
 int preproc_lexer_parse(const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context);

@@ -1,6 +1,5 @@
 /*
- *
- * Copyright 2016 Jeremy White
+ * Copyright 2024 Rémi Bernon for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -17,11 +16,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINEMAPI_PRIVATE_INCLUDED__
-#define __WINEMAPI_PRIVATE_INCLUDED__
+#pragma makedep register
 
-ULONG XDGSendMail(LHANDLE session, ULONG_PTR uiparam,
-    lpMapiMessage message, FLAGS flags, ULONG reserved);
-BOOLEAN XDGMailAvailable(void);
-
-#endif /* __WINEMAPI_PRIVATE_INCLUDED__ */
+[
+    helpstring("MPEG Layer-3 Decoder"),
+    threading(both),
+    uuid(38be3000-dbf4-11d0-860e-00a024cfef6d)
+]
+coclass MPEGLayer3Decoder {}

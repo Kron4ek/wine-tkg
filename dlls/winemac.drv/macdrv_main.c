@@ -61,6 +61,12 @@ int retina_enabled = FALSE;
 int enable_app_nap = FALSE;
 BOOL force_backing_store = FALSE;
 
+UINT64 app_icon_callback = 0;
+UINT64 app_quit_request_callback = 0;
+UINT64 dnd_query_drag_callback = 0;
+UINT64 dnd_query_drop_callback = 0;
+UINT64 dnd_query_exited_callback = 0;
+
 CFDictionaryRef localized_strings;
 
 
@@ -434,6 +440,12 @@ static NTSTATUS macdrv_init(void *arg)
     SessionAttributeBits attributes;
     OSStatus status;
 
+    app_icon_callback = params->app_icon_callback;
+    app_quit_request_callback = params->app_quit_request_callback;
+    dnd_query_drag_callback = params->dnd_query_drag_callback;
+    dnd_query_drop_callback = params->dnd_query_drop_callback;
+    dnd_query_exited_callback = params->dnd_query_exited_callback;
+
     status = SessionGetInfo(callerSecuritySession, NULL, &attributes);
     if (status != noErr || !(attributes & sessionHasGraphicAccess))
         return STATUS_UNSUCCESSFUL;
@@ -594,14 +606,6 @@ BOOL macdrv_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, 
         break;
     }
     return FALSE;
-}
-
-
-NTSTATUS macdrv_client_func(enum macdrv_client_funcs id, const void *params, ULONG size)
-{
-    void *ret_ptr;
-    ULONG ret_len;
-    return KeUserModeCallback(id, params, size, &ret_ptr, &ret_len);
 }
 
 

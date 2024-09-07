@@ -80,6 +80,7 @@ centroid                {return KW_CENTROID;            }
 column_major            {return KW_COLUMN_MAJOR;        }
 ComputeShader           {return KW_COMPUTESHADER;       }
 compile                 {return KW_COMPILE;             }
+CompileShader           {return KW_COMPILESHADER;       }
 const                   {return KW_CONST;               }
 continue                {return KW_CONTINUE;            }
 DepthStencilState       {return KW_DEPTHSTENCILSTATE;   }
