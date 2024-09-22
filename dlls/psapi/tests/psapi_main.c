@@ -1236,9 +1236,6 @@ static void test_QueryWorkingSetEx(void)
     check_QueryWorkingSetEx(addr, "exe,readonly1", 0, 0, 1, TRUE);
 
     *(volatile char *)addr;
-    check_QueryWorkingSetEx(addr, "exe,readonly2", 1, PAGE_READONLY, 1, FALSE);
-
-    ret = VirtualProtect(addr, 0x1000, PAGE_EXECUTE_READWRITE, &prot);
     ok(ret, "VirtualProtect failed with %ld\n", GetLastError());
     check_QueryWorkingSetEx(addr, "exe,readonly2", 1, PAGE_READONLY, 1, FALSE);
 

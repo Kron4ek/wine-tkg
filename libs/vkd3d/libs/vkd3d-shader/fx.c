@@ -38,6 +38,7 @@ struct type_entry
     struct list entry;
     const char *name;
     uint32_t elements_count;
+    uint32_t modifiers;
     uint32_t offset;
 };
 
@@ -278,9 +279,9 @@ static void write_fx_4_state_block(struct hlsl_ir_var *var, unsigned int block_i
 
 static uint32_t write_type(const struct hlsl_type *type, struct fx_write_context *fx)
 {
+    unsigned int elements_count, modifiers;
     const struct hlsl_type *element_type;
     struct type_entry *type_entry;
-    unsigned int elements_count;
     const char *name;
 
     VKD3D_ASSERT(fx->ctx->profile->major_version >= 4);
@@ -297,6 +298,7 @@ static uint32_t write_type(const struct hlsl_type *type, struct fx_write_context
     }
 
     name = get_fx_4_type_name(element_type);
+    modifiers = element_type->modifiers & HLSL_MODIFIERS_MAJORITY_MASK;
 
     LIST_FOR_EACH_ENTRY(type_entry, &fx->types, struct type_entry, entry)
     {
@@ -304,6 +306,9 @@ static uint32_t write_type(const struct hlsl_type *type, struct fx_write_context
             continue;
 
         if (type_entry->elements_count != elements_count)
+            continue;
+
+        if (type_entry->modifiers != modifiers)
             continue;
 
         return type_entry->offset;
@@ -315,6 +320,7 @@ static uint32_t write_type(const struct hlsl_type *type, struct fx_write_context
     type_entry->offset = write_fx_4_type(type, fx);
     type_entry->name = name;
     type_entry->elements_count = elements_count;
+    type_entry->modifiers = modifiers;
 
     list_add_tail(&fx->types, &type_entry->entry);
 
@@ -563,6 +569,9 @@ static const char * get_fx_4_type_name(const struct hlsl_type *type)
 
         case HLSL_CLASS_VERTEX_SHADER:
             return "VertexShader";
+
+        case HLSL_CLASS_GEOMETRY_SHADER:
+            return "GeometryShader";
 
         case HLSL_CLASS_PIXEL_SHADER:
             return "PixelShader";

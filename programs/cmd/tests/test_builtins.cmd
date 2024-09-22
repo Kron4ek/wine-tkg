@@ -491,18 +491,9 @@ call :setError 666 & Idontexist.exe & echo ERRORLEVEL !errorlevel!
 call :setError 666 & (cmd.exe /c "echo foo & exit /b 0" &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
 call :setError 666 & (cmd.exe /c "echo foo & exit /b 1024" &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
 call :setError 666 & (I\dont\exist.html &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
-rem native cmd on Windows 7 shows a dialog for missing association, and waits for its dismisal...
-rem later native cmd.exe shows the dialog, but is not blocking. so, skip the Windows7 case
-rem FIRMWARE_TYPE (undocumented readonly dynamic env variable) appears from Windows 8 onwards
-set foobar_doskip=
-if not defined WINEPREFIX if not defined FIRMWARE_TYPE (set foobar_doskip=1)
-if defined foobar_doskip (
-  echo Skipping on Win7
-  set foobar_doskip=
-) else (
-  echo:>foobar.IDontExist
-  call :setError 666 & (foobar.IDontExist &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
-)
+rem can't run this test, generates a nice popup under windows
+rem echo:>foobar.IDontExist
+rem call :setError 666 & (foobar.IDontExist &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
 cd .. && rd /q /s foo
 echo --- success/failure for CALL command
 mkdir foo & cd foo
@@ -3156,6 +3147,32 @@ call echo %1 %2 %3
 exit /b 0
 
 :call_expand_done
+
+cd .. & rd /s/q foobar
+
+echo --- builtin in expansions
+
+mkdir foobar & cd foobar
+
+set foobar=echo
+
+echo echo %%*>bar.bat
+%foobar% bar p1 %foobar%
+%%foobar%% bar p2 %%foobar%%
+%%%foobar%%% bar p3 %%%foobar%%%
+call %foobar% bar cp1 %foobar%
+call %%foobar%% bar cp2 %%foobar%%
+call %%%foobar%%% bar cp3 %%%foobar%%%
+setlocal EnableDelayedExpansion
+!foobar! bar b1 !foobar!
+!!foobar!! bar b2 !!foobar!!
+!!!foobar!!! bar b3 !!!foobar!!!
+call !foobar! bar cb1 !foobar!
+call !!foobar!! bar cb2 !!foobar!!
+call !!!foobar!!! bar cb3 !!!foobar!!!
+call !!!!foobar!!!! bar cb4 !!!!foobar!!!!
+setlocal DisableDelayedExpansion
+set foobar=
 
 cd .. & rd /s/q foobar
 

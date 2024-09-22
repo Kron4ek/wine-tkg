@@ -2127,19 +2127,120 @@ static void release_display_dc( HDC hdc )
     pthread_mutex_unlock( &display_dc_lock );
 }
 
-/**********************************************************************
- *           get_monitor_dpi
- */
-UINT get_monitor_dpi( HMONITOR monitor )
+/* display_lock must be held */
+static UINT monitor_get_dpi( struct monitor *monitor )
 {
     /* FIXME: use the monitor DPI instead */
     return system_dpi;
 }
 
-static RECT get_monitor_rect( struct monitor *monitor, BOOL work, UINT dpi )
+/* display_lock must be held */
+static RECT monitor_get_rect( struct monitor *monitor, BOOL work, UINT dpi )
 {
     RECT rect = work ? monitor->rc_work : monitor->rc_monitor;
-    return map_dpi_rect( rect, get_monitor_dpi( monitor->handle ), dpi );
+    return map_dpi_rect( rect, monitor_get_dpi( monitor ), dpi );
+}
+
+static void monitor_get_info( struct monitor *monitor, MONITORINFO *info, UINT dpi )
+{
+    info->rcMonitor = monitor_get_rect( monitor, FALSE, dpi );
+    info->rcWork = monitor_get_rect( monitor, TRUE, dpi );
+    info->dwFlags = is_monitor_primary( monitor ) ? MONITORINFOF_PRIMARY : 0;
+
+    if (info->cbSize >= sizeof(MONITORINFOEXW))
+    {
+        char buffer[CCHDEVICENAME];
+        if (monitor->source) snprintf( buffer, sizeof(buffer), "\\\\.\\DISPLAY%d", monitor->source->id + 1 );
+        else strcpy( buffer, "WinDisc" );
+        asciiz_to_unicode( ((MONITORINFOEXW *)info)->szDevice, buffer );
+    }
+}
+
+/* display_lock must be held */
+static struct monitor *get_monitor_from_rect( RECT rect, UINT flags, UINT dpi )
+{
+    struct monitor *monitor, *primary = NULL, *nearest = NULL, *found = NULL;
+    UINT max_area = 0, min_distance = -1;
+
+    if (IsRectEmpty( &rect ))
+    {
+        rect.right = rect.left + 1;
+        rect.bottom = rect.top + 1;
+    }
+
+    LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
+    {
+        RECT intersect, monitor_rect;
+
+        if (!is_monitor_active( monitor ) || monitor->is_clone) continue;
+
+        monitor_rect = monitor_get_rect( monitor, FALSE, dpi );
+        if (intersect_rect( &intersect, &monitor_rect, &rect ))
+        {
+            /* check for larger intersecting area */
+            UINT area = (intersect.right - intersect.left) * (intersect.bottom - intersect.top);
+            if (area > max_area)
+            {
+                max_area = area;
+                found = monitor;
+            }
+        }
+
+        if (!found && (flags & MONITOR_DEFAULTTONEAREST))  /* if not intersecting, check for min distance */
+        {
+            UINT distance;
+            UINT x, y;
+
+            if (rect.right <= monitor_rect.left) x = monitor_rect.left - rect.right;
+            else if (monitor_rect.right <= rect.left) x = rect.left - monitor_rect.right;
+            else x = 0;
+            if (rect.bottom <= monitor_rect.top) y = monitor_rect.top - rect.bottom;
+            else if (monitor_rect.bottom <= rect.top) y = rect.top - monitor_rect.bottom;
+            else y = 0;
+            distance = x * x + y * y;
+            if (distance < min_distance)
+            {
+                min_distance = distance;
+                nearest = monitor;
+            }
+        }
+
+        if (!found && (flags & MONITOR_DEFAULTTOPRIMARY))
+        {
+            if (is_monitor_primary( monitor )) primary = monitor;
+        }
+    }
+
+    if (found) return found;
+    if (primary) return primary;
+    return nearest;
+}
+
+/* display_lock must be held */
+static struct monitor *get_monitor_from_handle( HMONITOR handle )
+{
+    struct monitor *monitor;
+
+    LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
+    {
+        if (monitor->handle != handle) continue;
+        if (!is_monitor_active( monitor )) continue;
+        return monitor;
+    }
+
+    return NULL;
+}
+
+static UINT get_monitor_dpi( HMONITOR handle )
+{
+    struct monitor *monitor;
+    UINT dpi = system_dpi;
+
+    if (!lock_display_devices()) return 0;
+    if ((monitor = get_monitor_from_handle( handle ))) dpi = monitor_get_dpi( monitor );
+    unlock_display_devices();
+
+    return dpi;
 }
 
 /**********************************************************************
@@ -2356,7 +2457,7 @@ RECT get_virtual_screen_rect( UINT dpi )
     {
         RECT monitor_rect;
         if (!is_monitor_active( monitor ) || monitor->is_clone) continue;
-        monitor_rect = get_monitor_rect( monitor, FALSE, dpi );
+        monitor_rect = monitor_get_rect( monitor, FALSE, dpi );
         union_rect( &rect, &rect, &monitor_rect );
     }
 
@@ -2365,7 +2466,7 @@ RECT get_virtual_screen_rect( UINT dpi )
     return rect;
 }
 
-static BOOL is_window_rect_full_screen( const RECT *rect, UINT dpi )
+BOOL is_window_rect_full_screen( const RECT *rect, UINT dpi )
 {
     struct monitor *monitor;
     BOOL ret = FALSE;
@@ -2378,7 +2479,7 @@ static BOOL is_window_rect_full_screen( const RECT *rect, UINT dpi )
 
         if (!is_monitor_active( monitor ) || monitor->is_clone) continue;
 
-        monrect = get_monitor_rect( monitor, FALSE, dpi );
+        monrect = monitor_get_rect( monitor, FALSE, dpi );
         if (rect->left <= monrect.left && rect->right >= monrect.right &&
             rect->top <= monrect.top && rect->bottom >= monrect.bottom)
         {
@@ -2417,7 +2518,7 @@ RECT get_display_rect( const WCHAR *display )
     LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
     {
         if (!monitor->source || monitor->source->id + 1 != index) continue;
-        rect = get_monitor_rect( monitor, FALSE, dpi );
+        rect = monitor_get_rect( monitor, FALSE, dpi );
         break;
     }
 
@@ -2435,7 +2536,7 @@ RECT get_primary_monitor_rect( UINT dpi )
     LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
     {
         if (!is_monitor_primary( monitor )) continue;
-        rect = get_monitor_rect( monitor, FALSE, dpi );
+        rect = monitor_get_rect( monitor, FALSE, dpi );
         break;
     }
 
@@ -3575,7 +3676,7 @@ static BOOL should_enumerate_monitor( struct monitor *monitor, const POINT *orig
     if (!is_monitor_active( monitor )) return FALSE;
     if (monitor->is_clone) return FALSE;
 
-    *rect = get_monitor_rect( monitor, FALSE, get_thread_dpi() );
+    *rect = monitor_get_rect( monitor, FALSE, get_thread_dpi() );
     OffsetRect( rect, -origin->x, -origin->y );
     return intersect_rect( rect, rect, limit );
 }
@@ -3662,7 +3763,7 @@ BOOL WINAPI NtUserEnumDisplayMonitors( HDC hdc, RECT *rect, MONITORENUMPROC proc
     return ret;
 }
 
-BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info, UINT dpi )
+static BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info, UINT dpi )
 {
     struct monitor *monitor;
 
@@ -3670,21 +3771,9 @@ BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info, UINT dpi )
 
     if (!lock_display_devices()) return FALSE;
 
-    LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
+    if ((monitor = get_monitor_from_handle( handle )))
     {
-        if (monitor->handle != handle) continue;
-        if (!is_monitor_active( monitor )) continue;
-
-        info->rcMonitor = get_monitor_rect( monitor, FALSE, dpi );
-        info->rcWork = get_monitor_rect( monitor, TRUE, dpi );
-        info->dwFlags = is_monitor_primary( monitor ) ? MONITORINFOF_PRIMARY : 0;
-        if (info->cbSize >= sizeof(MONITORINFOEXW))
-        {
-            char buffer[CCHDEVICENAME];
-            if (monitor->source) snprintf( buffer, sizeof(buffer), "\\\\.\\DISPLAY%d", monitor->source->id + 1 );
-            else strcpy( buffer, "WinDisc" );
-            asciiz_to_unicode( ((MONITORINFOEXW *)info)->szDevice, buffer );
-        }
+        monitor_get_info( monitor, info, dpi );
         unlock_display_devices();
 
         TRACE( "flags %04x, monitor %s, work %s\n", (int)info->dwFlags,
@@ -3698,78 +3787,44 @@ BOOL get_monitor_info( HMONITOR handle, MONITORINFO *info, UINT dpi )
     return FALSE;
 }
 
-HMONITOR monitor_from_rect( const RECT *rect, UINT flags, UINT dpi )
+static HMONITOR monitor_from_rect( const RECT *rect, UINT flags, UINT dpi )
 {
-    HMONITOR primary = 0, nearest = 0, ret = 0;
-    UINT max_area = 0, min_distance = ~0u;
     struct monitor *monitor;
+    HMONITOR ret = 0;
     RECT r;
 
     r = map_dpi_rect( *rect, dpi, system_dpi );
-    if (IsRectEmpty( &r ))
-    {
-        r.right = r.left + 1;
-        r.bottom = r.top + 1;
-    }
 
     if (!lock_display_devices()) return 0;
-
-    LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
-    {
-        RECT intersect, monitor_rect;
-
-        if (!is_monitor_active( monitor ) || monitor->is_clone) continue;
-
-        monitor_rect = get_monitor_rect( monitor, FALSE, system_dpi );
-        if (intersect_rect( &intersect, &monitor_rect, &r ))
-        {
-            /* check for larger intersecting area */
-            UINT area = (intersect.right - intersect.left) * (intersect.bottom - intersect.top);
-            if (area > max_area)
-            {
-                max_area = area;
-                ret = monitor->handle;
-            }
-        }
-        else if (!max_area)  /* if not intersecting, check for min distance */
-        {
-            UINT distance;
-            UINT x, y;
-
-            if (r.right <= monitor_rect.left) x = monitor_rect.left - r.right;
-            else if (monitor_rect.right <= r.left) x = r.left - monitor_rect.right;
-            else x = 0;
-            if (r.bottom <= monitor_rect.top) y = monitor_rect.top - r.bottom;
-            else if (monitor_rect.bottom <= r.top) y = r.top - monitor_rect.bottom;
-            else y = 0;
-            distance = x * x + y * y;
-            if (distance < min_distance)
-            {
-                min_distance = distance;
-                nearest = monitor->handle;
-            }
-        }
-
-        if (is_monitor_primary( monitor )) primary = monitor->handle;
-    }
-
+    if ((monitor = get_monitor_from_rect( r, flags, system_dpi ))) ret = monitor->handle;
     unlock_display_devices();
-
-    if (!ret)
-    {
-        if (flags & MONITOR_DEFAULTTOPRIMARY) ret = primary;
-        else if (flags & MONITOR_DEFAULTTONEAREST) ret = nearest;
-    }
 
     TRACE( "%s flags %x returning %p\n", wine_dbgstr_rect(rect), flags, ret );
     return ret;
 }
 
-HMONITOR monitor_from_point( POINT pt, UINT flags, UINT dpi )
+MONITORINFO monitor_info_from_rect( RECT rect, UINT dpi )
 {
-    RECT rect;
-    SetRect( &rect, pt.x, pt.y, pt.x + 1, pt.y + 1 );
-    return monitor_from_rect( &rect, flags, dpi );
+    MONITORINFO info = {.cbSize = sizeof(info)};
+    struct monitor *monitor;
+
+    if (!lock_display_devices()) return info;
+    if ((monitor = get_monitor_from_rect( rect, MONITOR_DEFAULTTONEAREST, dpi ))) monitor_get_info( monitor, &info, dpi );
+    unlock_display_devices();
+
+    return info;
+}
+
+UINT monitor_dpi_from_rect( RECT rect, UINT dpi )
+{
+    struct monitor *monitor;
+    UINT ret = system_dpi;
+
+    if (!lock_display_devices()) return 0;
+    if ((monitor = get_monitor_from_rect( rect, MONITOR_DEFAULTTONEAREST, dpi ))) ret = monitor_get_dpi( monitor );
+    unlock_display_devices();
+
+    return ret;
 }
 
 /* see MonitorFromWindow */
@@ -3791,6 +3846,14 @@ HMONITOR monitor_from_window( HWND hwnd, UINT flags, UINT dpi )
     /* retrieve the primary */
     SetRect( &rect, 0, 0, 1, 1 );
     return monitor_from_rect( &rect, flags, dpi );
+}
+
+MONITORINFO monitor_info_from_window( HWND hwnd, UINT flags )
+{
+    MONITORINFO info = {.cbSize = sizeof(info)};
+    HMONITOR monitor = monitor_from_window( hwnd, flags, get_thread_dpi() );
+    get_monitor_info( monitor, &info, get_thread_dpi() );
+    return info;
 }
 
 /***********************************************************************
@@ -5342,7 +5405,7 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
             LIST_FOR_EACH_ENTRY( monitor, &monitors, struct monitor, entry )
             {
                 if (!is_monitor_primary( monitor )) continue;
-                work_area = get_monitor_rect( monitor, TRUE, dpi );
+                work_area = monitor_get_rect( monitor, TRUE, dpi );
                 break;
             }
 
@@ -6609,9 +6672,6 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
         struct adjust_window_rect_params *params = (void *)arg2;
         return adjust_window_rect( (RECT *)arg1, params->style, params->menu, params->ex_style, params->dpi );
     }
-
-    case NtUserCallTwoParam_IsWindowRectFullScreen:
-        return is_window_rect_full_screen( (const RECT *)arg1, arg2 );
 
     /* temporary exports */
     case NtUserAllocWinProc:

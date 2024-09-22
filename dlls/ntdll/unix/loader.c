@@ -1942,7 +1942,6 @@ static void start_main_thread(void)
     set_load_order_app_name( main_wargv[0] );
     init_thread_stack( teb, 0, 0, 0 );
     NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
-    signal_init_process();
     load_ntdll();
     load_wow64_ntdll( main_image_info.Machine );
     load_apiset_dll();

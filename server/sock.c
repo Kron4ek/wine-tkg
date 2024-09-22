@@ -3921,7 +3921,7 @@ DECL_HANDLER(recv_socket)
     sock->pending_events &= ~(req->oob ? AFD_POLL_OOB : AFD_POLL_READ);
     sock->reported_events &= ~(req->oob ? AFD_POLL_OOB : AFD_POLL_READ);
 
-    if ((async = create_request_async( fd, get_fd_comp_flags( fd ), &req->async )))
+    if ((async = create_request_async( fd, get_fd_comp_flags( fd ), &req->async, 0 )))
     {
         set_error( status );
 
@@ -3969,6 +3969,7 @@ DECL_HANDLER(send_socket)
     struct async *async;
     struct fd *fd;
     int bind_errno = 0;
+    BOOL force_async = req->flags & SERVER_SOCKET_IO_FORCE_ASYNC;
 
     if (!sock) return;
     fd = sock->fd;
@@ -3991,7 +3992,7 @@ DECL_HANDLER(send_socket)
         else if (!bind_errno) bind_errno = errno;
     }
 
-    if (!req->force_async && !sock->nonblocking && is_fd_overlapped( fd ))
+    if (!force_async && !sock->nonblocking && is_fd_overlapped( fd ))
         timeout = (timeout_t)sock->sndtimeo * -10000;
 
     if (bind_errno) status = sock_get_ntstatus( bind_errno );
@@ -4002,7 +4003,7 @@ DECL_HANDLER(send_socket)
          * asyncs will not consume all available space; if there's no space
          * available, the current request won't be immediately satiable.
          */
-        if ((!req->force_async && sock->nonblocking) || check_fd_events( sock->fd, POLLOUT ))
+        if ((!force_async && sock->nonblocking) || check_fd_events( sock->fd, POLLOUT ))
         {
             /* Give the client opportunity to complete synchronously.
              * If it turns out that the I/O request is not actually immediately satiable,
@@ -4027,10 +4028,11 @@ DECL_HANDLER(send_socket)
         }
     }
 
-    if (status == STATUS_PENDING && !req->force_async && sock->nonblocking)
+    if (status == STATUS_PENDING && !force_async && sock->nonblocking)
         status = STATUS_DEVICE_NOT_READY;
 
-    if ((async = create_request_async( fd, get_fd_comp_flags( fd ), &req->async )))
+    if ((async = create_request_async( fd, get_fd_comp_flags( fd ), &req->async,
+                                       req->flags & SERVER_SOCKET_IO_SYSTEM )))
     {
         struct send_req *send_req;
         struct iosb *iosb = async_get_iosb( async );

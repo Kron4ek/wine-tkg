@@ -246,8 +246,6 @@ extern void *(*p_vkGetInstanceProcAddr)(VkInstance, const char *);
 
 extern BOOL vulkan_init(void);
 extern void vulkan_detach_surfaces( struct list *surfaces );
-extern void vulkan_set_parent( HWND hwnd, HWND new_parent, HWND old_parent );
-extern void vulkan_set_region( HWND toplevel, HRGN region );
 
 /* window.c */
 HANDLE alloc_user_handle( struct user_object *ptr, unsigned int type );

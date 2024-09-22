@@ -89,6 +89,7 @@ const WCHAR inbuilt[][10] = {
         L"MORE",
         L"CHOICE",
         L"MKLINK",
+        L"",
         L"EXIT"
 };
 static const WCHAR externals[][10] = {
@@ -1800,7 +1801,7 @@ RETURN_CODE WCMD_give_help(WCHAR *args)
             WCHAR cmd[128];
             lstrcpyW(cmd, help_on);
             lstrcatW(cmd, L" /?");
-            WCMD_run_program(cmd, FALSE);
+            WCMD_run_builtin_command(WCMD_HELP, cmd);
         }
         else
         {
@@ -4199,4 +4200,29 @@ RETURN_CODE WCMD_mklink(WCHAR *args)
 
     WCMD_output_stderr(WCMD_LoadMessage(WCMD_READFAIL), file1);
     return errorlevel = ERROR_INVALID_FUNCTION;
+}
+
+RETURN_CODE WCMD_change_drive(WCHAR drive)
+{
+    WCHAR envvar[4];
+    WCHAR dir[MAX_PATH];
+
+    /* According to MSDN CreateProcess docs, special env vars record
+     * the current directory on each drive, in the form =C:
+     * so see if one specified, and if so go back to it
+     */
+    envvar[0] = L'=';
+    envvar[1] = drive;
+    envvar[2] = L':';
+    envvar[3] = L'\0';
+
+    if (GetEnvironmentVariableW(envvar, dir, ARRAY_SIZE(dir)) == 0)
+        wcscpy(dir, envvar + 1);
+    WINE_TRACE("Got directory for %lc: as %s\n", drive, wine_dbgstr_w(dir));
+    if (!SetCurrentDirectoryW(dir))
+    {
+        WCMD_print_error();
+        return errorlevel = ERROR_INVALID_FUNCTION;
+    }
+    return NO_ERROR;
 }

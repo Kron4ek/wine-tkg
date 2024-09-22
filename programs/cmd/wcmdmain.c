@@ -644,7 +644,7 @@ static WCHAR *WCMD_expand_envvar(WCHAR *start, WCHAR startchar)
       }
 
       /* Command line - just ignore this */
-      if (context == NULL) return endOfVar+1;
+      if (context == NULL || startchar == L'!') return endOfVar+1;
 
       /* Batch - replace unknown env var with nothing */
       if (colonpos == NULL)
@@ -829,7 +829,8 @@ static void handleExpansion(WCHAR *cmd, BOOL atExecute) {
         p++;
       }
       else p+=2;
-
+    } else if (*(p+1) == startchar && startchar == L'!') {
+        p++;
     /* Replace %~ modifications if in batch program */
     } else if (*(p+1) == '~') {
       WCMD_HandleTildeModifiers(&p, atExecute);
@@ -1377,8 +1378,6 @@ static void init_msvcrt_io_block(STARTUPINFOW* st)
     }
 }
 
-static RETURN_CODE execute_single_command(const WCHAR *command);
-
 /* Attempt to open a file at a known path. */
 static RETURN_CODE run_full_path(const WCHAR *file, WCHAR *full_cmdline, BOOL called)
 {
@@ -1463,213 +1462,248 @@ static RETURN_CODE run_full_path(const WCHAR *file, WCHAR *full_cmdline, BOOL ca
     return errorlevel;
 }
 
-/******************************************************************************
- * WCMD_run_program
- *
- *	Execute a command line as an external program. Must allow recursion.
- *
- *      Precedence:
- *        Manual testing under windows shows PATHEXT plays a key part in this,
- *      and the search algorithm and precedence appears to be as follows.
- *
- *      Search locations:
- *        If directory supplied on command, just use that directory
- *        If extension supplied on command, look for that explicit name first
- *        Otherwise, search in each directory on the path
- *      Precedence:
- *        If extension supplied on command, look for that explicit name first
- *        Then look for supplied name .* (even if extension supplied, so
- *          'garbage.exe' will match 'garbage.exe.cmd')
- *        If any found, cycle through PATHEXT looking for name.exe one by one
- *      Launching
- *        Once a match has been found, it is launched - Code currently uses
- *          findexecutable to achieve this which is left untouched.
- *        If an executable has not been found, and we were launched through
- *          a call, we need to check if the command is an internal command,
- *          so go back through wcmd_execute.
- */
-
-RETURN_CODE WCMD_run_program(WCHAR *command, BOOL called)
+struct search_command
 {
-  WCHAR  temp[MAX_PATH];
-  WCHAR  pathtosearch[MAXSTRING];
-  WCHAR *pathposn;
-  WCHAR  stemofsearch[MAX_PATH];    /* maximum allowed executable name is
-                                       MAX_PATH, including null character */
-  WCHAR *lastSlash;
-  WCHAR  pathext[MAXSTRING];
-  WCHAR *firstParam;
-  BOOL  extensionsupplied = FALSE;
-  BOOL  explicit_path = FALSE;
-  DWORD len;
+    WCHAR path[MAX_PATH];
+    BOOL has_path; /* if input has path part (ie cannot be a builtin command) */
+    BOOL has_extension; /* if extension was given to input */
+    int cmd_index; /* potential index to builtin command */
+};
 
-  /* Quick way to get the filename is to extract the first argument. */
-  WINE_TRACE("Running '%s' (%d)\n", wine_dbgstr_w(command), called);
-  firstParam = WCMD_parameter(command, 0, NULL, FALSE, TRUE);
-
-  if (!firstParam[0]) return NO_ERROR;
-
-  /* Calculate the search path and stem to search for */
-  if (wcspbrk(firstParam, L"/\\:") == NULL) {  /* No explicit path given, search path */
-    lstrcpyW(pathtosearch, L".;");
-    len = GetEnvironmentVariableW(L"PATH", &pathtosearch[2], ARRAY_SIZE(pathtosearch)-2);
-    if ((len == 0) || (len >= ARRAY_SIZE(pathtosearch) - 2)) {
-      lstrcpyW(pathtosearch, L".");
-    }
-    if (wcschr(firstParam, '.') != NULL) extensionsupplied = TRUE;
-    if (lstrlenW(firstParam) >= MAX_PATH)
+static BOOL search_in_pathext(WCHAR *path)
+{
+    static struct
     {
-        WCMD_output_asis_stderr(WCMD_LoadMessage(WCMD_LINETOOLONG));
-        return ERROR_INVALID_FUNCTION;
+        unsigned short offset; /* into cached_data */
+        unsigned short length;
+    } *cached_pathext;
+    static WCHAR *cached_data;
+    static unsigned cached_count;
+    WCHAR pathext[MAX_PATH];
+    WIN32_FIND_DATAW find;
+    WCHAR *pos;
+    HANDLE h;
+    unsigned efound;
+    DWORD len;
+
+    len = GetEnvironmentVariableW(L"PATHEXT", pathext, ARRAY_SIZE(pathext));
+    if (len == 0 || len >= ARRAY_SIZE(pathext))
+        wcscpy(pathext, L".bat;.com;.cmd;.exe");
+    /* erase cache if PATHEXT has changed */
+    if (cached_data && wcscmp(cached_data, pathext))
+    {
+        free(cached_pathext);
+        cached_pathext = NULL;
+        free(cached_data);
+        cached_data = NULL;
+        cached_count = 0;
+    }
+    /* (re)create cache if needed */
+    if (!cached_pathext)
+    {
+        size_t c;
+        WCHAR *p, *n;
+
+        cached_data = xstrdupW(pathext);
+        for (p = cached_data, c = 1; (p = wcschr(p, L';')) != NULL; c++, p++) {}
+        cached_pathext = xalloc(sizeof(cached_pathext[0]) * c);
+        cached_count = c;
+        for (c = 0, p = cached_data; (n = wcschr(p, L';')) != NULL; c++, p = n + 1)
+        {
+            cached_pathext[c].offset = p - cached_data;
+            cached_pathext[c].length = n - p;
+        }
+        cached_pathext[c].offset = p - cached_data;
+        cached_pathext[c].length = wcslen(p);
     }
 
-    lstrcpyW(stemofsearch, firstParam);
-
-  } else {
-
-    /* Convert eg. ..\fred to include a directory by removing file part */
-    if (!WCMD_get_fullpath(firstParam, ARRAY_SIZE(pathtosearch), pathtosearch, NULL))
-        return ERROR_INVALID_FUNCTION;
-    lastSlash = wcsrchr(pathtosearch, '\\');
-    if (lastSlash && wcschr(lastSlash, '.') != NULL) extensionsupplied = TRUE;
-    lstrcpyW(stemofsearch, lastSlash+1);
-
-    /* Reduce pathtosearch to a path with trailing '\' to support c:\a.bat and
-       c:\windows\a.bat syntax                                                 */
-    if (lastSlash) *(lastSlash + 1) = 0x00;
-    explicit_path = TRUE;
-  }
-
-  /* Now extract PATHEXT */
-  len = GetEnvironmentVariableW(L"PATHEXT", pathext, ARRAY_SIZE(pathext));
-  if ((len == 0) || (len >= ARRAY_SIZE(pathext))) {
-    lstrcpyW(pathext, L".bat;.com;.cmd;.exe");
-  }
-
-  /* Loop through the search path, dir by dir */
-  pathposn = pathtosearch;
-  WINE_TRACE("Searching in '%s' for '%s'\n", wine_dbgstr_w(pathtosearch),
-             wine_dbgstr_w(stemofsearch));
-  while (pathposn) {
-    WCHAR  thisDir[MAX_PATH] = {'\0'};
-    int    length            = 0;
-    WCHAR *pos               = NULL;
-    BOOL  found             = FALSE;
-    BOOL inside_quotes      = FALSE;
-    DWORD attribs;
-
-    if (explicit_path)
+    pos = &path[wcslen(path)]; /* Pos = end of name */
+    wcscpy(pos, L".*");
+    efound = cached_count;
+    if ((h = FindFirstFileW(path, &find)) != INVALID_HANDLE_VALUE)
     {
-        lstrcpyW(thisDir, pathposn);
-        pathposn = NULL;
+        do
+        {
+            WCHAR *last;
+            size_t basefound_len;
+            unsigned i;
+
+            if (find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            if (!(last = wcsrchr(find.cFileName, L'.'))) continue;
+            basefound_len = last - find.cFileName;
+            /* skip foo.bar.exe when looking for foo.exe */
+            if (pos < path + basefound_len || wcsnicmp(pos - basefound_len, find.cFileName, basefound_len))
+                continue;
+            for (i = 0; i < efound; i++)
+                if (!wcsnicmp(last, cached_data + cached_pathext[i].offset, cached_pathext[i].length) &&
+                    !last[cached_pathext[i].length])
+                    efound = i;
+        } while (FindNextFileW(h, &find));
+        CloseHandle(h);
+    }
+    if (efound == cached_count) return FALSE;
+
+    memcpy(pos, cached_data + cached_pathext[efound].offset, cached_pathext[efound].length * sizeof(WCHAR));
+    pos[cached_pathext[efound].length] = L'\0';
+    return TRUE;
+}
+
+static RETURN_CODE search_command(WCHAR *command, struct search_command *sc, BOOL fast)
+{
+    WCHAR  temp[MAX_PATH];
+    WCHAR  pathtosearch[MAXSTRING];
+    WCHAR *pathposn;
+    WCHAR  stemofsearch[MAX_PATH];    /* maximum allowed executable name is
+                                         MAX_PATH, including null character */
+    WCHAR *lastSlash;
+    WCHAR *firstParam;
+    DWORD  len;
+    WCHAR *p;
+
+    /* Quick way to get the filename is to extract the first argument. */
+    firstParam = WCMD_parameter(command, 0, NULL, FALSE, TRUE);
+
+    sc->cmd_index = WCMD_EXIT + 1;
+
+    if (!firstParam[0])
+    {
+        sc->path[0] = L'\0';
+        return NO_ERROR;
+    }
+    for (p = firstParam; *p && IsCharAlphaW(*p); p++) {}
+    if (p > firstParam && (!*p || wcschr(L" \t+./(;=:", *p)))
+    {
+        for (sc->cmd_index = 0; sc->cmd_index <= WCMD_EXIT; sc->cmd_index++)
+            if (CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORECASE | SORT_STRINGSORT,
+                               firstParam, p - firstParam, inbuilt[sc->cmd_index], -1) == CSTR_EQUAL)
+                break;
+    }
+    if (firstParam[1] == L':' && (!firstParam[2] || iswspace(firstParam[2])))
+    {
+        sc->cmd_index = WCMD_CHGDRIVE;
+        fast = TRUE;
+    }
+
+    if (fast && sc->cmd_index <= WCMD_EXIT && firstParam[wcslen(inbuilt[sc->cmd_index])] != L'.')
+    {
+        sc->path[0] = L'\0';
+        sc->has_path = sc->has_extension = FALSE;
+        return RETURN_CODE_CANT_LAUNCH;
+    }
+
+    /* Calculate the search path and stem to search for */
+    if (wcspbrk(firstParam, L"/\\:") == NULL)
+    {
+        /* No explicit path given, search path */
+        wcscpy(pathtosearch, L".;");
+        len = GetEnvironmentVariableW(L"PATH", &pathtosearch[2], ARRAY_SIZE(pathtosearch)-2);
+        if (len == 0 || len >= ARRAY_SIZE(pathtosearch) - 2)
+            wcscpy(pathtosearch, L".");
+        sc->has_extension = wcschr(firstParam, L'.') != NULL;
+        if (wcslen(firstParam) >= MAX_PATH)
+        {
+            WCMD_output_asis_stderr(WCMD_LoadMessage(WCMD_LINETOOLONG));
+            return ERROR_INVALID_FUNCTION;
+        }
+
+        wcscpy(stemofsearch, firstParam);
+        sc->has_path = FALSE;
     }
     else
     {
-        /* Work on the next directory on the search path */
-        pos = pathposn;
-        while ((inside_quotes || *pos != ';') && *pos != 0)
-        {
-            if (*pos == '"')
-                inside_quotes = !inside_quotes;
-            pos++;
-        }
+        /* Convert eg. ..\fred to include a directory by removing file part */
+        if (!WCMD_get_fullpath(firstParam, ARRAY_SIZE(pathtosearch), pathtosearch, NULL))
+            return ERROR_INVALID_FUNCTION;
+        lastSlash = wcsrchr(pathtosearch, L'\\');
+        sc->has_extension = wcschr(lastSlash ? lastSlash + 1 : firstParam, L'.') != NULL;
+        wcscpy(stemofsearch, lastSlash ? lastSlash + 1 : firstParam);
 
-        if (*pos)  /* Reached semicolon */
+        /* Reduce pathtosearch to a path with trailing '\' to support c:\a.bat and
+           c:\windows\a.bat syntax                                                 */
+        if (lastSlash) *(lastSlash + 1) = L'\0';
+        sc->has_path = TRUE;
+    }
+
+    /* Loop through the search path, dir by dir */
+    pathposn = pathtosearch;
+    WINE_TRACE("Searching in '%s' for '%s'\n", wine_dbgstr_w(pathtosearch),
+               wine_dbgstr_w(stemofsearch));
+    while (pathposn)
+    {
+        int    length            = 0;
+        WCHAR *pos               = NULL;
+        BOOL   found             = FALSE;
+        BOOL   inside_quotes     = FALSE;
+
+        sc->path[0] = L'\0';
+
+        if (sc->has_path)
         {
-            memcpy(thisDir, pathposn, (pos-pathposn) * sizeof(WCHAR));
-            thisDir[(pos-pathposn)] = 0x00;
-            pathposn = pos+1;
-        }
-        else       /* Reached string end */
-        {
-            lstrcpyW(thisDir, pathposn);
+            wcscpy(sc->path, pathposn);
             pathposn = NULL;
         }
-
-        /* Remove quotes */
-        length = lstrlenW(thisDir);
-        if (thisDir[length - 1] == '"')
-            thisDir[length - 1] = 0;
-
-        if (*thisDir != '"')
-            lstrcpyW(temp, thisDir);
         else
-            lstrcpyW(temp, thisDir + 1);
+        {
+            /* Work on the next directory on the search path */
+            pos = pathposn;
+            while ((inside_quotes || *pos != ';') && *pos != 0)
+            {
+                if (*pos == '"')
+                    inside_quotes = !inside_quotes;
+                pos++;
+            }
 
-        /* When temp is an empty string, skip over it. This needs
-           to be done before the expansion, because WCMD_get_fullpath
-           fails when given an empty string                         */
-        if (*temp == '\0')
-            continue;
+            if (*pos)  /* Reached semicolon */
+            {
+                memcpy(sc->path, pathposn, (pos-pathposn) * sizeof(WCHAR));
+                sc->path[(pos-pathposn)] = 0x00;
+                pathposn = pos+1;
+            }
+            else       /* Reached string end */
+            {
+                wcscpy(sc->path, pathposn);
+                pathposn = NULL;
+            }
 
-        /* Since you can have eg. ..\.. on the path, need to expand
-           to full information                                      */
-        if (!WCMD_get_fullpath(temp, ARRAY_SIZE(thisDir), thisDir, NULL))
-            return ERROR_INVALID_FUNCTION;
-    }
+            /* Remove quotes */
+            length = wcslen(sc->path);
+            if (sc->path[length - 1] == L'"')
+                sc->path[length - 1] = 0;
 
-    /* 1. If extension supplied, see if that file exists */
-    lstrcatW(thisDir, L"\\");
-    lstrcatW(thisDir, stemofsearch);
-    pos = &thisDir[lstrlenW(thisDir)]; /* Pos = end of name */
+            if (*sc->path != L'"')
+                wcscpy(temp, sc->path);
+            else
+                wcscpy(temp, sc->path + 1);
 
-    /* 1. If extension supplied, see if that file exists */
-    if (extensionsupplied) {
-      attribs = GetFileAttributesW(thisDir);
-      if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY)) {
-        found = TRUE;
-      }
-    }
+            /* When temp is an empty string, skip over it. This needs
+               to be done before the expansion, because WCMD_get_fullpath
+               fails when given an empty string                         */
+            if (*temp == L'\0')
+                continue;
 
-    /* 2. Any .* matches? */
-    if (!found) {
-      HANDLE          h;
-      WIN32_FIND_DATAW finddata;
-
-      lstrcatW(thisDir, L".*");
-      h = FindFirstFileW(thisDir, &finddata);
-      FindClose(h);
-      if (h != INVALID_HANDLE_VALUE) {
-
-        WCHAR *thisExt = pathext;
-
-        /* 3. Yes - Try each path ext */
-        while (thisExt) {
-          WCHAR *nextExt = wcschr(thisExt, ';');
-
-          if (nextExt) {
-            memcpy(pos, thisExt, (nextExt-thisExt) * sizeof(WCHAR));
-            pos[(nextExt-thisExt)] = 0x00;
-            thisExt = nextExt+1;
-          } else {
-            lstrcpyW(pos, thisExt);
-            thisExt = NULL;
-          }
-
-          attribs = GetFileAttributesW(thisDir);
-          if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY)) {
-            found = TRUE;
-            thisExt = NULL;
-          }
+            /* Since you can have eg. ..\.. on the path, need to expand
+               to full information                                      */
+            if (!WCMD_get_fullpath(temp, ARRAY_SIZE(sc->path), sc->path, NULL))
+                return ERROR_INVALID_FUNCTION;
         }
-      }
+
+        if (wcslen(sc->path) + 1 + wcslen(stemofsearch) >= ARRAY_SIZE(sc->path))
+            return ERROR_INVALID_FUNCTION;
+
+        /* 1. If extension supplied, see if that file exists */
+        wcscat(sc->path, L"\\");
+        wcscat(sc->path, stemofsearch);
+
+        if (sc->has_extension)
+        {
+            DWORD attribs = GetFileAttributesW(sc->path);
+            found = attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY);
+        }
+        else
+            found = search_in_pathext(sc->path);
+        if (found) return NO_ERROR;
     }
-
-    if (found)
-      return run_full_path(thisDir, command, called);
-  }
-
-  /* Not found anywhere - were we called? */
-  if (called)
-      return errorlevel = execute_single_command(command);
-
-  /* Not found anywhere - give up */
-  WCMD_output_stderr(WCMD_LoadMessage(WCMD_NO_COMMAND_FOUND), command);
-
-  /* If a command fails to launch, it sets errorlevel 9009 - which
-     does not seem to have any associated constant definition     */
-  errorlevel = RETURN_CODE_CANT_LAUNCH;
-  return ERROR_INVALID_FUNCTION;
+    return RETURN_CODE_CANT_LAUNCH;
 }
 
 static BOOL set_std_redirections(CMD_REDIRECTION *redir)
@@ -1744,6 +1778,159 @@ static BOOL set_std_redirections(CMD_REDIRECTION *redir)
     return TRUE;
 }
 
+RETURN_CODE WCMD_run_builtin_command(int cmd_index, WCHAR *cmd)
+{
+    size_t count = wcslen(inbuilt[cmd_index]);
+    WCHAR *parms_start = WCMD_skip_leading_spaces(&cmd[count]);
+    RETURN_CODE return_code;
+
+    WCMD_parse(parms_start, quals, param1, param2);
+    TRACE("param1: %s, param2: %s\n", wine_dbgstr_w(param1), wine_dbgstr_w(param2));
+
+    if (cmd_index <= WCMD_EXIT && (parms_start[0] == '/') && (parms_start[1] == '?'))
+    {
+        /* this is a help request for a builtin program */
+        cmd_index = WCMD_HELP;
+        wcscpy(parms_start, inbuilt[cmd_index]);
+    }
+
+    switch (cmd_index)
+    {
+    case WCMD_CALL:
+        return_code = WCMD_call(parms_start);
+        break;
+    case WCMD_CD:
+    case WCMD_CHDIR:
+        return_code = WCMD_setshow_default(parms_start);
+        break;
+    case WCMD_CLS:
+        return_code = WCMD_clear_screen();
+        break;
+    case WCMD_COPY:
+        return_code = WCMD_copy(parms_start);
+        break;
+    case WCMD_DATE:
+        return_code = WCMD_setshow_date();
+	break;
+    case WCMD_DEL:
+    case WCMD_ERASE:
+        return_code = WCMD_delete(parms_start);
+        break;
+    case WCMD_DIR:
+        return_code = WCMD_directory(parms_start);
+        break;
+    case WCMD_ECHO:
+        return_code = WCMD_echo(&cmd[count]);
+        break;
+    case WCMD_GOTO:
+        return_code = WCMD_goto();
+        break;
+    case WCMD_HELP:
+        return_code = WCMD_give_help(parms_start);
+        break;
+    case WCMD_LABEL:
+        return_code = WCMD_label();
+        break;
+    case WCMD_MD:
+    case WCMD_MKDIR:
+        return_code = WCMD_create_dir(parms_start);
+        break;
+    case WCMD_MOVE:
+        return_code = WCMD_move();
+        break;
+    case WCMD_PATH:
+        return_code = WCMD_setshow_path(parms_start);
+        break;
+    case WCMD_PAUSE:
+        return_code = WCMD_pause();
+        break;
+    case WCMD_PROMPT:
+        return_code = WCMD_setshow_prompt();
+        break;
+    case WCMD_REM:
+        return_code = NO_ERROR;
+        break;
+    case WCMD_REN:
+    case WCMD_RENAME:
+        return_code = WCMD_rename();
+	break;
+    case WCMD_RD:
+    case WCMD_RMDIR:
+        return_code = WCMD_remove_dir(parms_start);
+        break;
+    case WCMD_SETLOCAL:
+        return_code = WCMD_setlocal(parms_start);
+        break;
+    case WCMD_ENDLOCAL:
+        return_code = WCMD_endlocal();
+        break;
+    case WCMD_SET:
+        return_code = WCMD_setshow_env(parms_start);
+        break;
+    case WCMD_SHIFT:
+        return_code = WCMD_shift(parms_start);
+        break;
+    case WCMD_START:
+        return_code = WCMD_start(parms_start);
+        break;
+    case WCMD_TIME:
+        return_code = WCMD_setshow_time();
+        break;
+    case WCMD_TITLE:
+        return_code = WCMD_title(parms_start);
+        break;
+    case WCMD_TYPE:
+        return_code = WCMD_type(parms_start);
+        break;
+    case WCMD_VER:
+        return_code = WCMD_version();
+        break;
+    case WCMD_VERIFY:
+        return_code = WCMD_verify();
+        break;
+    case WCMD_VOL:
+        return_code = WCMD_volume();
+        break;
+    case WCMD_PUSHD:
+        return_code = WCMD_pushd(parms_start);
+        break;
+    case WCMD_POPD:
+        return_code = WCMD_popd();
+        break;
+    case WCMD_ASSOC:
+        return_code = WCMD_assoc(parms_start, TRUE);
+        break;
+    case WCMD_COLOR:
+        return_code = WCMD_color();
+        break;
+    case WCMD_FTYPE:
+        return_code = WCMD_assoc(parms_start, FALSE);
+        break;
+    case WCMD_MORE:
+        return_code = WCMD_more(parms_start);
+        break;
+    case WCMD_CHOICE:
+        return_code = WCMD_choice(parms_start);
+        break;
+    case WCMD_MKLINK:
+        return_code = WCMD_mklink(parms_start);
+        break;
+    case WCMD_CHGDRIVE:
+        return_code = WCMD_change_drive(cmd[0]);
+        break;
+    case WCMD_EXIT:
+        return_code = WCMD_exit();
+        break;
+    default:
+        FIXME("Shouldn't happen %d\n", cmd_index);
+    case WCMD_FOR: /* can happen in 'call for...' and should fail */
+    case WCMD_IF:
+        return_code = RETURN_CODE_CANT_LAUNCH;
+        break;
+    }
+    return return_code;
+}
+
 /*****************************************************************************
  * Process one command. If the command is EXIT this routine does not return.
  * We will recurse through here executing batch files.
@@ -1753,206 +1940,67 @@ static BOOL set_std_redirections(CMD_REDIRECTION *redir)
  */
 static RETURN_CODE execute_single_command(const WCHAR *command)
 {
+    struct search_command sc;
     RETURN_CODE return_code;
-    WCHAR *cmd, *parms_start;
-    int cmd_index, count;
-    BOOL prev_echo_mode;
+    WCHAR *cmd;
 
     TRACE("command on entry:%s\n", wine_dbgstr_w(command));
 
     /* Move copy of the command onto the heap so it can be expanded */
     cmd = xalloc(MAXSTRING * sizeof(WCHAR));
     lstrcpyW(cmd, command);
+    handleExpansion(cmd, TRUE);
 
     TRACE("Command: '%s'\n", wine_dbgstr_w(cmd));
 
-    /* Check if the command entered is internal, and identify which one */
-    count = 0;
-    while (IsCharAlphaNumericW(cmd[count])) {
-      count++;
+    return_code = search_command(cmd, &sc, TRUE);
+    if (return_code != NO_ERROR && sc.cmd_index == WCMD_EXIT + 1)
+    {
+        /* Not found anywhere - give up */
+        WCMD_output_stderr(WCMD_LoadMessage(WCMD_NO_COMMAND_FOUND), cmd);
+
+        /* If a command fails to launch, it sets errorlevel 9009 - which
+         * does not seem to have any associated constant definition
+         */
+        errorlevel = RETURN_CODE_CANT_LAUNCH;
+        return_code = ERROR_INVALID_FUNCTION;
     }
-    for (cmd_index=0; cmd_index<=WCMD_EXIT; cmd_index++) {
-      if (count && CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORECASE | SORT_STRINGSORT,
-                                  cmd, count, inbuilt[cmd_index], -1) == CSTR_EQUAL) break;
-    }
-    parms_start = WCMD_skip_leading_spaces(&cmd[count]);
-
-    handleExpansion(cmd, TRUE);
-
-/*
- * Changing default drive has to be handled as a special case, anything
- * else if it exists after whitespace is ignored
- */
-
-    if (cmd[1] == L':' && (!cmd[2] || iswspace(cmd[2]))) {
-      WCHAR envvar[5];
-      WCHAR dir[MAX_PATH];
-
-      /* Ignore potential garbage on the same line */
-      cmd[2] = L'\0';
-
-      /* According to MSDN CreateProcess docs, special env vars record
-         the current directory on each drive, in the form =C:
-         so see if one specified, and if so go back to it             */
-      lstrcpyW(envvar, L"=");
-      lstrcatW(envvar, cmd);
-      if (GetEnvironmentVariableW(envvar, dir, ARRAY_SIZE(dir)) == 0) {
-        wsprintfW(cmd, L"%s\\", cmd);
-        WINE_TRACE("No special directory settings, using dir of %s\n", wine_dbgstr_w(cmd));
-      }
-      WINE_TRACE("Got directory %s as %s\n", wine_dbgstr_w(envvar), wine_dbgstr_w(cmd));
-      if (!SetCurrentDirectoryW(cmd))
-      {
-          WCMD_print_error();
-          return_code = errorlevel = ERROR_INVALID_FUNCTION;
-      }
-      else return_code = NO_ERROR;
-      goto cleanup;
-    }
-
-    WCMD_parse(parms_start, quals, param1, param2);
-    TRACE("param1: %s, param2: %s\n", wine_dbgstr_w(param1), wine_dbgstr_w(param2));
-
-    if (cmd_index <= WCMD_EXIT && (parms_start[0] == '/') && (parms_start[1] == '?')) {
-      /* this is a help request for a builtin program */
-      cmd_index = WCMD_HELP;
-      memcpy(parms_start, cmd, count * sizeof(WCHAR));
-      parms_start[count] = '\0';
-    }
-
-    switch (cmd_index) {
-
-      case WCMD_CALL:
-        return_code = WCMD_call(parms_start);
-        break;
-      case WCMD_CD:
-      case WCMD_CHDIR:
-        return_code = WCMD_setshow_default(parms_start);
-        break;
-      case WCMD_CLS:
-        return_code = WCMD_clear_screen();
-        break;
-      case WCMD_COPY:
-        return_code = WCMD_copy(parms_start);
-        break;
-      case WCMD_DATE:
-        return_code = WCMD_setshow_date();
-	break;
-      case WCMD_DEL:
-      case WCMD_ERASE:
-        return_code = WCMD_delete(parms_start);
-        break;
-      case WCMD_DIR:
-        return_code = WCMD_directory(parms_start);
-        break;
-      case WCMD_ECHO:
-        return_code = WCMD_echo(&cmd[count]);
-        break;
-      case WCMD_GOTO:
-        return_code = WCMD_goto();
-        break;
-      case WCMD_HELP:
-        return_code = WCMD_give_help(parms_start);
-        break;
-      case WCMD_LABEL:
-        return_code = WCMD_label();
-        break;
-      case WCMD_MD:
-      case WCMD_MKDIR:
-        return_code = WCMD_create_dir(parms_start);
-        break;
-      case WCMD_MOVE:
-        return_code = WCMD_move();
-        break;
-      case WCMD_PATH:
-        return_code = WCMD_setshow_path(parms_start);
-        break;
-      case WCMD_PAUSE:
-        return_code = WCMD_pause();
-        break;
-      case WCMD_PROMPT:
-        return_code = WCMD_setshow_prompt();
-        break;
-      case WCMD_REM:
-        return_code = NO_ERROR;
-        break;
-      case WCMD_REN:
-      case WCMD_RENAME:
-        return_code = WCMD_rename();
-	break;
-      case WCMD_RD:
-      case WCMD_RMDIR:
-        return_code = WCMD_remove_dir(parms_start);
-        break;
-      case WCMD_SETLOCAL:
-        return_code = WCMD_setlocal(parms_start);
-        break;
-      case WCMD_ENDLOCAL:
-        return_code = WCMD_endlocal();
-        break;
-      case WCMD_SET:
-        return_code = WCMD_setshow_env(parms_start);
-        break;
-      case WCMD_SHIFT:
-        return_code = WCMD_shift(parms_start);
-        break;
-      case WCMD_START:
-        return_code = WCMD_start(parms_start);
-        break;
-      case WCMD_TIME:
-        return_code = WCMD_setshow_time();
-        break;
-      case WCMD_TITLE:
-        return_code = WCMD_title(parms_start);
-        break;
-      case WCMD_TYPE:
-        return_code = WCMD_type(parms_start);
-        break;
-      case WCMD_VER:
-        return_code = WCMD_version();
-        break;
-      case WCMD_VERIFY:
-        return_code = WCMD_verify();
-        break;
-      case WCMD_VOL:
-        return_code = WCMD_volume();
-        break;
-      case WCMD_PUSHD:
-        return_code = WCMD_pushd(parms_start);
-        break;
-      case WCMD_POPD:
-        return_code = WCMD_popd();
-        break;
-      case WCMD_ASSOC:
-        return_code = WCMD_assoc(parms_start, TRUE);
-        break;
-      case WCMD_COLOR:
-        return_code = WCMD_color();
-        break;
-      case WCMD_FTYPE:
-        return_code = WCMD_assoc(parms_start, FALSE);
-        break;
-      case WCMD_MORE:
-        return_code = WCMD_more(parms_start);
-        break;
-      case WCMD_CHOICE:
-        return_code = WCMD_choice(parms_start);
-        break;
-      case WCMD_MKLINK:
-        return_code = WCMD_mklink(parms_start);
-        break;
-      case WCMD_EXIT:
-        return_code = WCMD_exit();
-        break;
-      default:
-        prev_echo_mode = echo_mode;
-        return_code = WCMD_run_program(cmd, FALSE);
+    else if (sc.cmd_index <= WCMD_EXIT && (return_code != NO_ERROR || (!sc.has_path && !sc.has_extension)))
+        return_code = WCMD_run_builtin_command(sc.cmd_index, cmd);
+    else
+    {
+        BOOL prev_echo_mode = echo_mode;
+        if (*sc.path)
+            return_code = run_full_path(sc.path, cmd, FALSE);
         echo_mode = prev_echo_mode;
     }
-
-cleanup:
     free(cmd);
     return return_code;
+}
+
+RETURN_CODE WCMD_call_command(WCHAR *command)
+{
+  struct search_command sc;
+  RETURN_CODE return_code;
+
+  return_code = search_command(command, &sc, FALSE);
+  if (return_code == NO_ERROR)
+  {
+      if (!*sc.path) return NO_ERROR;
+      return run_full_path(sc.path, command, TRUE);
+  }
+
+  if (sc.cmd_index <= WCMD_EXIT)
+      return errorlevel = WCMD_run_builtin_command(sc.cmd_index, command);
+
+  /* Not found anywhere - give up */
+  WCMD_output_stderr(WCMD_LoadMessage(WCMD_NO_COMMAND_FOUND), command);
+
+  /* If a command fails to launch, it sets errorlevel 9009 - which
+   * does not seem to have any associated constant definition
+   */
+  errorlevel = RETURN_CODE_CANT_LAUNCH;
+  return ERROR_INVALID_FUNCTION;
 }
 
 /*************************************************************************
