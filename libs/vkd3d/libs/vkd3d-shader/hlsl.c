@@ -969,6 +969,7 @@ static const char * get_case_insensitive_typename(const char *name)
     {
         "dword",
         "float",
+        "geometryshader",
         "matrix",
         "pixelshader",
         "texture",
@@ -1679,22 +1680,6 @@ struct hlsl_ir_node *hlsl_new_switch(struct hlsl_ctx *ctx, struct hlsl_ir_node *
     return &s->node;
 }
 
-struct hlsl_ir_node *hlsl_new_vsir_instruction_ref(struct hlsl_ctx *ctx, unsigned int vsir_instr_idx,
-        struct hlsl_type *type, const struct hlsl_reg *reg, const struct vkd3d_shader_location *loc)
-{
-    struct hlsl_ir_vsir_instruction_ref *vsir_instr;
-
-    if (!(vsir_instr = hlsl_alloc(ctx, sizeof(*vsir_instr))))
-        return NULL;
-    init_node(&vsir_instr->node, HLSL_IR_VSIR_INSTRUCTION_REF, type, loc);
-    vsir_instr->vsir_instr_idx = vsir_instr_idx;
-
-    if (reg)
-        vsir_instr->node.reg = *reg;
-
-    return &vsir_instr->node;
-}
-
 struct hlsl_ir_load *hlsl_new_load_index(struct hlsl_ctx *ctx, const struct hlsl_deref *deref,
         struct hlsl_ir_node *idx, const struct vkd3d_shader_location *loc)
 {
@@ -1847,30 +1832,40 @@ struct hlsl_ir_node *hlsl_new_swizzle(struct hlsl_ctx *ctx, uint32_t s, unsigned
     return &swizzle->node;
 }
 
-struct hlsl_ir_node *hlsl_new_compile(struct hlsl_ctx *ctx, const char *profile_name,
-        struct hlsl_ir_node **args, unsigned int args_count, struct hlsl_block *args_instrs,
-        const struct vkd3d_shader_location *loc)
+struct hlsl_ir_node *hlsl_new_compile(struct hlsl_ctx *ctx, enum hlsl_compile_type compile_type,
+        const char *profile_name, struct hlsl_ir_node **args, unsigned int args_count,
+        struct hlsl_block *args_instrs, const struct vkd3d_shader_location *loc)
 {
     const struct hlsl_profile_info *profile_info = NULL;
     struct hlsl_ir_compile *compile;
     struct hlsl_type *type = NULL;
     unsigned int i;
 
-    if (!(profile_info = hlsl_get_target_info(profile_name)))
+    switch (compile_type)
     {
-        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_PROFILE, "Unknown profile \"%s\".", profile_name);
-        return NULL;
-    }
+        case HLSL_COMPILE_TYPE_COMPILE:
+            if (!(profile_info = hlsl_get_target_info(profile_name)))
+            {
+                hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_PROFILE, "Unknown profile \"%s\".", profile_name);
+                return NULL;
+            }
 
-    if (profile_info->type == VKD3D_SHADER_TYPE_PIXEL)
-        type = hlsl_get_type(ctx->cur_scope, "PixelShader", true, true);
-    else if (profile_info->type == VKD3D_SHADER_TYPE_VERTEX)
-        type = hlsl_get_type(ctx->cur_scope, "VertexShader", true, true);
+            if (profile_info->type == VKD3D_SHADER_TYPE_PIXEL)
+                type = hlsl_get_type(ctx->cur_scope, "PixelShader", true, true);
+            else if (profile_info->type == VKD3D_SHADER_TYPE_VERTEX)
+                type = hlsl_get_type(ctx->cur_scope, "VertexShader", true, true);
 
-    if (!type)
-    {
-        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_PROFILE, "Invalid profile \"%s\".", profile_name);
-        return NULL;
+            if (!type)
+            {
+                hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_PROFILE, "Invalid profile \"%s\".", profile_name);
+                return NULL;
+            }
+
+            break;
+
+        case HLSL_COMPILE_TYPE_CONSTRUCTGSWITHSO:
+            type = hlsl_get_type(ctx->cur_scope, "GeometryShader", true, true);
+            break;
     }
 
     if (!(compile = hlsl_alloc(ctx, sizeof(*compile))))
@@ -1878,6 +1873,7 @@ struct hlsl_ir_node *hlsl_new_compile(struct hlsl_ctx *ctx, const char *profile_
 
     init_node(&compile->node, HLSL_IR_COMPILE, type, loc);
 
+    compile->compile_type = compile_type;
     compile->profile = profile_info;
 
     hlsl_block_init(&compile->instrs);
@@ -2271,7 +2267,8 @@ static struct hlsl_ir_node *clone_compile(struct hlsl_ctx *ctx,
     if (compile->profile)
         profile_name = compile->profile->name;
 
-    if (!(node = hlsl_new_compile(ctx, profile_name, args, compile->args_count, &block, &compile->node.loc)))
+    if (!(node = hlsl_new_compile(ctx, compile->compile_type, profile_name,
+            args, compile->args_count, &block, &compile->node.loc)))
     {
         hlsl_block_cleanup(&block);
         vkd3d_free(args);
@@ -2429,9 +2426,6 @@ static struct hlsl_ir_node *clone_instr(struct hlsl_ctx *ctx,
 
         case HLSL_IR_STATEBLOCK_CONSTANT:
             return clone_stateblock_constant(ctx, map, hlsl_ir_stateblock_constant(instr));
-
-        case HLSL_IR_VSIR_INSTRUCTION_REF:
-            vkd3d_unreachable();
     }
 
     vkd3d_unreachable();
@@ -2847,7 +2841,6 @@ const char *hlsl_node_type_to_string(enum hlsl_ir_node_type type)
 
         [HLSL_IR_COMPILE]             = "HLSL_IR_COMPILE",
         [HLSL_IR_STATEBLOCK_CONSTANT] = "HLSL_IR_STATEBLOCK_CONSTANT",
-        [HLSL_IR_VSIR_INSTRUCTION_REF] = "HLSL_IR_VSIR_INSTRUCTION_REF",
     };
 
     if (type >= ARRAY_SIZE(names))
@@ -3300,7 +3293,16 @@ static void dump_ir_compile(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *bu
 {
     unsigned int i;
 
-    vkd3d_string_buffer_printf(buffer, "compile %s {\n", compile->profile->name);
+    switch (compile->compile_type)
+    {
+        case HLSL_COMPILE_TYPE_COMPILE:
+            vkd3d_string_buffer_printf(buffer, "compile %s {\n", compile->profile->name);
+            break;
+
+        case HLSL_COMPILE_TYPE_CONSTRUCTGSWITHSO:
+            vkd3d_string_buffer_printf(buffer, "ConstructGSWithSO {\n");
+            break;
+    }
 
     dump_block(ctx, buffer, &compile->instrs);
 
@@ -3419,11 +3421,6 @@ static void dump_instr(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer,
 
         case HLSL_IR_STATEBLOCK_CONSTANT:
             dump_ir_stateblock_constant(buffer, hlsl_ir_stateblock_constant(instr));
-            break;
-
-        case HLSL_IR_VSIR_INSTRUCTION_REF:
-            vkd3d_string_buffer_printf(buffer, "vsir_program instruction %u",
-                    hlsl_ir_vsir_instruction_ref(instr)->vsir_instr_idx);
             break;
     }
 }
@@ -3721,10 +3718,6 @@ void hlsl_free_instr(struct hlsl_ir_node *node)
 
         case HLSL_IR_STATEBLOCK_CONSTANT:
             free_ir_stateblock_constant(hlsl_ir_stateblock_constant(node));
-            break;
-
-        case HLSL_IR_VSIR_INSTRUCTION_REF:
-            vkd3d_free(hlsl_ir_vsir_instruction_ref(node));
             break;
     }
 }

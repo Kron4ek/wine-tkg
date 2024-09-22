@@ -167,7 +167,7 @@ static void wayland_win_data_get_config(struct wayland_win_data *data,
     TRACE("window=%s style=%#lx\n", wine_dbgstr_rect(&conf->rect), (long)style);
 
     /* The fullscreen state is implied by the window position and style. */
-    if (NtUserIsWindowRectFullScreen(&conf->rect, get_win_monitor_dpi(data->hwnd)))
+    if (data->is_fullscreen)
     {
         if ((style & WS_MAXIMIZE) && (style & WS_CAPTION) == WS_CAPTION)
             window_state |= WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED;
@@ -195,6 +195,7 @@ static void reapply_cursor_clipping(void)
 
 static void wayland_win_data_update_wayland_surface(struct wayland_win_data *data)
 {
+    struct wayland_client_surface *client = data->client_surface;
     struct wayland_surface *surface = data->wayland_surface;
     HWND parent = NtUserGetAncestor(data->hwnd, GA_PARENT);
     BOOL visible, xdg_visible;
@@ -205,7 +206,11 @@ static void wayland_win_data_update_wayland_surface(struct wayland_win_data *dat
     /* We don't want wayland surfaces for child windows. */
     if (parent != NtUserGetDesktopWindow() && parent != 0)
     {
-        if (surface) wayland_surface_destroy(surface);
+        if (surface)
+        {
+            if (client) wayland_client_surface_attach(client, surface);
+            wayland_surface_destroy(surface);
+        }
         surface = NULL;
         goto out;
     }
@@ -219,13 +224,18 @@ static void wayland_win_data_update_wayland_surface(struct wayland_win_data *dat
     if (visible != xdg_visible)
     {
         /* If we have a pre-existing surface ensure it has no role. */
-        if (data->wayland_surface) wayland_surface_clear_role(surface);
+        if (data->wayland_surface)
+        {
+            if (client) wayland_client_surface_detach(client);
+            wayland_surface_clear_role(surface);
+        }
         /* If the window is a visible toplevel make it a wayland
          * xdg_toplevel. Otherwise keep it role-less to avoid polluting the
          * compositor with empty xdg_toplevels. */
         if (visible)
         {
             wayland_surface_make_toplevel(surface);
+            if (client) wayland_client_surface_attach(client, surface);
             if (surface->xdg_toplevel)
             {
                 if (!NtUserInternalGetWindowText(data->hwnd, text, ARRAY_SIZE(text)))
@@ -425,8 +435,8 @@ BOOL WAYLAND_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const str
 /***********************************************************************
  *           WAYLAND_WindowPosChanged
  */
-void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags, const struct window_rects *new_rects,
-                              struct window_surface *surface)
+void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags, BOOL fullscreen,
+                              const struct window_rects *new_rects, struct window_surface *surface)
 {
     struct wayland_win_data *data;
     BOOL managed;
@@ -441,6 +451,7 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags, cons
     if (!(data = wayland_win_data_get(hwnd))) return;
 
     data->rects = *new_rects;
+    data->is_fullscreen = fullscreen;
     data->managed = managed;
 
     wayland_win_data_update_wayland_surface(data);
@@ -682,6 +693,51 @@ LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
     return ret;
 }
 
+/**********************************************************************
+ *          get_client_surface
+ */
+struct wayland_client_surface *get_client_surface(HWND hwnd, RECT *client_rect)
+{
+    struct wayland_client_surface *client;
+    struct wayland_surface *surface;
+    struct wayland_win_data *data;
+
+    if ((data = wayland_win_data_get(hwnd)))
+    {
+        surface = data->wayland_surface;
+
+        /* ownership is shared with one of the callers, the last caller to release
+         * its reference will also destroy it and clear our pointer. */
+        if ((client = data->client_surface)) InterlockedIncrement(&client->ref);
+
+        if (!data->wayland_surface) *client_rect = data->rects.client;
+        else *client_rect = data->wayland_surface->window.client_rect;
+    }
+    else
+    {
+        surface = NULL;
+        client = NULL;
+        SetRectEmpty(client_rect);
+    }
+
+    if (!client && !(client = wayland_client_surface_create(hwnd)))
+    {
+        if (data) wayland_win_data_release(data);
+        return NULL;
+    }
+    if (!data) return client;
+
+    if (surface && NtUserIsWindowVisible(hwnd))
+        wayland_client_surface_attach(client, surface);
+    else
+        wayland_client_surface_detach(client);
+
+    if (!data->client_surface) data->client_surface = client;
+
+    wayland_win_data_release(data);
+    return client;
+}
+
 BOOL set_window_surface_contents(HWND hwnd, struct wayland_shm_buffer *shm_buffer, HRGN damage_region)
 {
     struct wayland_surface *wayland_surface;
@@ -692,7 +748,7 @@ BOOL set_window_surface_contents(HWND hwnd, struct wayland_shm_buffer *shm_buffe
 
     if ((wayland_surface = data->wayland_surface))
     {
-        if (wayland_surface_reconfigure(wayland_surface))
+        if (wayland_surface_reconfigure(wayland_surface, data->client_surface))
         {
             wayland_surface_attach_shm(wayland_surface, shm_buffer, damage_region);
             wl_surface_commit(wayland_surface->wl_surface);
@@ -737,13 +793,13 @@ void ensure_window_surface_contents(HWND hwnd)
 
     if ((wayland_surface = data->wayland_surface))
     {
-        wayland_surface_ensure_contents(wayland_surface);
+        wayland_surface_ensure_contents(wayland_surface, data->client_surface);
 
         /* Handle any processed configure request, to ensure the related
          * surface state is applied by the compositor. */
         if (wayland_surface->processing.serial &&
             wayland_surface->processing.processed &&
-            wayland_surface_reconfigure(wayland_surface))
+            wayland_surface_reconfigure(wayland_surface, data->client_surface))
         {
             wl_surface_commit(wayland_surface->wl_surface);
         }

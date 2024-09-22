@@ -19,6 +19,7 @@
  */
 
 #include "vkd3d_private.h"
+#include <math.h>
 
 static void d3d12_fence_incref(struct d3d12_fence *fence);
 static void d3d12_fence_decref(struct d3d12_fence *fence);
@@ -2451,6 +2452,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_command_list_Close(ID3D12GraphicsCommandL
     }
 
     list->is_recording = false;
+    list->has_depth_bounds = false;
 
     if (!list->is_valid)
     {
@@ -2479,7 +2481,7 @@ static void d3d12_command_list_reset_state(struct d3d12_command_list *list,
     list->fb_layer_count = 0;
 
     list->xfb_enabled = false;
-
+    list->has_depth_bounds = false;
     list->is_predicated = false;
 
     list->current_framebuffer = VK_NULL_HANDLE;
@@ -3078,7 +3080,7 @@ done:
     vkd3d_free(vk_descriptor_writes);
 }
 
-static void d3d12_command_list_update_descriptors(struct d3d12_command_list *list,
+static void d3d12_command_list_update_virtual_descriptors(struct d3d12_command_list *list,
         enum vkd3d_pipeline_bind_point bind_point)
 {
     struct vkd3d_pipeline_bindings *bindings = &list->pipeline_bindings[bind_point];
@@ -3210,6 +3212,9 @@ static void command_list_flush_vk_heap_updates(struct d3d12_command_list *list)
 
 static void command_list_add_descriptor_heap(struct d3d12_command_list *list, struct d3d12_descriptor_heap *heap)
 {
+    if (!list->device->use_vk_heaps)
+        return;
+
     if (!contains_heap(list->descriptor_heaps, list->descriptor_heap_count, heap))
     {
         if (list->descriptor_heap_count == ARRAY_SIZE(list->descriptor_heaps))
@@ -3296,6 +3301,15 @@ static void d3d12_command_list_update_heap_descriptors(struct d3d12_command_list
     d3d12_command_list_bind_descriptor_heap(list, bind_point, sampler_heap);
 }
 
+static void d3d12_command_list_update_descriptors(struct d3d12_command_list *list,
+        enum vkd3d_pipeline_bind_point bind_point)
+{
+    if (list->device->use_vk_heaps)
+        d3d12_command_list_update_heap_descriptors(list, bind_point);
+    else
+        d3d12_command_list_update_virtual_descriptors(list, bind_point);
+}
+
 static bool d3d12_command_list_update_compute_state(struct d3d12_command_list *list)
 {
     d3d12_command_list_end_current_render_pass(list);
@@ -3303,7 +3317,7 @@ static bool d3d12_command_list_update_compute_state(struct d3d12_command_list *l
     if (!d3d12_command_list_update_compute_pipeline(list))
         return false;
 
-    list->update_descriptors(list, VKD3D_PIPELINE_BIND_POINT_COMPUTE);
+    d3d12_command_list_update_descriptors(list, VKD3D_PIPELINE_BIND_POINT_COMPUTE);
 
     return true;
 }
@@ -3320,7 +3334,7 @@ static bool d3d12_command_list_begin_render_pass(struct d3d12_command_list *list
     if (!d3d12_command_list_update_current_framebuffer(list))
         return false;
 
-    list->update_descriptors(list, VKD3D_PIPELINE_BIND_POINT_GRAPHICS);
+    d3d12_command_list_update_descriptors(list, VKD3D_PIPELINE_BIND_POINT_GRAPHICS);
 
     if (list->current_render_pass != VK_NULL_HANDLE)
         return true;
@@ -3349,6 +3363,12 @@ static bool d3d12_command_list_begin_render_pass(struct d3d12_command_list *list
                 list->so_counter_buffers, list->so_counter_buffer_offsets));
 
         list->xfb_enabled = true;
+    }
+
+    if (graphics->ds_desc.depthBoundsTestEnable && !list->has_depth_bounds)
+    {
+        list->has_depth_bounds = true;
+        VK_CALL(vkCmdSetDepthBounds(list->vk_command_buffer, 0.0f, 1.0f));
     }
 
     return true;
@@ -5939,7 +5959,25 @@ static void STDMETHODCALLTYPE d3d12_command_list_AtomicCopyBufferUINT64(ID3D12Gr
 static void STDMETHODCALLTYPE d3d12_command_list_OMSetDepthBounds(ID3D12GraphicsCommandList6 *iface,
         FLOAT min, FLOAT max)
 {
-    FIXME("iface %p, min %.8e, max %.8e stub!\n", iface, min, max);
+    struct d3d12_command_list *list = impl_from_ID3D12GraphicsCommandList6(iface);
+    const struct vkd3d_vk_device_procs *vk_procs = &list->device->vk_procs;
+
+    TRACE("iface %p, min %.8e, max %.8e.\n", iface, min, max);
+
+    if (isnan(max))
+        max = 0.0f;
+    if (isnan(min))
+        min = 0.0f;
+
+    if (!list->device->vk_info.EXT_depth_range_unrestricted && (min < 0.0f || min > 1.0f || max < 0.0f || max > 1.0f))
+    {
+        WARN("VK_EXT_depth_range_unrestricted was not found, clamping depth bounds to 0.0 and 1.0.\n");
+        max = vkd3d_clamp(max, 0.0f, 1.0f);
+        min = vkd3d_clamp(min, 0.0f, 1.0f);
+    }
+
+    list->has_depth_bounds = true;
+    VK_CALL(vkCmdSetDepthBounds(list->vk_command_buffer, min, max));
 }
 
 static void STDMETHODCALLTYPE d3d12_command_list_SetSamplePositions(ID3D12GraphicsCommandList6 *iface,
@@ -6189,8 +6227,6 @@ static HRESULT d3d12_command_list_init(struct d3d12_command_list *list, struct d
 
     list->allocator = allocator;
 
-    list->update_descriptors = device->use_vk_heaps ? d3d12_command_list_update_heap_descriptors
-            : d3d12_command_list_update_descriptors;
     list->descriptor_heap_count = 0;
 
     if (SUCCEEDED(hr = d3d12_command_allocator_allocate_command_buffer(allocator, list)))

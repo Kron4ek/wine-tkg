@@ -719,10 +719,7 @@ static inline void *init_handler( const ucontext_t *sigcontext )
     {
         struct x86_thread_data *thread_data = (struct x86_thread_data *)&teb->GdiTebBatch;
         set_fs( thread_data->fs );
-        /* FIXME ZF: This is a bit of a hack, but it doesn't matter,
-         * since this patch set goes in the wrong direction anyway. */
-        if (thread_data->gs)
-            set_gs( thread_data->gs );
+        set_gs( thread_data->gs );
     }
 #endif
 

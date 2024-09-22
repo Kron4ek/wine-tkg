@@ -738,7 +738,7 @@ static bool vkd3d_validate_descriptor_set_count(struct d3d12_device *device, uns
     if (set_count > max_count)
     {
         /* NOTE: If maxBoundDescriptorSets is < 9, try VKD3D_CONFIG=virtual_heaps */
-        ERR("Required descriptor set count exceeds maximum allowed count of %u.\n", max_count);
+        WARN("Required descriptor set count exceeds maximum allowed count of %u.\n", max_count);
         return false;
     }
 
@@ -3867,6 +3867,7 @@ VkPipeline d3d12_pipeline_state_get_or_create_pipeline(struct d3d12_pipeline_sta
         VK_DYNAMIC_STATE_SCISSOR,
         VK_DYNAMIC_STATE_BLEND_CONSTANTS,
         VK_DYNAMIC_STATE_STENCIL_REFERENCE,
+        VK_DYNAMIC_STATE_DEPTH_BOUNDS,
     };
     static const VkPipelineDynamicStateCreateInfo dynamic_desc =
     {

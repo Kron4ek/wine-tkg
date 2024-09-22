@@ -1053,7 +1053,7 @@ static BOOL X11DRV_ConfigureNotify( HWND hwnd, XEvent *xev )
     struct x11drv_win_data *data;
     RECT rect;
     POINT pos;
-    UINT flags, dpi;
+    UINT flags;
     HWND parent;
     BOOL root_coords;
     int cx, cy, x = event->x, y = event->y;
@@ -1075,7 +1075,6 @@ static BOOL X11DRV_ConfigureNotify( HWND hwnd, XEvent *xev )
 
     /* Get geometry */
 
-    dpi = get_win_monitor_dpi( data->hwnd );
     parent = NtUserGetAncestor( hwnd, GA_PARENT );
     root_coords = event->send_event;  /* synthetic events are always in root coords */
 
@@ -1128,7 +1127,7 @@ static BOOL X11DRV_ConfigureNotify( HWND hwnd, XEvent *xev )
                (int)(data->rects.window.bottom - data->rects.window.top), cx, cy );
 
     style = NtUserGetWindowLongW( data->hwnd, GWL_STYLE );
-    if ((style & WS_CAPTION) == WS_CAPTION || !NtUserIsWindowRectFullScreen( &data->rects.visible, dpi ))
+    if ((style & WS_CAPTION) == WS_CAPTION || !data->is_fullscreen)
     {
         read_net_wm_states( event->display, data );
         if ((data->net_wm_state & (1 << NET_WM_STATE_MAXIMIZED)))
@@ -1813,7 +1812,7 @@ static void handle_xdnd_position_event( HWND hwnd, XClientMessageEvent *event )
 
 static void handle_xdnd_drop_event( HWND hwnd, XClientMessageEvent *event )
 {
-    struct dnd_drop_event_params params = {.dispatch.callback = dnd_leave_event_callback, .hwnd = HandleToULong(hwnd)};
+    struct dnd_drop_event_params params = {.dispatch.callback = dnd_drop_event_callback, .hwnd = HandleToULong(hwnd)};
     XClientMessageEvent e;
     void *ret_ptr;
     ULONG ret_len;

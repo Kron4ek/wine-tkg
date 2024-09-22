@@ -4417,7 +4417,7 @@ static const WCHAR *get_attribute( const struct attribute_list *list, const WCHA
 static WCHAR *build_connect_string( struct attribute_list *list )
 {
     WCHAR *ret, *ptr;
-    UINT32 i, len = 0;
+    UINT32 i, len = 1;
 
     for (i = 0; i < list->count; i++) len += wcslen( list->attrs[i]->name ) + wcslen( list->attrs[i]->value ) + 2;
     if (!(ptr = ret = malloc( len * sizeof(WCHAR) ))) return NULL;
@@ -7987,7 +7987,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, LPVOID reserved)
         break;
 
     case DLL_PROCESS_DETACH:
-        WINE_UNIX_CALL( process_detach, NULL );
+        if (__wine_unixlib_handle) WINE_UNIX_CALL( process_detach, NULL );
         if (reserved) break;
     }
 

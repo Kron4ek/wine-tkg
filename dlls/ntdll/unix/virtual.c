@@ -124,7 +124,6 @@ struct file_view
 #define VPROT_GUARD      0x10
 #define VPROT_COMMITTED  0x20
 #define VPROT_WRITEWATCH 0x40
-#define VPROT_WRITTEN    0x80
 /* per-mapping protection flags */
 #define VPROT_ARM64EC          0x0100  /* view may contain ARM64EC code */
 #define VPROT_SYSTEM           0x0200  /* system view (underlying mmap not under our control) */
@@ -349,7 +348,6 @@ static void mmap_remove_reserved_area( void *addr, SIZE_T size )
                         new_area->size = (char *)area->base + area->size - (char *)new_area->base;
                         list_add_after( ptr, &new_area->entry );
                     }
-                    else size = (char *)area->base + area->size - (char *)addr;
                     area->size = (char *)addr - (char *)area->base;
                     break;
                 }
@@ -497,12 +495,11 @@ static void reserve_area( void *addr, void *end )
         address += size;
     }
 #else
-    void *ptr;
     size_t size = (char *)end - (char *)addr;
 
     if (!size) return;
 
-    if ((ptr = anon_mmap_tryfixed( addr, size, PROT_NONE, MAP_NORESERVE )) != MAP_FAILED)
+    if (anon_mmap_tryfixed( addr, size, PROT_NONE, MAP_NORESERVE ) != MAP_FAILED)
     {
         mmap_add_reserved_area( addr, size );
         return;
@@ -516,21 +513,6 @@ static void reserve_area( void *addr, void *end )
 #endif /* __APPLE__ */
 }
 
-/* This might look like a hack, but it actually isn't - the 'experimental' version
- * is correct, but it already has revealed a couple of additional Wine bugs, which
- * were not triggered before, and there are probably some more.
- * To avoid breaking Wine for everyone, the new correct implementation has to be
- * manually enabled, until it is tested a bit more. */
-static inline BOOL experimental_WRITECOPY( void )
-{
-    static int enabled = -1;
-    if (enabled == -1)
-    {
-        const char *str = getenv("STAGING_WRITECOPY");
-        enabled = str && (atoi(str) != 0);
-    }
-    return enabled;
-}
 
 static void mmap_init( const struct preload_info *preload_info )
 {
@@ -1161,19 +1143,8 @@ static int get_unix_prot( BYTE vprot )
     {
         if (vprot & VPROT_READ) prot |= PROT_READ;
         if (vprot & VPROT_WRITE) prot |= PROT_WRITE | PROT_READ;
-        if (vprot & VPROT_EXEC) prot |= PROT_EXEC | PROT_READ;
-#if defined(__i386__)
-        if (vprot & VPROT_WRITECOPY)
-        {
-            if (experimental_WRITECOPY() && !(vprot & VPROT_WRITTEN))
-                prot = (prot & ~PROT_WRITE) | PROT_READ;
-            else
-                prot |= PROT_WRITE | PROT_READ;
-        }
-#else
-        /* FIXME: Architecture needs implementation of signal_init_early. */
         if (vprot & VPROT_WRITECOPY) prot |= PROT_WRITE | PROT_READ;
-#endif
+        if (vprot & VPROT_EXEC) prot |= PROT_EXEC | PROT_READ;
         if (vprot & VPROT_WRITEWATCH) prot &= ~PROT_WRITE;
     }
     if (!prot) prot = PROT_NONE;
@@ -1333,7 +1304,7 @@ static void* try_map_free_area( struct alloc_area *area, void *base, void *end, 
 
     while (start && base <= start && (char*)start + size <= (char*)end)
     {
-        if ((ptr = anon_mmap_tryfixed( start, size, unix_prot, 0 )) != MAP_FAILED) return start;
+        if (anon_mmap_tryfixed( start, size, unix_prot, 0 ) != MAP_FAILED) return start;
         TRACE( "Found free area is already mapped, start %p.\n", start );
         if (errno != EEXIST)
         {
@@ -1561,11 +1532,7 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
  */
 static DWORD get_win32_prot( BYTE vprot, unsigned int map_prot )
 {
-    DWORD ret;
-
-    if ((vprot & VPROT_WRITECOPY) && (vprot & VPROT_WRITTEN))
-        vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
-    ret = VIRTUAL_Win32Flags[vprot & 0x0f];
+    DWORD ret = VIRTUAL_Win32Flags[vprot & 0x0f];
     if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
     return ret;
@@ -1671,30 +1638,16 @@ static void mprotect_range( void *base, size_t size, BYTE set, BYTE clear )
  */
 static BOOL set_vprot( struct file_view *view, void *base, size_t size, BYTE vprot )
 {
-    int unix_prot;
-
     if (view->protect & VPROT_WRITEWATCH)
     {
         /* each page may need different protections depending on write watch flag */
-        set_page_vprot_bits( base, size, vprot & ~VPROT_WRITEWATCH, ~vprot & ~(VPROT_WRITEWATCH|VPROT_WRITTEN) );
+        set_page_vprot_bits( base, size, vprot & ~VPROT_WRITEWATCH, ~vprot & ~VPROT_WRITEWATCH );
         mprotect_range( base, size, 0, 0 );
         return TRUE;
     }
-
     if (enable_write_exceptions && is_vprot_exec_write( vprot )) vprot |= VPROT_WRITEWATCH;
-    unix_prot = get_unix_prot(vprot);
-
-    /* check that we can map this memory with PROT_WRITE since we cannot fail later,
-     * but we fallback to copying pages for read-only mappings in virtual_handle_fault */
-    if ((vprot & VPROT_WRITECOPY) && (view->protect & VPROT_WRITECOPY))
-        unix_prot |= PROT_WRITE;
-
-    if (mprotect_exec( base, size, unix_prot )) return FALSE;
-    /* each page may need different protections depending on writecopy */
-    set_page_vprot_bits( base, size, vprot, ~vprot & ~VPROT_WRITTEN );
-    if (vprot & VPROT_WRITECOPY)
-        mprotect_range( base, size, 0, 0 );
-
+    if (mprotect_exec( base, size, get_unix_prot(vprot) )) return FALSE;
+    set_page_vprot( base, size, vprot );
     return TRUE;
 }
 
@@ -1750,7 +1703,7 @@ static void update_write_watches( void *base, size_t size, size_t accessed_size 
 {
     TRACE( "updating watch %p-%p-%p\n", base, (char *)base + accessed_size, (char *)base + size );
     /* clear write watch flag on accessed pages */
-    set_page_vprot_bits( base, accessed_size, VPROT_WRITE, VPROT_WRITEWATCH | VPROT_WRITECOPY );
+    set_page_vprot_bits( base, accessed_size, 0, VPROT_WRITEWATCH );
     /* restore page protections on the entire range */
     mprotect_range( base, size, 0, 0 );
 }
@@ -2936,8 +2889,6 @@ static NTSTATUS map_image_into_view( struct file_view *view, const WCHAR *filena
                            ptr + sec->VirtualAddress + file_size,
                            ptr + sec->VirtualAddress + end );
             memset( ptr + sec->VirtualAddress + file_size, 0, end - file_size );
-            /* clear WRITTEN mark so QueryVirtualMemory returns correct values */
-            set_page_vprot_bits( ptr + sec->VirtualAddress + file_size, 1, 0, VPROT_WRITTEN );
         }
     }
 
@@ -3370,7 +3321,7 @@ static void *alloc_virtual_heap( SIZE_T size )
 void virtual_init(void)
 {
     const struct preload_info **preload_info = dlsym( RTLD_DEFAULT, "wine_main_preload_info" );
-    const char *preload = getenv( "WINEPRELOADRESERVE" );
+    const char *preload;
     size_t size;
     int i;
     pthread_mutexattr_t attr;
@@ -4122,29 +4073,12 @@ NTSTATUS virtual_handle_fault( EXCEPTION_RECORD *rec, void *stack )
                 mprotect_range( page, page_size, 0, 0 );
             }
         }
-        if ((vprot & VPROT_WRITECOPY) && (vprot & VPROT_COMMITTED))
-        {
-            struct file_view *view = find_view( page, 0 );
-
-            set_page_vprot_bits( page, page_size, VPROT_WRITE | VPROT_WRITTEN, VPROT_WRITECOPY );
-            if (view->protect & VPROT_WRITECOPY)
-            {
-                mprotect_range( page, page_size, 0, 0 );
-            }
-            else
-            {
-                static BYTE *temp_page = NULL;
-                if (!temp_page)
-                    temp_page = anon_mmap_alloc( page_size, PROT_READ | PROT_WRITE );
-
-                /* original mapping is shared, replace with a private page */
-                memcpy( temp_page, page, page_size );
-                anon_mmap_fixed( page, page_size, get_unix_prot( vprot | VPROT_WRITE | VPROT_WRITTEN ), 0 );
-                memcpy( page, temp_page, page_size );
-            }
-        }
         /* ignore fault if page is writable now */
-        if (get_unix_prot( get_page_vprot( page ) ) & PROT_WRITE) ret = STATUS_SUCCESS;
+        if (get_unix_prot( get_page_vprot( page )) & PROT_WRITE)
+        {
+            if ((vprot & VPROT_WRITEWATCH) || is_write_watch_range( page, page_size ))
+                ret = STATUS_SUCCESS;
+        }
     }
     mutex_unlock( &virtual_mutex );
     rec->ExceptionCode = ret;
@@ -4218,16 +4152,11 @@ static NTSTATUS check_write_access( void *base, size_t size, BOOL *has_write_wat
     {
         BYTE vprot = get_page_vprot( addr + i );
         if (vprot & VPROT_WRITEWATCH) *has_write_watch = TRUE;
-        if (vprot & VPROT_WRITECOPY)
-        {
-            vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
-            *has_write_watch = TRUE;
-        }
         if (!(get_unix_prot( vprot & ~VPROT_WRITEWATCH ) & PROT_WRITE))
             return STATUS_INVALID_USER_BUFFER;
     }
     if (*has_write_watch)
-        mprotect_range( addr, size, VPROT_WRITE, VPROT_WRITEWATCH | VPROT_WRITECOPY );  /* temporarily enable write access */
+        mprotect_range( addr, size, 0, VPROT_WRITEWATCH );  /* temporarily enable write access */
     return STATUS_SUCCESS;
 }
 
@@ -5424,7 +5353,7 @@ static void fill_working_set_info( struct fill_working_set_info_data *d, struct 
         pagemap = d->pm_buffer[page - d->buffer_start];
 
         p->VirtualAttributes.Valid = !(vprot & VPROT_GUARD) && (vprot & 0x0f) && (pagemap >> 63);
-        p->VirtualAttributes.Shared = (!is_view_valloc( view ) && ((pagemap >> 61) & 1)) || ((view->protect & VPROT_WRITECOPY) && !(vprot & VPROT_WRITTEN));
+        p->VirtualAttributes.Shared = !is_view_valloc( view ) && ((pagemap >> 61) & 1);
         if (p->VirtualAttributes.Shared && p->VirtualAttributes.Valid)
             p->VirtualAttributes.ShareCount = 1; /* FIXME */
         if (p->VirtualAttributes.Valid)

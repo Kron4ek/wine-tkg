@@ -23,6 +23,7 @@
 
 #include "hlsl.h"
 #include "vkd3d_shader_private.h"
+#include "d3dcommon.h"
 
 #define SM4_MAX_SRC_COUNT 6
 #define SM4_MAX_DST_COUNT 2
@@ -616,6 +617,47 @@ enum vkd3d_sm4_shader_data_type
     VKD3D_SM4_SHADER_DATA_MESSAGE                   = 0x4,
 };
 
+enum vkd3d_sm4_stat_field
+{
+    VKD3D_STAT_UNUSED = 0,
+    VKD3D_STAT_INSTR_COUNT,
+    VKD3D_STAT_MOV,
+    VKD3D_STAT_MOVC,
+    VKD3D_STAT_CONV,
+    VKD3D_STAT_FLOAT,
+    VKD3D_STAT_INT,
+    VKD3D_STAT_UINT,
+    VKD3D_STAT_EMIT,
+    VKD3D_STAT_CUT,
+    VKD3D_STAT_SAMPLE,
+    VKD3D_STAT_SAMPLE_C,
+    VKD3D_STAT_SAMPLE_GRAD,
+    VKD3D_STAT_SAMPLE_BIAS,
+    VKD3D_STAT_LOAD,
+    VKD3D_STAT_STORE,
+    VKD3D_STAT_DCL_VERTICES_OUT,
+    VKD3D_STAT_DCL_INPUT_PRIMITIVE,
+    VKD3D_STAT_DCL_OUTPUT_TOPOLOGY,
+    VKD3D_STAT_DCL_GS_INSTANCES,
+    VKD3D_STAT_BITWISE,
+    VKD3D_STAT_ATOMIC,
+    VKD3D_STAT_TESS_DOMAIN,
+    VKD3D_STAT_TESS_PARTITIONING,
+    VKD3D_STAT_TESS_OUTPUT_PRIMITIVE,
+    VKD3D_STAT_TESS_CONTROL_POINT_COUNT,
+    VKD3D_STAT_BARRIER,
+    VKD3D_STAT_LOD,
+    VKD3D_STAT_GATHER,
+    VKD3D_STAT_TEMPS,
+    VKD3D_STAT_COUNT,
+};
+
+struct vkd3d_sm4_stat_field_info
+{
+    enum vkd3d_sm4_opcode opcode;
+    enum vkd3d_sm4_stat_field field;
+};
+
 struct sm4_index_range
 {
     unsigned int index;
@@ -634,6 +676,7 @@ struct vkd3d_sm4_lookup_tables
     const struct vkd3d_sm4_opcode_info *opcode_info_from_sm4[VKD3D_SM4_OP_COUNT];
     const struct vkd3d_sm4_register_type_info *register_type_info_from_sm4[VKD3D_SM4_REGISTER_TYPE_COUNT];
     const struct vkd3d_sm4_register_type_info *register_type_info_from_vkd3d[VKD3DSPR_COUNT];
+    const struct vkd3d_sm4_stat_field_info *stat_field_from_sm4[VKD3D_SM4_OP_COUNT];
 };
 
 struct vkd3d_shader_sm4_parser
@@ -1115,7 +1158,18 @@ static void shader_sm4_read_dcl_input_ps(struct vkd3d_shader_instruction *ins, u
         struct signature_element *e = vsir_signature_find_element_for_reg(
                 &priv->p.program->input_signature, dst->reg.idx[dst->reg.idx_count - 1].offset, dst->write_mask);
 
-        e->interpolation_mode = ins->flags;
+        if (!e)
+        {
+            WARN("No matching signature element for input register %u with mask %#x.\n",
+                    dst->reg.idx[dst->reg.idx_count - 1].offset, dst->write_mask);
+            vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_DCL,
+                    "No matching signature element for input register %u with mask %#x.\n",
+                    dst->reg.idx[dst->reg.idx_count - 1].offset, dst->write_mask);
+        }
+        else
+        {
+            e->interpolation_mode = ins->flags;
+        }
     }
 }
 
@@ -1130,7 +1184,18 @@ static void shader_sm4_read_dcl_input_ps_siv(struct vkd3d_shader_instruction *in
         struct signature_element *e = vsir_signature_find_element_for_reg(
                 &priv->p.program->input_signature, dst->reg.idx[dst->reg.idx_count - 1].offset, dst->write_mask);
 
-        e->interpolation_mode = ins->flags;
+        if (!e)
+        {
+            WARN("No matching signature element for input register %u with mask %#x.\n",
+                    dst->reg.idx[dst->reg.idx_count - 1].offset, dst->write_mask);
+            vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_DCL,
+                    "No matching signature element for input register %u with mask %#x.\n",
+                    dst->reg.idx[dst->reg.idx_count - 1].offset, dst->write_mask);
+        }
+        else
+        {
+            e->interpolation_mode = ins->flags;
+        }
     }
     ins->declaration.register_semantic.sysval_semantic = *tokens;
 }
@@ -1330,11 +1395,17 @@ static const enum vkd3d_shader_register_precision register_precision_table[] =
     /* VKD3D_SM4_REGISTER_PRECISION_MIN_UINT_16 */  VKD3D_SHADER_REGISTER_PRECISION_MIN_UINT_16,
 };
 
+struct sm4_stat
+{
+    uint32_t fields[VKD3D_STAT_COUNT];
+};
+
 struct tpf_writer
 {
     struct hlsl_ctx *ctx;
     struct vkd3d_bytecode_buffer *buffer;
     struct vkd3d_sm4_lookup_tables lookup;
+    struct sm4_stat *stat;
 };
 
 static void init_sm4_lookup_tables(struct vkd3d_sm4_lookup_tables *lookup)
@@ -1662,6 +1733,161 @@ static void init_sm4_lookup_tables(struct vkd3d_sm4_lookup_tables *lookup)
         {VKD3D_SM5_RT_OUTPUT_STENCIL_REF,      VKD3DSPR_OUTSTENCILREF,   VKD3D_SM4_SWIZZLE_VEC4},
     };
 
+    static const struct vkd3d_sm4_stat_field_info stat_field_table[] =
+    {
+        {VKD3D_SM4_OP_MOV,      VKD3D_STAT_MOV},
+        {VKD3D_SM4_OP_MOVC,     VKD3D_STAT_MOVC},
+        {VKD3D_SM5_OP_DMOV,     VKD3D_STAT_MOV},
+        {VKD3D_SM5_OP_DMOVC,    VKD3D_STAT_MOVC},
+
+        {VKD3D_SM4_OP_ITOF,     VKD3D_STAT_CONV},
+        {VKD3D_SM4_OP_FTOI,     VKD3D_STAT_CONV},
+        {VKD3D_SM4_OP_FTOU,     VKD3D_STAT_CONV},
+        {VKD3D_SM4_OP_UTOF,     VKD3D_STAT_CONV},
+        {VKD3D_SM5_OP_DTOU,     VKD3D_STAT_CONV},
+        {VKD3D_SM5_OP_UTOD,     VKD3D_STAT_CONV},
+        {VKD3D_SM5_OP_DTOF,     VKD3D_STAT_CONV},
+        {VKD3D_SM5_OP_FTOD,     VKD3D_STAT_CONV},
+        {VKD3D_SM5_OP_DTOI,     VKD3D_STAT_CONV},
+        {VKD3D_SM5_OP_ITOD,     VKD3D_STAT_CONV},
+        {VKD3D_SM5_OP_F32TOF16, VKD3D_STAT_CONV},
+        {VKD3D_SM5_OP_F16TOF32, VKD3D_STAT_CONV},
+
+        {VKD3D_SM4_OP_ADD,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_DIV,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_DP2,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_DP3,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_DP4,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_EQ,       VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_EXP,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_FRC,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_GE,       VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_LT,       VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_MAD,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_MIN,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_MAX,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_MUL,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_NE,       VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_ROUND_NE, VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_ROUND_NI, VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_ROUND_PI, VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_ROUND_Z,  VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_RSQ,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_SQRT,     VKD3D_STAT_FLOAT},
+        {VKD3D_SM4_OP_SINCOS,   VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_RCP,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DADD,     VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DMAX,     VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DMIN,     VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DMUL,     VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DEQ,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DGE,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DLT,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DNE,      VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DDIV,     VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DFMA,     VKD3D_STAT_FLOAT},
+        {VKD3D_SM5_OP_DRCP,     VKD3D_STAT_FLOAT},
+
+        {VKD3D_SM4_OP_IADD, VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_IEQ,  VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_IGE,  VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_ILT,  VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_IMAD, VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_IMAX, VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_IMIN, VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_IMUL, VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_INE,  VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_INEG, VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_ISHL, VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_ISHR, VKD3D_STAT_INT},
+        {VKD3D_SM4_OP_ITOF, VKD3D_STAT_INT},
+
+        {VKD3D_SM4_OP_UDIV, VKD3D_STAT_UINT},
+        {VKD3D_SM4_OP_ULT,  VKD3D_STAT_UINT},
+        {VKD3D_SM4_OP_UGE,  VKD3D_STAT_UINT},
+        {VKD3D_SM4_OP_UMUL, VKD3D_STAT_UINT},
+        {VKD3D_SM4_OP_UMAX, VKD3D_STAT_UINT},
+        {VKD3D_SM4_OP_UMIN, VKD3D_STAT_UINT},
+        {VKD3D_SM4_OP_USHR, VKD3D_STAT_UINT},
+
+        {VKD3D_SM4_OP_EMIT,        VKD3D_STAT_EMIT},
+        {VKD3D_SM4_OP_CUT,         VKD3D_STAT_CUT},
+        {VKD3D_SM5_OP_EMIT_STREAM, VKD3D_STAT_EMIT},
+        {VKD3D_SM5_OP_CUT_STREAM,  VKD3D_STAT_CUT},
+
+        {VKD3D_SM4_OP_SAMPLE,           VKD3D_STAT_SAMPLE},
+        {VKD3D_SM4_OP_SAMPLE_LOD,       VKD3D_STAT_SAMPLE},
+        {VKD3D_SM5_OP_SAMPLE_LOD_S,     VKD3D_STAT_SAMPLE},
+        {VKD3D_SM5_OP_SAMPLE_CL_S,      VKD3D_STAT_SAMPLE},
+        {VKD3D_SM4_OP_SAMPLE_C,         VKD3D_STAT_SAMPLE_C},
+        {VKD3D_SM4_OP_SAMPLE_C_LZ,      VKD3D_STAT_SAMPLE_C},
+        {VKD3D_SM5_OP_SAMPLE_C_LZ_S,    VKD3D_STAT_SAMPLE_C},
+        {VKD3D_SM5_OP_SAMPLE_C_CL_S,    VKD3D_STAT_SAMPLE_C},
+        {VKD3D_SM4_OP_SAMPLE_GRAD,      VKD3D_STAT_SAMPLE_GRAD},
+        {VKD3D_SM5_OP_SAMPLE_GRAD_CL_S, VKD3D_STAT_SAMPLE_GRAD},
+        {VKD3D_SM4_OP_SAMPLE_B,         VKD3D_STAT_SAMPLE_BIAS},
+        {VKD3D_SM4_OP_GATHER4,          VKD3D_STAT_GATHER},
+        {VKD3D_SM5_OP_GATHER4_PO,       VKD3D_STAT_GATHER},
+        {VKD3D_SM4_OP_LOD,              VKD3D_STAT_LOD},
+
+        {VKD3D_SM4_OP_LD,              VKD3D_STAT_LOAD},
+        {VKD3D_SM4_OP_LD2DMS,          VKD3D_STAT_LOAD},
+        {VKD3D_SM5_OP_LD_UAV_TYPED,    VKD3D_STAT_LOAD},
+        {VKD3D_SM5_OP_LD_RAW,          VKD3D_STAT_LOAD},
+        {VKD3D_SM5_OP_LD_STRUCTURED,   VKD3D_STAT_LOAD},
+        {VKD3D_SM5_OP_LD_S,            VKD3D_STAT_LOAD},
+        {VKD3D_SM5_OP_LD2DMS_S,        VKD3D_STAT_LOAD},
+        {VKD3D_SM5_OP_LD_UAV_TYPED_S,  VKD3D_STAT_LOAD},
+        {VKD3D_SM5_OP_LD_RAW_S,        VKD3D_STAT_LOAD},
+        {VKD3D_SM5_OP_LD_STRUCTURED_S, VKD3D_STAT_LOAD},
+
+        {VKD3D_SM5_OP_STORE_UAV_TYPED, VKD3D_STAT_STORE},
+        {VKD3D_SM5_OP_STORE_RAW,       VKD3D_STAT_STORE},
+        {VKD3D_SM5_OP_STORE_STRUCTURED,VKD3D_STAT_STORE},
+
+        {VKD3D_SM4_OP_DCL_VERTICES_OUT,    VKD3D_STAT_DCL_VERTICES_OUT},
+        {VKD3D_SM4_OP_DCL_INPUT_PRIMITIVE, VKD3D_STAT_DCL_INPUT_PRIMITIVE},
+        {VKD3D_SM4_OP_DCL_OUTPUT_TOPOLOGY, VKD3D_STAT_DCL_OUTPUT_TOPOLOGY},
+        {VKD3D_SM5_OP_DCL_GS_INSTANCES,    VKD3D_STAT_DCL_GS_INSTANCES},
+
+        {VKD3D_SM4_OP_AND, VKD3D_STAT_BITWISE},
+        {VKD3D_SM4_OP_NOT, VKD3D_STAT_BITWISE},
+        {VKD3D_SM4_OP_OR,  VKD3D_STAT_BITWISE},
+        {VKD3D_SM4_OP_XOR, VKD3D_STAT_BITWISE},
+
+        {VKD3D_SM5_OP_ATOMIC_AND,          VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_ATOMIC_OR,           VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_ATOMIC_XOR,          VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_ATOMIC_CMP_STORE,    VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_ATOMIC_IADD,         VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_ATOMIC_IMAX,         VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_ATOMIC_IMIN,         VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_ATOMIC_UMAX,         VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_ATOMIC_UMIN,         VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_ALLOC,    VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_CONSUME,  VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_IADD,     VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_AND,      VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_OR,       VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_XOR,      VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_EXCH,     VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_CMP_EXCH, VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_IMAX,     VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_IMIN,     VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_UMAX,     VKD3D_STAT_ATOMIC},
+        {VKD3D_SM5_OP_IMM_ATOMIC_UMIN,     VKD3D_STAT_ATOMIC},
+
+        {VKD3D_SM5_OP_DCL_TESSELLATOR_DOMAIN, VKD3D_STAT_TESS_DOMAIN},
+        {VKD3D_SM5_OP_DCL_TESSELLATOR_PARTITIONING, VKD3D_STAT_TESS_PARTITIONING},
+        {VKD3D_SM5_OP_DCL_TESSELLATOR_OUTPUT_PRIMITIVE, VKD3D_STAT_TESS_OUTPUT_PRIMITIVE},
+        {VKD3D_SM5_OP_DCL_INPUT_CONTROL_POINT_COUNT, VKD3D_STAT_TESS_CONTROL_POINT_COUNT},
+        {VKD3D_SM5_OP_DCL_OUTPUT_CONTROL_POINT_COUNT, VKD3D_STAT_TESS_CONTROL_POINT_COUNT},
+
+        {VKD3D_SM5_OP_SYNC, VKD3D_STAT_BARRIER},
+
+        {VKD3D_SM4_OP_DCL_TEMPS, VKD3D_STAT_TEMPS},
+    };
+
     memset(lookup, 0, sizeof(*lookup));
 
     for (i = 0; i < ARRAY_SIZE(opcode_table); ++i)
@@ -1678,12 +1904,21 @@ static void init_sm4_lookup_tables(struct vkd3d_sm4_lookup_tables *lookup)
         lookup->register_type_info_from_sm4[info->sm4_type] = info;
         lookup->register_type_info_from_vkd3d[info->vkd3d_type] = info;
     }
+
+    for (i = 0; i < ARRAY_SIZE(stat_field_table); ++i)
+    {
+        const struct vkd3d_sm4_stat_field_info *info = &stat_field_table[i];
+
+        lookup->stat_field_from_sm4[info->opcode] = info;
+    }
 }
 
-static void tpf_writer_init(struct tpf_writer *tpf, struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer)
+static void tpf_writer_init(struct tpf_writer *tpf, struct hlsl_ctx *ctx, struct sm4_stat *stat,
+        struct vkd3d_bytecode_buffer *buffer)
 {
     tpf->ctx = ctx;
     tpf->buffer = buffer;
+    tpf->stat = stat;
     init_sm4_lookup_tables(&tpf->lookup);
 }
 
@@ -1719,6 +1954,16 @@ static enum vkd3d_sm4_swizzle_type vkd3d_sm4_get_default_swizzle_type(
 
     VKD3D_ASSERT(register_type_info);
     return register_type_info->default_src_swizzle_type;
+}
+
+static enum vkd3d_sm4_stat_field get_stat_field_from_sm4_opcode(
+        const struct vkd3d_sm4_lookup_tables *lookup, enum vkd3d_sm4_opcode sm4_opcode)
+{
+    const struct vkd3d_sm4_stat_field_info *field_info;
+
+    if (sm4_opcode >= VKD3D_SM4_OP_COUNT || !(field_info = lookup->stat_field_from_sm4[sm4_opcode]))
+        return VKD3D_STAT_UNUSED;
+    return field_info->field;
 }
 
 static enum vkd3d_data_type map_data_type(char t)
@@ -2553,7 +2798,7 @@ static bool shader_sm4_init(struct vkd3d_shader_sm4_parser *sm4, struct vsir_pro
     version.minor = VKD3D_SM4_VERSION_MINOR(version_token);
 
     /* Estimate instruction count to avoid reallocation in most shaders. */
-    if (!vsir_program_init(program, compile_info, &version, token_count / 7u + 20))
+    if (!vsir_program_init(program, compile_info, &version, token_count / 7u + 20, VSIR_CF_STRUCTURED))
         return false;
     vkd3d_shader_parser_init(&sm4->p, program, message_context, compile_info->source_name);
     sm4->ptr = sm4->start;
@@ -2814,6 +3059,7 @@ bool sysval_semantic_from_hlsl(enum vkd3d_shader_sysval_semantic *semantic,
         {"sv_isfrontface",              false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_IS_FRONT_FACE},
         {"sv_rendertargetarrayindex",   false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
         {"sv_viewportarrayindex",       false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
+        {"sv_sampleindex",              false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_SAMPLE_INDEX},
 
         {"color",                       true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_TARGET},
         {"depth",                       true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_DEPTH},
@@ -4182,10 +4428,55 @@ static void sm4_write_src_register(const struct tpf_writer *tpf, const struct vk
     }
 }
 
+static void sm4_update_stat_counters(const struct tpf_writer *tpf, const struct sm4_instruction *instr)
+{
+    enum vkd3d_shader_type shader_type = tpf->ctx->profile->type;
+    enum vkd3d_sm4_stat_field stat_field;
+    uint32_t opcode;
+
+    ++tpf->stat->fields[VKD3D_STAT_INSTR_COUNT];
+
+    opcode = instr->opcode & VKD3D_SM4_OPCODE_MASK;
+    stat_field = get_stat_field_from_sm4_opcode(&tpf->lookup, opcode);
+
+    switch (opcode)
+    {
+        case VKD3D_SM4_OP_DCL_TEMPS:
+            tpf->stat->fields[stat_field] = max(tpf->stat->fields[stat_field], instr->idx[0]);
+            break;
+        case VKD3D_SM4_OP_DCL_OUTPUT_TOPOLOGY:
+        case VKD3D_SM4_OP_DCL_INPUT_PRIMITIVE:
+            tpf->stat->fields[stat_field] = (instr->opcode & VKD3D_SM4_PRIMITIVE_TYPE_MASK)
+                    >> VKD3D_SM4_PRIMITIVE_TYPE_SHIFT;
+            break;
+        case VKD3D_SM4_OP_DCL_VERTICES_OUT:
+        case VKD3D_SM5_OP_DCL_GS_INSTANCES:
+            tpf->stat->fields[stat_field] = instr->idx[0];
+            break;
+        case VKD3D_SM5_OP_DCL_TESSELLATOR_DOMAIN:
+        case VKD3D_SM5_OP_DCL_TESSELLATOR_PARTITIONING:
+        case VKD3D_SM5_OP_DCL_TESSELLATOR_OUTPUT_PRIMITIVE:
+            tpf->stat->fields[stat_field] = (instr->opcode & VKD3D_SM5_TESSELLATOR_MASK) >> VKD3D_SM5_TESSELLATOR_SHIFT;
+            break;
+        case VKD3D_SM5_OP_DCL_INPUT_CONTROL_POINT_COUNT:
+        case VKD3D_SM5_OP_DCL_OUTPUT_CONTROL_POINT_COUNT:
+            if ((shader_type == VKD3D_SHADER_TYPE_HULL && opcode == VKD3D_SM5_OP_DCL_OUTPUT_CONTROL_POINT_COUNT)
+                    || (shader_type == VKD3D_SHADER_TYPE_DOMAIN
+                            && opcode == VKD3D_SM5_OP_DCL_INPUT_CONTROL_POINT_COUNT))
+            {
+                tpf->stat->fields[stat_field] = (instr->opcode & VKD3D_SM5_CONTROL_POINT_COUNT_MASK)
+                        >> VKD3D_SM5_CONTROL_POINT_COUNT_SHIFT;
+            }
+            break;
+        default:
+            ++tpf->stat->fields[stat_field];
+    }
+}
+
 static void write_sm4_instruction(const struct tpf_writer *tpf, const struct sm4_instruction *instr)
 {
-    struct vkd3d_bytecode_buffer *buffer = tpf->buffer;
     uint32_t token = instr->opcode | instr->extra_bits;
+    struct vkd3d_bytecode_buffer *buffer = tpf->buffer;
     unsigned int size, i, j;
     size_t token_position;
 
@@ -4218,6 +4509,8 @@ static void write_sm4_instruction(const struct tpf_writer *tpf, const struct sm4
     size = (bytecode_get_size(buffer) - token_position) / sizeof(uint32_t);
     token |= (size << VKD3D_SM4_INSTRUCTION_LENGTH_SHIFT);
     set_u32(buffer, token_position, token);
+
+    sm4_update_stat_counters(tpf, instr);
 }
 
 static bool encode_texel_offset_as_aoffimmi(struct sm4_instruction *instr,
@@ -4461,6 +4754,7 @@ static void write_sm4_dcl_semantic(const struct tpf_writer *tpf, const struct hl
             case VKD3D_SHADER_SV_INSTANCE_ID:
             case VKD3D_SHADER_SV_PRIMITIVE_ID:
             case VKD3D_SHADER_SV_VERTEX_ID:
+            case VKD3D_SHADER_SV_SAMPLE_INDEX:
                 instr.opcode = (profile->type == VKD3D_SHADER_TYPE_PIXEL)
                         ? VKD3D_SM4_OP_DCL_INPUT_PS_SGV : VKD3D_SM4_OP_DCL_INPUT_SGV;
                 break;
@@ -4572,6 +4866,17 @@ static void write_sm4_dcl_thread_group(const struct tpf_writer *tpf, const uint3
         .idx[1] = thread_count[1],
         .idx[2] = thread_count[2],
         .idx_count = 3,
+    };
+
+    write_sm4_instruction(tpf, &instr);
+}
+
+static void write_sm4_dcl_global_flags(const struct tpf_writer *tpf, uint32_t flags)
+{
+    struct sm4_instruction instr =
+    {
+        .opcode = VKD3D_SM4_OP_DCL_GLOBAL_FLAGS,
+        .extra_bits = flags << VKD3D_SM4_GLOBAL_FLAGS_SHIFT,
     };
 
     write_sm4_instruction(tpf, &instr);
@@ -5578,6 +5883,23 @@ static void write_sm4_expr(const struct tpf_writer *tpf, const struct hlsl_ir_ex
             write_sm4_ternary_op(tpf, VKD3D_SM4_OP_MOVC, &expr->node, arg1, arg2, arg3);
             break;
 
+        case HLSL_OP3_MAD:
+            switch (dst_type->e.numeric.type)
+            {
+                case HLSL_TYPE_FLOAT:
+                    write_sm4_ternary_op(tpf, VKD3D_SM4_OP_MAD, &expr->node, arg1, arg2, arg3);
+                    break;
+
+                case HLSL_TYPE_INT:
+                case HLSL_TYPE_UINT:
+                    write_sm4_ternary_op(tpf, VKD3D_SM4_OP_IMAD, &expr->node, arg1, arg2, arg3);
+                    break;
+
+                default:
+                    hlsl_fixme(tpf->ctx, &expr->node.loc, "SM4 %s negation expression.", dst_type_string->buffer);
+            }
+            break;
+
         default:
             hlsl_fixme(tpf->ctx, &expr->node.loc, "SM4 %s expression.", debug_hlsl_expr_op(expr->op));
     }
@@ -5998,8 +6320,8 @@ static void write_sm4_block(const struct tpf_writer *tpf, const struct hlsl_bloc
     }
 }
 
-static void write_sm4_shdr(struct hlsl_ctx *ctx,
-        const struct hlsl_ir_function_decl *entry_func, struct dxbc_writer *dxbc)
+static void write_sm4_shdr(struct hlsl_ctx *ctx, const struct hlsl_ir_function_decl *entry_func,
+        struct sm4_stat *stat, struct dxbc_writer *dxbc)
 {
     const struct hlsl_profile_info *profile = ctx->profile;
     struct vkd3d_bytecode_buffer buffer = {0};
@@ -6024,7 +6346,7 @@ static void write_sm4_shdr(struct hlsl_ctx *ctx,
         VKD3D_SM4_LIB,
     };
 
-    tpf_writer_init(&tpf, ctx, &buffer);
+    tpf_writer_init(&tpf, ctx, stat, &buffer);
 
     extern_resources = sm4_get_extern_resources(ctx, &extern_resources_count);
 
@@ -6048,6 +6370,9 @@ static void write_sm4_shdr(struct hlsl_ctx *ctx,
         else if (resource->regset == HLSL_REGSET_UAVS)
             write_sm4_dcl_textures(&tpf, resource, true);
     }
+
+    if (entry_func->early_depth_test && profile->major_version >= 5)
+        write_sm4_dcl_global_flags(&tpf, VKD3DSGF_FORCE_EARLY_DEPTH_STENCIL);
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
@@ -6116,8 +6441,58 @@ static void write_sm4_sfi0(struct hlsl_ctx *ctx, struct dxbc_writer *dxbc)
         vkd3d_free(flags);
 }
 
+static void write_sm4_stat(struct hlsl_ctx *ctx, const struct sm4_stat *stat, struct dxbc_writer *dxbc)
+{
+    struct vkd3d_bytecode_buffer buffer = {0};
+
+    put_u32(&buffer, stat->fields[VKD3D_STAT_INSTR_COUNT]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_TEMPS]);
+    put_u32(&buffer, 0); /* Def count */
+    put_u32(&buffer, 0); /* DCL count */
+    put_u32(&buffer, stat->fields[VKD3D_STAT_FLOAT]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_INT]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_UINT]);
+    put_u32(&buffer, 0); /* Static flow control count */
+    put_u32(&buffer, 0); /* Dynamic flow control count */
+    put_u32(&buffer, 0); /* Macro instruction count */
+    put_u32(&buffer, 0); /* Temp array count */
+    put_u32(&buffer, 0); /* Array instr count */
+    put_u32(&buffer, stat->fields[VKD3D_STAT_CUT]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_EMIT]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_SAMPLE]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_LOAD]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_SAMPLE_C]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_SAMPLE_BIAS]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_SAMPLE_GRAD]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_MOV]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_MOVC]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_CONV]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_BITWISE]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_DCL_INPUT_PRIMITIVE]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_DCL_OUTPUT_TOPOLOGY]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_DCL_VERTICES_OUT]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_GATHER]);
+    put_u32(&buffer, stat->fields[VKD3D_STAT_LOD]);
+    put_u32(&buffer, 0); /* Sample frequency */
+
+    if (hlsl_version_ge(ctx, 5, 0))
+    {
+        put_u32(&buffer, stat->fields[VKD3D_STAT_DCL_GS_INSTANCES]);
+        put_u32(&buffer, stat->fields[VKD3D_STAT_TESS_CONTROL_POINT_COUNT]);
+        put_u32(&buffer, stat->fields[VKD3D_STAT_TESS_OUTPUT_PRIMITIVE]);
+        put_u32(&buffer, stat->fields[VKD3D_STAT_TESS_PARTITIONING]);
+        put_u32(&buffer, stat->fields[VKD3D_STAT_TESS_DOMAIN]);
+        put_u32(&buffer, stat->fields[VKD3D_STAT_BARRIER]);
+        put_u32(&buffer, stat->fields[VKD3D_STAT_ATOMIC]);
+        put_u32(&buffer, stat->fields[VKD3D_STAT_STORE]);
+    }
+
+    add_section(ctx, dxbc, TAG_STAT, &buffer);
+}
+
 int hlsl_sm4_write(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func, struct vkd3d_shader_code *out)
 {
+    struct sm4_stat stat = {0};
     struct dxbc_writer dxbc;
     size_t i;
     int ret;
@@ -6127,8 +6502,9 @@ int hlsl_sm4_write(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_fun
     write_sm4_signature(ctx, &dxbc, false);
     write_sm4_signature(ctx, &dxbc, true);
     write_sm4_rdef(ctx, &dxbc);
-    write_sm4_shdr(ctx, entry_func, &dxbc);
+    write_sm4_shdr(ctx, entry_func, &stat, &dxbc);
     write_sm4_sfi0(ctx, &dxbc);
+    write_sm4_stat(ctx, &stat, &dxbc);
 
     if (!(ret = ctx->result))
         ret = dxbc_writer_write(&dxbc, out);

@@ -295,16 +295,8 @@ unsigned int server_call_unlocked( void *req_ptr )
  */
 unsigned int CDECL wine_server_call( void *req_ptr )
 {
-    struct __server_request_info * const req = req_ptr;
     sigset_t old_set;
     unsigned int ret;
-
-    /* trigger write watches, otherwise read() might return EFAULT */
-    if (req->u.req.request_header.reply_size &&
-        !virtual_check_buffer_for_write( req->reply_data, req->u.req.request_header.reply_size ))
-    {
-        return STATUS_ACCESS_VIOLATION;
-    }
 
     pthread_sigmask( SIG_BLOCK, &server_block_set, &old_set );
     ret = server_call_unlocked( req_ptr );
@@ -1718,6 +1710,11 @@ void server_init_process_done(void)
 #ifdef __APPLE__
     send_server_task_port();
 #endif
+
+    /* Install signal handlers; this cannot be done earlier, since we cannot
+     * send exceptions to the debugger before the create process event that
+     * is sent by init_process_done */
+    signal_init_process();
 
     /* always send the native TEB */
     if (!(teb = NtCurrentTeb64())) teb = NtCurrentTeb();
