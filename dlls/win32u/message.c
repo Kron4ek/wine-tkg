@@ -2099,8 +2099,13 @@ static LRESULT handle_internal_message( HWND hwnd, UINT msg, WPARAM wparam, LPAR
         if (is_desktop_window( hwnd )) return 0;
         return set_window_style( hwnd, wparam, lparam );
     case WM_WINE_SETACTIVEWINDOW:
+    {
+        HWND prev;
+
         if (!wparam && NtUserGetForegroundWindow() == hwnd) return 0;
-        return (LRESULT)NtUserSetActiveWindow( (HWND)wparam );
+        if (!set_active_window( (HWND)wparam, &prev, FALSE, TRUE, lparam )) return 0;
+        return (LRESULT)prev;
+    }
     case WM_WINE_KEYBOARD_LL_HOOK:
     case WM_WINE_MOUSE_LL_HOOK:
     {
@@ -2694,7 +2699,7 @@ static BOOL check_queue_bits( UINT wake_mask, UINT changed_mask, UINT signal_bit
  * available; -1 on error.
  * All pending sent messages are processed before returning.
  */
-int peek_message( MSG *msg, const struct peek_message_filter *filter )
+int peek_message( MSG *msg, const struct peek_message_filter *filter, BOOL waited )
 {
     LRESULT result;
     HWND hwnd = filter->hwnd;
@@ -2734,7 +2739,7 @@ int peek_message( MSG *msg, const struct peek_message_filter *filter )
         thread_info->client_info.msg_source = prev_source;
         wake_mask = filter->mask & (QS_SENDMESSAGE | QS_SMRESULT);
 
-        if (NtGetTickCount() - thread_info->last_getmsg_time < 3000 && /* avoid hung queue */
+        if ((!waited && (NtGetTickCount() - thread_info->last_getmsg_time < 3000)) && /* avoid hung queue */
             check_queue_bits( wake_mask, filter->mask, wake_mask | signal_bits, filter->mask | clear_bits,
                               &wake_bits, &changed_bits ))
             res = STATUS_PENDING;
@@ -2935,7 +2940,7 @@ int peek_message( MSG *msg, const struct peek_message_filter *filter )
                         .mask = filter->mask,
                         .internal = filter->internal,
                     };
-                    peek_message( msg, &new_filter );
+                    peek_message( msg, &new_filter, TRUE );
                 }
                 continue;
             }
@@ -3000,7 +3005,7 @@ static void process_sent_messages(void)
 {
     struct peek_message_filter filter = {.flags = PM_REMOVE | PM_QS_SENDMESSAGE};
     MSG msg;
-    peek_message( &msg, &filter );
+    peek_message( &msg, &filter, FALSE );
 }
 
 /***********************************************************************
@@ -3234,7 +3239,7 @@ BOOL WINAPI NtUserPeekMessage( MSG *msg_out, HWND hwnd, UINT first, UINT last, U
     user_check_not_lock();
     check_for_driver_events();
 
-    if ((ret = peek_message( &msg, &filter )) <= 0)
+    if ((ret = peek_message( &msg, &filter, FALSE )) <= 0)
     {
         if (!ret)
         {
@@ -3285,7 +3290,7 @@ BOOL WINAPI NtUserGetMessage( MSG *msg, HWND hwnd, UINT first, UINT last )
 
     filter.mask = mask;
     filter.flags = PM_REMOVE | (mask << 16);
-    while (!(ret = peek_message( msg, &filter )))
+    while (!(ret = peek_message( msg, &filter, TRUE )))
     {
         wait_objects( 1, &server_queue, INFINITE, mask & (QS_SENDMESSAGE | QS_SMRESULT), mask, 0 );
     }

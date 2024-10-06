@@ -235,7 +235,7 @@ struct peek_message_filter
     BOOL internal;
 };
 
-extern int peek_message( MSG *msg, const struct peek_message_filter *filter );
+extern int peek_message( MSG *msg, const struct peek_message_filter *filter, BOOL waited );
 
 /* systray.c */
 extern LRESULT system_tray_call( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, void *data );

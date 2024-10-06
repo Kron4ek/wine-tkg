@@ -328,10 +328,13 @@ static HRESULT DPWS_Start( DPWS_DATA *dpwsData )
         return DPERR_UNAVAILABLE;
     }
 
+    InitializeCriticalSection( &dpwsData->sendCs );
+
     dpwsData->thread = CreateThread( NULL, 0, DPWS_ThreadProc, dpwsData, 0, NULL );
     if ( !dpwsData->thread )
     {
         ERR( "CreateThread() failed\n" );
+        DeleteCriticalSection( &dpwsData->sendCs );
         WSACloseEvent( dpwsData->stopEvent );
         WSACloseEvent( dpwsData->acceptEvent );
         closesocket( dpwsData->tcpSock );
@@ -357,10 +360,14 @@ static void DPWS_Stop( DPWS_DATA *dpwsData )
     WaitForSingleObject( dpwsData->thread, INFINITE );
     CloseHandle( dpwsData->thread );
 
+    if ( dpwsData->nameserverConnection.tcpSock != INVALID_SOCKET )
+        closesocket( dpwsData->nameserverConnection.tcpSock );
+
     LIST_FOR_EACH_ENTRY_SAFE( inConnection, inConnection2, &dpwsData->inConnections,
                               DPWS_IN_CONNECTION, entry )
         DPWS_RemoveInConnection( inConnection );
 
+    DeleteCriticalSection( &dpwsData->sendCs );
     WSACloseEvent( dpwsData->stopEvent );
     WSACloseEvent( dpwsData->acceptEvent );
     closesocket( dpwsData->tcpSock );
@@ -445,10 +452,53 @@ static HRESULT WINAPI DPWSCB_Send( LPDPSP_SENDDATA data )
 
 static HRESULT WINAPI DPWSCB_CreatePlayer( LPDPSP_CREATEPLAYERDATA data )
 {
-    FIXME( "(%ld,0x%08lx,%p,%p) stub\n",
+    DPWS_PLAYERDATA *playerData;
+    DWORD playerDataSize;
+    DPWS_DATA *dpwsData;
+    DWORD dpwsDataSize;
+    HRESULT hr;
+
+    TRACE( "(%ld,0x%08lx,%p,%p)\n",
            data->idPlayer, data->dwFlags,
            data->lpSPMessageHeader, data->lpISP );
-    return DPERR_UNSUPPORTED;
+
+    hr = IDirectPlaySP_GetSPData( data->lpISP, (void **) &dpwsData, &dpwsDataSize, DPSET_LOCAL );
+    if ( FAILED( hr ) )
+        return hr;
+
+    if ( !data->lpSPMessageHeader )
+    {
+        DPWS_PLAYERDATA playerDataPlaceholder = { 0 };
+        hr = IDirectPlaySP_SetSPPlayerData( data->lpISP, data->idPlayer,
+                                            (void *) &playerDataPlaceholder,
+                                            sizeof( playerDataPlaceholder ), DPSET_REMOTE );
+        if ( FAILED( hr ) )
+            return hr;
+    }
+
+    hr = IDirectPlaySP_GetSPPlayerData( data->lpISP, data->idPlayer, (void **) &playerData,
+                                        &playerDataSize, DPSET_REMOTE );
+    if ( FAILED( hr ) )
+        return hr;
+    if ( playerDataSize != sizeof( DPWS_PLAYERDATA ) )
+        return DPERR_GENERIC;
+
+    if ( data->lpSPMessageHeader )
+    {
+        DPSP_MSG_HEADER *header = data->lpSPMessageHeader;
+        if ( !playerData->tcpAddr.sin_addr.s_addr )
+            playerData->tcpAddr.sin_addr = header->SockAddr.sin_addr;
+        if ( !playerData->udpAddr.sin_addr.s_addr )
+            playerData->udpAddr.sin_addr = header->SockAddr.sin_addr;
+    }
+    else
+    {
+        playerData->tcpAddr.sin_family = AF_INET;
+        playerData->tcpAddr.sin_port = dpwsData->tcpAddr.sin_port;
+        playerData->udpAddr.sin_family = AF_INET;
+    }
+
+    return DP_OK;
 }
 
 static HRESULT WINAPI DPWSCB_DeletePlayer( LPDPSP_DELETEPLAYERDATA data )
@@ -498,10 +548,36 @@ static HRESULT WINAPI DPWSCB_GetCaps( LPDPSP_GETCAPSDATA data )
 
 static HRESULT WINAPI DPWSCB_Open( LPDPSP_OPENDATA data )
 {
-    FIXME( "(%u,%p,%p,%u,0x%08lx,0x%08lx) stub\n",
+    DPSP_MSG_HEADER *header = (DPSP_MSG_HEADER *) data->lpSPMessageHeader;
+    DPWS_DATA *dpwsData;
+    DWORD dpwsDataSize;
+    HRESULT hr;
+
+    TRACE( "(%u,%p,%p,%u,0x%08lx,0x%08lx)\n",
            data->bCreate, data->lpSPMessageHeader, data->lpISP,
            data->bReturnStatus, data->dwOpenFlags, data->dwSessionFlags );
-    return DPERR_UNSUPPORTED;
+
+    if ( data->bCreate )
+    {
+        FIXME( "session creation is not yet supported\n" );
+        return DPERR_UNSUPPORTED;
+    }
+
+    hr = IDirectPlaySP_GetSPData( data->lpISP, (void **)&dpwsData, &dpwsDataSize, DPSET_LOCAL );
+    if ( FAILED( hr ) )
+        return hr;
+
+    hr = DPWS_Start( dpwsData );
+    if ( FAILED (hr) )
+        return hr;
+
+    dpwsData->nameserverConnection.addr.sin_family = AF_INET;
+    dpwsData->nameserverConnection.addr.sin_addr = header->SockAddr.sin_addr;
+    dpwsData->nameserverConnection.addr.sin_port = header->SockAddr.sin_port;
+
+    dpwsData->nameserverConnection.tcpSock = INVALID_SOCKET;
+
+    return DP_OK;
 }
 
 static HRESULT WINAPI DPWSCB_CloseEx( LPDPSP_CLOSEDATA data )
@@ -549,12 +625,95 @@ static HRESULT WINAPI DPWSCB_GetAddressChoices( LPDPSP_GETADDRESSCHOICESDATA dat
 
 static HRESULT WINAPI DPWSCB_SendEx( LPDPSP_SENDEXDATA data )
 {
-    FIXME( "(%p,0x%08lx,%ld,%ld,%p,%ld,%ld,%ld,%ld,%p,%p,%u) stub\n",
+    DPWS_OUT_CONNECTION *connection;
+    DPSP_MSG_HEADER header = { 0 };
+    DPWS_DATA *dpwsData;
+    DWORD dpwsDataSize;
+    DWORD transferred;
+    HRESULT hr;
+
+    TRACE( "(%p,0x%08lx,%ld,%ld,%p,%ld,%ld,%ld,%ld,%p,%p,%u)\n",
            data->lpISP, data->dwFlags, data->idPlayerTo, data->idPlayerFrom,
            data->lpSendBuffers, data->cBuffers, data->dwMessageSize,
            data->dwPriority, data->dwTimeout, data->lpDPContext,
            data->lpdwSPMsgID, data->bSystemMessage );
-    return DPERR_UNSUPPORTED;
+
+    if ( data->idPlayerTo )
+    {
+        FIXME( "only sending to nameserver is currently implemented\n" );
+        return DPERR_UNSUPPORTED;
+    }
+
+    if ( !( data->dwFlags & DPSEND_GUARANTEED ) )
+    {
+        FIXME( "non-guaranteed delivery is not yet supported\n" );
+        return DPERR_UNSUPPORTED;
+    }
+
+    if ( data->dwFlags & DPSEND_ASYNC )
+    {
+        FIXME("asynchronous send is not yet supported\n");
+        return DPERR_UNSUPPORTED;
+    }
+
+    hr = IDirectPlaySP_GetSPData( data->lpISP, (void **) &dpwsData, &dpwsDataSize, DPSET_LOCAL );
+    if ( FAILED( hr ) )
+        return hr;
+
+    header.mixed = DPSP_MSG_MAKE_MIXED( data->dwMessageSize, DPSP_MSG_TOKEN_REMOTE );
+    header.SockAddr.sin_family = AF_INET;
+    header.SockAddr.sin_port = dpwsData->tcpAddr.sin_port;
+
+    data->lpSendBuffers[ 0 ].pData = (unsigned char *) &header;
+
+    EnterCriticalSection( &dpwsData->sendCs );
+
+    connection = &dpwsData->nameserverConnection;
+
+    if ( connection->tcpSock == INVALID_SOCKET )
+    {
+        connection->tcpSock = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP );
+        if ( connection->tcpSock == INVALID_SOCKET )
+        {
+            ERR( "socket() failed\n" );
+            LeaveCriticalSection( &dpwsData->sendCs );
+            return DPERR_UNAVAILABLE;
+        }
+
+        if ( SOCKET_ERROR == connect( connection->tcpSock, (SOCKADDR *) &connection->addr,
+                                      sizeof( connection->addr ) ) )
+        {
+            ERR( "connect() failed\n" );
+            closesocket( connection->tcpSock );
+            connection->tcpSock = INVALID_SOCKET;
+            LeaveCriticalSection( &dpwsData->sendCs );
+            return DPERR_UNAVAILABLE;
+        }
+    }
+
+    if ( SOCKET_ERROR == WSASend( connection->tcpSock, (WSABUF *) data->lpSendBuffers,
+                                  data->cBuffers, &transferred, 0, NULL, NULL ) )
+    {
+        if ( WSAGetLastError() != WSA_IO_PENDING )
+        {
+            ERR( "WSASend() failed\n" );
+            LeaveCriticalSection( &dpwsData->sendCs );
+            return DPERR_UNAVAILABLE;
+        }
+    }
+
+    if ( transferred < data->dwMessageSize )
+    {
+        ERR( "lost connection\n" );
+        closesocket( connection->tcpSock );
+        connection->tcpSock = INVALID_SOCKET;
+        LeaveCriticalSection( &dpwsData->sendCs );
+        return DPERR_CONNECTIONLOST;
+    }
+
+    LeaveCriticalSection( &dpwsData->sendCs );
+
+    return DP_OK;
 }
 
 static HRESULT WINAPI DPWSCB_SendToGroupEx( LPDPSP_SENDTOGROUPEXDATA data )

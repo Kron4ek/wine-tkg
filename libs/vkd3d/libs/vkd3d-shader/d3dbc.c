@@ -457,17 +457,36 @@ static uint32_t swizzle_from_sm1(uint32_t swizzle)
             shader_sm1_get_swizzle_component(swizzle, 3));
 }
 
+/* D3DBC doesn't have the concept of index count. All registers implicitly have
+ * exactly one index. However for some register types the index doesn't make
+ * sense, so we remove it. */
+static unsigned int idx_count_from_reg_type(enum vkd3d_shader_register_type reg_type)
+{
+    switch (reg_type)
+    {
+        case VKD3DSPR_DEPTHOUT:
+            return 0;
+
+        default:
+            return 1;
+    }
+}
+
 static void shader_sm1_parse_src_param(uint32_t param, struct vkd3d_shader_src_param *rel_addr,
         struct vkd3d_shader_src_param *src)
 {
     enum vkd3d_shader_register_type reg_type = ((param & VKD3D_SM1_REGISTER_TYPE_MASK) >> VKD3D_SM1_REGISTER_TYPE_SHIFT)
             | ((param & VKD3D_SM1_REGISTER_TYPE_MASK2) >> VKD3D_SM1_REGISTER_TYPE_SHIFT2);
+    unsigned int idx_count = idx_count_from_reg_type(reg_type);
 
-    vsir_register_init(&src->reg, reg_type, VKD3D_DATA_FLOAT, 1);
+    vsir_register_init(&src->reg, reg_type, VKD3D_DATA_FLOAT, idx_count);
     src->reg.precision = VKD3D_SHADER_REGISTER_PRECISION_DEFAULT;
     src->reg.non_uniform = false;
-    src->reg.idx[0].offset = param & VKD3D_SM1_REGISTER_NUMBER_MASK;
-    src->reg.idx[0].rel_addr = rel_addr;
+    if (idx_count == 1)
+    {
+        src->reg.idx[0].offset = param & VKD3D_SM1_REGISTER_NUMBER_MASK;
+        src->reg.idx[0].rel_addr = rel_addr;
+    }
     if (src->reg.type == VKD3DSPR_SAMPLER)
         src->reg.dimension = VSIR_DIMENSION_NONE;
     else if (src->reg.type == VKD3DSPR_DEPTHOUT)
@@ -483,12 +502,16 @@ static void shader_sm1_parse_dst_param(uint32_t param, struct vkd3d_shader_src_p
 {
     enum vkd3d_shader_register_type reg_type = ((param & VKD3D_SM1_REGISTER_TYPE_MASK) >> VKD3D_SM1_REGISTER_TYPE_SHIFT)
             | ((param & VKD3D_SM1_REGISTER_TYPE_MASK2) >> VKD3D_SM1_REGISTER_TYPE_SHIFT2);
+    unsigned int idx_count = idx_count_from_reg_type(reg_type);
 
-    vsir_register_init(&dst->reg, reg_type, VKD3D_DATA_FLOAT, 1);
+    vsir_register_init(&dst->reg, reg_type, VKD3D_DATA_FLOAT, idx_count);
     dst->reg.precision = VKD3D_SHADER_REGISTER_PRECISION_DEFAULT;
     dst->reg.non_uniform = false;
-    dst->reg.idx[0].offset = param & VKD3D_SM1_REGISTER_NUMBER_MASK;
-    dst->reg.idx[0].rel_addr = rel_addr;
+    if (idx_count == 1)
+    {
+        dst->reg.idx[0].offset = param & VKD3D_SM1_REGISTER_NUMBER_MASK;
+        dst->reg.idx[0].rel_addr = rel_addr;
+    }
     if (dst->reg.type == VKD3DSPR_SAMPLER)
         dst->reg.dimension = VSIR_DIMENSION_NONE;
     else if (dst->reg.type == VKD3DSPR_DEPTHOUT)
@@ -614,7 +637,7 @@ static bool add_signature_element_from_register(struct vkd3d_shader_sm1_parser *
         const struct vkd3d_shader_register *reg, bool is_dcl, unsigned int mask)
 {
     const struct vkd3d_shader_version *version = &sm1->p.program->shader_version;
-    unsigned int register_index = reg->idx[0].offset;
+    unsigned int register_index = reg->idx_count > 0 ? reg->idx[0].offset : 0;
 
     switch (reg->type)
     {
@@ -1352,9 +1375,6 @@ int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t c
     for (i = 0; i < ARRAY_SIZE(program->flat_constant_count); ++i)
         program->flat_constant_count[i] = get_external_constant_count(&sm1, i);
 
-    if (!sm1.p.failed)
-        ret = vkd3d_shader_parser_validate(&sm1.p, config_flags);
-
     if (sm1.p.failed && ret >= 0)
         ret = VKD3D_ERROR_INVALID_SHADER;
 
@@ -1365,7 +1385,18 @@ int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t c
         return ret;
     }
 
-    return ret;
+    if ((ret = vkd3d_shader_parser_validate(&sm1.p, config_flags)) < 0)
+    {
+        WARN("Failed to validate shader after parsing, ret %d.\n", ret);
+
+        if (TRACE_ON())
+            vkd3d_shader_trace(program);
+
+        vsir_program_cleanup(program);
+        return ret;
+    }
+
+    return VKD3D_OK;
 }
 
 bool hlsl_sm1_register_from_semantic(const struct vkd3d_shader_version *version, const char *semantic_name,
@@ -1522,6 +1553,7 @@ D3DXPARAMETER_CLASS hlsl_sm1_class(const struct hlsl_type *type)
         case HLSL_CLASS_DEPTH_STENCIL_STATE:
         case HLSL_CLASS_DEPTH_STENCIL_VIEW:
         case HLSL_CLASS_EFFECT_GROUP:
+        case HLSL_CLASS_ERROR:
         case HLSL_CLASS_PASS:
         case HLSL_CLASS_RASTERIZER_STATE:
         case HLSL_CLASS_RENDER_TARGET_VIEW:
@@ -1627,6 +1659,7 @@ D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
         case HLSL_CLASS_DEPTH_STENCIL_STATE:
         case HLSL_CLASS_DEPTH_STENCIL_VIEW:
         case HLSL_CLASS_EFFECT_GROUP:
+        case HLSL_CLASS_ERROR:
         case HLSL_CLASS_PASS:
         case HLSL_CLASS_RASTERIZER_STATE:
         case HLSL_CLASS_RENDER_TARGET_VIEW:
@@ -1719,7 +1752,7 @@ static void sm1_sort_externs(struct hlsl_ctx *ctx)
 
 void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer)
 {
-    size_t ctab_offset, ctab_start, ctab_end, vars_start, size_offset, creator_offset, offset;
+    size_t ctab_offset, ctab_start, ctab_end, vars_offset, vars_start, size_offset, creator_offset, offset;
     unsigned int uniform_count = 0;
     struct hlsl_ir_var *var;
 
@@ -1755,11 +1788,12 @@ void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buff
     creator_offset = put_u32(buffer, 0);
     put_u32(buffer, sm1_version(ctx->profile->type, ctx->profile->major_version, ctx->profile->minor_version));
     put_u32(buffer, uniform_count);
-    put_u32(buffer, sizeof(D3DXSHADER_CONSTANTTABLE)); /* offset of constants */
+    vars_offset = put_u32(buffer, 0);
     put_u32(buffer, 0); /* FIXME: flags */
     put_u32(buffer, 0); /* FIXME: target string */
 
     vars_start = bytecode_align(buffer);
+    set_u32(buffer, vars_offset, vars_start - ctab_start);
 
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
@@ -1835,8 +1869,10 @@ void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buff
                         switch (comp_type->e.numeric.type)
                         {
                             case HLSL_TYPE_DOUBLE:
-                                hlsl_fixme(ctx, &var->loc, "Write double default values.");
-                                uni.u = 0;
+                                if (ctx->double_as_float_alias)
+                                    uni.u = var->default_values[k].number.u;
+                                else
+                                    uni.u = 0;
                                 break;
 
                             case HLSL_TYPE_INT:

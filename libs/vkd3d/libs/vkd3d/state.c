@@ -1107,7 +1107,9 @@ static int compare_descriptor_range(const void *a, const void *b)
     if ((ret = vkd3d_u32_compare(range_a->offset, range_b->offset)))
         return ret;
 
-    return (range_a->descriptor_count == UINT_MAX) - (range_b->descriptor_count == UINT_MAX);
+    /* Place bounded ranges after unbounded ones of equal offset,
+     * so the bounded range can be mapped to the unbounded one. */
+    return (range_b->descriptor_count == UINT_MAX) - (range_a->descriptor_count == UINT_MAX);
 }
 
 static HRESULT d3d12_root_signature_init_root_descriptor_tables(struct d3d12_root_signature *root_signature,

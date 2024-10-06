@@ -1305,6 +1305,7 @@ static void update_gl_drawable_size( struct gl_drawable *gl )
 void sync_gl_drawable( HWND hwnd, BOOL known_child )
 {
     struct gl_drawable *old, *new;
+    BOOL is_offscreen;
 
     if (!(old = get_gl_drawable( hwnd, 0 ))) return;
 
@@ -1312,9 +1313,9 @@ void sync_gl_drawable( HWND hwnd, BOOL known_child )
     {
     case DC_GL_WINDOW:
     case DC_GL_CHILD_WIN:
-        if (!known_child)
+        is_offscreen = old->type == DC_GL_CHILD_WIN;
+        if (is_offscreen == needs_offscreen_rendering( hwnd, known_child ))
         {
-            /* Still a childless top-level window */
             update_gl_drawable_size( old );
             break;
         }
@@ -1897,8 +1898,8 @@ static void present_gl_drawable( HWND hwnd, HDC hdc, struct gl_drawable *gl, BOO
 
     if (flush) XFlush( gdi_display );
 
-    NtUserGetClientRect( hwnd, &rect_dst, get_win_monitor_dpi( hwnd ) );
-    NtUserMapWindowPoints( hwnd, toplevel, (POINT *)&rect_dst, 2, get_win_monitor_dpi( hwnd ) );
+    NtUserGetClientRect( hwnd, &rect_dst, NtUserGetWinMonitorDpi( hwnd, MDT_DEFAULT ) );
+    NtUserMapWindowPoints( hwnd, toplevel, (POINT *)&rect_dst, 2, NtUserGetWinMonitorDpi( hwnd, MDT_DEFAULT ) );
 
     if ((data = get_win_data( toplevel )))
     {

@@ -64,7 +64,7 @@ from enum import Enum
 LOGGER = logging.Logger("vulkan")
 LOGGER.addHandler(logging.StreamHandler())
 
-VK_XML_VERSION = "1.3.295"
+VK_XML_VERSION = "1.3.296"
 WINE_VK_VERSION = (1, 3)
 
 # Filenames to create.
@@ -2411,6 +2411,9 @@ class StructConversionFunction(object):
             body += ")\n"
 
         needs_extensions = self.operand.needs_extensions_conversion(self.conv, self.direction)
+
+        if self.direction == Direction.OUTPUT and not any([any([self.member_needs_copy(ext, m) for m in ext]) for ext in self.operand.struct_extensions]):
+            needs_extensions = False
 
         body += "{\n"
         if needs_extensions:

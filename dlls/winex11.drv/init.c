@@ -104,7 +104,7 @@ static BOOL X11DRV_CreateDC( PHYSDEV *pdev, LPCWSTR device, LPCWSTR output, cons
 
     physDev->depth         = default_visual.depth;
     physDev->color_shifts  = &X11DRV_PALETTE_default_shifts;
-    physDev->dc_rect       = NtUserGetVirtualScreenRect();
+    physDev->dc_rect       = NtUserGetVirtualScreenRect( MDT_DEFAULT );
     OffsetRect( &physDev->dc_rect, -physDev->dc_rect.left, -physDev->dc_rect.top );
     push_dc_driver( pdev, &physDev->dev, &x11drv_funcs.dc_funcs );
     if (xrender_funcs && !xrender_funcs->pCreateDC( pdev, device, output, initData )) return FALSE;
@@ -196,7 +196,7 @@ static HFONT X11DRV_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags )
 
 BOOL needs_offscreen_rendering( HWND hwnd, BOOL known_child )
 {
-    if (NtUserGetDpiForWindow( hwnd ) != get_win_monitor_dpi( hwnd )) return TRUE; /* needs DPI scaling */
+    if (NtUserGetDpiForWindow( hwnd ) != NtUserGetWinMonitorDpi( hwnd, MDT_DEFAULT )) return TRUE; /* needs DPI scaling */
     if (NtUserGetAncestor( hwnd, GA_PARENT ) != NtUserGetDesktopWindow()) return TRUE; /* child window, needs compositing */
     if (NtUserGetWindowRelative( hwnd, GW_CHILD )) return TRUE; /* window has children, needs compositing */
     if (known_child) return TRUE; /* window is/have children, needs compositing */
@@ -443,8 +443,6 @@ static const struct user_driver_funcs x11drv_funcs =
     .pSystrayDockClear = X11DRV_SystrayDockClear,
     .pSystrayDockRemove = X11DRV_SystrayDockRemove,
     .pChangeDisplaySettings = X11DRV_ChangeDisplaySettings,
-    .pGetCurrentDisplaySettings = X11DRV_GetCurrentDisplaySettings,
-    .pGetDisplayDepth = X11DRV_GetDisplayDepth,
     .pUpdateDisplayDevices = X11DRV_UpdateDisplayDevices,
     .pCreateDesktop = X11DRV_CreateDesktop,
     .pCreateWindow = X11DRV_CreateWindow,
