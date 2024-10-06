@@ -1655,11 +1655,16 @@ static bool copy_propagation_transform_load(struct hlsl_ctx *ctx,
         case HLSL_CLASS_MATRIX:
         case HLSL_CLASS_ARRAY:
         case HLSL_CLASS_STRUCT:
-        case HLSL_CLASS_CONSTANT_BUFFER:
-            /* FIXME: Actually we shouldn't even get here, but we don't split
-             * matrices yet. */
+            /* We can't handle complex types here.
+             * They should have been already split anyway by earlier passes,
+             * but they may not have been deleted yet. We can't rely on DCE to
+             * solve that problem for us, since we may be called on a partial
+             * block, but DCE deletes dead stores, so it needs to be able to
+             * see the whole program. */
+        case HLSL_CLASS_ERROR:
             return false;
 
+        case HLSL_CLASS_CONSTANT_BUFFER:
         case HLSL_CLASS_EFFECT_GROUP:
         case HLSL_CLASS_PASS:
         case HLSL_CLASS_TECHNIQUE:
@@ -4057,6 +4062,7 @@ static bool dce(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
         case HLSL_IR_RESOURCE_LOAD:
         case HLSL_IR_STRING_CONSTANT:
         case HLSL_IR_SWIZZLE:
+        case HLSL_IR_SAMPLER_STATE:
             if (list_empty(&instr->uses))
             {
                 list_remove(&instr->entry);
@@ -4339,7 +4345,8 @@ static void compute_liveness_recurse(struct hlsl_block *block, unsigned int loop
         case HLSL_IR_STRING_CONSTANT:
             break;
         case HLSL_IR_COMPILE:
-            /* Compile calls are skipped as they are only relevent to effects. */
+        case HLSL_IR_SAMPLER_STATE:
+            /* These types are skipped as they are only relevant to effects. */
             break;
         }
     }
@@ -5201,7 +5208,8 @@ static void allocate_semantic_registers(struct hlsl_ctx *ctx)
     }
 }
 
-static const struct hlsl_buffer *get_reserved_buffer(struct hlsl_ctx *ctx, uint32_t space, uint32_t index)
+static const struct hlsl_buffer *get_reserved_buffer(struct hlsl_ctx *ctx,
+        uint32_t space, uint32_t index, bool allocated_only)
 {
     const struct hlsl_buffer *buffer;
 
@@ -5209,7 +5217,12 @@ static const struct hlsl_buffer *get_reserved_buffer(struct hlsl_ctx *ctx, uint3
     {
         if (buffer->reservation.reg_type == 'b'
                 && buffer->reservation.reg_space == space && buffer->reservation.reg_index == index)
+        {
+            if (allocated_only && !buffer->reg.allocated)
+                continue;
+
             return buffer;
+        }
     }
     return NULL;
 }
@@ -5392,8 +5405,8 @@ static void allocate_buffers(struct hlsl_ctx *ctx)
 
             if (reservation->reg_type == 'b')
             {
-                const struct hlsl_buffer *reserved_buffer = get_reserved_buffer(ctx,
-                        reservation->reg_space, reservation->reg_index);
+                const struct hlsl_buffer *allocated_buffer = get_reserved_buffer(ctx,
+                        reservation->reg_space, reservation->reg_index, true);
                 unsigned int max_index = get_max_cbuffer_reg_index(ctx);
 
                 if (buffer->reservation.reg_index > max_index)
@@ -5401,14 +5414,14 @@ static void allocate_buffers(struct hlsl_ctx *ctx)
                             "Buffer reservation cb%u exceeds target's maximum (cb%u).",
                             buffer->reservation.reg_index, max_index);
 
-                if (reserved_buffer && reserved_buffer != buffer)
+                if (allocated_buffer && allocated_buffer != buffer)
                 {
                     hlsl_error(ctx, &buffer->loc, VKD3D_SHADER_ERROR_HLSL_OVERLAPPING_RESERVATIONS,
                             "Multiple buffers bound to space %u, index %u.",
                             reservation->reg_space, reservation->reg_index);
-                    hlsl_note(ctx, &reserved_buffer->loc, VKD3D_SHADER_LOG_ERROR,
+                    hlsl_note(ctx, &allocated_buffer->loc, VKD3D_SHADER_LOG_ERROR,
                             "Buffer %s is already bound to space %u, index %u.",
-                            reserved_buffer->name, reservation->reg_space, reservation->reg_index);
+                            allocated_buffer->name, reservation->reg_space, reservation->reg_index);
                 }
 
                 buffer->reg.space = reservation->reg_space;
@@ -5425,12 +5438,12 @@ static void allocate_buffers(struct hlsl_ctx *ctx)
             else if (!reservation->reg_type)
             {
                 unsigned int max_index = get_max_cbuffer_reg_index(ctx);
-                while (get_reserved_buffer(ctx, 0, index))
+                while (get_reserved_buffer(ctx, 0, index, false))
                     ++index;
 
                 if (index > max_index)
                     hlsl_error(ctx, &buffer->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
-                        "Too many buffers allocated, target's maximum is %u.", max_index);
+                        "Too many buffers reserved, target's maximum is %u.", max_index);
 
                 buffer->reg.space = 0;
                 buffer->reg.index = index;
@@ -6173,12 +6186,16 @@ static void remove_unreachable_code(struct hlsl_ctx *ctx, struct hlsl_block *bod
     }
 }
 
+void hlsl_lower_index_loads(struct hlsl_ctx *ctx, struct hlsl_block *body)
+{
+    lower_ir(ctx, lower_index_loads, body);
+}
+
 void hlsl_run_const_passes(struct hlsl_ctx *ctx, struct hlsl_block *body)
 {
     bool progress;
 
     lower_ir(ctx, lower_matrix_swizzles, body);
-    lower_ir(ctx, lower_index_loads, body);
 
     lower_ir(ctx, lower_broadcasts, body);
     while (hlsl_transform_ir(ctx, fold_redundant_casts, body, NULL));
@@ -6622,7 +6639,13 @@ static bool sm1_generate_vsir_instr_expr_cast(struct hlsl_ctx *ctx,
                     return true;
 
                 case HLSL_TYPE_DOUBLE:
-                    hlsl_fixme(ctx, &instr->loc, "SM1 cast from double to float.");
+                    if (ctx->double_as_float_alias)
+                    {
+                        sm1_generate_vsir_instr_expr_single_instr_op(ctx, program, expr, VKD3DSIH_MOV, 0, 0, true);
+                        return true;
+                    }
+                    hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                            "The 'double' type is not supported for the %s profile.", ctx->profile->name);
                     break;
 
                 default:
@@ -6660,7 +6683,22 @@ static bool sm1_generate_vsir_instr_expr_cast(struct hlsl_ctx *ctx,
             break;
 
         case HLSL_TYPE_DOUBLE:
-            hlsl_fixme(ctx, &instr->loc, "SM1 cast to double.");
+            switch (src_type->e.numeric.type)
+            {
+                case HLSL_TYPE_FLOAT:
+                    if (ctx->double_as_float_alias)
+                    {
+                        sm1_generate_vsir_instr_expr_single_instr_op(ctx, program, expr, VKD3DSIH_MOV, 0, 0, true);
+                        return true;
+                    }
+                    hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                            "The 'double' type is not supported for the %s profile.", ctx->profile->name);
+                    break;
+
+                default:
+                    hlsl_fixme(ctx, &instr->loc, "SM1 cast to double.");
+                    break;
+            }
             break;
 
         case HLSL_TYPE_BOOL:

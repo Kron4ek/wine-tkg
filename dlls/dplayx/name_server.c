@@ -92,9 +92,9 @@ void NS_AddRemoteComputerAsNameServer( LPCVOID                      lpcNSAddrHdr
                                        DWORD                        msgSize,
                                        LPVOID                       lpNSInfo )
 {
-  DWORD len;
   lpNSCache     lpCache = (lpNSCache)lpNSInfo;
   lpNSCacheData lpCacheNode;
+  DPSESSIONDESC2 dpsd;
   DWORD maxNameLength;
   DWORD nameLength;
 
@@ -131,21 +131,17 @@ void NS_AddRemoteComputerAsNameServer( LPCVOID                      lpcNSAddrHdr
   lpCacheNode->lpNSAddrHdr = malloc( dwHdrSize );
   CopyMemory( lpCacheNode->lpNSAddrHdr, lpcNSAddrHdr, dwHdrSize );
 
-  lpCacheNode->data = calloc( 1, sizeof( *(lpCacheNode->data) ) );
+  dpsd = lpcMsg->sd;
+  dpsd.lpszSessionName = (WCHAR *) (lpcMsg + 1);
+  dpsd.lpszPassword = NULL;
+
+  lpCacheNode->data = DP_DuplicateSessionDesc( &dpsd, TRUE, FALSE );
 
   if( lpCacheNode->data == NULL )
   {
     ERR( "no memory for SESSIONDESC2\n" );
     free( lpCacheNode );
     return;
-  }
-
-  *lpCacheNode->data = lpcMsg->sd;
-  len = WideCharToMultiByte( CP_ACP, 0, (LPCWSTR)(lpcMsg+1), -1, NULL, 0, NULL, NULL );
-  if ((lpCacheNode->data->lpszSessionNameA = malloc( len )))
-  {
-      WideCharToMultiByte( CP_ACP, 0, (LPCWSTR)(lpcMsg+1), -1,
-                           lpCacheNode->data->lpszSessionNameA, len, NULL, NULL );
   }
 
   lpCacheNode->ref = 1;
@@ -157,39 +153,6 @@ void NS_AddRemoteComputerAsNameServer( LPCVOID                      lpcNSAddrHdr
    * that we don't enum them again
    */
   NS_PruneSessionCache( lpNSInfo );
-}
-
-LPVOID NS_GetNSAddr( LPVOID lpNSInfo )
-{
-  lpNSCache lpCache = (lpNSCache)lpNSInfo;
-
-  FIXME( ":quick stub\n" );
-
-  /* Ok. Cheat and don't search for the correct stuff just take the first.
-   * FIXME: In the future how are we to know what is _THE_ enum we used?
-   *        This is going to have to go into dplay somehow. Perhaps it
-   *        comes back with app server id for the join command! Oh... that
-   *        must be it. That would make this method obsolete once that's
-   *        in place.
-   */
-#if 1
-  if ( lpCache->walkFirst.lpQHFirst )
-    return lpCache->walkFirst.lpQHFirst->lpNSAddrHdr;
-
-  return NULL;
-#else
-  /* FIXME: Should convert over to this */
-  return lpCache->bNsIsLocal ? lpCache->lpLocalAddrHdr
-                             : lpCache->lpRemoteAddrHdr;
-#endif
-}
-
-/* Get the magic number associated with the Name Server */
-DWORD NS_GetNsMagic( LPVOID lpNSInfo )
-{
-  LPDWORD lpHdrInfo = NS_GetNSAddr( lpNSInfo );
-
-  return lpHdrInfo[1];
 }
 
 void NS_SetLocalAddr( LPVOID lpNSInfo, LPCVOID lpHdr, DWORD dwHdrSize )
@@ -250,7 +213,6 @@ static DPQ_DECL_DELETECB( cbReleaseNSNode, lpNSCacheData )
   if ( ref )
     return;
 
-  /* FIXME: Memory leak on data (contained ptrs) */
   free( elem->data );
   free( elem->lpNSAddrHdr );
   free( elem );
@@ -318,7 +280,7 @@ void NS_ResetSessionEnumeration( LPVOID lpNSInfo )
   ((lpNSCache)lpNSInfo)->present = ((lpNSCache)lpNSInfo)->walkFirst.lpQHFirst;
 }
 
-LPDPSESSIONDESC2 NS_WalkSessions( LPVOID lpNSInfo )
+LPDPSESSIONDESC2 NS_WalkSessions( LPVOID lpNSInfo, void **spMessageHeader )
 {
   LPDPSESSIONDESC2 lpSessionDesc;
   lpNSCache lpCache = (lpNSCache)lpNSInfo;
@@ -330,6 +292,9 @@ LPDPSESSIONDESC2 NS_WalkSessions( LPVOID lpNSInfo )
   }
 
   lpSessionDesc = lpCache->present->data;
+
+  if( spMessageHeader )
+    *spMessageHeader = lpCache->present->lpNSAddrHdr;
 
   /* Advance tracking pointer */
   lpCache->present = lpCache->present->walkNext.lpQNext;

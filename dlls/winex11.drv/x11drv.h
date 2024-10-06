@@ -216,8 +216,6 @@ extern BOOL X11DRV_SystrayDockInsert( HWND owner, UINT cx, UINT cy, void *icon )
 extern void X11DRV_SystrayDockClear( HWND hwnd );
 extern BOOL X11DRV_SystrayDockRemove( HWND hwnd );
 extern LONG X11DRV_ChangeDisplaySettings( LPDEVMODEW displays, LPCWSTR primary_name, HWND hwnd, DWORD flags, LPVOID lpvoid );
-extern BOOL X11DRV_GetCurrentDisplaySettings( LPCWSTR name, BOOL is_primary, LPDEVMODEW devmode );
-extern INT X11DRV_GetDisplayDepth( LPCWSTR name, BOOL is_primary );
 extern UINT X11DRV_UpdateDisplayDevices( const struct gdi_device_manager *device_manager, void *param );
 extern BOOL X11DRV_CreateDesktop( const WCHAR *name, UINT width, UINT height );
 extern BOOL X11DRV_CreateWindow( HWND hwnd );
@@ -247,7 +245,8 @@ extern LRESULT X11DRV_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 extern BOOL X11DRV_WindowPosChanging( HWND hwnd, UINT swp_flags, BOOL shaped, const struct window_rects *rects );
 extern BOOL X11DRV_GetWindowStyleMasks( HWND hwnd, UINT style, UINT ex_style, UINT *style_mask, UINT *ex_style_mask );
 extern BOOL X11DRV_CreateWindowSurface( HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface );
-extern void X11DRV_MoveWindowBits( HWND hwnd, const struct window_rects *new_rects, const RECT *valid_rects );
+extern void X11DRV_MoveWindowBits( HWND hwnd, const struct window_rects *old_rects,
+                                   const struct window_rects *new_rects, const RECT *valid_rects );
 extern void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, UINT swp_flags, BOOL fullscreen,
                                      const struct window_rects *new_rects, struct window_surface *surface );
 extern BOOL X11DRV_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param,
@@ -670,7 +669,6 @@ extern XContext winContext;
 /* X context to associate an X cursor to a Win32 cursor handle */
 extern XContext cursor_context;
 
-extern UINT get_win_monitor_dpi( HWND hwnd );
 extern BOOL is_current_process_focused(void);
 extern void X11DRV_SetFocus( HWND hwnd );
 extern void set_window_cursor( Window window, HCURSOR handle );
@@ -839,7 +837,7 @@ extern void xim_set_focus( HWND hwnd, BOOL focus );
 
 static inline BOOL is_window_rect_mapped( const RECT *rect )
 {
-    RECT virtual_rect = NtUserGetVirtualScreenRect();
+    RECT virtual_rect = NtUserGetVirtualScreenRect( MDT_DEFAULT );
     return (rect->left < virtual_rect.right &&
             rect->top < virtual_rect.bottom &&
             max( rect->right, rect->left + 1 ) > virtual_rect.left &&
@@ -892,15 +890,6 @@ static inline BOOL set_window_pos( HWND hwnd, HWND after, INT x, INT y, INT cx, 
 {
     UINT context = NtUserSetThreadDpiAwarenessContext( NTUSER_DPI_PER_MONITOR_AWARE_V2 );
     BOOL ret = NtUserSetWindowPos( hwnd, after, x, y, cx, cy, flags );
-    NtUserSetThreadDpiAwarenessContext( context );
-    return ret;
-}
-
-/* per-monitor DPI aware NtUserRedrawWindow call */
-static inline BOOL redraw_window( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags )
-{
-    UINT context = NtUserSetThreadDpiAwarenessContext( NTUSER_DPI_PER_MONITOR_AWARE_V2 );
-    BOOL ret = NtUserRedrawWindow( hwnd, rect, hrgn, flags );
     NtUserSetThreadDpiAwarenessContext( context );
     return ret;
 }

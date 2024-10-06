@@ -73,6 +73,13 @@ enum wayland_surface_config_state
     WAYLAND_SURFACE_CONFIG_STATE_FULLSCREEN = (1 << 3)
 };
 
+enum wayland_surface_role
+{
+    WAYLAND_SURFACE_ROLE_NONE,
+    WAYLAND_SURFACE_ROLE_TOPLEVEL,
+    WAYLAND_SURFACE_ROLE_SUBSURFACE,
+};
+
 struct wayland_keyboard
 {
     struct wl_keyboard *wl_keyboard;
@@ -185,6 +192,7 @@ struct wayland_client_surface
 {
     LONG ref;
     HWND hwnd;
+    HWND toplevel;
     struct wl_surface *wl_surface;
     struct wl_subsurface *wl_subsurface;
     struct wp_viewport *wp_viewport;
@@ -193,10 +201,25 @@ struct wayland_client_surface
 struct wayland_surface
 {
     HWND hwnd;
+
     struct wl_surface *wl_surface;
-    struct xdg_surface *xdg_surface;
-    struct xdg_toplevel *xdg_toplevel;
     struct wp_viewport *wp_viewport;
+
+    enum wayland_surface_role role;
+    union
+    {
+        struct
+        {
+            struct xdg_surface *xdg_surface;
+            struct xdg_toplevel *xdg_toplevel;
+        };
+        struct
+        {
+            struct wl_subsurface *wl_subsurface;
+            HWND toplevel_hwnd;
+        };
+    };
+
     struct wayland_surface_config pending, requested, processing, current;
     BOOL resizing;
     struct wayland_window_config window;
@@ -237,12 +260,13 @@ void wayland_output_use_xdg_extension(struct wayland_output *output);
 struct wayland_surface *wayland_surface_create(HWND hwnd);
 void wayland_surface_destroy(struct wayland_surface *surface);
 void wayland_surface_make_toplevel(struct wayland_surface *surface);
+void wayland_surface_make_subsurface(struct wayland_surface *surface,
+                                     struct wayland_surface *parent);
 void wayland_surface_clear_role(struct wayland_surface *surface);
 void wayland_surface_attach_shm(struct wayland_surface *surface,
                                 struct wayland_shm_buffer *shm_buffer,
                                 HRGN surface_damage_region);
-BOOL wayland_surface_reconfigure(struct wayland_surface *surface, struct wayland_client_surface *client);
-void wayland_surface_reconfigure_client(struct wayland_surface *surface, struct wayland_client_surface *client);
+BOOL wayland_surface_reconfigure(struct wayland_surface *surface);
 BOOL wayland_surface_config_is_compatible(struct wayland_surface_config *conf,
                                           int width, int height,
                                           enum wayland_surface_config_state state);
@@ -254,9 +278,9 @@ void wayland_surface_coords_to_window(struct wayland_surface *surface,
                                       int *window_x, int *window_y);
 struct wayland_client_surface *wayland_client_surface_create(HWND hwnd);
 BOOL wayland_client_surface_release(struct wayland_client_surface *client);
-void wayland_client_surface_attach(struct wayland_client_surface *client, struct wayland_surface *surface);
+void wayland_client_surface_attach(struct wayland_client_surface *client, HWND toplevel);
 void wayland_client_surface_detach(struct wayland_client_surface *client);
-void wayland_surface_ensure_contents(struct wayland_surface *surface, struct wayland_client_surface *client);
+void wayland_surface_ensure_contents(struct wayland_surface *surface);
 void wayland_surface_set_title(struct wayland_surface *surface, LPCWSTR title);
 
 /**********************************************************************
@@ -291,9 +315,10 @@ struct wayland_win_data
 };
 
 struct wayland_win_data *wayland_win_data_get(HWND hwnd);
+struct wayland_win_data *wayland_win_data_get_nolock(HWND hwnd);
 void wayland_win_data_release(struct wayland_win_data *data);
 
-struct wayland_client_surface *get_client_surface(HWND hwnd, RECT *client_rect);
+struct wayland_client_surface *get_client_surface(HWND hwnd);
 BOOL set_window_surface_contents(HWND hwnd, struct wayland_shm_buffer *shm_buffer, HRGN damage_region);
 struct wayland_shm_buffer *get_window_surface_contents(HWND hwnd);
 void ensure_window_surface_contents(HWND hwnd);

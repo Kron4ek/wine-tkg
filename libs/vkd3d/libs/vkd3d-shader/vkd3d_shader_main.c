@@ -1620,6 +1620,7 @@ int vsir_program_compile(struct vsir_program *program, uint64_t config_flags,
         const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_code *out,
         struct vkd3d_shader_message_context *message_context)
 {
+    struct vkd3d_shader_scan_combined_resource_sampler_info combined_sampler_info;
     struct vkd3d_shader_scan_descriptor_info1 scan_descriptor_info;
     struct vkd3d_shader_compile_info scan_info;
     int ret;
@@ -1633,10 +1634,14 @@ int vsir_program_compile(struct vsir_program *program, uint64_t config_flags,
             break;
 
         case VKD3D_SHADER_TARGET_GLSL:
+            combined_sampler_info.type = VKD3D_SHADER_STRUCTURE_TYPE_SCAN_COMBINED_RESOURCE_SAMPLER_INFO;
+            combined_sampler_info.next = scan_info.next;
+            scan_info.next = &combined_sampler_info;
             if ((ret = vsir_program_scan(program, &scan_info, message_context, &scan_descriptor_info)) < 0)
                 return ret;
             ret = glsl_compile(program, config_flags, &scan_descriptor_info,
-                    compile_info, out, message_context);
+                    &combined_sampler_info, compile_info, out, message_context);
+            vkd3d_shader_free_scan_combined_resource_sampler_info(&combined_sampler_info);
             vkd3d_shader_free_scan_descriptor_info1(&scan_descriptor_info);
             break;
 

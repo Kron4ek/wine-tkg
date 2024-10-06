@@ -190,6 +190,17 @@ enum vkd3d_shader_compile_option_backward_compatibility
      *  - DEPTH to SV_Depth for pixel shader outputs.
      */
     VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_MAP_SEMANTIC_NAMES = 0x00000001,
+    /**
+     *  Causes 'double' to behave as an alias for 'float'. This option only
+     *  applies to HLSL sources with shader model 1-3 target profiles. Without
+     *  this option using the 'double' type produces compilation errors in
+     *  these target profiles.
+     *
+     *  This option is disabled by default.
+     *
+     *  \since 1.14
+     */
+    VKD3D_SHADER_COMPILE_OPTION_DOUBLE_AS_FLOAT_ALIAS = 0x00000002,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_BACKWARD_COMPATIBILITY),
 };
@@ -469,8 +480,8 @@ enum vkd3d_shader_parameter_type
     /** The parameter value is embedded directly in the shader. */
     VKD3D_SHADER_PARAMETER_TYPE_IMMEDIATE_CONSTANT,
     /**
-     * The parameter value is provided to the shader via a specialization
-     * constant. This value is only supported for the SPIR-V target type.
+     * The parameter value is provided to the shader via specialization
+     * constants. This value is only supported for the SPIR-V target type.
      */
     VKD3D_SHADER_PARAMETER_TYPE_SPECIALIZATION_CONSTANT,
     /**
@@ -495,6 +506,13 @@ enum vkd3d_shader_parameter_data_type
     VKD3D_SHADER_PARAMETER_DATA_TYPE_UINT32,
     /** The parameter is provided as a 32-bit float. \since 1.13 */
     VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32,
+    /**
+     * The parameter is provided as a 4-dimensional vector of 32-bit floats.
+     * This parameter must be used with struct vkd3d_shader_parameter1;
+     * it cannot be used with struct vkd3d_shader_parameter.
+     * \since 1.14
+     */
+    VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32_VEC4,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_PARAMETER_DATA_TYPE),
 };
@@ -578,6 +596,58 @@ enum vkd3d_shader_parameter_name
      * \since 1.13
      */
     VKD3D_SHADER_PARAMETER_NAME_FLAT_INTERPOLATION,
+    /**
+     * A mask of enabled clip planes.
+     *
+     * When this parameter is provided to a vertex shader, for each nonzero bit
+     * of this mask, a user clip distance will be generated from vertex position
+     * in clip space, and the clip plane defined by the indexed vector, taken
+     * from the VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_# parameter.
+     *
+     * Regardless of the specific clip planes which are enabled, the clip
+     * distances which are output are a contiguous array starting from clip
+     * distance 0. This affects the interface of OpenGL. For example, if only
+     * clip planes 1 and 3 are enabled (and so the value of the mask is 0xa),
+     * the user should enable only GL_CLIP_DISTANCE0 and GL_CLIP_DISTANCE1.
+     *
+     * The default value is zero, i.e. do not enable any clip planes.
+     *
+     * The data type for this parameter must be
+     * VKD3D_SHADER_PARAMETER_DATA_TYPE_UINT32.
+     *
+     * Only VKD3D_SHADER_PARAMETER_TYPE_IMMEDIATE_CONSTANT is supported in this
+     * version of vkd3d-shader.
+     *
+     * If the source shader writes clip distances and this parameter is nonzero,
+     * compilation fails.
+     *
+     * \since 1.14
+     */
+    VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_MASK,
+    /**
+     * Clip plane values.
+     * See VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_MASK for documentation of
+     * clip planes.
+     *
+     * These enum values are contiguous and arithmetic may safely be performed
+     * on them. That is, VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_[n] is
+     * VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_0 plus n.
+     *
+     * The data type for each parameter must be
+     * VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32_VEC4.
+     *
+     * The default value for each plane is a (0, 0, 0, 0) vector.
+     *
+     * \since 1.14
+     */
+    VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_0,
+    VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_1,
+    VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_2,
+    VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_3,
+    VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_4,
+    VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_5,
+    VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_6,
+    VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_7,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_PARAMETER_NAME),
 };
@@ -625,6 +695,13 @@ struct vkd3d_shader_parameter_immediate_constant1
          * VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32.
          */
         float f32;
+        /**
+         * A pointer to the value if the parameter's data type is
+         * VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32_VEC4.
+         *
+         * \since 1.14
+         */
+        float f32_vec4[4];
         void *_pointer_pad;
         uint32_t _pad[4];
     } u;
@@ -636,7 +713,13 @@ struct vkd3d_shader_parameter_immediate_constant1
  */
 struct vkd3d_shader_parameter_specialization_constant
 {
-    /** The ID of the specialization constant. */
+    /**
+     * The ID of the specialization constant.
+     * If the type comprises more than one constant, such as
+     * VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32_VEC4, then a contiguous
+     * array of specialization constants should be used, one for each component,
+     * and this ID should point to the first component.
+     */
     uint32_t id;
 };
 

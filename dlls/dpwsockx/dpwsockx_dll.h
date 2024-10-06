@@ -45,6 +45,12 @@ typedef struct tagDPSP_MSG_HEADER
 } DPSP_MSG_HEADER, *LPDPSP_MSG_HEADER;
 typedef const DPSP_MSG_HEADER* LPCDPSP_MSG_HEADER;
 
+typedef struct
+{
+    SOCKADDR_IN tcpAddr;
+    SOCKADDR_IN udpAddr;
+} DPWS_PLAYERDATA;
+
 #include "poppack.h"
 
 typedef struct tagDPWS_IN_CONNECTION DPWS_IN_CONNECTION;
@@ -67,6 +73,13 @@ struct tagDPWS_IN_CONNECTION
     IDirectPlaySP           *sp;
 };
 
+typedef struct
+{
+    SOCKADDR_IN         addr;
+
+    SOCKET              tcpSock;
+} DPWS_OUT_CONNECTION;
+
 typedef struct tagDPWS_DATA
 {
     LPDIRECTPLAYSP        lpISP;
@@ -75,6 +88,9 @@ typedef struct tagDPWS_DATA
     SOCKADDR_IN           tcpAddr;
     WSAEVENT              acceptEvent;
     struct list           inConnections;
+
+    CRITICAL_SECTION      sendCs;
+    DPWS_OUT_CONNECTION   nameserverConnection;
 
     BOOL                  started;
     HANDLE                thread;

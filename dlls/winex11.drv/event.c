@@ -541,7 +541,7 @@ static inline BOOL can_activate_window( HWND hwnd )
     if (style & WS_MINIMIZE) return FALSE;
     if (NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_NOACTIVATE) return FALSE;
     if (hwnd == NtUserGetDesktopWindow()) return FALSE;
-    if (NtUserGetWindowRect( hwnd, &rect, get_win_monitor_dpi( hwnd ) ) && IsRectEmpty( &rect )) return FALSE;
+    if (NtUserGetWindowRect( hwnd, &rect, NtUserGetDpiForWindow( hwnd ) ) && IsRectEmpty( &rect )) return FALSE;
     return !(style & WS_DISABLED);
 }
 
@@ -939,7 +939,7 @@ static BOOL X11DRV_Expose( HWND hwnd, XEvent *xev )
 
     release_win_data( data );
 
-    NtUserExposeWindowSurface( hwnd, flags, &rect, get_win_monitor_dpi( hwnd ) );
+    NtUserExposeWindowSurface( hwnd, flags, &rect, NtUserGetWinMonitorDpi( hwnd, MDT_DEFAULT ) );
     return TRUE;
 }
 
@@ -1413,7 +1413,7 @@ void X11DRV_SetFocus( HWND hwnd )
 
 static HWND find_drop_window( HWND hQueryWnd, LPPOINT lpPt )
 {
-    UINT dpi = get_win_monitor_dpi( hQueryWnd );
+    UINT dpi = NtUserGetWinMonitorDpi( hQueryWnd, MDT_DEFAULT );
     RECT tempRect;
 
     if (!NtUserIsWindowEnabled(hQueryWnd)) return 0;

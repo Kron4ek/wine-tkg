@@ -59,6 +59,8 @@
 #define VKD3D_VEC4_SIZE 4
 #define VKD3D_DVEC2_SIZE 2
 
+#define VKD3D_SHADER_COMPONENT_TYPE_COUNT (VKD3D_SHADER_COMPONENT_UINT64 + 1)
+
 enum vkd3d_shader_error
 {
     VKD3D_SHADER_ERROR_DXBC_INVALID_SIZE                = 1,
@@ -159,6 +161,7 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_HLSL_INVALID_CONTROL_POINT_COUNT = 5036,
     VKD3D_SHADER_ERROR_HLSL_INVALID_OUTPUT_PRIMITIVE    = 5037,
     VKD3D_SHADER_ERROR_HLSL_INVALID_PARTITIONING        = 5038,
+    VKD3D_SHADER_ERROR_HLSL_MISPLACED_SAMPLER_STATE     = 5039,
 
     VKD3D_SHADER_WARNING_HLSL_IMPLICIT_TRUNCATION       = 5300,
     VKD3D_SHADER_WARNING_HLSL_DIVISION_BY_ZERO          = 5301,
@@ -170,6 +173,7 @@ enum vkd3d_shader_error
 
     VKD3D_SHADER_ERROR_GLSL_INTERNAL                    = 6000,
     VKD3D_SHADER_ERROR_GLSL_BINDING_NOT_FOUND           = 6001,
+    VKD3D_SHADER_ERROR_GLSL_UNSUPPORTED                 = 6002,
 
     VKD3D_SHADER_ERROR_D3DBC_UNEXPECTED_EOF             = 7000,
     VKD3D_SHADER_ERROR_D3DBC_INVALID_VERSION_TOKEN      = 7001,
@@ -239,6 +243,8 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_VSIR_INVALID_SSA_USAGE           = 9017,
     VKD3D_SHADER_ERROR_VSIR_INVALID_TESSELLATION        = 9018,
     VKD3D_SHADER_ERROR_VSIR_INVALID_GS                  = 9019,
+    VKD3D_SHADER_ERROR_VSIR_INVALID_PARAMETER           = 9020,
+    VKD3D_SHADER_ERROR_VSIR_MISSING_SEMANTIC            = 9021,
 
     VKD3D_SHADER_WARNING_VSIR_DYNAMIC_DESCRIPTOR_ARRAY  = 9300,
 
@@ -658,9 +664,6 @@ enum vkd3d_data_type
 {
     VKD3D_DATA_FLOAT,
     VKD3D_DATA_INT,
-    VKD3D_DATA_RESOURCE,
-    VKD3D_DATA_SAMPLER,
-    VKD3D_DATA_UAV,
     VKD3D_DATA_UINT,
     VKD3D_DATA_UNORM,
     VKD3D_DATA_SNORM,
@@ -1491,6 +1494,7 @@ enum vsir_asm_flags
 {
     VSIR_ASM_FLAG_NONE = 0,
     VSIR_ASM_FLAG_DUMP_TYPES = 0x1,
+    VSIR_ASM_FLAG_DUMP_ALL_INDICES = 0x2,
 };
 
 enum vkd3d_result d3d_asm_compile(const struct vsir_program *program,
@@ -1596,6 +1600,7 @@ int shader_parse_input_signature(const struct vkd3d_shader_code *dxbc,
 
 int glsl_compile(struct vsir_program *program, uint64_t config_flags,
         const struct vkd3d_shader_scan_descriptor_info1 *descriptor_info,
+        const struct vkd3d_shader_scan_combined_resource_sampler_info *combined_sampler_info,
         const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context);
 

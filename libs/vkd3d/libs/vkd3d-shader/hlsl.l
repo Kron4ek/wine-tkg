@@ -90,7 +90,6 @@ default                 {return KW_DEFAULT;             }
 discard                 {return KW_DISCARD;             }
 DomainShader            {return KW_DOMAINSHADER;        }
 do                      {return KW_DO;                  }
-double                  {return KW_DOUBLE;              }
 else                    {return KW_ELSE;                }
 export                  {return KW_EXPORT;              }
 extern                  {return KW_EXTERN;              }

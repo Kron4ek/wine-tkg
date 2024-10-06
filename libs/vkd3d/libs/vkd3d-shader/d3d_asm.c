@@ -675,9 +675,6 @@ static void shader_dump_data_type(struct vkd3d_d3d_asm_compiler *compiler, enum 
     {
         [VKD3D_DATA_FLOAT    ] = "float",
         [VKD3D_DATA_INT      ] = "int",
-        [VKD3D_DATA_RESOURCE ] = "resource",
-        [VKD3D_DATA_SAMPLER  ] = "sampler",
-        [VKD3D_DATA_UAV      ] = "uav",
         [VKD3D_DATA_UINT     ] = "uint",
         [VKD3D_DATA_UNORM    ] = "unorm",
         [VKD3D_DATA_SNORM    ] = "snorm",
@@ -1229,8 +1226,6 @@ static void shader_print_register(struct vkd3d_d3d_asm_compiler *compiler, const
                     case VKD3D_DATA_INT:
                         shader_print_int_literal(compiler, "", reg->u.immconst_u32[0], "");
                         break;
-                    case VKD3D_DATA_RESOURCE:
-                    case VKD3D_DATA_SAMPLER:
                     case VKD3D_DATA_UINT:
                         shader_print_uint_literal(compiler, "", reg->u.immconst_u32[0], "");
                         break;
@@ -1266,8 +1261,6 @@ static void shader_print_register(struct vkd3d_d3d_asm_compiler *compiler, const
                         shader_print_int_literal(compiler, ", ", reg->u.immconst_u32[2], "");
                         shader_print_int_literal(compiler, ", ", reg->u.immconst_u32[3], "");
                         break;
-                    case VKD3D_DATA_RESOURCE:
-                    case VKD3D_DATA_SAMPLER:
                     case VKD3D_DATA_UINT:
                         shader_print_uint_literal(compiler, "", reg->u.immconst_u32[0], "");
                         shader_print_uint_literal(compiler, ", ", reg->u.immconst_u32[1], "");
@@ -1318,6 +1311,23 @@ static void shader_print_register(struct vkd3d_d3d_asm_compiler *compiler, const
                     compiler->colours.error, reg->dimension, compiler->colours.reset);
         }
         vkd3d_string_buffer_printf(buffer, ")");
+    }
+    else if (compiler->flags & VSIR_ASM_FLAG_DUMP_ALL_INDICES)
+    {
+        unsigned int i = 0;
+
+        if (reg->idx_count == 0 || reg->idx[0].rel_addr)
+        {
+            vkd3d_string_buffer_printf(buffer, "%s", compiler->colours.reset);
+        }
+        else
+        {
+            vkd3d_string_buffer_printf(buffer, "%u%s", offset, compiler->colours.reset);
+            i = 1;
+        }
+
+        for (; i < reg->idx_count; ++i)
+            shader_print_subscript(compiler, reg->idx[i].offset, reg->idx[i].rel_addr);
     }
     else if (reg->type != VKD3DSPR_RASTOUT
             && reg->type != VKD3DSPR_MISCTYPE
@@ -2491,10 +2501,11 @@ enum vkd3d_result d3d_asm_compile(const struct vsir_program *program,
 
 void vkd3d_shader_trace(const struct vsir_program *program)
 {
-    const char *p, *q, *end;
+    const unsigned int flags = VSIR_ASM_FLAG_DUMP_TYPES | VSIR_ASM_FLAG_DUMP_ALL_INDICES;
     struct vkd3d_shader_code code;
+    const char *p, *q, *end;
 
-    if (d3d_asm_compile(program, NULL, &code, VSIR_ASM_FLAG_DUMP_TYPES) != VKD3D_OK)
+    if (d3d_asm_compile(program, NULL, &code, flags) != VKD3D_OK)
         return;
 
     end = (const char *)code.code + code.size;

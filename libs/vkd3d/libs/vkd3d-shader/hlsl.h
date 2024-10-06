@@ -106,6 +106,7 @@ enum hlsl_type_class
     HLSL_CLASS_BLEND_STATE,
     HLSL_CLASS_VOID,
     HLSL_CLASS_NULL,
+    HLSL_CLASS_ERROR,
 };
 
 enum hlsl_base_type
@@ -325,6 +326,7 @@ enum hlsl_ir_node_type
     HLSL_IR_SWITCH,
 
     HLSL_IR_COMPILE,
+    HLSL_IR_SAMPLER_STATE,
     HLSL_IR_STATEBLOCK_CONSTANT,
 };
 
@@ -361,6 +363,9 @@ struct hlsl_block
 {
     /* List containing instruction nodes; linked by the hlsl_ir_node.entry fields. */
     struct list instrs;
+    /* Instruction representing the "value" of this block, if applicable.
+     * This may point to an instruction outside of this block! */
+    struct hlsl_ir_node *value;
 };
 
 /* A reference to an instruction node (struct hlsl_ir_node), usable as a field in other structs.
@@ -657,6 +662,7 @@ struct hlsl_ir_switch
 
 enum hlsl_ir_expr_op
 {
+    HLSL_OP0_ERROR,
     HLSL_OP0_VOID,
     HLSL_OP0_RASTERIZER_SAMPLE_COUNT,
 
@@ -894,6 +900,14 @@ struct hlsl_ir_compile
     unsigned int args_count;
 };
 
+/* Represents a state block initialized with the "sampler_state" keyword. */
+struct hlsl_ir_sampler_state
+{
+    struct hlsl_ir_node node;
+
+    struct hlsl_state_block *state_block;
+};
+
 /* Stateblock constants are undeclared values found on state blocks or technique passes descriptions,
  *   that do not concern regular pixel, vertex, or compute shaders, except for parsing. */
 struct hlsl_ir_stateblock_constant
@@ -1043,7 +1057,11 @@ struct hlsl_ctx
         struct hlsl_type *string;
         struct hlsl_type *Void;
         struct hlsl_type *null;
+        struct hlsl_type *error;
     } builtin_types;
+
+    /* Pre-allocated "error" expression. */
+    struct hlsl_ir_node *error_instr;
 
     /* List of the instruction nodes for initializing static variables. */
     struct hlsl_block static_initializers;
@@ -1091,6 +1109,7 @@ struct hlsl_ctx
     bool child_effect;
     bool include_empty_buffers;
     bool warn_implicit_truncation;
+    bool double_as_float_alias;
 };
 
 static inline bool hlsl_version_ge(const struct hlsl_ctx *ctx, unsigned int major, unsigned int minor)
@@ -1202,6 +1221,12 @@ static inline struct hlsl_ir_compile *hlsl_ir_compile(const struct hlsl_ir_node 
     return CONTAINING_RECORD(node, struct hlsl_ir_compile, node);
 }
 
+static inline struct hlsl_ir_sampler_state *hlsl_ir_sampler_state(const struct hlsl_ir_node *node)
+{
+    VKD3D_ASSERT(node->type == HLSL_IR_SAMPLER_STATE);
+    return CONTAINING_RECORD(node, struct hlsl_ir_sampler_state, node);
+};
+
 static inline struct hlsl_ir_stateblock_constant *hlsl_ir_stateblock_constant(const struct hlsl_ir_node *node)
 {
     VKD3D_ASSERT(node->type == HLSL_IR_STATEBLOCK_CONSTANT);
@@ -1211,16 +1236,19 @@ static inline struct hlsl_ir_stateblock_constant *hlsl_ir_stateblock_constant(co
 static inline void hlsl_block_init(struct hlsl_block *block)
 {
     list_init(&block->instrs);
+    block->value = NULL;
 }
 
 static inline void hlsl_block_add_instr(struct hlsl_block *block, struct hlsl_ir_node *instr)
 {
     list_add_tail(&block->instrs, &instr->entry);
+    block->value = (instr->data_type ? instr : NULL);
 }
 
 static inline void hlsl_block_add_block(struct hlsl_block *block, struct hlsl_block *add)
 {
     list_move_tail(&block->instrs, &add->instrs);
+    block->value = add->value;
 }
 
 static inline void hlsl_src_from_node(struct hlsl_src *src, struct hlsl_ir_node *node)
@@ -1383,12 +1411,15 @@ bool hlsl_clone_block(struct hlsl_ctx *ctx, struct hlsl_block *dst_block, const 
 void hlsl_dump_function(struct hlsl_ctx *ctx, const struct hlsl_ir_function_decl *func);
 void hlsl_dump_var_default_values(const struct hlsl_ir_var *var);
 
+bool hlsl_state_block_add_entry(struct hlsl_state_block *state_block,
+        struct hlsl_state_block_entry *entry);
 bool hlsl_validate_state_block_entry(struct hlsl_ctx *ctx, struct hlsl_state_block_entry *entry,
         const struct vkd3d_shader_location *loc);
 struct hlsl_state_block_entry *clone_stateblock_entry(struct hlsl_ctx *ctx,
-        struct hlsl_state_block_entry *src, const char *name, bool lhs_has_index,
-        unsigned int lhs_index, unsigned int arg_index);
+        const struct hlsl_state_block_entry *src, const char *name, bool lhs_has_index,
+        unsigned int lhs_index, bool single_arg, unsigned int arg_index);
 
+void hlsl_lower_index_loads(struct hlsl_ctx *ctx, struct hlsl_block *body);
 void hlsl_run_const_passes(struct hlsl_ctx *ctx, struct hlsl_block *body);
 int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func,
         enum vkd3d_shader_target_type target_type, struct vkd3d_shader_code *out);
@@ -1496,6 +1527,8 @@ struct hlsl_type *hlsl_new_struct_type(struct hlsl_ctx *ctx, const char *name,
         struct hlsl_struct_field *fields, size_t field_count);
 struct hlsl_ir_node *hlsl_new_swizzle(struct hlsl_ctx *ctx, uint32_t s, unsigned int components,
         struct hlsl_ir_node *val, const struct vkd3d_shader_location *loc);
+struct hlsl_ir_node *hlsl_new_sampler_state(struct hlsl_ctx *ctx,
+        const struct hlsl_state_block *state_block, struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_stateblock_constant(struct hlsl_ctx *ctx, const char *name,
         struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_string_constant(struct hlsl_ctx *ctx, const char *str,

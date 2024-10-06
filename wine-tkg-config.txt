@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sun Sep 22 09:30:51 AM UTC 2024 :
+# Last wine-tkg-staging-fsync-git configuration - Sun Oct  6 01:06:55 AM UTC 2024 :
 
 Local cfg files used
 
-Wine (plain) version: 9.18.r0.g42af68b8b7c
-Using wine-staging patchset (version 9.18.r0.g1212b7dd)
+Wine (plain) version: 9.19.r0.g7ee99608f46
+Using wine-staging patchset (version 9.19.r0.g858bf979)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -27,5 +27,8 @@ Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix a608ef1.mypatch
 Applied hotfix opencl-fixup.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
+Applied hotfix HACK-user32-Always-call-get_message-request-after-waiting.mypatch
+Applied your own patch hags.mypatch
+Applied your own patch win32u-hdr.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )

@@ -619,7 +619,7 @@ static void update_mouse_coords( INPUT *input )
         RECT rc;
 
         if (input->mi.dwFlags & MOUSEEVENTF_VIRTUALDESK)
-            rc = get_virtual_screen_rect( 0 );
+            rc = get_virtual_screen_rect( 0, MDT_DEFAULT );
         else
             rc = get_primary_monitor_rect( 0 );
 
@@ -709,9 +709,9 @@ BOOL WINAPI NtUserSetCursorPos( INT x, INT y )
     RECT rect = {x, y, x, y};
     BOOL ret;
     INT prev_x, prev_y, new_x, new_y;
-    UINT dpi;
+    UINT dpi, raw_dpi;
 
-    dpi = monitor_dpi_from_rect( rect, get_thread_dpi() );
+    dpi = monitor_dpi_from_rect( rect, get_thread_dpi(), &raw_dpi );
     rect = map_dpi_rect( rect, get_thread_dpi(), dpi );
 
     SERVER_START_REQ( set_cursor )
@@ -743,7 +743,7 @@ BOOL get_cursor_pos( POINT *pt )
     DWORD last_change = 0;
     NTSTATUS status;
     RECT rect;
-    UINT dpi;
+    UINT dpi, raw_dpi;
 
     if (!pt) return FALSE;
 
@@ -760,7 +760,7 @@ BOOL get_cursor_pos( POINT *pt )
     if (!ret) return FALSE;
 
     SetRect( &rect, pt->x, pt->y, pt->x, pt->y );
-    dpi = monitor_dpi_from_rect( rect, get_thread_dpi() );
+    dpi = monitor_dpi_from_rect( rect, get_thread_dpi(), &raw_dpi );
     rect = map_dpi_rect( rect, dpi, get_thread_dpi() );
     *pt = *(POINT *)&rect.left;
     return ret;
@@ -804,7 +804,7 @@ static void check_for_events( UINT flags )
     if (!user_driver->pProcessEvents( flags ))
         flush_window_surfaces( TRUE );
 
-    peek_message( &msg, &filter );
+    peek_message( &msg, &filter, FALSE );
 }
 
 /**********************************************************************
@@ -1870,7 +1870,7 @@ static HWND set_focus_window( HWND hwnd )
 /*******************************************************************
  *		set_active_window
  */
-static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
+BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus, DWORD new_active_thread_id )
 {
     HWND previous = get_active_window();
     BOOL ret;
@@ -1940,10 +1940,11 @@ static BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus )
         {
             if (old_thread)
             {
+                if (!new_active_thread_id) new_active_thread_id = new_thread;
                 for (phwnd = list; *phwnd; phwnd++)
                 {
                     if (get_window_thread( *phwnd, NULL ) == old_thread)
-                        send_message( *phwnd, WM_ACTIVATEAPP, 0, new_thread );
+                        send_message( *phwnd, WM_ACTIVATEAPP, 0, new_active_thread_id );
                 }
             }
             if (new_thread)
@@ -2026,7 +2027,7 @@ HWND WINAPI NtUserSetActiveWindow( HWND hwnd )
             return get_active_window();  /* Windows doesn't seem to return an error here */
     }
 
-    if (!set_active_window( hwnd, &prev, FALSE, TRUE )) return 0;
+    if (!set_active_window( hwnd, &prev, FALSE, TRUE, 0 )) return 0;
     return prev;
 }
 
@@ -2072,7 +2073,7 @@ HWND WINAPI NtUserSetFocus( HWND hwnd )
         /* activate hwndTop if needed. */
         if (hwndTop != get_active_window())
         {
-            if (!set_active_window( hwndTop, NULL, FALSE, FALSE )) return 0;
+            if (!set_active_window( hwndTop, NULL, FALSE, FALSE, 0 )) return 0;
             if (!is_window( hwnd )) return 0;  /* Abort if window destroyed */
 
             /* Do not change focus if the window is no longer active */
@@ -2095,9 +2096,11 @@ HWND WINAPI NtUserSetFocus( HWND hwnd )
 BOOL set_foreground_window( HWND hwnd, BOOL mouse )
 {
     BOOL ret, send_msg_old = FALSE, send_msg_new = FALSE;
+    DWORD new_thread_id;
     HWND previous = 0;
 
     if (mouse) hwnd = get_full_window_handle( hwnd );
+    new_thread_id = get_window_thread( hwnd, NULL );
 
     SERVER_START_REQ( set_foreground_window )
     {
@@ -2114,16 +2117,16 @@ BOOL set_foreground_window( HWND hwnd, BOOL mouse )
     if (ret && previous != hwnd)
     {
         if (send_msg_old)  /* old window belongs to other thread */
-            NtUserMessageCall( previous, WM_WINE_SETACTIVEWINDOW, 0, 0,
+            NtUserMessageCall( previous, WM_WINE_SETACTIVEWINDOW, 0, new_thread_id,
                                0, NtUserSendNotifyMessage, FALSE );
         else if (send_msg_new)  /* old window belongs to us but new one to other thread */
-            ret = set_active_window( 0, NULL, mouse, TRUE );
+            ret = set_active_window( 0, NULL, mouse, TRUE, new_thread_id );
 
         if (send_msg_new)  /* new window belongs to other thread */
             NtUserMessageCall( hwnd, WM_WINE_SETACTIVEWINDOW, (WPARAM)hwnd, 0,
                                0, NtUserSendNotifyMessage, FALSE );
         else  /* new window belongs to us */
-            ret = set_active_window( hwnd, NULL, mouse, TRUE );
+            ret = set_active_window( hwnd, NULL, mouse, TRUE, 0 );
     }
     return ret;
 }
@@ -2566,7 +2569,7 @@ BOOL clip_fullscreen_window( HWND hwnd, BOOL reset )
 
     ctx = set_thread_dpi_awareness_context( NTUSER_DPI_PER_MONITOR_AWARE );
     monitor_info = monitor_info_from_window( hwnd, MONITOR_DEFAULTTONEAREST );
-    virtual_rect = get_virtual_screen_rect( 0 );
+    virtual_rect = get_virtual_screen_rect( 0, MDT_DEFAULT );
     set_thread_dpi_awareness_context( ctx );
 
     if (!grab_fullscreen)
@@ -2614,7 +2617,7 @@ BOOL get_clip_cursor( RECT *rect, UINT dpi )
     if (!status)
     {
         UINT ctx = set_thread_dpi_awareness_context( NTUSER_DPI_PER_MONITOR_AWARE );
-        UINT dpi_from = monitor_dpi_from_rect( *rect, get_thread_dpi() );
+        UINT raw_dpi, dpi_from = monitor_dpi_from_rect( *rect, get_thread_dpi(), &raw_dpi );
         *rect = map_dpi_rect( *rect, dpi_from, dpi );
         set_thread_dpi_awareness_context( ctx );
     }
@@ -2624,7 +2627,7 @@ BOOL get_clip_cursor( RECT *rect, UINT dpi )
 BOOL process_wine_clipcursor( HWND hwnd, UINT flags, BOOL reset )
 {
     struct user_thread_info *thread_info = get_user_thread_info();
-    RECT rect, virtual_rect = get_virtual_screen_rect( 0 );
+    RECT rect, virtual_rect = get_virtual_screen_rect( 0, MDT_DEFAULT );
     BOOL was_clipping, empty = !!(flags & SET_CURSOR_NOCLIP);
 
     TRACE( "hwnd %p, flags %#x, reset %u\n", hwnd, flags, reset );
@@ -2662,7 +2665,7 @@ BOOL process_wine_clipcursor( HWND hwnd, UINT flags, BOOL reset )
  */
 BOOL WINAPI NtUserClipCursor( const RECT *rect )
 {
-    UINT dpi_from = get_thread_dpi(), dpi_to;
+    UINT dpi_from = get_thread_dpi(), dpi_to, raw_dpi;
     BOOL ret;
     RECT new_rect;
 
@@ -2671,7 +2674,7 @@ BOOL WINAPI NtUserClipCursor( const RECT *rect )
     if (rect)
     {
         if (rect->left > rect->right || rect->top > rect->bottom) return FALSE;
-        dpi_to = monitor_dpi_from_rect( *rect, dpi_from );
+        dpi_to = monitor_dpi_from_rect( *rect, dpi_from, &raw_dpi );
         new_rect = map_dpi_rect( *rect, dpi_from, dpi_to );
         rect = &new_rect;
     }

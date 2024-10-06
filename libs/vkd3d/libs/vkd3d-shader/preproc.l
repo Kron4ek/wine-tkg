@@ -67,7 +67,7 @@ static void update_location(struct preproc_ctx *ctx);
 
 NEWLINE         \r?\n
 WS              [ \t\r]
-IDENTIFIER      [A-Za-z_][A-Za-z0-9_]*
+IDENTIFIER      (::)?[A-Za-z_]((::)?[A-Za-z0-9_]+)*
 INT_SUFFIX      [uUlL]{0,2}
 
 %%
