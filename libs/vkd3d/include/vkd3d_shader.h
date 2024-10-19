@@ -648,6 +648,58 @@ enum vkd3d_shader_parameter_name
     VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_5,
     VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_6,
     VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_7,
+    /**
+     * Point size.
+     *
+     * When this parameter is provided to a vertex, tessellation, or geometry
+     * shader, and the source shader does not write point size, it specifies a
+     * uniform value which will be written to point size.
+     * If the source shader writes point size, this parameter is ignored.
+     *
+     * This parameter can be used to implement fixed function point size, as
+     * present in Direct3D versions 8 and 9, if the target environment does not
+     * support point size as part of its own fixed-function API (as Vulkan and
+     * core OpenGL).
+     *
+     * The data type for this parameter must be
+     * VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32.
+     *
+     * \since 1.14
+     */
+    VKD3D_SHADER_PARAMETER_NAME_POINT_SIZE,
+    /**
+     * Minimum point size.
+     *
+     * When this parameter is provided to a vertex, tessellation, or geometry
+     * shader, and the source shader writes point size or uses the
+     * VKD3D_SHADER_PARAMETER_NAME_POINT_SIZE parameter, the point size will
+     * be clamped to the provided minimum value.
+     * If point size is not written in one of these ways,
+     * this parameter is ignored.
+     * If this parameter is not provided, the point size will not be clamped
+     * to a minimum size by vkd3d-shader.
+     *
+     * This parameter can be used to implement fixed function point size, as
+     * present in Direct3D versions 8 and 9, if the target environment does not
+     * support point size as part of its own fixed-function API (as Vulkan and
+     * core OpenGL).
+     *
+     * The data type for this parameter must be
+     * VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32.
+     *
+     * \since 1.14
+     */
+    VKD3D_SHADER_PARAMETER_NAME_POINT_SIZE_MIN,
+    /**
+     * Maximum point size.
+     *
+     * This parameter has identical behaviour to
+     * VKD3D_SHADER_PARAMETER_NAME_POINT_SIZE_MIN, except that it provides
+     * the maximum size rather than the minimum.
+     *
+     * \since 1.14
+     */
+    VKD3D_SHADER_PARAMETER_NAME_POINT_SIZE_MAX,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_PARAMETER_NAME),
 };
@@ -1129,6 +1181,11 @@ enum vkd3d_shader_source_type
      * the format used for Direct3D shader model 6 shaders. \since 1.9
      */
     VKD3D_SHADER_SOURCE_DXBC_DXIL,
+    /**
+     * Binary format used by Direct3D 9/10.x/11 effects.
+     * Input is a raw FX section without container. \since 1.14
+     */
+    VKD3D_SHADER_SOURCE_FX,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_SOURCE_TYPE),
 };

@@ -488,6 +488,8 @@ struct hlsl_ir_var
      *   range). The IR instructions are numerated starting from 2, because 0 means unused, and 1
      *   means function entry. */
     unsigned int first_write, last_read;
+    /* Whether the variable is read in any entry function. */
+    bool is_read;
     /* Offset where the variable's value is stored within its buffer in numeric register components.
      * This in case the variable is uniform. */
     unsigned int buffer_offset;
@@ -611,6 +613,12 @@ struct hlsl_ir_function_decl
      * executed. Needed to deal with return statements in non-uniform control
      * flow, since some backends can't handle them. */
     struct hlsl_ir_var *early_return_var;
+
+    /* List of all the extern semantic variables; linked by the
+     * hlsl_ir_var.extern_entry fields. This exists as a convenience because
+     * it is often necessary to iterate all extern variables and these can be
+     * declared in as function parameters, or as the function return value. */
+    struct list extern_vars;
 };
 
 struct hlsl_ir_call
@@ -1019,10 +1027,11 @@ struct hlsl_ctx
     struct hlsl_scope *dummy_scope;
     /* List of all the scopes in the program; linked by the hlsl_scope.entry fields. */
     struct list scopes;
-    /* List of all the extern variables; linked by the hlsl_ir_var.extern_entry fields.
-     * This exists as a convenience because it is often necessary to iterate all extern variables
-     *   and these can be declared in global scope, as function parameters, or as the function
-     *   return value. */
+
+    /* List of all the extern variables, excluding semantic variables; linked
+     * by the hlsl_ir_var.extern_entry fields. This exists as a convenience
+     * because it is often necessary to iterate all extern variables declared
+     * in the global scope or as function parameters. */
     struct list extern_vars;
 
     /* List containing both the built-in HLSL buffers ($Globals and $Params) and the ones declared
@@ -1080,9 +1089,6 @@ struct hlsl_ctx
     } constant_defs;
     /* 'c' registers where the constants expected by SM2 sincos are stored. */
     struct hlsl_reg d3dsincosconst1, d3dsincosconst2;
-    /* Number of temp. registers required for the shader to run, i.e. the largest temp register
-     *   index that will be used in the output bytecode (+1). */
-    uint32_t temp_count;
 
     /* Number of threads to be executed (on the X, Y, and Z dimensions) in a single thread group in
      *   compute shader profiles. It is set using the numthreads() attribute in the entry point. */
@@ -1421,6 +1427,9 @@ struct hlsl_state_block_entry *clone_stateblock_entry(struct hlsl_ctx *ctx,
 
 void hlsl_lower_index_loads(struct hlsl_ctx *ctx, struct hlsl_block *body);
 void hlsl_run_const_passes(struct hlsl_ctx *ctx, struct hlsl_block *body);
+uint32_t allocate_temp_registers(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func);
+void mark_indexable_vars(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func);
+void compute_liveness(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func);
 int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func,
         enum vkd3d_shader_target_type target_type, struct vkd3d_shader_code *out);
 int hlsl_emit_effect_binary(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out);
@@ -1615,21 +1624,15 @@ bool hlsl_transform_ir(struct hlsl_ctx *ctx, bool (*func)(struct hlsl_ctx *ctx, 
 
 D3DXPARAMETER_CLASS hlsl_sm1_class(const struct hlsl_type *type);
 D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type);
-bool hlsl_sm1_register_from_semantic(const struct vkd3d_shader_version *version, const char *semantic_name,
-        unsigned int semantic_index, bool output, enum vkd3d_shader_register_type *type, unsigned int *reg);
-bool hlsl_sm1_usage_from_semantic(const char *semantic_name,
-        uint32_t semantic_index, enum vkd3d_decl_usage *usage, uint32_t *usage_idx);
 
 void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer);
 int d3dbc_compile(struct vsir_program *program, uint64_t config_flags,
         const struct vkd3d_shader_compile_info *compile_info, const struct vkd3d_shader_code *ctab,
         struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context);
 
-bool sysval_semantic_from_hlsl(enum vkd3d_shader_sysval_semantic *semantic,
-        struct hlsl_ctx *ctx, const struct hlsl_semantic *hlsl_semantic, bool output);
-bool hlsl_sm4_register_from_semantic(struct hlsl_ctx *ctx, const struct hlsl_semantic *semantic,
-        bool output, enum vkd3d_shader_register_type *type, bool *has_idx);
-int hlsl_sm4_write(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func, struct vkd3d_shader_code *out);
+int tpf_compile(struct vsir_program *program, uint64_t config_flags,
+        struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context,
+        struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func);
 
 struct hlsl_ir_function_decl *hlsl_compile_internal_function(struct hlsl_ctx *ctx, const char *name, const char *hlsl);
 

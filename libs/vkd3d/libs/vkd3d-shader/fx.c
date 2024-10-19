@@ -25,6 +25,17 @@ static inline size_t put_u32_unaligned(struct vkd3d_bytecode_buffer *buffer, uin
     return bytecode_put_bytes_unaligned(buffer, &value, sizeof(value));
 }
 
+struct fx_4_binary_type
+{
+    uint32_t name;
+    uint32_t class;
+    uint32_t element_count;
+    uint32_t unpacked_size;
+    uint32_t stride;
+    uint32_t packed_size;
+    uint32_t typeinfo;
+};
+
 struct string_entry
 {
     struct rb_entry entry;
@@ -470,26 +481,48 @@ static uint32_t get_fx_4_type_size(const struct hlsl_type *type)
     return type->reg_size[HLSL_REGSET_NUMERIC] * sizeof(float) * elements_count;
 }
 
-static const uint32_t fx_4_numeric_base_type[] =
+enum fx_4_type_constants
 {
-    [HLSL_TYPE_HALF]  = 1,
-    [HLSL_TYPE_FLOAT] = 1,
-    [HLSL_TYPE_INT  ] = 2,
-    [HLSL_TYPE_UINT ] = 3,
-    [HLSL_TYPE_BOOL ] = 4,
+    /* Numeric types encoding */
+    FX_4_NUMERIC_TYPE_FLOAT = 1,
+    FX_4_NUMERIC_TYPE_INT   = 2,
+    FX_4_NUMERIC_TYPE_UINT  = 3,
+    FX_4_NUMERIC_TYPE_BOOL  = 4,
+
+    FX_4_NUMERIC_CLASS_SCALAR = 1,
+    FX_4_NUMERIC_CLASS_VECTOR = 2,
+    FX_4_NUMERIC_CLASS_MATRIX = 3,
+
+    FX_4_NUMERIC_BASE_TYPE_SHIFT = 3,
+    FX_4_NUMERIC_ROWS_SHIFT = 8,
+    FX_4_NUMERIC_COLUMNS_SHIFT = 11,
+    FX_4_NUMERIC_COLUMN_MAJOR_MASK = 0x4000,
+
+    /* Object types */
+    FX_4_OBJECT_TYPE_STRING = 1,
+
+    /* Types */
+    FX_4_TYPE_CLASS_NUMERIC = 1,
+    FX_4_TYPE_CLASS_OBJECT = 2,
+    FX_4_TYPE_CLASS_STRUCT = 3,
+};
+
+static const uint32_t fx_4_numeric_base_types[] =
+{
+    [HLSL_TYPE_HALF ] = FX_4_NUMERIC_TYPE_FLOAT,
+    [HLSL_TYPE_FLOAT] = FX_4_NUMERIC_TYPE_FLOAT,
+    [HLSL_TYPE_INT  ] = FX_4_NUMERIC_TYPE_INT,
+    [HLSL_TYPE_UINT ] = FX_4_NUMERIC_TYPE_UINT,
+    [HLSL_TYPE_BOOL ] = FX_4_NUMERIC_TYPE_BOOL,
 };
 
 static uint32_t get_fx_4_numeric_type_description(const struct hlsl_type *type, struct fx_write_context *fx)
 {
-    static const unsigned int NUMERIC_BASE_TYPE_SHIFT = 3;
-    static const unsigned int NUMERIC_ROWS_SHIFT = 8;
-    static const unsigned int NUMERIC_COLUMNS_SHIFT = 11;
-    static const unsigned int NUMERIC_COLUMN_MAJOR_MASK = 0x4000;
     static const uint32_t numeric_type_class[] =
     {
-        [HLSL_CLASS_SCALAR] = 1,
-        [HLSL_CLASS_VECTOR] = 2,
-        [HLSL_CLASS_MATRIX] = 3,
+        [HLSL_CLASS_SCALAR] = FX_4_NUMERIC_CLASS_SCALAR,
+        [HLSL_CLASS_VECTOR] = FX_4_NUMERIC_CLASS_VECTOR,
+        [HLSL_CLASS_MATRIX] = FX_4_NUMERIC_CLASS_MATRIX,
     };
     struct hlsl_ctx *ctx = fx->ctx;
     uint32_t value = 0;
@@ -513,17 +546,17 @@ static uint32_t get_fx_4_numeric_type_description(const struct hlsl_type *type, 
         case HLSL_TYPE_INT:
         case HLSL_TYPE_UINT:
         case HLSL_TYPE_BOOL:
-            value |= (fx_4_numeric_base_type[type->e.numeric.type] << NUMERIC_BASE_TYPE_SHIFT);
+            value |= (fx_4_numeric_base_types[type->e.numeric.type] << FX_4_NUMERIC_BASE_TYPE_SHIFT);
             break;
         default:
             hlsl_fixme(ctx, &ctx->location, "Not implemented for base type %u.", type->e.numeric.type);
             return 0;
     }
 
-    value |= (type->dimy & 0x7) << NUMERIC_ROWS_SHIFT;
-    value |= (type->dimx & 0x7) << NUMERIC_COLUMNS_SHIFT;
+    value |= (type->dimy & 0x7) << FX_4_NUMERIC_ROWS_SHIFT;
+    value |= (type->dimx & 0x7) << FX_4_NUMERIC_COLUMNS_SHIFT;
     if (type->modifiers & HLSL_MODIFIER_COLUMN_MAJOR)
-        value |= NUMERIC_COLUMN_MAJOR_MASK;
+        value |= FX_4_NUMERIC_COLUMN_MAJOR_MASK;
 
     return value;
 }
@@ -651,7 +684,7 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
         case HLSL_CLASS_SCALAR:
         case HLSL_CLASS_VECTOR:
         case HLSL_CLASS_MATRIX:
-            put_u32_unaligned(buffer, 1);
+            put_u32_unaligned(buffer, FX_4_TYPE_CLASS_NUMERIC);
             break;
 
         case HLSL_CLASS_DEPTH_STENCIL_STATE:
@@ -669,11 +702,11 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
         case HLSL_CLASS_GEOMETRY_SHADER:
         case HLSL_CLASS_BLEND_STATE:
         case HLSL_CLASS_STRING:
-            put_u32_unaligned(buffer, 2);
+            put_u32_unaligned(buffer, FX_4_TYPE_CLASS_OBJECT);
             break;
 
         case HLSL_CLASS_STRUCT:
-            put_u32_unaligned(buffer, 3);
+            put_u32_unaligned(buffer, FX_4_TYPE_CLASS_STRUCT);
             break;
 
         case HLSL_CLASS_ARRAY:
@@ -794,7 +827,7 @@ static uint32_t write_fx_4_type(const struct hlsl_type *type, struct fx_write_co
     }
     else if (element_type->class == HLSL_CLASS_STRING)
     {
-        put_u32_unaligned(buffer, 1);
+        put_u32_unaligned(buffer, FX_4_OBJECT_TYPE_STRING);
     }
     else if (hlsl_is_numeric_type(element_type))
     {
@@ -1543,7 +1576,7 @@ static uint32_t write_fx_4_state_numeric_value(struct hlsl_ir_constant *value, s
                 case HLSL_TYPE_INT:
                 case HLSL_TYPE_UINT:
                 case HLSL_TYPE_BOOL:
-                    type = fx_4_numeric_base_type[data_type->e.numeric.type];
+                    type = fx_4_numeric_base_types[data_type->e.numeric.type];
                     break;
                 default:
                     type = 0;
@@ -2813,4 +2846,507 @@ int hlsl_emit_effect_binary(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
     {
         vkd3d_unreachable();
     }
+}
+
+struct fx_parser
+{
+    const uint8_t *ptr, *start, *end;
+    struct vkd3d_shader_message_context *message_context;
+    struct vkd3d_string_buffer buffer;
+    unsigned int indent;
+    struct
+    {
+        const uint8_t *ptr;
+        const uint8_t *end;
+        uint32_t size;
+    } unstructured;
+    uint32_t buffer_count;
+    uint32_t object_count;
+    bool failed;
+};
+
+static uint32_t fx_parser_read_u32(struct fx_parser *parser)
+{
+    uint32_t ret;
+
+    if ((parser->end - parser->ptr) < sizeof(uint32_t))
+    {
+        parser->failed = true;
+        return 0;
+    }
+
+    ret = *(uint32_t *)parser->ptr;
+    parser->ptr += sizeof(uint32_t);
+
+    return ret;
+}
+
+static void fx_parser_read_u32s(struct fx_parser *parser, void *dst, size_t size)
+{
+    uint32_t *ptr = dst;
+    size_t i;
+
+    for (i = 0; i < size / sizeof(uint32_t); ++i)
+        ptr[i] = fx_parser_read_u32(parser);
+}
+
+static void fx_parser_skip(struct fx_parser *parser, size_t size)
+{
+    if ((parser->end - parser->ptr) < size)
+    {
+        parser->ptr = parser->end;
+        parser->failed = true;
+        return;
+    }
+    parser->ptr += size;
+}
+
+static void VKD3D_PRINTF_FUNC(3, 4) fx_parser_error(struct fx_parser *parser, enum vkd3d_shader_error error,
+        const char *format, ...)
+{
+    va_list args;
+
+    va_start(args, format);
+    vkd3d_shader_verror(parser->message_context, NULL, error, format, args);
+    va_end(args);
+
+    parser->failed = true;
+}
+
+static int fx_2_parse(struct fx_parser *parser)
+{
+    fx_parser_error(parser, VKD3D_SHADER_ERROR_FX_NOT_IMPLEMENTED, "Parsing fx_2_0 binaries is not implemented.\n");
+
+    return -1;
+}
+
+static void fx_parser_read_unstructured(struct fx_parser *parser, void *dst, uint32_t offset, size_t size)
+{
+    const uint8_t *ptr = parser->unstructured.ptr;
+
+    memset(dst, 0, size);
+    if (offset >= parser->unstructured.size
+            || size > parser->unstructured.size - offset)
+    {
+        parser->failed = true;
+        return;
+    }
+
+    ptr += offset;
+    memcpy(dst, ptr, size);
+}
+
+static const char *fx_4_get_string(struct fx_parser *parser, uint32_t offset)
+{
+    const uint8_t *ptr = parser->unstructured.ptr;
+    const uint8_t *end = parser->unstructured.end;
+
+    if (offset >= parser->unstructured.size)
+    {
+        parser->failed = true;
+        return "<invalid>";
+    }
+
+    ptr += offset;
+
+    while (ptr < end && *ptr)
+        ++ptr;
+
+    if (*ptr)
+    {
+        parser->failed = true;
+        return "<invalid>";
+    }
+
+    return (const char *)(parser->unstructured.ptr + offset);
+}
+
+static void parse_fx_start_indent(struct fx_parser *parser)
+{
+    ++parser->indent;
+}
+
+static void parse_fx_end_indent(struct fx_parser *parser)
+{
+    --parser->indent;
+}
+
+static void parse_fx_print_indent(struct fx_parser *parser)
+{
+    vkd3d_string_buffer_printf(&parser->buffer, "%*s", 4 * parser->indent, "");
+}
+
+static void parse_fx_4_numeric_value(struct fx_parser *parser, uint32_t offset,
+        const struct fx_4_binary_type *type)
+{
+    unsigned int base_type, comp_count;
+    size_t i;
+
+    base_type = (type->typeinfo >> FX_4_NUMERIC_BASE_TYPE_SHIFT) & 0xf;
+
+    comp_count = type->packed_size / sizeof(uint32_t);
+    for (i = 0; i < comp_count; ++i)
+    {
+        union hlsl_constant_value_component value;
+
+        fx_parser_read_unstructured(parser, &value, offset, sizeof(uint32_t));
+
+        if (base_type == FX_4_NUMERIC_TYPE_FLOAT)
+            vkd3d_string_buffer_printf(&parser->buffer, "%f", value.f);
+        else if (base_type == FX_4_NUMERIC_TYPE_INT)
+            vkd3d_string_buffer_printf(&parser->buffer, "%d", value.i);
+        else if (base_type == FX_4_NUMERIC_TYPE_UINT)
+            vkd3d_string_buffer_printf(&parser->buffer, "%u", value.u);
+        else if (base_type == FX_4_NUMERIC_TYPE_BOOL)
+            vkd3d_string_buffer_printf(&parser->buffer, "%s", value.u ? "true" : "false" );
+        else
+            vkd3d_string_buffer_printf(&parser->buffer, "%#x", value.u);
+
+        if (i < comp_count - 1)
+            vkd3d_string_buffer_printf(&parser->buffer, ", ");
+
+        offset += sizeof(uint32_t);
+    }
+}
+
+static void fx_4_parse_string_initializer(struct fx_parser *parser, uint32_t offset)
+{
+    const char *str = fx_4_get_string(parser, offset);
+    vkd3d_string_buffer_printf(&parser->buffer, "\"%s\"", str);
+}
+
+static void fx_parse_fx_4_annotations(struct fx_parser *parser)
+{
+    struct fx_4_annotation
+    {
+        uint32_t name;
+        uint32_t type;
+    } var;
+    struct fx_4_binary_type type;
+    const char *name, *type_name;
+    uint32_t count, i, value;
+
+    count = fx_parser_read_u32(parser);
+
+    if (!count)
+        return;
+
+    vkd3d_string_buffer_printf(&parser->buffer, "\n");
+    parse_fx_print_indent(parser);
+    vkd3d_string_buffer_printf(&parser->buffer, "<\n");
+    parse_fx_start_indent(parser);
+
+    for (i = 0; i < count; ++i)
+    {
+        fx_parser_read_u32s(parser, &var, sizeof(var));
+        fx_parser_read_unstructured(parser, &type, var.type, sizeof(type));
+
+        name = fx_4_get_string(parser, var.name);
+        type_name = fx_4_get_string(parser, type.name);
+
+        parse_fx_print_indent(parser);
+        vkd3d_string_buffer_printf(&parser->buffer, "%s %s", type_name, name);
+        if (type.element_count)
+            vkd3d_string_buffer_printf(&parser->buffer, "[%u]", type.element_count);
+        vkd3d_string_buffer_printf(&parser->buffer, " = ");
+        if (type.element_count)
+            vkd3d_string_buffer_printf(&parser->buffer, "{ ");
+
+        if (type.class == FX_4_TYPE_CLASS_NUMERIC)
+        {
+            value = fx_parser_read_u32(parser);
+            parse_fx_4_numeric_value(parser, value, &type);
+        }
+        else if (type.class == FX_4_TYPE_CLASS_OBJECT && type.typeinfo == FX_4_OBJECT_TYPE_STRING)
+        {
+            uint32_t element_count = max(type.element_count, 1);
+
+            for (uint32_t j = 0; j < element_count; ++j)
+            {
+                value = fx_parser_read_u32(parser);
+                fx_4_parse_string_initializer(parser, value);
+                if (j < element_count - 1)
+                    vkd3d_string_buffer_printf(&parser->buffer, ", ");
+            }
+        }
+        else
+        {
+            fx_parser_error(parser, VKD3D_SHADER_ERROR_FX_INVALID_DATA,
+                    "Only numeric and string types are supported in annotations.\n");
+        }
+
+        if (type.element_count)
+            vkd3d_string_buffer_printf(&parser->buffer, " }");
+        vkd3d_string_buffer_printf(&parser->buffer, ";\n");
+    }
+    parse_fx_end_indent(parser);
+
+    parse_fx_print_indent(parser);
+    vkd3d_string_buffer_printf(&parser->buffer, ">");
+}
+
+
+static void fx_parse_fx_4_numeric_variables(struct fx_parser *parser, uint32_t count)
+{
+    struct fx_4_numeric_variable
+    {
+        uint32_t name;
+        uint32_t type;
+        uint32_t semantic;
+        uint32_t offset;
+        uint32_t value;
+        uint32_t flags;
+    } var;
+    const char *name, *semantic, *type_name;
+    struct fx_4_binary_type type;
+    uint32_t i;
+
+    for (i = 0; i < count; ++i)
+    {
+        fx_parser_read_u32s(parser, &var, sizeof(var));
+        fx_parser_read_unstructured(parser, &type, var.type, sizeof(type));
+
+        name = fx_4_get_string(parser, var.name);
+        type_name = fx_4_get_string(parser, type.name);
+
+        vkd3d_string_buffer_printf(&parser->buffer, "    %s %s", type_name, name);
+        if (type.element_count)
+            vkd3d_string_buffer_printf(&parser->buffer, "[%u]", type.element_count);
+
+        if (var.semantic)
+        {
+            semantic = fx_4_get_string(parser, var.semantic);
+            vkd3d_string_buffer_printf(&parser->buffer, " : %s", semantic);
+        }
+        fx_parse_fx_4_annotations(parser);
+
+        if (var.value)
+        {
+            vkd3d_string_buffer_printf(&parser->buffer, " = { ");
+            parse_fx_4_numeric_value(parser, var.value, &type);
+            vkd3d_string_buffer_printf(&parser->buffer, " }");
+        }
+        vkd3d_string_buffer_printf(&parser->buffer, ";    // Offset: %u, size %u.\n", var.offset, type.unpacked_size);
+    }
+}
+
+static void fx_parse_buffers(struct fx_parser *parser)
+{
+    struct fx_buffer
+    {
+        uint32_t name;
+        uint32_t size;
+        uint32_t flags;
+        uint32_t count;
+        uint32_t bind_point;
+    } buffer;
+    const char *name;
+    uint32_t i;
+
+    if (parser->failed)
+        return;
+
+    for (i = 0; i < parser->buffer_count; ++i)
+    {
+        fx_parser_read_u32s(parser, &buffer, sizeof(buffer));
+
+        name = fx_4_get_string(parser, buffer.name);
+
+        vkd3d_string_buffer_printf(&parser->buffer, "cbuffer %s", name);
+        fx_parse_fx_4_annotations(parser);
+
+        vkd3d_string_buffer_printf(&parser->buffer, "\n{\n");
+        parse_fx_start_indent(parser);
+        fx_parse_fx_4_numeric_variables(parser, buffer.count);
+        parse_fx_end_indent(parser);
+        vkd3d_string_buffer_printf(&parser->buffer, "}\n\n");
+    }
+}
+
+static void fx_4_parse_objects(struct fx_parser *parser)
+{
+    struct fx_4_object_variable
+    {
+        uint32_t name;
+        uint32_t type;
+        uint32_t semantic;
+        uint32_t bind_point;
+    } var;
+    uint32_t i, j, value, element_count;
+    struct fx_4_binary_type type;
+    const char *name, *type_name;
+
+    if (parser->failed)
+        return;
+
+    for (i = 0; i < parser->object_count; ++i)
+    {
+        fx_parser_read_u32s(parser, &var, sizeof(var));
+        fx_parser_read_unstructured(parser, &type, var.type, sizeof(type));
+
+        name = fx_4_get_string(parser, var.name);
+        type_name = fx_4_get_string(parser, type.name);
+        vkd3d_string_buffer_printf(&parser->buffer, "%s %s", type_name, name);
+        if (type.element_count)
+            vkd3d_string_buffer_printf(&parser->buffer, "[%u]", type.element_count);
+        vkd3d_string_buffer_printf(&parser->buffer, " = {\n");
+
+        element_count = max(type.element_count, 1);
+        for (j = 0; j < element_count; ++j)
+        {
+            switch (type.typeinfo)
+            {
+                case FX_4_OBJECT_TYPE_STRING:
+                    vkd3d_string_buffer_printf(&parser->buffer, "    ");
+                    value = fx_parser_read_u32(parser);
+                    fx_4_parse_string_initializer(parser, value);
+                    break;
+                default:
+                    fx_parser_error(parser, VKD3D_SHADER_ERROR_FX_NOT_IMPLEMENTED,
+                            "Parsing object type %u is not implemented.\n", type.typeinfo);
+                    return;
+            }
+            vkd3d_string_buffer_printf(&parser->buffer, ",\n");
+        }
+        vkd3d_string_buffer_printf(&parser->buffer, "};\n");
+    }
+}
+
+static int fx_4_parse(struct fx_parser *parser)
+{
+    struct fx_4_header
+    {
+        uint32_t version;
+        uint32_t buffer_count;
+        uint32_t numeric_variable_count;
+        uint32_t object_count;
+        uint32_t shared_buffer_count;
+        uint32_t shared_numeric_variable_count;
+        uint32_t shared_object_count;
+        uint32_t technique_count;
+        uint32_t unstructured_size;
+        uint32_t string_count;
+        uint32_t texture_count;
+        uint32_t depth_stencil_state_count;
+        uint32_t blend_state_count;
+        uint32_t rasterizer_state_count;
+        uint32_t sampler_state_count;
+        uint32_t rtv_count;
+        uint32_t dsv_count;
+        uint32_t shader_count;
+        uint32_t inline_shader_count;
+    } header;
+
+    fx_parser_read_u32s(parser, &header, sizeof(header));
+    parser->buffer_count = header.buffer_count;
+    parser->object_count = header.object_count;
+
+    if (parser->end - parser->ptr < header.unstructured_size)
+    {
+        parser->failed = true;
+        return -1;
+    }
+
+    parser->unstructured.ptr = parser->ptr;
+    parser->unstructured.end = parser->ptr + header.unstructured_size;
+    parser->unstructured.size = header.unstructured_size;
+    fx_parser_skip(parser, header.unstructured_size);
+
+    fx_parse_buffers(parser);
+    fx_4_parse_objects(parser);
+
+    return parser->failed ? - 1 : 0;
+}
+
+static int fx_5_parse(struct fx_parser *parser)
+{
+    struct fx_5_header
+    {
+        uint32_t version;
+        uint32_t buffer_count;
+        uint32_t numeric_variable_count;
+        uint32_t object_count;
+        uint32_t shared_buffer_count;
+        uint32_t shared_numeric_variable_count;
+        uint32_t shared_object_count;
+        uint32_t technique_count;
+        uint32_t unstructured_size;
+        uint32_t string_count;
+        uint32_t texture_count;
+        uint32_t depth_stencil_state_count;
+        uint32_t blend_state_count;
+        uint32_t rasterizer_state_count;
+        uint32_t sampler_state_count;
+        uint32_t rtv_count;
+        uint32_t dsv_count;
+        uint32_t shader_count;
+        uint32_t inline_shader_count;
+        uint32_t group_count;
+        uint32_t uav_count;
+        uint32_t interface_variable_count;
+        uint32_t interface_variable_element_count;
+        uint32_t class_instance_element_count;
+    } header;
+
+    fx_parser_read_u32s(parser, &header, sizeof(header));
+    parser->buffer_count = header.buffer_count;
+    parser->object_count = header.object_count;
+
+    if (parser->end - parser->ptr < header.unstructured_size)
+    {
+        parser->failed = true;
+        return -1;
+    }
+
+    parser->unstructured.ptr = parser->ptr;
+    parser->unstructured.end = parser->ptr + header.unstructured_size;
+    parser->unstructured.size = header.unstructured_size;
+    fx_parser_skip(parser, header.unstructured_size);
+
+    fx_parse_buffers(parser);
+    fx_4_parse_objects(parser);
+
+    return parser->failed ? - 1 : 0;
+}
+
+int fx_parse(const struct vkd3d_shader_compile_info *compile_info,
+        struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context)
+{
+    struct fx_parser parser =
+    {
+        .start = compile_info->source.code,
+        .ptr = compile_info->source.code,
+        .end = (uint8_t *)compile_info->source.code + compile_info->source.size,
+        .message_context = message_context,
+    };
+    uint32_t version;
+    int ret;
+
+    vkd3d_string_buffer_init(&parser.buffer);
+
+    if (parser.end - parser.start < sizeof(version))
+        return -1;
+    version = *(uint32_t *)parser.ptr;
+
+    switch (version)
+    {
+        case 0xfeff0901:
+            ret = fx_2_parse(&parser);
+            break;
+        case 0xfeff1001:
+        case 0xfeff1011:
+            ret = fx_4_parse(&parser);
+            break;
+        case 0xfeff2001:
+            ret = fx_5_parse(&parser);
+            break;
+        default:
+            fx_parser_error(&parser, VKD3D_SHADER_ERROR_FX_INVALID_VERSION,
+                    "Invalid effect binary version value 0x%08x.", version);
+            ret = -1;
+    }
+
+    vkd3d_shader_code_from_string_buffer(out, &parser.buffer);
+
+    return ret;
 }

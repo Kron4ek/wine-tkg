@@ -419,8 +419,6 @@ static int shader_parse_signature(const struct vkd3d_shader_dxbc_section_desc *s
         const char *name;
         uint32_t mask;
 
-        e[i].sort_index = i;
-
         if (has_stream_index)
             e[i].stream_index = read_u32(&ptr);
         else

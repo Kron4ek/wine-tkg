@@ -2268,7 +2268,7 @@ static const char *get_semantic_register_name(enum vkd3d_shader_sysval_semantic 
     }
 }
 
-static enum vkd3d_result dump_signature(struct vkd3d_d3d_asm_compiler *compiler,
+static enum vkd3d_result dump_dxbc_signature(struct vkd3d_d3d_asm_compiler *compiler,
         const char *name, const char *register_name, const struct shader_signature *signature)
 {
     struct vkd3d_string_buffer *buffer = &compiler->buffer;
@@ -2335,21 +2335,21 @@ static enum vkd3d_result dump_signature(struct vkd3d_d3d_asm_compiler *compiler,
     return VKD3D_OK;
 }
 
-static enum vkd3d_result dump_signatures(struct vkd3d_d3d_asm_compiler *compiler,
+static enum vkd3d_result dump_dxbc_signatures(struct vkd3d_d3d_asm_compiler *compiler,
         const struct vsir_program *program)
 {
     enum vkd3d_result ret;
 
-    if ((ret = dump_signature(compiler, ".input",
+    if ((ret = dump_dxbc_signature(compiler, ".input",
             program->shader_version.type == VKD3D_SHADER_TYPE_DOMAIN ? "vicp" : "v",
             &program->input_signature)) < 0)
         return ret;
 
-    if ((ret = dump_signature(compiler, ".output", "o",
+    if ((ret = dump_dxbc_signature(compiler, ".output", "o",
             &program->output_signature)) < 0)
         return ret;
 
-    if ((ret = dump_signature(compiler, ".patch_constant",
+    if ((ret = dump_dxbc_signature(compiler, ".patch_constant",
             program->shader_version.type == VKD3D_SHADER_TYPE_DOMAIN ? "vpc" : "o",
             &program->patch_constant_signature)) < 0)
         return ret;
@@ -2437,7 +2437,7 @@ enum vkd3d_result d3d_asm_compile(const struct vsir_program *program,
      * doesn't even have an explicit concept of signature. */
     if (formatting & VKD3D_SHADER_COMPILE_OPTION_FORMATTING_IO_SIGNATURES && shader_version->major >= 4)
     {
-        if ((result = dump_signatures(&compiler, program)) < 0)
+        if ((result = dump_dxbc_signatures(&compiler, program)) < 0)
         {
             vkd3d_string_buffer_cleanup(buffer);
             return result;
@@ -2499,11 +2499,56 @@ enum vkd3d_result d3d_asm_compile(const struct vsir_program *program,
     return result;
 }
 
-void vkd3d_shader_trace(const struct vsir_program *program)
+/* This is meant exclusively for development use. Therefore, differently from
+ * dump_dxbc_signature(), it doesn't try particularly hard to make the output
+ * nice or easily parsable, and it dumps all fields, not just the DXBC ones.
+ * This format isn't meant to be stable. */
+static void trace_signature(const struct shader_signature *signature, const char *signature_type)
+{
+    struct vkd3d_string_buffer buffer;
+    unsigned int i;
+
+    TRACE("%s signature:%s\n", signature_type, signature->element_count == 0 ? " empty" : "");
+
+    vkd3d_string_buffer_init(&buffer);
+
+    for (i = 0; i < signature->element_count; ++i)
+    {
+        const struct signature_element *element = &signature->elements[i];
+
+        vkd3d_string_buffer_clear(&buffer);
+
+        vkd3d_string_buffer_printf(&buffer, "Element %u: %s %u-%u %s", i,
+                get_component_type_name(element->component_type),
+                element->register_index, element->register_index + element->register_count,
+                element->semantic_name);
+        if (element->semantic_index != -1)
+            vkd3d_string_buffer_printf(&buffer, "%u", element->semantic_index);
+        vkd3d_string_buffer_printf(&buffer,
+                " mask %#x used_mask %#x sysval %s min_precision %s interpolation %u stream %u",
+                element->mask, element->used_mask, get_sysval_semantic_name(element->sysval_semantic),
+                get_minimum_precision_name(element->min_precision), element->interpolation_mode,
+                element->stream_index);
+        if (element->target_location != -1)
+            vkd3d_string_buffer_printf(&buffer, " target %u", element->target_location);
+        else
+            vkd3d_string_buffer_printf(&buffer, " unused");
+
+        TRACE("%s\n", buffer.buffer);
+    }
+
+    vkd3d_string_buffer_cleanup(&buffer);
+}
+
+void vsir_program_trace(const struct vsir_program *program)
 {
     const unsigned int flags = VSIR_ASM_FLAG_DUMP_TYPES | VSIR_ASM_FLAG_DUMP_ALL_INDICES;
     struct vkd3d_shader_code code;
     const char *p, *q, *end;
+
+    trace_signature(&program->input_signature, "Input");
+    trace_signature(&program->output_signature, "Output");
+    trace_signature(&program->patch_constant_signature, "Patch-constant");
 
     if (d3d_asm_compile(program, NULL, &code, flags) != VKD3D_OK)
         return;
