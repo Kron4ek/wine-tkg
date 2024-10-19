@@ -1489,7 +1489,7 @@ static int vsir_program_scan(struct vsir_program *program, const struct vkd3d_sh
             descriptor_info1, combined_sampler_info, message_context);
 
     if (TRACE_ON())
-        vkd3d_shader_trace(program);
+        vsir_program_trace(program);
 
     for (i = 0; i < program->instructions.count; ++i)
     {
@@ -1655,7 +1655,10 @@ int vsir_program_compile(struct vsir_program *program, uint64_t config_flags,
             break;
 
         case VKD3D_SHADER_TARGET_MSL:
-            ret = msl_compile(program, config_flags, compile_info, message_context);
+            if ((ret = vsir_program_scan(program, &scan_info, message_context, &scan_descriptor_info)) < 0)
+                return ret;
+            ret = msl_compile(program, config_flags,  &scan_descriptor_info, compile_info, message_context);
+            vkd3d_shader_free_scan_descriptor_info1(&scan_descriptor_info);
             break;
 
         default:
@@ -1706,6 +1709,10 @@ int vkd3d_shader_compile(const struct vkd3d_shader_compile_info *compile_info,
     if (compile_info->source_type == VKD3D_SHADER_SOURCE_HLSL)
     {
         ret = compile_hlsl(compile_info, out, &message_context);
+    }
+    else if (compile_info->source_type == VKD3D_SHADER_SOURCE_FX)
+    {
+        ret = fx_parse(compile_info, out, &message_context);
     }
     else
     {
@@ -1846,6 +1853,8 @@ void shader_signature_cleanup(struct shader_signature *signature)
     }
     vkd3d_free(signature->elements);
     signature->elements = NULL;
+    signature->elements_capacity = 0;
+    signature->element_count = 0;
 }
 
 int vkd3d_shader_parse_input_signature(const struct vkd3d_shader_code *dxbc,
@@ -1937,6 +1946,7 @@ const enum vkd3d_shader_source_type *vkd3d_shader_get_supported_source_types(uns
 #ifdef VKD3D_SHADER_UNSUPPORTED_DXIL
         VKD3D_SHADER_SOURCE_DXBC_DXIL,
 #endif
+        VKD3D_SHADER_SOURCE_FX,
     };
 
     TRACE("count %p.\n", count);
@@ -1995,6 +2005,11 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
     };
 #endif
 
+    static const enum vkd3d_shader_target_type fx_types[] =
+    {
+        VKD3D_SHADER_TARGET_D3D_ASM,
+    };
+
     TRACE("source_type %#x, count %p.\n", source_type, count);
 
     switch (source_type)
@@ -2016,6 +2031,10 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
             *count = ARRAY_SIZE(dxbc_dxil_types);
             return dxbc_dxil_types;
 #endif
+
+        case VKD3D_SHADER_SOURCE_FX:
+            *count = ARRAY_SIZE(fx_types);
+            return fx_types;
 
         default:
             *count = 0;

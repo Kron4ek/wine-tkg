@@ -4174,6 +4174,7 @@ static enum vkd3d_shader_opcode map_binary_op(uint64_t code, const struct sm6_ty
         const struct sm6_type *type_b, struct sm6_parser *sm6)
 {
     bool is_int = sm6_type_is_bool_i16_i32_i64(type_a);
+    bool is_double = sm6_type_is_double(type_a);
     bool is_bool = sm6_type_is_bool(type_a);
     enum vkd3d_shader_opcode op;
     bool is_valid;
@@ -4198,7 +4199,7 @@ static enum vkd3d_shader_opcode map_binary_op(uint64_t code, const struct sm6_ty
         case BINOP_ADD:
         case BINOP_SUB:
             /* NEG is applied later for subtraction. */
-            op = is_int ? VKD3DSIH_IADD : VKD3DSIH_ADD;
+            op = is_int ? VKD3DSIH_IADD : (is_double ? VKD3DSIH_DADD : VKD3DSIH_ADD);
             is_valid = !is_bool;
             break;
         case BINOP_AND:
@@ -4214,7 +4215,7 @@ static enum vkd3d_shader_opcode map_binary_op(uint64_t code, const struct sm6_ty
             is_valid = is_int && !is_bool;
             break;
         case BINOP_MUL:
-            op = is_int ? VKD3DSIH_UMUL : VKD3DSIH_MUL;
+            op = is_int ? VKD3DSIH_UMUL : (is_double ? VKD3DSIH_DMUL : VKD3DSIH_MUL);
             is_valid = !is_bool;
             break;
         case BINOP_OR:
@@ -4222,7 +4223,7 @@ static enum vkd3d_shader_opcode map_binary_op(uint64_t code, const struct sm6_ty
             is_valid = is_int;
             break;
         case BINOP_SDIV:
-            op = is_int ? VKD3DSIH_IDIV : VKD3DSIH_DIV;
+            op = is_int ? VKD3DSIH_IDIV : (is_double ? VKD3DSIH_DDIV : VKD3DSIH_DIV);
             is_valid = !is_bool;
             break;
         case BINOP_SREM:
@@ -5871,6 +5872,8 @@ static void sm6_parser_emit_dx_store_output(struct sm6_parser *sm6, enum dx_intr
         return;
     }
     e = &signature->elements[row_index];
+    if (!e->sysval_semantic)
+        column_index += vsir_write_mask_get_component_idx(e->mask);
 
     if (column_index >= VKD3D_VEC4_SIZE)
     {
@@ -9637,6 +9640,7 @@ static enum vkd3d_result sm6_parser_emit_thread_group(struct sm6_parser *sm6, co
     ins->declaration.thread_group_size.x = group_sizes[0];
     ins->declaration.thread_group_size.y = group_sizes[1];
     ins->declaration.thread_group_size.z = group_sizes[2];
+    sm6->p.program->thread_group_size = ins->declaration.thread_group_size;
 
     return VKD3D_OK;
 }
@@ -10307,11 +10311,27 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, struct vsir_pro
 
     /* Estimate instruction count to avoid reallocation in most shaders. */
     count = max(token_count, 400) - 400;
-    if (!vsir_program_init(program, compile_info, &version, (count + (count >> 2)) / 2u + 10, VSIR_CF_BLOCKS))
+    if (!vsir_program_init(program, compile_info, &version,
+            (count + (count >> 2)) / 2u + 10, VSIR_CF_BLOCKS, true))
         return VKD3D_ERROR_OUT_OF_MEMORY;
     vkd3d_shader_parser_init(&sm6->p, program, message_context, compile_info->source_name);
     sm6->ptr = &sm6->start[1];
     sm6->bitpos = 2;
+
+    switch (program->shader_version.type)
+    {
+        case VKD3D_SHADER_TYPE_HULL:
+        case VKD3D_SHADER_TYPE_DOMAIN:
+            break;
+
+        default:
+            if (program->patch_constant_signature.element_count != 0)
+            {
+                WARN("The patch constant signature only makes sense for Hull and Domain Shaders, ignoring it.\n");
+                shader_signature_cleanup(&program->patch_constant_signature);
+            }
+            break;
+    }
 
     input_signature = &program->input_signature;
     output_signature = &program->output_signature;
@@ -10592,7 +10612,7 @@ int dxil_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t co
         WARN("Failed to validate shader after parsing, ret %d.\n", ret);
 
         if (TRACE_ON())
-            vkd3d_shader_trace(program);
+            vsir_program_trace(program);
 
         sm6_parser_cleanup(&sm6);
         vsir_program_cleanup(program);
