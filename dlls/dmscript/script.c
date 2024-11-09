@@ -171,7 +171,7 @@ static HRESULT WINAPI IDirectMusicScriptImpl_EnumRoutine(IDirectMusicScript *ifa
 {
   IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %ld, %p): stub\n", This, dwIndex, pwszName);
-  return S_OK;
+  return S_FALSE;
 }
 
 static HRESULT WINAPI IDirectMusicScriptImpl_EnumVariable(IDirectMusicScript *iface, DWORD dwIndex,

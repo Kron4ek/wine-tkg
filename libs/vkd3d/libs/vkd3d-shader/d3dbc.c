@@ -1320,7 +1320,7 @@ static enum vkd3d_result shader_sm1_init(struct vkd3d_shader_sm1_parser *sm1, st
 
     /* Estimate instruction count to avoid reallocation in most shaders. */
     if (!vsir_program_init(program, compile_info, &version,
-            code_size != ~(size_t)0 ? token_count / 4u + 4 : 16, VSIR_CF_STRUCTURED, false))
+            code_size != ~(size_t)0 ? token_count / 4u + 4 : 16, VSIR_CF_STRUCTURED, VSIR_NOT_NORMALISED))
         return VKD3D_ERROR_OUT_OF_MEMORY;
 
     vkd3d_shader_parser_init(&sm1->p, program, message_context, compile_info->source_name);
@@ -1391,18 +1391,6 @@ int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t c
 
     if (ret < 0)
     {
-        WARN("Failed to parse shader.\n");
-        vsir_program_cleanup(program);
-        return ret;
-    }
-
-    if ((ret = vkd3d_shader_parser_validate(&sm1.p, config_flags)) < 0)
-    {
-        WARN("Failed to validate shader after parsing, ret %d.\n", ret);
-
-        if (TRACE_ON())
-            vsir_program_trace(program);
-
         vsir_program_cleanup(program);
         return ret;
     }

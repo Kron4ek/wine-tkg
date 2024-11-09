@@ -89,7 +89,6 @@ static BOOL X11DRV_ReparentNotify( HWND hwnd, XEvent *event );
 static BOOL X11DRV_ConfigureNotify( HWND hwnd, XEvent *event );
 static BOOL X11DRV_PropertyNotify( HWND hwnd, XEvent *event );
 static BOOL X11DRV_ClientMessage( HWND hwnd, XEvent *event );
-static BOOL X11DRV_GravityNotify( HWND hwnd, XEvent *event );
 
 #define MAX_EVENT_HANDLERS 128
 
@@ -119,7 +118,7 @@ static x11drv_event_handler handlers[MAX_EVENT_HANDLERS] =
     X11DRV_ReparentNotify,    /* 21 ReparentNotify */
     X11DRV_ConfigureNotify,   /* 22 ConfigureNotify */
     NULL,                     /* 23 ConfigureRequest */
-    X11DRV_GravityNotify,     /* 24 GravityNotify */
+    NULL,                     /* 24 GravityNotify */
     NULL,                     /* 25 ResizeRequest */
     NULL,                     /* 26 CirculateNotify */
     NULL,                     /* 27 CirculateRequest */
@@ -170,6 +169,82 @@ static inline void free_event_data( XEvent *event )
     if (event->xany.type != GenericEvent) return;
     if (event->xcookie.data) pXFreeEventData( event->xany.display, event );
 #endif
+}
+
+static BOOL host_window_filter_event( XEvent *event )
+{
+    struct host_window *win;
+    RECT old_rect;
+
+    if (!(win = get_host_window( event->xany.window, FALSE ))) return FALSE;
+    old_rect = win->rect;
+
+    switch (event->type)
+    {
+    case DestroyNotify:
+        TRACE( "host window %p/%lx DestroyNotify\n", win, win->window );
+        win->destroyed = TRUE;
+        break;
+    case ReparentNotify:
+    {
+        XReparentEvent *reparent = (XReparentEvent *)event;
+        TRACE( "host window %p/%lx ReparentNotify, parent %lx\n", win, win->window, reparent->parent );
+        host_window_set_parent( win, reparent->parent );
+        break;
+    }
+    case GravityNotify:
+    {
+        XGravityEvent *gravity = (XGravityEvent *)event;
+        OffsetRect( &win->rect, gravity->x - win->rect.left, gravity->y - win->rect.top );
+        if (win->parent) win->rect = host_window_configure_child( win->parent, win->window, win->rect, FALSE );
+        TRACE( "host window %p/%lx GravityNotify, rect %s\n", win, win->window, wine_dbgstr_rect(&win->rect) );
+        break;
+    }
+    case ConfigureNotify:
+    {
+        XConfigureEvent *configure = (XConfigureEvent *)event;
+        SetRect( &win->rect, configure->x, configure->y, configure->x + configure->width, configure->y + configure->height );
+        if (win->parent) win->rect = host_window_configure_child( win->parent, win->window, win->rect, configure->send_event );
+        TRACE( "host window %p/%lx ConfigureNotify, rect %s\n", win, win->window, wine_dbgstr_rect(&win->rect) );
+        break;
+    }
+    }
+
+    if (old_rect.left != win->rect.left || old_rect.top != win->rect.top)
+    {
+        XConfigureEvent configure = {.type = ConfigureNotify, .serial = event->xany.serial, .display = event->xany.display};
+        unsigned int i;
+
+        for (i = 0; i < win->children_count; i++)
+        {
+            RECT rect = win->children[i].rect;
+            struct x11drv_win_data *data;
+            BOOL has_serial;
+            HWND hwnd;
+
+            /* Only send a fake event if we're not expecting one from a state/config request.
+             * We may know what was requested, but not what the WM will decide to reply, and our
+             * fake event might trigger some undesired changes before the real ConfigureNotify.
+             */
+            if (XFindContext( event->xany.display, event->xany.window, winContext, (char **)&hwnd )) continue;
+            if (!(data = get_win_data( hwnd ))) continue;
+            has_serial = data->wm_state_serial || data->configure_serial;
+            release_win_data( data );
+            if (has_serial) continue;
+
+            configure.event = win->children[i].window;
+            configure.window = configure.event;
+            configure.x = rect.left;
+            configure.y = rect.top;
+            configure.width = rect.right - rect.left;
+            configure.height = rect.bottom - rect.top;
+            configure.send_event = 0;
+
+            XPutBackEvent( configure.display, (XEvent *)&configure );
+        }
+    }
+
+    return TRUE;
 }
 
 /***********************************************************************
@@ -410,7 +485,7 @@ static inline BOOL call_event_handler( Display *display, XEvent *event )
 /***********************************************************************
  *           process_events
  */
-BOOL process_events( Display *display, Bool (*filter)(Display*, XEvent*,XPointer), ULONG_PTR arg )
+static BOOL process_events( Display *display, Bool (*filter)(Display*, XEvent*,XPointer), ULONG_PTR arg )
 {
     XEvent event, prev_event;
     int count = 0;
@@ -451,6 +526,9 @@ BOOL process_events( Display *display, Bool (*filter)(Display*, XEvent*,XPointer
             else
                 continue;  /* filtered, ignore it */
         }
+
+        if (host_window_filter_event( &event )) continue;
+
         get_event_data( &event );
         if (prev_event.type) action = merge_events( &prev_event, &event );
         switch( action )
@@ -922,10 +1000,8 @@ static BOOL X11DRV_Expose( HWND hwnd, XEvent *xev )
 
     if (event->window != root_window)
     {
-        if (NtUserGetWindowLongW( data->hwnd, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL)
-            mirror_rect( &data->rects.client, &rect );
         abs_rect = rect;
-        NtUserMapWindowPoints( hwnd, 0, (POINT *)&abs_rect, 2, 0 /* per-monitor DPI */ );
+        OffsetRect( &abs_rect, data->rects.client.left, data->rects.client.top );
 
         SERVER_START_REQ( update_window_zorder )
         {
@@ -939,7 +1015,7 @@ static BOOL X11DRV_Expose( HWND hwnd, XEvent *xev )
 
     release_win_data( data );
 
-    NtUserExposeWindowSurface( hwnd, flags, &rect, NtUserGetWinMonitorDpi( hwnd, MDT_DEFAULT ) );
+    NtUserExposeWindowSurface( hwnd, flags, &rect, NtUserGetWinMonitorDpi( hwnd, MDT_RAW_DPI ) );
     return TRUE;
 }
 
@@ -976,40 +1052,6 @@ static BOOL X11DRV_UnmapNotify( HWND hwnd, XEvent *event )
 
 
 /***********************************************************************
- *           reparent_notify
- */
-static void reparent_notify( Display *display, HWND hwnd, Window xparent, int x, int y )
-{
-    HWND parent, old_parent;
-    DWORD style, flags = 0;
-    RECT rect;
-
-    style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
-    if (xparent == root_window)
-    {
-        parent = NtUserGetDesktopWindow();
-        style = (style & ~WS_CHILD) | WS_POPUP;
-    }
-    else
-    {
-        if (!(parent = create_foreign_window( display, xparent ))) return;
-        style = (style & ~WS_POPUP) | WS_CHILD;
-    }
-
-    NtUserShowWindow( hwnd, SW_HIDE );
-    old_parent = NtUserSetParent( hwnd, parent );
-    NtUserSetWindowLong( hwnd, GWL_STYLE, style, FALSE );
-
-    if (style & WS_VISIBLE) flags = SWP_SHOWWINDOW;
-    SetRect( &rect, x, y, x, y );
-    NtUserSetRawWindowPos( hwnd, rect, SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOCOPYBITS | flags, FALSE );
-
-    /* make old parent destroy itself if it no longer has children */
-    if (old_parent != NtUserGetDesktopWindow()) NtUserPostMessage( old_parent, WM_CLOSE, 0, 0 );
-}
-
-
-/***********************************************************************
  *           X11DRV_ReparentNotify
  */
 static BOOL X11DRV_ReparentNotify( HWND hwnd, XEvent *xev )
@@ -1018,6 +1060,7 @@ static BOOL X11DRV_ReparentNotify( HWND hwnd, XEvent *xev )
     struct x11drv_win_data *data;
 
     if (!(data = get_win_data( hwnd ))) return FALSE;
+    set_window_parent( data, event->parent );
 
     if (!data->embedded)
     {
@@ -1040,37 +1083,7 @@ static BOOL X11DRV_ReparentNotify( HWND hwnd, XEvent *xev )
 
     TRACE( "%p/%lx reparented to %lx\n", hwnd, data->whole_window, event->parent );
     release_win_data( data );
-
-    reparent_notify( event->display, hwnd, event->parent, event->x, event->y );
     return TRUE;
-}
-
-/* map XConfigureNotify event coordinates to parent-relative monitor DPI coordinates */
-static POINT map_configure_event_coords( struct x11drv_win_data *data, XConfigureEvent *event )
-{
-    Window child, parent = data->embedder ? data->embedder : root_window;
-    POINT pos;
-
-    if (event->send_event && parent == DefaultRootWindow( event->display ))
-    {
-        pos.x = event->x;
-        pos.y = event->y;
-    }
-    else if (event->send_event)
-    {
-        /* synthetic events are always in root coords */
-        XTranslateCoordinates( event->display, DefaultRootWindow( event->display ), parent,
-                               event->x, event->y, (int *)&pos.x, (int *)&pos.y, &child );
-    }
-    else
-    {
-        /* query the current window position, events are relative to their parent */
-        XTranslateCoordinates( event->display, event->window, parent, 0, 0,
-                               (int *)&pos.x, (int *)&pos.y, &child );
-    }
-
-    if (parent == root_window) pos = root_to_virtual_screen( pos.x, pos.y );
-    return pos;
 }
 
 /***********************************************************************
@@ -1081,17 +1094,30 @@ static BOOL X11DRV_ConfigureNotify( HWND hwnd, XEvent *xev )
     XConfigureEvent *event = &xev->xconfigure;
     struct x11drv_win_data *data;
     RECT rect;
-    POINT pos;
+    POINT pos = {event->x, event->y};
     UINT flags;
-    int cx, cy, x = event->x, y = event->y;
+    int cx, cy, x, y;
     DWORD style;
 
     if (!hwnd) return FALSE;
     if (!(data = get_win_data( hwnd ))) return FALSE;
+
+    if (data->whole_window && data->parent && !data->parent_invalid)
+    {
+        SetRect( &rect, event->x, event->y, event->x + event->width, event->y + event->height );
+        host_window_configure_child( data->parent, data->whole_window, rect, event->send_event );
+    }
+
+    /* synthetic events are already in absolute coordinates */
+    if (!event->send_event) pos = host_window_map_point( data->parent, event->x, event->y );
+    else if (is_virtual_desktop()) FIXME( "synthetic event mapping not implemented\n" );
+
+    pos = root_to_virtual_screen( pos.x, pos.y );
+    SetRect( &rect, pos.x, pos.y, pos.x + event->width, pos.y + event->height );
+    window_configure_notify( data, event->serial, &rect );
+
     if (!data->mapped || data->iconic) goto done;
-    if (data->whole_window && !data->managed) goto done;
-    /* ignore synthetic events on foreign windows */
-    if (event->send_event && !data->whole_window) goto done;
+    if (!data->whole_window || !data->managed) goto done;
     if (data->configure_serial && (long)(data->configure_serial - event->serial) > 0)
     {
         TRACE( "win %p/%lx event %d,%d,%dx%d ignoring old serial %lu/%lu\n",
@@ -1100,10 +1126,6 @@ static BOOL X11DRV_ConfigureNotify( HWND hwnd, XEvent *xev )
         goto done;
     }
 
-    /* Get geometry */
-
-    pos = map_configure_event_coords( data, event );
-    SetRect( &rect, pos.x, pos.y, pos.x + event->width, pos.y + event->height );
     rect = window_rect_from_visible( &data->rects, rect );
 
     TRACE( "win %p/%lx new X rect %d,%d,%dx%d (event %d,%d,%dx%d)\n",
@@ -1138,7 +1160,7 @@ static BOOL X11DRV_ConfigureNotify( HWND hwnd, XEvent *xev )
     style = NtUserGetWindowLongW( data->hwnd, GWL_STYLE );
     if ((style & WS_CAPTION) == WS_CAPTION || !data->is_fullscreen)
     {
-        read_net_wm_states( event->display, data );
+        data->net_wm_state = get_window_net_wm_state( event->display, data->whole_window );
         if ((data->net_wm_state & (1 << NET_WM_STATE_MAXIMIZED)))
         {
             if (!(style & WS_MAXIMIZE))
@@ -1171,43 +1193,6 @@ done:
 }
 
 
-/**********************************************************************
- *           X11DRV_GravityNotify
- */
-static BOOL X11DRV_GravityNotify( HWND hwnd, XEvent *xev )
-{
-    XGravityEvent *event = &xev->xgravity;
-    struct x11drv_win_data *data = get_win_data( hwnd );
-    RECT window_rect;
-    int x, y;
-
-    if (!data) return FALSE;
-
-    if (data->whole_window)  /* only handle this for foreign windows */
-    {
-        release_win_data( data );
-        return FALSE;
-    }
-
-    x = event->x + data->rects.window.left - data->rects.visible.left;
-    y = event->y + data->rects.window.top - data->rects.visible.top;
-
-    TRACE( "win %p/%lx new X pos %d,%d (event %d,%d)\n",
-           hwnd, data->whole_window, x, y, event->x, event->y );
-
-    window_rect = data->rects.window;
-    release_win_data( data );
-
-    if (window_rect.left != x || window_rect.top != y)
-    {
-        RECT rect = {x, y, x, y};
-        NtUserSetRawWindowPos( hwnd, rect, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS, FALSE );
-    }
-
-    return TRUE;
-}
-
-
 /***********************************************************************
  *           get_window_wm_state
  */
@@ -1233,6 +1218,31 @@ static int get_window_wm_state( Display *display, Window window )
     return ret;
 }
 
+/***********************************************************************
+ *           get_window_xembed_info
+ */
+static int get_window_xembed_info( Display *display, Window window )
+{
+    struct
+    {
+        unsigned long version;
+        unsigned long flags;
+    } *state;
+    Atom type;
+    int format, ret = -1;
+    unsigned long count, remaining;
+
+    if (!XGetWindowProperty( display, window, x11drv_atom(_XEMBED_INFO), 0, 65535, False, x11drv_atom(_XEMBED_INFO),
+                             &type, &format, &count, &remaining, (unsigned char **)&state ))
+    {
+        if (type == x11drv_atom(_XEMBED_INFO) && get_property_size( format, count ) >= sizeof(*state))
+            ret = state->flags;
+        XFree( state );
+    }
+
+    return ret;
+}
+
 
 /***********************************************************************
  *           handle_wm_state_notify
@@ -1241,10 +1251,12 @@ static int get_window_wm_state( Display *display, Window window )
  */
 static void handle_wm_state_notify( HWND hwnd, XPropertyEvent *event, BOOL update_window )
 {
-    struct x11drv_win_data *data = get_win_data( hwnd );
-    UINT style;
+    struct x11drv_win_data *data;
+    UINT style, value = 0;
 
-    if (!data) return;
+    if (!(data = get_win_data( hwnd ))) return;
+    if (event->state == PropertyNewValue) value = get_window_wm_state( event->display, event->window );
+    if (update_window) window_wm_state_notify( data, event->serial, value );
 
     switch(event->state)
     {
@@ -1276,7 +1288,7 @@ static void handle_wm_state_notify( HWND hwnd, XPropertyEvent *event, BOOL updat
     if (data->iconic && data->wm_state == NormalState)  /* restore window */
     {
         data->iconic = FALSE;
-        read_net_wm_states( event->display, data );
+        data->net_wm_state = get_window_net_wm_state( event->display, data->whole_window );
         if ((style & WS_CAPTION) == WS_CAPTION && (data->net_wm_state & (1 << NET_WM_STATE_MAXIMIZED)))
         {
             if ((style & WS_MAXIMIZEBOX) && !(style & WS_DISABLED))
@@ -1318,6 +1330,27 @@ done:
     release_win_data( data );
 }
 
+static void handle_xembed_info_notify( HWND hwnd, XPropertyEvent *event )
+{
+    struct x11drv_win_data *data;
+    UINT value = 0;
+
+    if (!(data = get_win_data( hwnd ))) return;
+    if (event->state == PropertyNewValue) value = get_window_xembed_info( event->display, event->window );
+    window_wm_state_notify( data, event->serial, value ? NormalState : WithdrawnState );
+    release_win_data( data );
+}
+
+static void handle_net_wm_state_notify( HWND hwnd, XPropertyEvent *event )
+{
+    struct x11drv_win_data *data;
+    UINT value = 0;
+
+    if (!(data = get_win_data( hwnd ))) return;
+    if (event->state == PropertyNewValue) value = get_window_net_wm_state( event->display, event->window );
+    window_net_wm_state_notify( data, event->serial, value );
+    release_win_data( data );
+}
 
 /***********************************************************************
  *           X11DRV_PropertyNotify
@@ -1328,6 +1361,8 @@ static BOOL X11DRV_PropertyNotify( HWND hwnd, XEvent *xev )
 
     if (!hwnd) return FALSE;
     if (event->atom == x11drv_atom(WM_STATE)) handle_wm_state_notify( hwnd, event, TRUE );
+    if (event->atom == x11drv_atom(_XEMBED_INFO)) handle_xembed_info_notify( hwnd, event );
+    if (event->atom == x11drv_atom(_NET_WM_STATE)) handle_net_wm_state_notify( hwnd, event );
     return TRUE;
 }
 
@@ -1501,9 +1536,9 @@ static void handle_xembed_protocol( HWND hwnd, XClientMessageEvent *event )
                 break;
             }
 
+            set_window_parent( data, data->embedder );
             make_window_embedded( data );
             release_win_data( data );
-            reparent_notify( event->display, hwnd, event->data.l[3], 0, 0 );
         }
         break;
 

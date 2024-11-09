@@ -1,7 +1,7 @@
 /*
- * X11 driver definitions
+ * Runtime Classes for dataexchange.dll
  *
- * Copyright 2022 Jacek Caban for CodeWeavers
+ * Copyright 2024 Zhiyi Zhang for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,18 +18,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef __WINE_X11DRV_DLL_H
-#define __WINE_X11DRV_DLL_H
+#pragma makedep register
 
-#include <stdarg.h>
-#include "windef.h"
-#include "winbase.h"
-#include "ntgdi.h"
-#include "unixlib.h"
-
-extern LRESULT WINAPI foreign_window_proc( HWND hwnd, UINT msg, WPARAM wparam,
-                                           LPARAM lparam );
-
-extern HMODULE x11drv_module;
-
-#endif /* __WINE_X11DRV_DLL_H */
+#include "windows.applicationmodel.datatransfer.dragdrop.core.idl"

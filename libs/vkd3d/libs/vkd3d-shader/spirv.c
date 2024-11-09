@@ -1913,7 +1913,11 @@ static uint32_t vkd3d_spirv_get_type_id(struct vkd3d_spirv_builder *builder,
     uint32_t scalar_id, type_id;
 
     VKD3D_ASSERT(component_type < VKD3D_SHADER_COMPONENT_TYPE_COUNT);
-    VKD3D_ASSERT(1 <= component_count && component_count <= VKD3D_VEC4_SIZE);
+    if (!component_count || component_count > VKD3D_VEC4_SIZE)
+    {
+        ERR("Invalid component count %u.\n", component_count);
+        return 0;
+    }
 
     if ((type_id = builder->numeric_type_ids[component_type][component_count - 1]))
         return type_id;
@@ -3192,6 +3196,14 @@ static bool spirv_compiler_get_register_name(char *buffer, unsigned int buffer_s
         case VKD3DSPR_CONSTBUFFER:
             snprintf(buffer, buffer_size, "cb%u_%u", reg->idx[0].offset, reg->idx[1].offset);
             break;
+        case VKD3DSPR_RASTOUT:
+            if (idx == VSIR_RASTOUT_POINT_SIZE)
+            {
+                snprintf(buffer, buffer_size, "oPts");
+                break;
+            }
+            FIXME("Unhandled rastout register %#x.\n", idx);
+            return false;
         case VKD3DSPR_INPUT:
             snprintf(buffer, buffer_size, "v%u", idx);
             break;
@@ -3251,6 +3263,9 @@ static bool spirv_compiler_get_register_name(char *buffer, unsigned int buffer_s
             break;
         case VKD3DSPR_WAVELANEINDEX:
             snprintf(buffer, buffer_size, "vWaveLaneIndex");
+            break;
+        case VKD3DSPR_POINT_COORD:
+            snprintf(buffer, buffer_size, "vPointCoord");
             break;
         default:
             FIXME("Unhandled register %#x.\n", reg->type);
@@ -4886,6 +4901,8 @@ vkd3d_register_builtins[] =
 
     {VKD3DSPR_TESSCOORD,        {VKD3D_SHADER_COMPONENT_FLOAT, 3, SpvBuiltInTessCoord}},
 
+    {VKD3DSPR_POINT_COORD,      {VKD3D_SHADER_COMPONENT_FLOAT, 2, SpvBuiltInPointCoord}},
+
     {VKD3DSPR_COVERAGE,         {VKD3D_SHADER_COMPONENT_UINT, 1, SpvBuiltInSampleMask, NULL, 1}},
     {VKD3DSPR_SAMPLEMASK,       {VKD3D_SHADER_COMPONENT_UINT, 1, SpvBuiltInSampleMask, NULL, 1}},
 
@@ -5907,11 +5924,8 @@ static size_t spirv_compiler_get_current_function_location(struct spirv_compiler
     return builder->main_function_location;
 }
 
-static void spirv_compiler_emit_dcl_global_flags(struct spirv_compiler *compiler,
-        const struct vkd3d_shader_instruction *instruction)
+static void spirv_compiler_emit_global_flags(struct spirv_compiler *compiler, enum vsir_global_flags flags)
 {
-    enum vkd3d_shader_global_flags flags = instruction->declaration.global_flags;
-
     if (flags & VKD3DSGF_FORCE_EARLY_DEPTH_STENCIL)
     {
         spirv_compiler_emit_execution_mode(compiler, SpvExecutionModeEarlyFragmentTests, NULL, 0);
@@ -8890,15 +8904,20 @@ static void spirv_compiler_emit_ld_raw_structured_srv_uav(struct spirv_compiler 
     uint32_t base_coordinate_id, component_idx;
     uint32_t constituents[VKD3D_VEC4_SIZE];
     struct vkd3d_shader_image image;
+    bool storage_buffer_uav = false;
     uint32_t indices[2];
     unsigned int i, j;
     SpvOp op;
 
     resource = &src[instruction->src_count - 1];
-    resource_symbol = spirv_compiler_find_resource(compiler, &resource->reg);
 
-    if (resource->reg.type == VKD3DSPR_UAV
-            && spirv_compiler_use_storage_buffer(compiler, &resource_symbol->info.resource))
+    if (resource->reg.type == VKD3DSPR_UAV)
+    {
+        resource_symbol = spirv_compiler_find_resource(compiler, &resource->reg);
+        storage_buffer_uav = spirv_compiler_use_storage_buffer(compiler, &resource_symbol->info.resource);
+    }
+
+    if (storage_buffer_uav)
     {
         texel_type_id = vkd3d_spirv_get_type_id(builder, resource_symbol->info.resource.sampled_type, 1);
         ptr_type_id = vkd3d_spirv_get_op_type_pointer(builder, SpvStorageClassUniform, texel_type_id);
@@ -10180,9 +10199,6 @@ static int spirv_compiler_handle_instruction(struct spirv_compiler *compiler,
 
     switch (instruction->opcode)
     {
-        case VKD3DSIH_DCL_GLOBAL_FLAGS:
-            spirv_compiler_emit_dcl_global_flags(compiler, instruction);
-            break;
         case VKD3DSIH_DCL_INDEXABLE_TEMP:
             spirv_compiler_emit_dcl_indexable_temp(compiler, instruction);
             break;
@@ -10596,6 +10612,14 @@ static void spirv_compiler_emit_io_declarations(struct spirv_compiler *compiler)
         dst.reg.idx[0].offset = VSIR_RASTOUT_POINT_SIZE;
         spirv_compiler_emit_output_register(compiler, &dst);
     }
+
+    if (compiler->program->has_point_coord)
+    {
+        struct vkd3d_shader_dst_param dst;
+
+        vsir_dst_param_init(&dst, VKD3DSPR_POINT_COORD, VKD3D_DATA_FLOAT, 0);
+        spirv_compiler_emit_input_register(compiler, &dst);
+    }
 }
 
 static void spirv_compiler_emit_descriptor_declarations(struct spirv_compiler *compiler)
@@ -10650,8 +10674,7 @@ static int spirv_compiler_generate_spirv(struct spirv_compiler *compiler, struct
             compile_info, compiler->message_context)) < 0)
         return result;
 
-    VKD3D_ASSERT(program->normalised_io);
-    VKD3D_ASSERT(program->normalised_hull_cp_io);
+    VKD3D_ASSERT(program->normalisation_level == VSIR_FULLY_NORMALISED_IO);
 
     max_element_count = max(program->output_signature.element_count, program->patch_constant_signature.element_count);
     if (!(compiler->output_info = vkd3d_calloc(max_element_count, sizeof(*compiler->output_info))))
@@ -10663,6 +10686,7 @@ static int spirv_compiler_generate_spirv(struct spirv_compiler *compiler, struct
         spirv_compiler_allocate_ssa_register_ids(compiler, program->ssa_count);
     if (compiler->shader_type == VKD3D_SHADER_TYPE_COMPUTE)
         spirv_compiler_emit_thread_group_size(compiler, &program->thread_group_size);
+    spirv_compiler_emit_global_flags(compiler, program->global_flags);
 
     spirv_compiler_emit_descriptor_declarations(compiler);
 
