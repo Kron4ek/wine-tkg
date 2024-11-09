@@ -1695,6 +1695,22 @@ struct hlsl_ir_node *hlsl_new_switch(struct hlsl_ctx *ctx, struct hlsl_ir_node *
     return &s->node;
 }
 
+struct hlsl_ir_node *hlsl_new_vsir_instruction_ref(struct hlsl_ctx *ctx, unsigned int vsir_instr_idx,
+        struct hlsl_type *type, const struct hlsl_reg *reg, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_vsir_instruction_ref *vsir_instr;
+
+    if (!(vsir_instr = hlsl_alloc(ctx, sizeof(*vsir_instr))))
+        return NULL;
+    init_node(&vsir_instr->node, HLSL_IR_VSIR_INSTRUCTION_REF, type, loc);
+    vsir_instr->vsir_instr_idx = vsir_instr_idx;
+
+    if (reg)
+        vsir_instr->node.reg = *reg;
+
+    return &vsir_instr->node;
+}
+
 struct hlsl_ir_load *hlsl_new_load_index(struct hlsl_ctx *ctx, const struct hlsl_deref *deref,
         struct hlsl_ir_node *idx, const struct vkd3d_shader_location *loc)
 {
@@ -2517,6 +2533,9 @@ static struct hlsl_ir_node *clone_instr(struct hlsl_ctx *ctx,
 
         case HLSL_IR_STATEBLOCK_CONSTANT:
             return clone_stateblock_constant(ctx, map, hlsl_ir_stateblock_constant(instr));
+
+        case HLSL_IR_VSIR_INSTRUCTION_REF:
+            vkd3d_unreachable();
     }
 
     vkd3d_unreachable();
@@ -2755,6 +2774,12 @@ struct vkd3d_string_buffer *hlsl_type_to_string(struct hlsl_ctx *ctx, const stru
             return string;
 
         case HLSL_CLASS_TEXTURE:
+            if (type->sampler_dim == HLSL_SAMPLER_DIM_RAW_BUFFER)
+            {
+                vkd3d_string_buffer_printf(string, "ByteAddressBuffer");
+                return string;
+            }
+
             if (type->sampler_dim == HLSL_SAMPLER_DIM_GENERIC)
             {
                 vkd3d_string_buffer_printf(string, "Texture");
@@ -2780,6 +2805,11 @@ struct vkd3d_string_buffer *hlsl_type_to_string(struct hlsl_ctx *ctx, const stru
             return string;
 
         case HLSL_CLASS_UAV:
+            if (type->sampler_dim == HLSL_SAMPLER_DIM_RAW_BUFFER)
+            {
+                vkd3d_string_buffer_printf(string, "RWByteAddressBuffer");
+                return string;
+            }
             if (type->sampler_dim == HLSL_SAMPLER_DIM_BUFFER)
                 vkd3d_string_buffer_printf(string, "RWBuffer");
             else if (type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
@@ -2938,6 +2968,7 @@ const char *hlsl_node_type_to_string(enum hlsl_ir_node_type type)
         [HLSL_IR_COMPILE]             = "HLSL_IR_COMPILE",
         [HLSL_IR_SAMPLER_STATE]       = "HLSL_IR_SAMPLER_STATE",
         [HLSL_IR_STATEBLOCK_CONSTANT] = "HLSL_IR_STATEBLOCK_CONSTANT",
+        [HLSL_IR_VSIR_INSTRUCTION_REF] = "HLSL_IR_VSIR_INSTRUCTION_REF",
     };
 
     if (type >= ARRAY_SIZE(names))
@@ -3164,6 +3195,7 @@ const char *debug_hlsl_expr_op(enum hlsl_ir_expr_op op)
         [HLSL_OP1_DSY_FINE]     = "dsy_fine",
         [HLSL_OP1_EXP2]         = "exp2",
         [HLSL_OP1_F16TOF32]     = "f16tof32",
+        [HLSL_OP1_F32TOF16]     = "f32tof16",
         [HLSL_OP1_FLOOR]        = "floor",
         [HLSL_OP1_FRACT]        = "fract",
         [HLSL_OP1_LOG2]         = "log2",
@@ -3530,6 +3562,11 @@ static void dump_instr(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer,
         case HLSL_IR_STATEBLOCK_CONSTANT:
             dump_ir_stateblock_constant(buffer, hlsl_ir_stateblock_constant(instr));
             break;
+
+        case HLSL_IR_VSIR_INSTRUCTION_REF:
+            vkd3d_string_buffer_printf(buffer, "vsir_program instruction %u",
+                    hlsl_ir_vsir_instruction_ref(instr)->vsir_instr_idx);
+            break;
     }
 }
 
@@ -3837,6 +3874,10 @@ void hlsl_free_instr(struct hlsl_ir_node *node)
 
         case HLSL_IR_STATEBLOCK_CONSTANT:
             free_ir_stateblock_constant(hlsl_ir_stateblock_constant(node));
+            break;
+
+        case HLSL_IR_VSIR_INSTRUCTION_REF:
+            vkd3d_free(hlsl_ir_vsir_instruction_ref(node));
             break;
     }
 }
@@ -4415,8 +4456,6 @@ static void hlsl_ctx_cleanup(struct hlsl_ctx *ctx)
 
     rb_destroy(&ctx->functions, free_function_rb, NULL);
 
-    hlsl_block_cleanup(&ctx->static_initializers);
-
     /* State blocks must be free before the variables, because they contain instructions that may
      * refer to them. */
     LIST_FOR_EACH_ENTRY_SAFE(scope, next_scope, &ctx->scopes, struct hlsl_scope, entry)
@@ -4431,6 +4470,8 @@ static void hlsl_ctx_cleanup(struct hlsl_ctx *ctx)
             var->state_block_capacity = 0;
         }
     }
+
+    hlsl_block_cleanup(&ctx->static_initializers);
 
     LIST_FOR_EACH_ENTRY_SAFE(scope, next_scope, &ctx->scopes, struct hlsl_scope, entry)
     {

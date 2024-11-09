@@ -700,6 +700,39 @@ enum vkd3d_shader_parameter_name
      * \since 1.14
      */
     VKD3D_SHADER_PARAMETER_NAME_POINT_SIZE_MAX,
+    /**
+     * Whether texture coordinate inputs should take their values from the
+     * point coordinate.
+     *
+     * When this parameter is provided to a pixel shader, and the value is
+     * nonzero, any fragment shader input with the semantic name "TEXCOORD"
+     * takes its value from the point coordinates instead of from the previous
+     * shader. The point coordinates here are defined as a four-component vector
+     * whose X and Y components are the X and Y coordinates of the fragment
+     * within a point being rasterized, and whose Z and W components are zero.
+     *
+     * In GLSL, the X and Y components are drawn from gl_PointCoord; in SPIR-V,
+     * they are drawn from a variable with the BuiltinPointCoord decoration.
+     *
+     * This includes t# fragment shader inputs in shader model 2 shaders,
+     * as well as texture sampling in shader model 1 shaders.
+     *
+     * This parameter can be used to implement fixed function point sprite, as
+     * present in Direct3D versions 8 and 9, if the target environment does not
+     * support point sprite as part of its own fixed-function API (as Vulkan and
+     * core OpenGL).
+     *
+     * The data type for this parameter must be
+     * VKD3D_SHADER_PARAMETER_DATA_TYPE_UINT32.
+     *
+     * The default value is zero, i.e. use the original varyings.
+     *
+     * Only VKD3D_SHADER_PARAMETER_TYPE_IMMEDIATE_CONSTANT is supported in this
+     * version of vkd3d-shader.
+     *
+     * \since 1.14
+     */
+    VKD3D_SHADER_PARAMETER_NAME_POINT_SPRITE,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_PARAMETER_NAME),
 };

@@ -772,14 +772,21 @@ void d3d12_dsv_desc_create_dsv(struct d3d12_dsv_desc *dsv_desc, struct d3d12_dev
 
 enum vkd3d_vk_descriptor_set_index
 {
-    VKD3D_SET_INDEX_UNIFORM_BUFFER = 0,
-    VKD3D_SET_INDEX_UNIFORM_TEXEL_BUFFER = 1,
-    VKD3D_SET_INDEX_SAMPLED_IMAGE = 2,
-    VKD3D_SET_INDEX_STORAGE_TEXEL_BUFFER = 3,
-    VKD3D_SET_INDEX_STORAGE_IMAGE = 4,
-    VKD3D_SET_INDEX_SAMPLER = 5,
-    VKD3D_SET_INDEX_UAV_COUNTER = 6,
-    VKD3D_SET_INDEX_COUNT = 7
+    VKD3D_SET_INDEX_SAMPLER,
+    VKD3D_SET_INDEX_UAV_COUNTER,
+    VKD3D_SET_INDEX_MUTABLE,
+
+    /* These are used when mutable descriptors are not available to back
+     * SRV-UAV-CBV descriptor heaps. They must stay at the end of this
+     * enumeration, so that they can be ignored when mutable descriptors are
+     * used. */
+    VKD3D_SET_INDEX_UNIFORM_BUFFER = VKD3D_SET_INDEX_MUTABLE,
+    VKD3D_SET_INDEX_UNIFORM_TEXEL_BUFFER,
+    VKD3D_SET_INDEX_SAMPLED_IMAGE,
+    VKD3D_SET_INDEX_STORAGE_TEXEL_BUFFER,
+    VKD3D_SET_INDEX_STORAGE_IMAGE,
+
+    VKD3D_SET_INDEX_COUNT
 };
 
 extern const enum vkd3d_vk_descriptor_set_index vk_descriptor_set_index_table[];

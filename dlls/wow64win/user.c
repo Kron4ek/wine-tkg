@@ -2122,6 +2122,11 @@ NTSTATUS WINAPI wow64_NtUserEnableMouseInPointer( UINT *args )
     return NtUserEnableMouseInPointer( enable );
 }
 
+NTSTATUS WINAPI wow64_NtUserEnableMouseInPointerForThread( UINT *args )
+{
+    return NtUserEnableMouseInPointerForThread();
+}
+
 NTSTATUS WINAPI wow64_NtUserEnableScrollBar( UINT *args )
 {
     HWND hwnd = get_handle( &args );
@@ -3913,6 +3918,13 @@ NTSTATUS WINAPI wow64_NtUserRegisterRawInputDevices( UINT *args )
     }
 
     return NtUserRegisterRawInputDevices( devices64, count, sizeof(*devices64) );
+}
+
+NTSTATUS WINAPI wow64_NtUserRegisterTouchPadCapable( UINT *args )
+{
+    UINT capable = get_ulong( &args );
+
+    return NtUserRegisterTouchPadCapable( capable );
 }
 
 NTSTATUS WINAPI wow64_NtUserReleaseDC( UINT *args )

@@ -1016,7 +1016,7 @@ static void vkd3d_descriptor_heap_binding_from_descriptor_range(const struct d3d
         }
         else
         {
-            binding->set = 0;
+            binding->set = VKD3D_SET_INDEX_MUTABLE;
             descriptor_set_size = descriptor_limits->sampled_image_max_descriptors;
         }
     }
@@ -1483,21 +1483,24 @@ static unsigned int d3d12_root_signature_copy_descriptor_set_layouts(const struc
 {
     const struct d3d12_device *device = root_signature->device;
     enum vkd3d_vk_descriptor_set_index set;
+    VkDescriptorSetLayout vk_set_layout;
     unsigned int i;
 
     for (i = 0; i < root_signature->vk_set_count; ++i)
         vk_set_layouts[i] = root_signature->descriptor_set_layouts[i].vk_layout;
 
-    if (device->use_vk_heaps)
-    {
-        VkDescriptorSetLayout mutable_layout = device->vk_descriptor_heap_layouts[0].vk_set_layout;
+    if (!device->use_vk_heaps)
+        return i;
 
-        for (set = 0; set < ARRAY_SIZE(device->vk_descriptor_heap_layouts); ++set)
-        {
-            VkDescriptorSetLayout vk_set_layout = device->vk_descriptor_heap_layouts[set].vk_set_layout;
-            /* All layouts must be valid, so if null, just set it to the mutable one. */
-            vk_set_layouts[i++] = vk_set_layout ? vk_set_layout : mutable_layout;
-        }
+    for (set = 0; set < ARRAY_SIZE(device->vk_descriptor_heap_layouts); ++set)
+    {
+        vk_set_layout = device->vk_descriptor_heap_layouts[set].vk_set_layout;
+
+        VKD3D_ASSERT(vk_set_layout);
+        vk_set_layouts[i++] = vk_set_layout;
+
+        if (device->vk_info.EXT_mutable_descriptor_type && set == VKD3D_SET_INDEX_MUTABLE)
+            break;
     }
 
     return i;

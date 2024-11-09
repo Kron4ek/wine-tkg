@@ -896,6 +896,17 @@ struct directory_entry
     /* VARARG(type,unicode_str,type_len); */
 };
 
+struct monitor_info
+{
+    rectangle_t raw;     /* host / physical position of the monitor rect */
+    rectangle_t virt;    /* client / virtual position of the monitor rect */
+    unsigned int flags;  /* MONITOR_FLAG_* flags for the monitor */
+    unsigned int dpi;    /* physical DPI for the monitor */
+};
+#define MONITOR_FLAG_PRIMARY  0x01
+#define MONITOR_FLAG_CLONE    0x02
+#define MONITOR_FLAG_INACTIVE 0x04
+
 /****************************************************************/
 /* shared session mapping structures */
 
@@ -2822,6 +2833,12 @@ enum coords_relative
 @END
 
 
+/* Update the process current window station monitors */
+@REQ(set_winstation_monitors)
+    VARARG(infos,monitor_infos);  /* window station monitors */
+@END
+
+
 /* Get the process current window station */
 @REQ(get_process_winstation)
 @REPLY
@@ -3813,6 +3830,18 @@ typedef union
 /* get completion from completion port queue */
 @REQ(remove_completion)
     obj_handle_t handle;          /* port handle */
+    int          alertable;       /* completion wait is alertable */
+@REPLY
+    apc_param_t   ckey;           /* completion key */
+    apc_param_t   cvalue;         /* completion value */
+    apc_param_t   information;    /* IO_STATUS_BLOCK Information */
+    unsigned int  status;         /* completion result */
+    obj_handle_t  wait_handle;    /* handle to completion wait internal object */
+@END
+
+
+/* get completion after successful wait */
+@REQ(get_thread_completion)
 @REPLY
     apc_param_t   ckey;           /* completion key */
     apc_param_t   cvalue;         /* completion value */

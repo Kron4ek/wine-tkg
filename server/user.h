@@ -21,6 +21,7 @@
 #ifndef __WINE_SERVER_USER_H
 #define __WINE_SERVER_USER_H
 
+#include <limits.h>
 #include "wine/server_protocol.h"
 #include "unicode.h"
 
@@ -52,6 +53,8 @@ struct winstation
     struct clipboard  *clipboard;          /* clipboard information */
     struct atom_table *atom_table;         /* global atom table */
     struct namespace  *desktop_names;      /* namespace for desktops of this winstation */
+    unsigned int       monitor_count;      /* number of monitors */
+    struct monitor_info *monitors;         /* window station monitors */
 };
 
 struct key_repeat
@@ -127,6 +130,7 @@ extern int attach_thread_input( struct thread *thread_from, struct thread *threa
 extern void detach_thread_input( struct thread *thread_from );
 extern void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect,
                                 unsigned int flags, int reset );
+extern void update_cursor_pos( struct desktop *desktop );
 extern void post_message( user_handle_t win, unsigned int message,
                           lparam_t wparam, lparam_t lparam );
 extern void send_notify_message( user_handle_t win, unsigned int message,
@@ -171,7 +175,7 @@ extern int rect_in_region( struct region *region, const rectangle_t *rect );
 /* window functions */
 
 extern struct process *get_top_window_owner( struct desktop *desktop );
-extern void get_top_window_rectangle( struct desktop *desktop, rectangle_t *rect );
+extern void get_virtual_screen_rect( struct desktop *desktop, rectangle_t *rect, int is_raw );
 extern void post_desktop_message( struct desktop *desktop, unsigned int message,
                                   lparam_t wparam, lparam_t lparam );
 extern void free_window_handle( struct window *win );
@@ -272,6 +276,36 @@ static inline int intersect_rect( rectangle_t *dst, const rectangle_t *src1, con
     dst->right  = min( src1->right, src2->right );
     dst->bottom = min( src1->bottom, src2->bottom );
     return !is_rect_empty( dst );
+}
+
+static inline void reset_bounds( rectangle_t *bounds )
+{
+    bounds->left = bounds->top = INT_MAX;
+    bounds->right = bounds->bottom = INT_MIN;
+}
+
+static inline void union_rect( rectangle_t *dest, const rectangle_t *src1, const rectangle_t *src2 )
+{
+    if (is_rect_empty( src1 ))
+    {
+        if (is_rect_empty( src2 ))
+        {
+            reset_bounds( dest );
+            return;
+        }
+        else *dest = *src2;
+    }
+    else
+    {
+        if (is_rect_empty( src2 )) *dest = *src1;
+        else
+        {
+            dest->left   = min( src1->left, src2->left );
+            dest->right  = max( src1->right, src2->right );
+            dest->top    = min( src1->top, src2->top );
+            dest->bottom = max( src1->bottom, src2->bottom );
+        }
+    }
 }
 
 /* validate a window handle and return the full handle */

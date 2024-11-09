@@ -109,6 +109,7 @@ static const struct object_ops apc_reserve_ops =
     NULL,                       /* remove_queue */
     NULL,                       /* signaled */
     NULL,                       /* get_esync_fd */
+    NULL,                       /* get_fsync_idx */
     no_satisfied,               /* satisfied */
     no_signal,                  /* signal */
     no_get_fd,                  /* get_fd */
@@ -134,6 +135,7 @@ static const struct object_ops completion_reserve_ops =
     NULL,                      /* remove_queue */
     NULL,                      /* signaled */
     NULL,                      /* get_esync_fd */
+    NULL,                      /* get_fsync_idx */
     no_satisfied,              /* satisfied */
     no_signal,                 /* signal */
     no_get_fd,                 /* get_fd */

@@ -47,9 +47,6 @@ extern BOOL force_backing_store;
 
 extern UINT64 app_icon_callback;
 extern UINT64 app_quit_request_callback;
-extern UINT64 dnd_query_drag_callback;
-extern UINT64 dnd_query_drop_callback;
-extern UINT64 dnd_query_exited_callback;
 
 extern const char* debugstr_cf(CFTypeRef t);
 
@@ -154,7 +151,7 @@ extern LRESULT macdrv_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 extern BOOL macdrv_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const struct window_rects *rects);
 extern BOOL macdrv_GetWindowStyleMasks(HWND hwnd, UINT style, UINT ex_style, UINT *style_mask, UINT *ex_style_mask);
 extern BOOL macdrv_CreateWindowSurface(HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface);
-extern void macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, UINT swp_flags, BOOL fullscreen,
+extern void macdrv_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UINT swp_flags, BOOL fullscreen,
                                     const struct window_rects *new_rects, struct window_surface *surface);
 extern void macdrv_DestroyCursorIcon(HCURSOR cursor);
 extern BOOL macdrv_GetCursorPos(LPPOINT pos);
@@ -262,13 +259,7 @@ extern void macdrv_status_item_mouse_move(const macdrv_event *event);
 extern void check_retina_status(void);
 extern void init_user_driver(void);
 
-/* unixlib interface */
-
-extern NTSTATUS macdrv_dnd_get_data(void *arg);
-extern NTSTATUS macdrv_dnd_get_formats(void *arg);
-extern NTSTATUS macdrv_dnd_have_format(void *arg);
-extern NTSTATUS macdrv_dnd_release(void *arg);
-extern NTSTATUS macdrv_dnd_retain(void *arg);
+extern struct format_entry *get_format_entries(CFTypeRef pasteboard, UINT *entries_size);
 
 /* user helpers */
 

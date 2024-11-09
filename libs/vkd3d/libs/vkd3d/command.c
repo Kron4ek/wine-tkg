@@ -2005,6 +2005,8 @@ static void d3d12_command_list_invalidate_bindings(struct d3d12_command_list *li
 
         vkd3d_array_reserve((void **)&bindings->vk_uav_counter_views, &bindings->vk_uav_counter_views_size,
                 state->uav_counters.binding_count, sizeof(*bindings->vk_uav_counter_views));
+        memset(bindings->vk_uav_counter_views, 0,
+                state->uav_counters.binding_count * sizeof(*bindings->vk_uav_counter_views));
         bindings->uav_counters_dirty = true;
     }
 }
@@ -4802,20 +4804,42 @@ static void STDMETHODCALLTYPE d3d12_command_list_IASetVertexBuffers(ID3D12Graphi
     VkDeviceSize offsets[ARRAY_SIZE(list->strides)];
     const struct vkd3d_vk_device_procs *vk_procs;
     VkBuffer buffers[ARRAY_SIZE(list->strides)];
+    struct d3d12_device *device = list->device;
+    unsigned int i, stride, max_view_count;
     struct d3d12_resource *resource;
     bool invalidate = false;
-    unsigned int i, stride;
 
     TRACE("iface %p, start_slot %u, view_count %u, views %p.\n", iface, start_slot, view_count, views);
 
-    vk_procs = &list->device->vk_procs;
-    null_resources = &list->device->null_resources;
-    gpu_va_allocator = &list->device->gpu_va_allocator;
+    vk_procs = &device->vk_procs;
+    null_resources = &device->null_resources;
+    gpu_va_allocator = &device->gpu_va_allocator;
 
     if (!vkd3d_bound_range(start_slot, view_count, ARRAY_SIZE(list->strides)))
     {
         WARN("Invalid start slot %u / view count %u.\n", start_slot, view_count);
         return;
+    }
+
+    max_view_count = device->vk_info.device_limits.maxVertexInputBindings;
+    if (start_slot < max_view_count)
+        max_view_count -= start_slot;
+    else
+        max_view_count = 0;
+
+    /* Although simply skipping unsupported binding slots isn't especially
+     * likely to work well in the general case, applications sometimes
+     * explicitly set all 32 vertex buffer bindings slots supported by
+     * Direct3D 12, with unused slots set to NULL. "Spider-Man Remastered" is
+     * an example of such an application. */
+    if (view_count > max_view_count)
+    {
+        for (i = max_view_count; i < view_count; ++i)
+        {
+            if (views && views[i].BufferLocation)
+                WARN("Ignoring unsupported vertex buffer slot %u.\n", start_slot + i);
+        }
+        view_count = max_view_count;
     }
 
     for (i = 0; i < view_count; ++i)

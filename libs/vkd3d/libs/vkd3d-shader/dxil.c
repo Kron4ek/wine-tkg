@@ -9564,7 +9564,7 @@ static enum vkd3d_result sm6_parser_signatures_init(struct sm6_parser *sm6, cons
 
 static void sm6_parser_emit_global_flags(struct sm6_parser *sm6, const struct sm6_metadata_value *m)
 {
-    enum vkd3d_shader_global_flags global_flags, mask, rotated_flags;
+    enum vsir_global_flags global_flags, mask, rotated_flags;
     struct vkd3d_shader_instruction *ins;
 
     if (!sm6_metadata_get_uint64_value(sm6, m, (uint64_t*)&global_flags))
@@ -9574,7 +9574,7 @@ static void sm6_parser_emit_global_flags(struct sm6_parser *sm6, const struct sm
                 "Global flags metadata value is not an integer.");
         return;
     }
-    /* Rotate SKIP_OPTIMIZATION from bit 0 to bit 4 to match vkd3d_shader_global_flags. */
+    /* Rotate SKIP_OPTIMIZATION from bit 0 to bit 4 to match vsir_global_flags. */
     mask = (VKD3DSGF_SKIP_OPTIMIZATION << 1) - 1;
     rotated_flags = global_flags & mask;
     rotated_flags = (rotated_flags >> 1) | ((rotated_flags & 1) << 4);
@@ -9582,6 +9582,7 @@ static void sm6_parser_emit_global_flags(struct sm6_parser *sm6, const struct sm
 
     ins = sm6_parser_add_instruction(sm6, VKD3DSIH_DCL_GLOBAL_FLAGS);
     ins->declaration.global_flags = global_flags;
+    sm6->p.program->global_flags = global_flags;
 }
 
 static enum vkd3d_result sm6_parser_emit_thread_group(struct sm6_parser *sm6, const struct sm6_metadata_value *m)
@@ -10312,7 +10313,7 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, struct vsir_pro
     /* Estimate instruction count to avoid reallocation in most shaders. */
     count = max(token_count, 400) - 400;
     if (!vsir_program_init(program, compile_info, &version,
-            (count + (count >> 2)) / 2u + 10, VSIR_CF_BLOCKS, true))
+            (count + (count >> 2)) / 2u + 10, VSIR_CF_BLOCKS, VSIR_FULLY_NORMALISED_IO))
         return VKD3D_ERROR_OUT_OF_MEMORY;
     vkd3d_shader_parser_init(&sm6->p, program, message_context, compile_info->source_name);
     sm6->ptr = &sm6->start[1];
@@ -10602,22 +10603,7 @@ int dxil_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t co
     vkd3d_free(byte_code);
 
     if (ret < 0)
-    {
-        WARN("Failed to parse shader.\n");
         return ret;
-    }
-
-    if ((ret = vkd3d_shader_parser_validate(&sm6.p, config_flags)) < 0)
-    {
-        WARN("Failed to validate shader after parsing, ret %d.\n", ret);
-
-        if (TRACE_ON())
-            vsir_program_trace(program);
-
-        sm6_parser_cleanup(&sm6);
-        vsir_program_cleanup(program);
-        return ret;
-    }
 
     sm6_parser_cleanup(&sm6);
 
