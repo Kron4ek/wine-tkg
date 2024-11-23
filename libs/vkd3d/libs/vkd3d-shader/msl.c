@@ -39,6 +39,8 @@ struct msl_generator
     struct vkd3d_shader_message_context *message_context;
     unsigned int indent;
     const char *prefix;
+    bool failed;
+
     const struct vkd3d_shader_interface_info *interface_info;
     const struct vkd3d_shader_scan_descriptor_info1 *descriptor_info;
 };
@@ -51,6 +53,7 @@ static void VKD3D_PRINTF_FUNC(3, 4) msl_compiler_error(struct msl_generator *gen
     va_start(args, fmt);
     vkd3d_shader_verror(gen->message_context, &gen->location, error, fmt, args);
     va_end(args);
+    gen->failed = true;
 }
 
 static const char *msl_get_prefix(enum vkd3d_shader_type type)
@@ -312,6 +315,9 @@ static void msl_handle_instruction(struct msl_generator *gen, const struct vkd3d
 
     switch (ins->opcode)
     {
+        case VKD3DSIH_DCL_INPUT:
+        case VKD3DSIH_DCL_OUTPUT:
+        case VKD3DSIH_DCL_OUTPUT_SIV:
         case VKD3DSIH_NOP:
             break;
         case VKD3DSIH_MOV:
@@ -426,7 +432,7 @@ static void msl_generate_cbv_declaration(struct msl_generator *gen,
     size /= VKD3D_VEC4_SIZE * sizeof(uint32_t);
 
     vkd3d_string_buffer_printf(buffer,
-            "constant vkd3d_vec4 (&cb_%u)[%zu] [[id(%u)]];", cbv->register_id, size, binding->binding);
+            "constant vkd3d_vec4 *cb_%u [[id(%u)]];", cbv->register_id, binding->binding);
 };
 
 static void msl_generate_descriptor_struct_declarations(struct msl_generator *gen)
@@ -715,7 +721,7 @@ static void msl_generate_entrypoint_epilogue(struct msl_generator *gen)
             case VKD3D_SHADER_SV_POSITION:
                 vkd3d_string_buffer_printf(buffer, "    output.shader_out_%u", i);
                 msl_print_write_mask(buffer, e->mask);
-                vkd3d_string_buffer_printf(buffer, " = %s_out", gen->prefix);
+                vkd3d_string_buffer_printf(buffer, " = %s_out[%u]", gen->prefix, e->register_index);
                 msl_print_register_datatype(buffer, gen, vkd3d_data_type_from_component_type(e->component_type));
                 msl_print_write_mask(buffer, e->mask);
                 break;
@@ -776,7 +782,7 @@ static void msl_generate_entrypoint(struct msl_generator *gen)
     vkd3d_string_buffer_printf(gen->buffer, "    return output;\n}\n");
 }
 
-static void msl_generator_generate(struct msl_generator *gen)
+static int msl_generator_generate(struct msl_generator *gen, struct vkd3d_shader_code *out)
 {
     const struct vkd3d_shader_instruction_array *instructions = &gen->program->instructions;
     unsigned int i;
@@ -827,6 +833,13 @@ static void msl_generator_generate(struct msl_generator *gen)
 
     if (TRACE_ON())
         vkd3d_string_buffer_trace(gen->buffer);
+
+    if (gen->failed)
+        return VKD3D_ERROR_INVALID_SHADER;
+
+    vkd3d_shader_code_from_string_buffer(out, gen->buffer);
+
+    return VKD3D_OK;
 }
 
 static void msl_generator_cleanup(struct msl_generator *gen)
@@ -865,7 +878,8 @@ static int msl_generator_init(struct msl_generator *gen, struct vsir_program *pr
 
 int msl_compile(struct vsir_program *program, uint64_t config_flags,
         const struct vkd3d_shader_scan_descriptor_info1 *descriptor_info,
-        const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_message_context *message_context)
+        const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_code *out,
+        struct vkd3d_shader_message_context *message_context)
 {
     struct msl_generator generator;
     int ret;
@@ -877,8 +891,8 @@ int msl_compile(struct vsir_program *program, uint64_t config_flags,
 
     if ((ret = msl_generator_init(&generator, program, compile_info, descriptor_info, message_context)) < 0)
         return ret;
-    msl_generator_generate(&generator);
+    ret = msl_generator_generate(&generator, out);
     msl_generator_cleanup(&generator);
 
-    return VKD3D_ERROR_INVALID_SHADER;
+    return ret;
 }

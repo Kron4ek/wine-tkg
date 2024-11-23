@@ -4379,7 +4379,13 @@ static BOOL codeview_process_info(const struct process *pcs,
 
         TRACE("Got RSDS type of PDB file: guid=%s age=%08x name=%s\n",
               wine_dbgstr_guid(&rsds->guid), rsds->age, debugstr_a(rsds->name));
-        ret = pdb_process_file(pcs, msc_dbg, rsds->name, &rsds->guid, 0, rsds->age);
+        /* gcc/mingw and clang can emit build-id information, but with an empty PDB filename.
+         * Don't search for the .pdb file in that case.
+         */
+        if (rsds->name[0])
+            ret = pdb_process_file(pcs, msc_dbg, rsds->name, &rsds->guid, 0, rsds->age);
+        else
+            ret = TRUE;
         break;
     }
     default:
@@ -4487,7 +4493,7 @@ typedef struct _FPO_DATA
     __ENDTRY
 
     /* we haven't found yet any debug information, fallback to unmatched pdb */
-    if (module->module.SymType == SymDeferred)
+    if (!ret && module->module.SymType == SymDeferred)
     {
         SYMSRV_INDEX_INFOW info = {.sizeofstruct = sizeof(info)};
         char buffer[MAX_PATH];
@@ -4549,38 +4555,35 @@ DWORD msc_get_file_indexinfo(void* image, const IMAGE_DEBUG_DIRECTORY* debug_dir
             num_misc_records++;
         }
     }
-    return info->stripped && !num_misc_records ? ERROR_BAD_EXE_FORMAT : ERROR_SUCCESS;
+    return (!num_dir || (info->stripped && !num_misc_records)) ? ERROR_BAD_EXE_FORMAT : ERROR_SUCCESS;
 }
 
 DWORD dbg_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW* info)
 {
     const IMAGE_SEPARATE_DEBUG_HEADER *header;
+    IMAGE_DEBUG_DIRECTORY *dbg;
     DWORD num_directories;
 
-    if (size < sizeof(*header)) return ERROR_BAD_EXE_FORMAT;
+    if (size < sizeof(*header)) return ERROR_BAD_FORMAT;
     header = image;
     if (header->Signature != 0x4944 /* DI */ ||
         size < sizeof(*header) + header->NumberOfSections * sizeof(IMAGE_SECTION_HEADER) + header->ExportedNamesSize + header->DebugDirectorySize)
-        return ERROR_BAD_EXE_FORMAT;
+        return ERROR_BAD_FORMAT;
+
+    info->size = header->SizeOfImage;
+    /* seems to use header's timestamp, not debug_directory one */
+    info->timestamp = header->TimeDateStamp;
+    info->stripped = FALSE; /* FIXME */
 
     /* header is followed by:
      * - header->NumberOfSections of IMAGE_SECTION_HEADER
      * - header->ExportedNameSize
      * - then num_directories of IMAGE_DEBUG_DIRECTORY
      */
+    dbg = (IMAGE_DEBUG_DIRECTORY*)((char*)(header + 1) +
+                                   header->NumberOfSections * sizeof(IMAGE_SECTION_HEADER) +
+                                   header->ExportedNamesSize);
     num_directories = header->DebugDirectorySize / sizeof(IMAGE_DEBUG_DIRECTORY);
 
-    if (!num_directories) return ERROR_BAD_EXE_FORMAT;
-
-    info->age = 0;
-    memset(&info->guid, 0, sizeof(info->guid));
-    info->sig = 0;
-    info->dbgfile[0] = L'\0';
-    info->pdbfile[0] = L'\0';
-    info->size = header->SizeOfImage;
-    /* seems to use header's timestamp, not debug_directory one */
-    info->timestamp = header->TimeDateStamp;
-    info->stripped = FALSE; /* FIXME */
-
-    return ERROR_SUCCESS;
+    return msc_get_file_indexinfo(image, dbg, num_directories, info);
 }

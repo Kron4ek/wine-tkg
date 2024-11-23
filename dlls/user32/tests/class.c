@@ -29,6 +29,7 @@
 #include "winreg.h"
 #include "wingdi.h"
 #include "winuser.h"
+#include "winternl.h"
 #include "commctrl.h"
 
 #define NUMCLASSWORDS 4
@@ -46,6 +47,8 @@
 #else
 #define ARCH "none"
 #endif
+
+static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
 
 static const char comctl32_manifest[] =
 "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
@@ -681,7 +684,6 @@ static void test_builtinproc(void)
     static const WCHAR classW[] = {'d','e','f','t','e','s','t',0};
     WCHAR unistring[] = {0x142, 0x40e, 0x3b4, 0};  /* a string that would be destroyed by a W->A->W conversion */
     WNDPROC pDefWindowProcA, pDefWindowProcW;
-    WNDPROC pNtdllDefWindowProcA, pNtdllDefWindowProcW;
     WNDPROC oldproc;
     WNDCLASSEXA cls;  /* the memory layout of WNDCLASSEXA and WNDCLASSEXW is the same */
     WCHAR buf[128];
@@ -691,57 +693,6 @@ static void test_builtinproc(void)
 
     pDefWindowProcA = (void *)GetProcAddress(GetModuleHandleA("user32.dll"), "DefWindowProcA");
     pDefWindowProcW = (void *)GetProcAddress(GetModuleHandleA("user32.dll"), "DefWindowProcW");
-    pNtdllDefWindowProcA = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtdllDefWindowProc_A");
-    pNtdllDefWindowProcW = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtdllDefWindowProc_W");
-
-    /* On Vista+, the user32.dll export DefWindowProcA/W is forwarded to  */
-    /* ntdll.NtdllDefWindowProc_A/W. However, the wndproc returned by     */
-    /* GetClassLong/GetWindowLong points to an unexported user32 function */
-    if (pDefWindowProcA == pNtdllDefWindowProcA &&
-        pDefWindowProcW == pNtdllDefWindowProcW)
-        skip("user32.DefWindowProcX forwarded to ntdll.NtdllDefWindowProc_X\n");
-    else
-    {
-        for (i = 0; i < 4; i++)
-        {
-            ZeroMemory(&cls, sizeof(cls));
-            cls.cbSize = sizeof(cls);
-            cls.hInstance = GetModuleHandleA(NULL);
-            cls.hbrBackground = GetStockObject (WHITE_BRUSH);
-            if (i & 1)
-                cls.lpfnWndProc = pDefWindowProcA;
-            else
-                cls.lpfnWndProc = pDefWindowProcW;
-
-            if (i & 2)
-            {
-                cls.lpszClassName = classA;
-                atom = RegisterClassExA(&cls);
-            }
-            else
-            {
-                cls.lpszClassName = (LPCSTR)classW;
-                atom = RegisterClassExW((WNDCLASSEXW *)&cls);
-            }
-            ok(atom != 0, "Couldn't register class, i=%d, %ld\n", i, GetLastError());
-
-            hwnd = CreateWindowA(classA, NULL, 0, 0, 0, 100, 100, NULL, NULL, GetModuleHandleA(NULL), NULL);
-            ok(hwnd != NULL, "Couldn't create window i=%d\n", i);
-
-            ok(GetWindowLongPtrA(hwnd, GWLP_WNDPROC) == (LONG_PTR)pDefWindowProcA, "Wrong ANSI wndproc: %p vs %p\n",
-                (void *)GetWindowLongPtrA(hwnd, GWLP_WNDPROC), pDefWindowProcA);
-            ok(GetClassLongPtrA(hwnd, GCLP_WNDPROC) == (ULONG_PTR)pDefWindowProcA, "Wrong ANSI wndproc: %p vs %p\n",
-                (void *)GetClassLongPtrA(hwnd, GCLP_WNDPROC), pDefWindowProcA);
-
-            ok(GetWindowLongPtrW(hwnd, GWLP_WNDPROC) == (LONG_PTR)pDefWindowProcW, "Wrong Unicode wndproc: %p vs %p\n",
-                (void *)GetWindowLongPtrW(hwnd, GWLP_WNDPROC), pDefWindowProcW);
-            ok(GetClassLongPtrW(hwnd, GCLP_WNDPROC) == (ULONG_PTR)pDefWindowProcW, "Wrong Unicode wndproc: %p vs %p\n",
-                (void *)GetClassLongPtrW(hwnd, GCLP_WNDPROC), pDefWindowProcW);
-
-            DestroyWindow(hwnd);
-            UnregisterClassA((LPSTR)(DWORD_PTR)atom, GetModuleHandleA(NULL));
-        }
-    }
 
     /* built-in winproc - window A/W type automatically detected */
     ZeroMemory(&cls, sizeof(cls));
@@ -904,6 +855,80 @@ static void test_builtinproc(void)
     SetWindowLongPtrW(hwnd, GWLP_WNDPROC, (LONG_PTR)oldproc);
 
     DestroyWindow(hwnd);
+}
+
+
+static void test_ntdll_wndprocs(void)
+{
+    static const char *classes[] =
+    {
+        "ScrollBar",
+        "Message",
+        "#32768",        /* menu */
+        "#32769",        /* desktop */
+        "DefWindowProc", /* not a real class */
+        "#32772",        /* icon title */
+        "??",            /* ?? */
+        "Button",
+        "ComboBox",
+        "ComboLBox",
+        "#32770",        /* dialog */
+        "Edit",
+        "ListBox",
+        "MDIClient",
+        "Static",
+        "IME",
+        "Ghost",
+    };
+    unsigned int i;
+    void *procsA[ARRAY_SIZE(classes)] = { NULL };
+    void *procsW[ARRAY_SIZE(classes)] = { NULL };
+    const UINT64 *ptr_A, *ptr_W, *ptr_workers;
+    NTSTATUS (WINAPI *pRtlRetrieveNtUserPfn)(const UINT64**,const UINT64**,const UINT64 **);
+
+    pRtlRetrieveNtUserPfn = (void *)GetProcAddress( GetModuleHandleA("ntdll.dll"), "RtlRetrieveNtUserPfn" );
+    if (!pRtlRetrieveNtUserPfn || pRtlRetrieveNtUserPfn( &ptr_A, &ptr_W, &ptr_workers ))
+    {
+        win_skip( "RtlRetrieveNtUserPfn not supported\n" );
+        return;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(classes); i++)
+    {
+        WNDCLASSA wcA;
+        WNDCLASSW wcW;
+        WCHAR buffer[20];
+
+        MultiByteToWideChar( CP_ACP, 0, classes[i], -1, buffer, ARRAY_SIZE(buffer) );
+        if (GetClassInfoA( 0, classes[i], &wcA )) procsA[i] = wcA.lpfnWndProc;
+        if (GetClassInfoW( 0, buffer, &wcW )) procsW[i] = wcW.lpfnWndProc;
+    }
+    procsA[4] = (void *)GetProcAddress(GetModuleHandleA("user32.dll"), "DefWindowProcA");
+    procsW[4] = (void *)GetProcAddress(GetModuleHandleA("user32.dll"), "DefWindowProcW");
+
+    if (!is_win64 && ptr_A[0] >> 32)  /* some older versions use 32-bit pointers */
+    {
+        const void **ptr_A32 = (const void **)ptr_A, **ptr_W32 = (const void **)ptr_W;
+        for (i = 0; i < ARRAY_SIZE(procsA); i++)
+        {
+            ok( !procsA[i] || procsA[i] == ptr_A32[i],
+                "wrong ptr A %u %s: %p / %p\n", i, classes[i], procsA[i], ptr_A32[i] );
+            ok( !procsW[i] || procsW[i] == ptr_W32[i] ||
+                broken(i == 4),  /* DefWindowProcW can be different on wow64 */
+                "wrong ptr W %u %s: %p / %p\n", i, classes[i], procsW[i], ptr_W32[i] );
+        }
+    }
+    else
+    {
+        for (i = 0; i < ARRAY_SIZE(procsA); i++)
+        {
+            ok( !procsA[i] || (ULONG_PTR)procsA[i] == ptr_A[i],
+                "wrong ptr A %u %s: %p / %I64x\n", i, classes[i], procsA[i], ptr_A[i] );
+            ok( !procsW[i] || (ULONG_PTR)procsW[i] == ptr_W[i] ||
+                broken( !is_win64 && i == 4 ),  /* DefWindowProcW can be different on wow64 */
+                "wrong ptr W %u %s: %p / %I64x\n", i, classes[i], procsW[i], ptr_W[i] );
+        }
+    }
 }
 
 
@@ -1622,6 +1647,7 @@ START_TEST(class)
     CreateDialogParamTest(hInstance);
     test_styles();
     test_builtinproc();
+    test_ntdll_wndprocs();
     test_icons();
     test_comctl32_classes();
     test_actctx_classes();

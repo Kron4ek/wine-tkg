@@ -900,6 +900,22 @@ DWORD get_input_state(void)
 }
 
 /***********************************************************************
+ *           get_last_input_time
+ */
+DWORD get_last_input_time(void)
+{
+    DWORD ret;
+
+    SERVER_START_REQ( get_last_input_time )
+    {
+        wine_server_call( req );
+        ret = reply->time;
+    }
+    SERVER_END_REQ;
+    return ret;
+}
+
+/***********************************************************************
  *           get_locale_kbd_layout
  */
 static HKL get_locale_kbd_layout(void)
@@ -1465,7 +1481,7 @@ BOOL WINAPI NtUserUnregisterHotKey( HWND hwnd, INT id )
 int WINAPI NtUserGetMouseMovePointsEx( UINT size, MOUSEMOVEPOINT *ptin, MOUSEMOVEPOINT *ptout,
                                        int count, DWORD resolution )
 {
-    cursor_pos_t *pos, positions[64];
+    struct cursor_pos *pos, positions[64];
     int copied;
     unsigned int i;
 
@@ -1931,7 +1947,7 @@ BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus, DWORD new
     {
         HWND *list, *phwnd;
 
-        if ((list = list_window_children( NULL, get_desktop_window(), NULL, 0 )))
+        if ((list = list_window_children( 0 )))
         {
             if (old_thread)
             {

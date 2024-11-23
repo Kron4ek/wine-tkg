@@ -1061,39 +1061,27 @@ struct wow_handlers16 wow_handlers =
     NULL,  /* call_dialog_proc */
 };
 
-static const struct user_client_procs client_procsA =
-{
-    .pButtonWndProc = ButtonWndProcA,
-    .pComboWndProc = ComboWndProcA,
-    .pDefWindowProc = DefWindowProcA,
-    .pDefDlgProc = DefDlgProcA,
-    .pEditWndProc = EditWndProcA,
-    .pListBoxWndProc = ListBoxWndProcA,
-    .pMDIClientWndProc = MDIClientWndProcA,
-    .pScrollBarWndProc = ScrollBarWndProcA,
-    .pStaticWndProc = StaticWndProcA,
-    .pImeWndProc = ImeWndProcA,
-};
+#define MessageWndProcA MessageWndProc
+#define MessageWndProcW MessageWndProc
+#define ComboLBoxWndProcA ListBoxWndProcA
+#define ComboLBoxWndProcW ListBoxWndProcW
+#define GhostWndProcA DefWindowProcA
+#define GhostWndProcW DefWindowProcW
 
-static const struct user_client_procs client_procsW =
+static const struct ntuser_client_procs_table client_procs =
 {
-    .pButtonWndProc = ButtonWndProcW,
-    .pComboWndProc = ComboWndProcW,
-    .pDefWindowProc = DefWindowProcW,
-    .pDefDlgProc = DefDlgProcW,
-    .pEditWndProc = EditWndProcW,
-    .pListBoxWndProc = ListBoxWndProcW,
-    .pMDIClientWndProc = MDIClientWndProcW,
-    .pScrollBarWndProc = ScrollBarWndProcW,
-    .pStaticWndProc = StaticWndProcW,
-    .pImeWndProc = ImeWndProcW,
-    .pDesktopWndProc = DesktopWndProc,
-    .pIconTitleWndProc = IconTitleWndProc,
-    .pPopupMenuWndProc = PopupMenuWndProc,
-    .pMessageWndProc = MessageWndProc,
+#define USER_FUNC(name,proc) .A[proc] = { name##A }, .W[proc] = { name##W },
+    ALL_NTUSER_CLIENT_PROCS
+#undef USER_FUNC
 };
 
 void winproc_init(void)
 {
-    NtUserInitializeClientPfnArrays( &client_procsA, &client_procsW, NULL, user32_module );
+    const ntuser_client_func_ptr *ptr_A, *ptr_W, *ptr_workers;
+
+    RtlInitializeNtUserPfn( client_procs.A, sizeof(client_procs.A),
+                            client_procs.W, sizeof(client_procs.W),
+                            client_procs.workers, sizeof(client_procs.workers) );
+    RtlRetrieveNtUserPfn( (const void **)&ptr_A, (const void **)&ptr_W, (const void **)&ptr_workers );
+    NtUserInitializeClientPfnArrays( ptr_A, ptr_W, ptr_workers, user32_module );
 }

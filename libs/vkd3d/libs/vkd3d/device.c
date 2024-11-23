@@ -597,7 +597,7 @@ static HRESULT vkd3d_instance_init(struct vkd3d_instance *instance,
     }
     if (!create_info->pfn_create_thread != !create_info->pfn_join_thread)
     {
-        ERR("Invalid create/join thread function pointers.\n");
+        WARN("Invalid create/join thread function pointers.\n");
         return E_INVALIDARG;
     }
     if (create_info->wchar_size != 2 && create_info->wchar_size != 4)
@@ -615,7 +615,7 @@ static HRESULT vkd3d_instance_init(struct vkd3d_instance *instance,
 
     if (FAILED(hr = vkd3d_init_vk_global_procs(instance, create_info->pfn_vkGetInstanceProcAddr)))
     {
-        ERR("Failed to initialise Vulkan global procs, hr %s.\n", debugstr_hresult(hr));
+        WARN("Failed to initialise Vulkan global procs, hr %s.\n", debugstr_hresult(hr));
         return hr;
     }
 
@@ -697,7 +697,7 @@ static HRESULT vkd3d_instance_init(struct vkd3d_instance *instance,
     vkd3d_free(extensions);
     if (vr < 0)
     {
-        ERR("Failed to create Vulkan instance, vr %d.\n", vr);
+        WARN("Failed to create Vulkan instance, vr %d.\n", vr);
         if (instance->libvulkan)
             vkd3d_dlclose(instance->libvulkan);
         return hresult_from_vk_result(vr);
@@ -705,7 +705,7 @@ static HRESULT vkd3d_instance_init(struct vkd3d_instance *instance,
 
     if (FAILED(hr = vkd3d_load_vk_instance_procs(&instance->vk_procs, vk_global_procs, vk_instance)))
     {
-        ERR("Failed to load instance procs, hr %s.\n", debugstr_hresult(hr));
+        WARN("Failed to load instance procs, hr %s.\n", debugstr_hresult(hr));
         if (instance->vk_procs.vkDestroyInstance)
             instance->vk_procs.vkDestroyInstance(vk_instance, NULL);
         if (instance->libvulkan)

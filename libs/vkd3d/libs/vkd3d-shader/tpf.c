@@ -1268,6 +1268,7 @@ static void shader_sm5_read_dcl_tessellator_domain(struct vkd3d_shader_instructi
 {
     ins->declaration.tessellator_domain = (opcode_token & VKD3D_SM5_TESSELLATOR_MASK)
             >> VKD3D_SM5_TESSELLATOR_SHIFT;
+    priv->p.program->tess_domain = ins->declaration.tessellator_domain;
 }
 
 static void shader_sm5_read_dcl_tessellator_partitioning(struct vkd3d_shader_instruction *ins, uint32_t opcode,
@@ -3331,6 +3332,7 @@ static D3D_SHADER_VARIABLE_CLASS sm4_class(const struct hlsl_type *type)
         case HLSL_CLASS_HULL_SHADER:
         case HLSL_CLASS_GEOMETRY_SHADER:
         case HLSL_CLASS_BLEND_STATE:
+        case HLSL_CLASS_STREAM_OUTPUT:
         case HLSL_CLASS_NULL:
             break;
     }
@@ -5312,57 +5314,6 @@ static void write_sm4_jump(const struct tpf_compiler *tpf, const struct hlsl_ir_
     write_sm4_instruction(tpf, &instr);
 }
 
-/* Does this variable's data come directly from the API user, rather than being
- * temporary or from a previous shader stage?
- * I.e. is it a uniform or VS input? */
-static bool var_is_user_input(const struct vkd3d_shader_version *version, const struct hlsl_ir_var *var)
-{
-    if (var->is_uniform)
-        return true;
-
-    return var->is_input_semantic && version->type == VKD3D_SHADER_TYPE_VERTEX;
-}
-
-static void write_sm4_load(const struct tpf_compiler *tpf, const struct hlsl_ir_load *load)
-{
-    const struct vkd3d_shader_version *version = &tpf->program->shader_version;
-    const struct hlsl_type *type = load->node.data_type;
-    struct sm4_instruction instr;
-
-    memset(&instr, 0, sizeof(instr));
-
-    sm4_dst_from_node(&instr.dsts[0], &load->node);
-    instr.dst_count = 1;
-
-    VKD3D_ASSERT(hlsl_is_numeric_type(type));
-    if (type->e.numeric.type == HLSL_TYPE_BOOL && var_is_user_input(version, load->src.var))
-    {
-        struct hlsl_constant_value value;
-
-        /* Uniform bools can be specified as anything, but internal bools always
-         * have 0 for false and ~0 for true. Normalize that here. */
-
-        instr.opcode = VKD3D_SM4_OP_MOVC;
-
-        sm4_src_from_deref(tpf, &instr.srcs[0], &load->src, instr.dsts[0].write_mask, &instr);
-
-        memset(&value, 0xff, sizeof(value));
-        sm4_src_from_constant_value(&instr.srcs[1], &value, type->dimx, instr.dsts[0].write_mask);
-        memset(&value, 0, sizeof(value));
-        sm4_src_from_constant_value(&instr.srcs[2], &value, type->dimx, instr.dsts[0].write_mask);
-        instr.src_count = 3;
-    }
-    else
-    {
-        instr.opcode = VKD3D_SM4_OP_MOV;
-
-        sm4_src_from_deref(tpf, &instr.srcs[0], &load->src, instr.dsts[0].write_mask, &instr);
-        instr.src_count = 1;
-    }
-
-    write_sm4_instruction(tpf, &instr);
-}
-
 static void write_sm4_loop(struct tpf_compiler *tpf, const struct hlsl_ir_loop *loop)
 {
     struct sm4_instruction instr =
@@ -5489,64 +5440,6 @@ static void write_sm4_resource_load(const struct tpf_compiler *tpf, const struct
     }
 }
 
-static void write_sm4_resource_store(const struct tpf_compiler *tpf, const struct hlsl_ir_resource_store *store)
-{
-    struct hlsl_type *resource_type = hlsl_deref_get_type(tpf->ctx, &store->resource);
-    struct hlsl_ir_node *coords = store->coords.node, *value = store->value.node;
-    struct sm4_instruction instr;
-
-    if (!store->resource.var->is_uniform)
-    {
-        hlsl_fixme(tpf->ctx, &store->node.loc, "Store to non-uniform resource variable.");
-        return;
-    }
-
-    if (resource_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
-    {
-        hlsl_fixme(tpf->ctx, &store->node.loc, "Structured buffers store is not implemented.");
-        return;
-    }
-
-    memset(&instr, 0, sizeof(instr));
-
-    sm4_register_from_deref(tpf, &instr.dsts[0].reg, &instr.dsts[0].write_mask, &store->resource, &instr);
-    instr.dst_count = 1;
-    if (resource_type->sampler_dim == HLSL_SAMPLER_DIM_RAW_BUFFER)
-    {
-        instr.opcode = VKD3D_SM5_OP_STORE_RAW;
-        instr.dsts[0].write_mask = vkd3d_write_mask_from_component_count(value->data_type->dimx);
-    }
-    else
-    {
-        instr.opcode = VKD3D_SM5_OP_STORE_UAV_TYPED;
-    }
-
-    sm4_src_from_node(tpf, &instr.srcs[0], coords, VKD3DSP_WRITEMASK_ALL);
-    sm4_src_from_node(tpf, &instr.srcs[1], value, VKD3DSP_WRITEMASK_ALL);
-    instr.src_count = 2;
-
-    write_sm4_instruction(tpf, &instr);
-}
-
-static void write_sm4_store(const struct tpf_compiler *tpf, const struct hlsl_ir_store *store)
-{
-    const struct hlsl_ir_node *rhs = store->rhs.node;
-    struct sm4_instruction instr;
-    uint32_t writemask;
-
-    memset(&instr, 0, sizeof(instr));
-    instr.opcode = VKD3D_SM4_OP_MOV;
-
-    sm4_register_from_deref(tpf, &instr.dsts[0].reg, &writemask, &store->lhs, &instr);
-    instr.dsts[0].write_mask = hlsl_combine_writemasks(writemask, store->writemask);
-    instr.dst_count = 1;
-
-    sm4_src_from_node(tpf, &instr.srcs[0], rhs, instr.dsts[0].write_mask);
-    instr.src_count = 1;
-
-    write_sm4_instruction(tpf, &instr);
-}
-
 static void write_sm4_switch(struct tpf_compiler *tpf, const struct hlsl_ir_switch *s)
 {
     const struct hlsl_ir_node *selector = s->selector.node;
@@ -5583,27 +5476,6 @@ static void write_sm4_switch(struct tpf_compiler *tpf, const struct hlsl_ir_swit
 
     memset(&instr, 0, sizeof(instr));
     instr.opcode = VKD3D_SM4_OP_ENDSWITCH;
-
-    write_sm4_instruction(tpf, &instr);
-}
-
-static void write_sm4_swizzle(const struct tpf_compiler *tpf, const struct hlsl_ir_swizzle *swizzle)
-{
-    unsigned int hlsl_swizzle;
-    struct sm4_instruction instr;
-    uint32_t writemask;
-
-    memset(&instr, 0, sizeof(instr));
-    instr.opcode = VKD3D_SM4_OP_MOV;
-
-    sm4_dst_from_node(&instr.dsts[0], &swizzle->node);
-    instr.dst_count = 1;
-
-    sm4_register_from_node(&instr.srcs[0].reg, &writemask, swizzle->val.node);
-    hlsl_swizzle = hlsl_map_swizzle(hlsl_combine_swizzles(hlsl_swizzle_from_writemask(writemask),
-            swizzle->swizzle, swizzle->node.data_type->dimx), instr.dsts[0].write_mask);
-    instr.srcs[0].swizzle = swizzle_from_sm4(hlsl_swizzle);
-    instr.src_count = 1;
 
     write_sm4_instruction(tpf, &instr);
 }
@@ -5755,6 +5627,8 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
         case VKD3DSIH_SAMPLE_INFO:
         case VKD3DSIH_SINCOS:
         case VKD3DSIH_SQRT:
+        case VKD3DSIH_STORE_RAW:
+        case VKD3DSIH_STORE_UAV_TYPED:
         case VKD3DSIH_UDIV:
         case VKD3DSIH_UGE:
         case VKD3DSIH_ULT:
@@ -5809,32 +5683,16 @@ static void write_sm4_block(struct tpf_compiler *tpf, const struct hlsl_block *b
                 write_sm4_jump(tpf, hlsl_ir_jump(instr));
                 break;
 
-            case HLSL_IR_LOAD:
-                write_sm4_load(tpf, hlsl_ir_load(instr));
-                break;
-
             case HLSL_IR_RESOURCE_LOAD:
                 write_sm4_resource_load(tpf, hlsl_ir_resource_load(instr));
-                break;
-
-            case HLSL_IR_RESOURCE_STORE:
-                write_sm4_resource_store(tpf, hlsl_ir_resource_store(instr));
                 break;
 
             case HLSL_IR_LOOP:
                 write_sm4_loop(tpf, hlsl_ir_loop(instr));
                 break;
 
-            case HLSL_IR_STORE:
-                write_sm4_store(tpf, hlsl_ir_store(instr));
-                break;
-
             case HLSL_IR_SWITCH:
                 write_sm4_switch(tpf, hlsl_ir_switch(instr));
-                break;
-
-            case HLSL_IR_SWIZZLE:
-                write_sm4_swizzle(tpf, hlsl_ir_swizzle(instr));
                 break;
 
             case HLSL_IR_VSIR_INSTRUCTION_REF:

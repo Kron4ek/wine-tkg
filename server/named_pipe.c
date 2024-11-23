@@ -350,7 +350,7 @@ static const struct object_ops named_pipe_dir_ops =
     remove_queue,                            /* remove_queue */
     default_fd_signaled,                     /* signaled */
     NULL,                                    /* get_esync_fd */
-    NULL,                                    /* get_fsync_idx */     
+    NULL,                                    /* get_fsync_idx */
     no_satisfied,                            /* satisfied */
     no_signal,                               /* signal */
     named_pipe_dir_get_fd,                   /* get_fd */

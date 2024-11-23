@@ -158,6 +158,7 @@ static struct list monitors = LIST_INIT(monitors);
 static INT64 last_query_display_time;
 static pthread_mutex_t display_lock = PTHREAD_MUTEX_INITIALIZER;
 
+static BOOL emulate_modeset;
 BOOL decorated_mode = TRUE;
 UINT64 thunk_lock_callback = 0;
 
@@ -1655,8 +1656,7 @@ static DEVMODEW *get_virtual_modes( const DEVMODEW *current, const DEVMODEW *ini
 static void add_modes( const DEVMODEW *current, UINT modes_count, const DEVMODEW *modes, void *param )
 {
     struct device_manager_ctx *ctx = param;
-    DEVMODEW dummy, detached = *current, virtual, *virtual_modes = NULL;
-    const DEVMODEW physical = modes_count == 1 ? *modes : *current;
+    DEVMODEW dummy, physical, detached = *current, virtual, *virtual_modes = NULL;
     struct source *source;
     UINT virtual_count;
 
@@ -1665,6 +1665,13 @@ static void add_modes( const DEVMODEW *current, UINT modes_count, const DEVMODEW
     assert( !list_empty( &sources ) );
     source = LIST_ENTRY( list_tail( &sources ), struct source, entry );
 
+    if (emulate_modeset)
+    {
+        modes = current;
+        modes_count = 1;
+    }
+
+    physical = modes_count == 1 ? *modes : *current;
     if (ctx->is_primary) ctx->primary = *current;
 
     detached.dmPelsWidth = 0;
@@ -1762,6 +1769,27 @@ static BOOL is_monitor_primary( struct monitor *monitor )
 }
 
 /* display_lock must be held */
+static void monitor_virt_to_raw_ratio( struct monitor *monitor, UINT *num, UINT *den )
+{
+    struct source *source = monitor->source;
+
+    *num = *den = 1;
+    if (!source) return;
+
+    if (source->physical.dmPelsWidth * source->current.dmPelsHeight <=
+        source->physical.dmPelsHeight * source->current.dmPelsWidth)
+    {
+        *num = source->physical.dmPelsWidth;
+        *den = source->current.dmPelsWidth;
+    }
+    else
+    {
+        *num = source->physical.dmPelsHeight;
+        *den = source->current.dmPelsHeight;
+    }
+}
+
+/* display_lock must be held */
 static UINT monitor_get_dpi( struct monitor *monitor, MONITOR_DPI_TYPE type, UINT *dpi_x, UINT *dpi_y )
 {
     struct source *source = monitor->source;
@@ -1769,6 +1797,12 @@ static UINT monitor_get_dpi( struct monitor *monitor, MONITOR_DPI_TYPE type, UIN
     UINT dpi;
 
     if (!source || !(dpi = source->dpi)) dpi = system_dpi;
+    if (source && type != MDT_EFFECTIVE_DPI)
+    {
+        scale_x = source->physical.dmPelsWidth / (float)source->current.dmPelsWidth;
+        scale_y = source->physical.dmPelsHeight / (float)source->current.dmPelsHeight;
+    }
+
     *dpi_x = round( dpi * scale_x );
     *dpi_y = round( dpi * scale_y );
     return min( *dpi_x, *dpi_y );
@@ -1781,6 +1815,7 @@ static RECT monitor_get_rect( struct monitor *monitor, UINT dpi, MONITOR_DPI_TYP
     RECT rect = {0, 0, 1024, 768};
     struct source *source;
     UINT dpi_from, x, y;
+    DEVMODEW *mode;
 
     /* services do not have any adapters, only a virtual monitor */
     if (!(source = monitor->source)) return rect;
@@ -1789,9 +1824,10 @@ static RECT monitor_get_rect( struct monitor *monitor, UINT dpi, MONITOR_DPI_TYP
     if (!(source->state_flags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)) return rect;
     source_get_current_settings( source, &current_mode );
 
-    SetRect( &rect, current_mode.dmPosition.x, current_mode.dmPosition.y,
-             current_mode.dmPosition.x + current_mode.dmPelsWidth,
-             current_mode.dmPosition.y + current_mode.dmPelsHeight );
+    mode = type != MDT_EFFECTIVE_DPI ? &source->physical : &current_mode;
+    SetRect( &rect, mode->dmPosition.x, mode->dmPosition.y,
+             mode->dmPosition.x + mode->dmPelsWidth,
+             mode->dmPosition.y + mode->dmPelsHeight );
 
     dpi_from = monitor_get_dpi( monitor, type, &x, &y );
     return map_dpi_rect( rect, dpi_from, dpi );
@@ -2403,6 +2439,42 @@ static RECT map_monitor_rect( struct monitor *monitor, RECT rect, UINT dpi_from,
                               UINT dpi_to, MONITOR_DPI_TYPE type_to )
 {
     UINT x, y;
+
+    assert( type_from != type_to );
+
+    if (monitor->source)
+    {
+        DEVMODEW current_mode = {.dmSize = sizeof(DEVMODEW)}, *mode_from, *mode_to;
+        UINT num, den, dpi;
+
+        source_get_current_settings( monitor->source, &current_mode );
+
+        dpi = monitor_get_dpi( monitor, MDT_DEFAULT, &x, &y );
+        if (!dpi_from) dpi_from = dpi;
+        if (!dpi_to) dpi_to = dpi;
+
+        if (type_from == MDT_RAW_DPI)
+        {
+            monitor_virt_to_raw_ratio( monitor, &den, &num );
+            mode_from = &monitor->source->physical;
+            mode_to = &current_mode;
+        }
+        else
+        {
+            monitor_virt_to_raw_ratio( monitor, &num, &den );
+            mode_from = &current_mode;
+            mode_to = &monitor->source->physical;
+        }
+
+        rect = map_dpi_rect( rect, dpi_from, dpi * 2 );
+        OffsetRect( &rect, -mode_from->dmPosition.x * 2 - mode_from->dmPelsWidth,
+                    -mode_from->dmPosition.y * 2 - mode_from->dmPelsHeight );
+        rect = map_dpi_rect( rect, den, num );
+        OffsetRect( &rect, mode_to->dmPosition.x * 2 + mode_to->dmPelsWidth,
+                    mode_to->dmPosition.y * 2 + mode_to->dmPelsHeight );
+        return map_dpi_rect( rect, dpi * 2, dpi_to );
+    }
+
     if (!dpi_from) dpi_from = monitor_get_dpi( monitor, type_from, &x, &y );
     if (!dpi_to) dpi_to = monitor_get_dpi( monitor, type_to, &x, &y );
     return map_dpi_rect( rect, dpi_from, dpi_to );
@@ -2487,7 +2559,7 @@ UINT get_win_monitor_dpi( HWND hwnd, UINT *raw_dpi )
         if (!get_window_rect( hwnd, &rect, dpi )) return 0;
     }
     /* avoid recursive calls from get_window_rects for the process windows */
-    else if ((parent = win->parent))
+    else if ((parent = win->parent) && parent != get_desktop_window())
     {
         release_win_ptr( win );
         return get_win_monitor_dpi( parent, raw_dpi );
@@ -3648,13 +3720,25 @@ static POINT get_placement_offset( const DEVMODEW *displays, const DEVMODEW *pla
     return min_offset;
 }
 
-static void place_all_displays( DEVMODEW *displays )
+static void place_all_displays( DEVMODEW *displays, const WCHAR *primary_name )
 {
-    POINT min_offset, offset;
+    POINT min_offset, offset = {0};
     DEVMODEW *mode, *placing;
 
     for (mode = displays; mode->dmSize; mode = NEXT_DEVMODEW(mode))
+    {
+        if (wcsicmp( mode->dmDeviceName, primary_name )) continue;
+        offset.x = -mode->dmPosition.x;
+        offset.y = -mode->dmPosition.y;
+        break;
+    }
+
+    for (mode = displays; mode->dmSize; mode = NEXT_DEVMODEW(mode))
+    {
+        mode->dmPosition.x += offset.x;
+        mode->dmPosition.y += offset.y;
         mode->dmFields &= ~DM_POSITION;
+    }
 
     /* Place all displays with no extra space between them and no overlapping */
     while (1)
@@ -3763,8 +3847,6 @@ static LONG apply_display_settings( struct source *target, const DEVMODEW *devmo
         return DISP_CHANGE_SUCCESSFUL;
     }
 
-    place_all_displays( displays );
-
     if (!(primary = find_primary_source())) primary_name[0] = 0;
     else
     {
@@ -3773,8 +3855,10 @@ static LONG apply_display_settings( struct source *target, const DEVMODEW *devmo
         asciiz_to_unicode( primary_name, device_name );
     }
 
+    place_all_displays( displays, primary_name );
+
     /* use the default implementation in virtual desktop mode */
-    if (is_virtual_desktop()) ret = DISP_CHANGE_SUCCESSFUL;
+    if (is_virtual_desktop() || emulate_modeset) ret = DISP_CHANGE_SUCCESSFUL;
     else ret = user_driver->pChangeDisplaySettings( displays, primary_name, hwnd, flags, lparam );
 
     if (ret == DISP_CHANGE_SUCCESSFUL)
@@ -3836,6 +3920,7 @@ static BOOL source_enum_display_settings( const struct source *source, UINT inde
 {
     DEVMODEW current_mode = {.dmSize = sizeof(DEVMODEW)};
     const DEVMODEW *source_mode;
+    unsigned int i = index;
 
     if (!(flags & EDS_ROTATEDMODE) && !source_get_current_settings( source, &current_mode ))
     {
@@ -3851,7 +3936,7 @@ static BOOL source_enum_display_settings( const struct source *source, UINT inde
         if (!(flags & EDS_RAWMODE) && (source_mode->dmFields & DM_DISPLAYFLAGS) &&
             (source_mode->dmDisplayFlags & WINE_DM_UNSUPPORTED))
             continue;
-        if (!index--)
+        if (!i--)
         {
             memcpy( &devmode->dmFields, &source_mode->dmFields, devmode->dmSize - FIELD_OFFSET(DEVMODEW, dmFields) );
             devmode->dmDisplayFlags &= ~WINE_DM_UNSUPPORTED;
@@ -5346,6 +5431,8 @@ void sysparams_init(void)
         grab_fullscreen = IS_OPTION_TRUE( buffer[0] );
     if (!get_config_key( hkey, appkey, "Decorated", buffer, sizeof(buffer) ))
         decorated_mode = IS_OPTION_TRUE( buffer[0] );
+    if (!get_config_key( hkey, appkey, "EmulateModeset", buffer, sizeof(buffer) ))
+        emulate_modeset = IS_OPTION_TRUE( buffer[0] );
 
 #undef IS_OPTION_TRUE
 
@@ -6826,6 +6913,9 @@ ULONG_PTR WINAPI NtUserCallNoParam( ULONG code )
     case NtUserCallNoParam_GetInputState:
         return get_input_state();
 
+    case NtUserCallNoParam_GetLastInputTime:
+        return get_last_input_time();
+
     case NtUserCallNoParam_GetProcessDefaultLayout:
         return process_layout;
 
@@ -6919,6 +7009,9 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
 
     case NtUserCallOneParam_MessageBeep:
         return message_beep( arg );
+
+    case NtUserCallOneParam_PostQuitMessage:
+        return post_quit_message( arg );
 
     case NtUserCallOneParam_ReplyMessage:
         return reply_message_result( arg );

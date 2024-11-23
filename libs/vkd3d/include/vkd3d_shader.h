@@ -56,6 +56,7 @@ enum vkd3d_shader_api_version
     VKD3D_SHADER_API_VERSION_1_11,
     VKD3D_SHADER_API_VERSION_1_12,
     VKD3D_SHADER_API_VERSION_1_13,
+    VKD3D_SHADER_API_VERSION_1_14,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_API_VERSION),
 };
@@ -111,6 +112,11 @@ enum vkd3d_shader_structure_type
      * \since 1.13
      */
     VKD3D_SHADER_STRUCTURE_TYPE_PARAMETER_INFO,
+    /**
+     * The structure is a vkd3d_shader_scan_hull_shader_tessellation_info structure.
+     * \since 1.15
+     */
+    VKD3D_SHADER_STRUCTURE_TYPE_SCAN_HULL_SHADER_TESSELLATION_INFO,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_STRUCTURE_TYPE),
 };
@@ -2040,6 +2046,26 @@ struct vkd3d_shader_scan_combined_resource_sampler_info
 };
 
 /**
+ * A chained structure describing the tessellation information in a hull shader.
+ *
+ * This structure extends vkd3d_shader_compile_info.
+ *
+ * \since 1.15
+ */
+struct vkd3d_shader_scan_hull_shader_tessellation_info
+{
+    /** Must be set to VKD3D_SHADER_STRUCTURE_TYPE_SCAN_HULL_SHADER_TESSELLATION_INFO. */
+    enum vkd3d_shader_structure_type type;
+    /** Optional pointer to a structure containing further parameters. */
+    const void *next;
+
+    /** The tessellation output primitive. */
+    enum vkd3d_shader_tessellator_output_primitive output_primitive;
+    /** The tessellation partitioning mode. */
+    enum vkd3d_shader_tessellator_partitioning partitioning;
+};
+
+/**
  * Data type of a shader varying, returned as part of struct
  * vkd3d_shader_signature_element.
  */
@@ -2511,6 +2537,7 @@ VKD3D_SHADER_API const enum vkd3d_shader_target_type *vkd3d_shader_get_supported
  * - VKD3D_SHADER_SOURCE_HLSL to VKD3D_SHADER_TARGET_D3D_BYTECODE
  * - VKD3D_SHADER_SOURCE_HLSL to VKD3D_SHADER_TARGET_DXBC_TPF
  * - VKD3D_SHADER_SOURCE_HLSL to VKD3D_SHADER_TARGET_FX
+ * - VKD3D_SHADER_SOURCE_FX to VKD3D_SHADER_TARGET_D3D_ASM
  *
  * Supported transformations can also be detected at runtime with the functions
  * vkd3d_shader_get_supported_source_types() and

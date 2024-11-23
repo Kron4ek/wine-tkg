@@ -376,7 +376,7 @@ static int wait_select_reply( void *cookie )
 /***********************************************************************
  *              invoke_user_apc
  */
-static NTSTATUS invoke_user_apc( CONTEXT *context, const user_apc_t *apc, NTSTATUS status )
+static NTSTATUS invoke_user_apc( CONTEXT *context, const struct user_apc *apc, NTSTATUS status )
 {
     return call_user_apc_dispatcher( context, apc->args[0], apc->args[1], apc->args[2],
                                      wine_server_get_ptr( apc->func ), status );
@@ -386,7 +386,7 @@ static NTSTATUS invoke_user_apc( CONTEXT *context, const user_apc_t *apc, NTSTAT
 /***********************************************************************
  *              invoke_system_apc
  */
-static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOOL self )
+static void invoke_system_apc( const union apc_call *call, union apc_result *result, BOOL self )
 {
     SIZE_T size, bits;
     void *addr;
@@ -709,21 +709,21 @@ static void invoke_system_apc( const apc_call_t *call, apc_result_t *result, BOO
 /***********************************************************************
  *              server_select
  */
-unsigned int server_select( const select_op_t *select_op, data_size_t size, UINT flags,
-                            timeout_t abs_timeout, context_t *context, user_apc_t *user_apc )
+unsigned int server_select( const union select_op *select_op, data_size_t size, UINT flags,
+                            timeout_t abs_timeout, struct context_data *context, struct user_apc *user_apc )
 {
     unsigned int ret;
     int cookie;
     obj_handle_t apc_handle = 0;
     BOOL suspend_context = !!context;
-    apc_result_t result;
+    union apc_result result;
     sigset_t old_set;
     int signaled;
     data_size_t reply_size;
     struct
     {
-        apc_call_t call;
-        context_t  context[2];
+        union apc_call call;
+        struct context_data context[2];
     } reply_data;
 
     memset( &result, 0, sizeof(result) );
@@ -762,7 +762,7 @@ unsigned int server_select( const select_op_t *select_op, data_size_t size, UINT
 
             /* don't signal multiple times */
             if (size >= sizeof(select_op->signal_and_wait) && select_op->op == SELECT_SIGNAL_AND_WAIT)
-                size = offsetof( select_op_t, signal_and_wait.signal );
+                size = offsetof( union select_op, signal_and_wait.signal );
         }
         pthread_sigmask( SIG_SETMASK, &old_set, NULL );
         if (signaled) break;
@@ -785,12 +785,12 @@ unsigned int server_select( const select_op_t *select_op, data_size_t size, UINT
 /***********************************************************************
  *              server_wait
  */
-unsigned int server_wait( const select_op_t *select_op, data_size_t size, UINT flags,
+unsigned int server_wait( const union select_op *select_op, data_size_t size, UINT flags,
                           const LARGE_INTEGER *timeout )
 {
     timeout_t abs_timeout = timeout ? timeout->QuadPart : TIMEOUT_INFINITE;
     unsigned int ret;
-    user_apc_t apc;
+    struct user_apc apc;
 
     if (abs_timeout < 0)
     {
@@ -816,7 +816,7 @@ unsigned int server_wait( const select_op_t *select_op, data_size_t size, UINT f
  */
 NTSTATUS WINAPI NtContinue( CONTEXT *context, BOOLEAN alertable )
 {
-    user_apc_t apc;
+    struct user_apc apc;
     NTSTATUS status;
 
     if (alertable)
@@ -833,7 +833,7 @@ NTSTATUS WINAPI NtContinue( CONTEXT *context, BOOLEAN alertable )
  */
 NTSTATUS WINAPI NtTestAlert(void)
 {
-    user_apc_t apc;
+    struct user_apc apc;
     NTSTATUS status;
 
     status = server_select( NULL, 0, SELECT_INTERRUPTIBLE | SELECT_ALERTABLE, 0, NULL, &apc );
@@ -845,7 +845,7 @@ NTSTATUS WINAPI NtTestAlert(void)
 /***********************************************************************
  *           server_queue_process_apc
  */
-unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call, apc_result_t *result )
+unsigned int server_queue_process_apc( HANDLE process, const union apc_call *call, union apc_result *result )
 {
     for (;;)
     {
@@ -1804,8 +1804,8 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source, HANDLE 
 
     if ((options & DUPLICATE_CLOSE_SOURCE) && source_process != NtCurrentProcess())
     {
-        apc_call_t call;
-        apc_result_t result;
+        union apc_call call;
+        union apc_result result;
 
         memset( &call, 0, sizeof(call) );
 

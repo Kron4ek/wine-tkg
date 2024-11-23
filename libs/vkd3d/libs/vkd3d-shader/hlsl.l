@@ -104,6 +104,7 @@ if                      {return KW_IF;                  }
 in                      {return KW_IN;                  }
 inline                  {return KW_INLINE;              }
 inout                   {return KW_INOUT;               }
+LineStream              {return KW_LINESTREAM;          }
 linear                  {return KW_LINEAR;              }
 matrix                  {return KW_MATRIX;              }
 namespace               {return KW_NAMESPACE;           }
@@ -114,6 +115,7 @@ out                     {return KW_OUT;                 }
 packoffset              {return KW_PACKOFFSET;          }
 pass                    {return KW_PASS;                }
 PixelShader             {return KW_PIXELSHADER;         }
+PointStream             {return KW_POINTSTREAM;         }
 pixelshader             {return KW_PIXELSHADER;         }
 RasterizerOrderedBuffer           {return KW_RASTERIZERORDEREDBUFFER;            }
 RasterizerOrderedStructuredBuffer {return KW_RASTERIZERORDEREDSTRUCTUREDBUFFER;  }
@@ -170,6 +172,7 @@ texture3D               {return KW_TEXTURE3D;           }
 TextureCube             {return KW_TEXTURECUBE;         }
 textureCUBE             {return KW_TEXTURECUBE;         }
 TextureCubeArray        {return KW_TEXTURECUBEARRAY;    }
+TriangleStream          {return KW_TRIANGLESTREAM;      }
 true                    {return KW_TRUE;                }
 typedef                 {return KW_TYPEDEF;             }
 unsigned                {return KW_UNSIGNED;            }

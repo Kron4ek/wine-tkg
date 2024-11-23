@@ -807,6 +807,9 @@ struct vkd3d_shader_scan_context
 
     struct vkd3d_shader_scan_combined_resource_sampler_info *combined_sampler_info;
     size_t combined_samplers_size;
+
+    enum vkd3d_shader_tessellator_output_primitive output_primitive;
+    enum vkd3d_shader_tessellator_partitioning partitioning;
 };
 
 static VKD3D_PRINTF_FUNC(3, 4) void vkd3d_shader_scan_error(struct vkd3d_shader_scan_context *context,
@@ -1264,6 +1267,12 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
                     VKD3D_SHADER_RESOURCE_BUFFER, VKD3D_SHADER_RESOURCE_DATA_UINT, 0,
                     instruction->declaration.structured_resource.byte_stride, false, instruction->flags);
             break;
+        case VKD3DSIH_DCL_TESSELLATOR_OUTPUT_PRIMITIVE:
+            context->output_primitive = instruction->declaration.tessellator_output_primitive;
+            break;
+        case VKD3DSIH_DCL_TESSELLATOR_PARTITIONING:
+            context->partitioning = instruction->declaration.tessellator_partitioning;
+            break;
         case VKD3DSIH_IF:
         case VKD3DSIH_IFC:
             cf_info = vkd3d_shader_scan_push_cf_info(context);
@@ -1504,6 +1513,7 @@ static int vsir_program_scan(struct vsir_program *program, const struct vkd3d_sh
         struct vkd3d_shader_scan_descriptor_info1 *descriptor_info1)
 {
     struct vkd3d_shader_scan_combined_resource_sampler_info *combined_sampler_info;
+    struct vkd3d_shader_scan_hull_shader_tessellation_info *tessellation_info;
     struct vkd3d_shader_scan_descriptor_info1 local_descriptor_info1 = {0};
     struct vkd3d_shader_scan_descriptor_info *descriptor_info;
     struct vkd3d_shader_scan_signature_info *signature_info;
@@ -1531,6 +1541,8 @@ static int vsir_program_scan(struct vsir_program *program, const struct vkd3d_sh
         if (!descriptor_info1)
             descriptor_info1 = &local_descriptor_info1;
     }
+
+    tessellation_info = vkd3d_find_struct(compile_info->next, SCAN_HULL_SHADER_TESSELLATION_INFO);
 
     vkd3d_shader_scan_context_init(&context, &program->shader_version, compile_info,
             descriptor_info1, combined_sampler_info, message_context);
@@ -1574,6 +1586,12 @@ static int vsir_program_scan(struct vsir_program *program, const struct vkd3d_sh
 
     if (!ret && descriptor_info)
         ret = convert_descriptor_info(descriptor_info, descriptor_info1);
+
+    if (!ret && tessellation_info)
+    {
+        tessellation_info->output_primitive = context.output_primitive;
+        tessellation_info->partitioning = context.partitioning;
+    }
 
     if (ret < 0)
     {
@@ -1680,7 +1698,7 @@ int vsir_program_compile(struct vsir_program *program, uint64_t config_flags,
         case VKD3D_SHADER_TARGET_MSL:
             if ((ret = vsir_program_scan(program, &scan_info, message_context, &scan_descriptor_info)) < 0)
                 return ret;
-            ret = msl_compile(program, config_flags,  &scan_descriptor_info, compile_info, message_context);
+            ret = msl_compile(program, config_flags, &scan_descriptor_info, compile_info, out, message_context);
             vkd3d_shader_free_scan_descriptor_info1(&scan_descriptor_info);
             break;
 

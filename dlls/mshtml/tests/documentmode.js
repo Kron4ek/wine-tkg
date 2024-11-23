@@ -353,6 +353,12 @@ sync_test("builtin_toString", function() {
         test("SVGSVGElement", document.createElementNS(svg_ns, "svg"), "SVGSVGElement");
         test("SVGCircleElement", document.createElementNS(svg_ns, "circle"), "SVGCircleElement");
         test("SVGCircleElement", document.createElementNS(svg_ns, "tspan"), "SVGTSpanElement");
+
+        /* Non-function constructors */
+        var props = Object.getOwnPropertyNames(window);
+        for(i = 0; i < props.length; i++)
+            if(typeof(window[props[i]]) === "object" && window[props[i]].hasOwnProperty("prototype"))
+                test(props[i] + " constructor", window[props[i]], props[i]);
     }
 });
 
@@ -512,6 +518,9 @@ sync_test("elem_props", function() {
     test_exposed("readyState", v < 11);
     test_exposed("clientTop", true);
     test_exposed("title", true);
+    test_exposed("removeNode", true);
+    test_exposed("replaceNode", true);
+    test_exposed("swapNode", true);
     test_exposed("querySelectorAll", v >= 8);
     test_exposed("textContent", v >= 9);
     test_exposed("prefix", v >= 9);
@@ -584,6 +593,30 @@ sync_test("docfrag_props", function() {
     var v = document.documentMode;
 
     test_exposed("compareDocumentPosition", v >= 9);
+});
+
+sync_test("textnode_props", function() {
+    var node = document.createTextNode("testNode");
+
+    function test_exposed(prop, expect) {
+        if(expect)
+            ok(prop in node, prop + " not found in text node.");
+        else
+            ok(!(prop in node), prop + " found in text node.");
+    }
+
+    var v = document.documentMode;
+
+    test_exposed("childNodes", true);
+    test_exposed("nodeName", true);
+    test_exposed("nodeValue", true);
+    test_exposed("ownerDocument", true);
+    test_exposed("removeNode", true);
+    test_exposed("replaceNode", true);
+    test_exposed("swapNode", true);
+    test_exposed("compareDocumentPosition", v >= 9);
+    test_exposed("isEqualNode", v >= 9);
+    test_exposed("prefix", v >= 9);
 });
 
 sync_test("window_props", function() {
@@ -1180,6 +1213,9 @@ sync_test("doctype", function() {
     }
 
     ok(doctype.name === "html", "doctype.name = " + doctype.name);
+    ok(!("removeNode" in doctype), "removeNode found in doctype.");
+    ok(!("replaceNode" in doctype), "replaceNode found in doctype.");
+    ok(!("swapNode" in doctype), "swapNode found in doctype.");
 });
 
 async_test("iframe_doc_mode", function() {
@@ -1301,7 +1337,7 @@ sync_test("navigator", function() {
 
 sync_test("delete_prop", function() {
     var v = document.documentMode;
-    var obj = document.createElement("div"), r, obj2;
+    var obj = document.createElement("div"), r, obj2, func, prop;
 
     obj.prop1 = true;
     r = false;
@@ -1317,6 +1353,40 @@ sync_test("delete_prop", function() {
     ok(!r, "got an unexpected exception");
     ok(!("prop1" in obj), "prop1 is still in obj");
 
+    /* builtin properties don't throw any exception, but are not really deleted */
+    r = (delete obj.tagName);
+    ok(r, "delete returned " + r);
+    ok("tagName" in obj, "tagName deleted from obj");
+    ok(obj.tagName === "DIV", "tagName = " + obj.tagName);
+
+    prop = obj.id;
+    r = (delete obj.id);
+    ok(r, "delete returned " + r);
+    ok("id" in obj, "id deleted from obj");
+    ok(obj.id === prop, "id = " + obj.id);
+
+    obj.id = "1234";
+    ok(obj.id === "1234", "id after set to 1234 = " + obj.id);
+    r = (delete obj.id);
+    ok(r, "delete returned " + r);
+    ok("id" in obj, "id deleted from obj");
+    ok(obj.id === "1234", "id = " + obj.id);
+
+    /* builtin functions get reset to their original values */
+    func = function() { }
+    prop = obj.setAttribute;
+    r = (delete obj.setAttribute);
+    ok(r, "delete returned " + r);
+    ok("setAttribute" in obj, "setAttribute deleted from obj");
+    ok(obj.setAttribute === prop, "setAttribute = " + obj.setAttribute);
+
+    obj.setAttribute = func;
+    ok(obj.setAttribute === func, "setAttribute after set to func = " + obj.setAttribute);
+    r = (delete obj.setAttribute);
+    ok(r, "delete returned " + r);
+    ok("setAttribute" in obj, "setAttribute deleted from obj");
+    ok(obj.setAttribute === prop, "setAttribute = " + obj.setAttribute);
+
     /* again, this time prop1 does not exist */
     r = false;
     try {
@@ -1326,7 +1396,6 @@ sync_test("delete_prop", function() {
     }
     if(v < 9) {
         ok(r, "did not get an expected exception");
-        return;
     }else {
         ok(!r, "got an unexpected exception");
         ok(!("prop1" in obj), "prop1 is still in obj");
@@ -1336,12 +1405,6 @@ sync_test("delete_prop", function() {
     ok(r, "delete returned " + r);
     ok("className" in obj, "className deleted from obj");
     ok(obj.className === "", "className = " + obj.className);
-
-    /* builtin propertiles don't throw any exception, but are not really deleted */
-    r = (delete obj.tagName);
-    ok(r, "delete returned " + r);
-    ok("tagName" in obj, "tagName deleted from obj");
-    ok(obj.tagName === "DIV", "tagName = " + obj.tagName);
 
     obj = document.querySelectorAll("*");
     ok("0" in obj, "0 is not in obj");
@@ -1353,12 +1416,27 @@ sync_test("delete_prop", function() {
     /* test window object and its global scope handling */
     obj = window;
 
+    ok("encodeURIComponent" in obj, "encodeURIComponent not in obj");
+    try {
+        prop = window.encodeURIComponent;
+        r = (delete window.encodeURIComponent);
+        ok(v >= 9, "did not get an expect exception deleting encodeURIComponent");
+        ok(r, "delete returned " + r);
+        ok(!("encodeURIComponent" in obj), "encodeURIComponent is still in obj");
+        window.encodeURIComponent = prop;
+    }catch(ex) {
+        ok(v < 9, "expected exception deleting encodeURIComponent");
+        ok(ex.number === 0xa01bd - 0x80000000, "deleting encodeURIComponent threw " + ex.number);
+        ok("encodeURIComponent" in obj, "encodeURIComponent is not in obj");
+    }
+
     obj.globalprop1 = true;
     ok(globalprop1, "globalprop1 = " + globalprop1);
     r = false;
     try {
         delete obj.globalprop1;
     }catch(ex) {
+        ok(ex.number === 0xa01bd - 0x80000000, "deleting globalprop1 threw " + ex.number);
         r = true;
     }
     if(v < 9) {
@@ -1374,13 +1452,13 @@ sync_test("delete_prop", function() {
     try {
         delete obj.globalprop2;
     }catch(ex) {
+        ok(ex.number === 0xa01bd - 0x80000000, "deleting globalprop2 threw " + ex.number);
         r = true;
     }
     if(v < 9) {
         ok(r, "did not get an expected globalprop2 exception");
     }else {
         ok(!r, "got an unexpected exception");
-        todo_wine.
         ok(!("globalprop2" in obj), "globalprop2 is still in obj");
     }
 
@@ -1390,6 +1468,7 @@ sync_test("delete_prop", function() {
     try {
         delete globalprop3;
     }catch(ex) {
+        ok(ex.number === 0xa01bd - 0x80000000, "deleting globalprop3 threw " + ex.number);
         r = true;
     }
     if(v < 9) {
@@ -1404,8 +1483,88 @@ sync_test("delete_prop", function() {
     ok(obj.globalprop4, "globalprop4 = " + globalprop4);
     r = (delete globalprop4);
     ok(r, "delete returned " + r);
-    todo_wine.
     ok(!("globalprop4" in obj), "globalprop4 is still in obj");
+
+    globalprop5 = true;
+    ok(obj.globalprop5, "globalprop5 = " + globalprop5);
+    try {
+        r = (delete window.globalprop5);
+        ok(v >= 9, "did not get an expected exception deleting globalprop5");
+        ok(r, "delete returned " + r);
+        ok(!("globalprop5" in obj), "globalprop5 is still in obj");
+    }catch(ex) {
+        ok(v < 9, "expected exception deleting globalprop5");
+        ok(ex.number === 0xa01bd - 0x80000000, "deleting globalprop5 threw " + ex.number);
+        ok("globalprop5" in obj, "globalprop5 is not in obj");
+    }
+
+    document.body.innerHTML = '<div id="winetest"/>';
+    ok("winetest" in obj, "winetest not in obj");
+    try {
+        r = (delete window.winetest);
+        ok(v >= 9, "did not get an expected exception deleting winetest");
+        ok(r, "delete returned " + r);
+    }catch(ex) {
+        ok(v < 9, "expected exception deleting winetest");
+        ok(ex.number === 0xa01bd - 0x80000000, "deleting winetest threw " + ex.number);
+    }
+    ok("winetest" in obj, "winetest is not in obj");
+    document.body.innerHTML = "";
+    ok(!("winetest" in obj), "winetest is still in obj");
+
+    document.body.innerHTML = '<div id="foobar"/>';
+    ok("foobar" in obj, "foobar not in obj");
+    window.foobar = "1234";
+    ok(obj.foobar === "1234", "foobar = " + obj.foobar);
+    document.body.innerHTML = "";
+    ok("foobar" in obj, "foobar is not in obj");
+    ok(obj.foobar === "1234", "foobar = " + obj.foobar);
+    try {
+        r = (delete window.foobar);
+        ok(v >= 9, "did not get an expected exception deleting foobar");
+        ok(r, "delete returned " + r);
+        ok(!("foobar" in obj), "foobar is still in obj");
+    }catch(ex) {
+        ok(v < 9, "expected exception deleting foobar");
+        ok(ex.number === 0xa01bd - 0x80000000, "deleting foobar threw " + ex.number);
+        ok("foobar" in obj, "foobar is not in obj");
+    }
+
+    document.body.innerHTML = '<div id="barfoo"/>';
+    ok("barfoo" in obj, "barfoo not in obj");
+    window.barfoo = "5678";
+    ok(obj.barfoo === "5678", "barfoo = " + obj.barfoo);
+    try {
+        r = (delete window.barfoo);
+        ok(v >= 9, "did not get an expected exception deleting barfoo");
+        ok(r, "delete returned " + r);
+        ok(obj.barfoo !== "5678", "barfoo is still 5678");
+    }catch(ex) {
+        ok(v < 9, "expected exception deleting barfoo");
+        ok(ex.number === 0xa01bd - 0x80000000, "deleting barfoo threw " + ex.number);
+        ok(obj.barfoo === "5678", "barfoo = " + obj.barfoo);
+    }
+    ok("barfoo" in obj, "barfoo is not in obj");
+    document.body.innerHTML = "";
+    if(v < 9)
+        ok("barfoo" in obj, "barfoo is not in obj");
+    else
+        ok(!("barfoo" in obj), "barfoo is still in obj");
+
+    document.body.innerHTML = '<iframe id="testwine"/>';
+    ok("testwine" in obj, "testwine not in obj");
+    try {
+        r = (delete window.testwine);
+        ok(v >= 9, "did not get an expected exception deleting testwine");
+        ok(r, "delete returned " + r);
+    }catch(ex) {
+        ok(v < 9, "expected exception deleting testwine");
+        ok(ex.number === 0xa01bd - 0x80000000, "deleting testwine threw " + ex.number);
+    }
+    ok("testwine" in obj, "testwine is not in obj");
+
+    document.body.innerHTML = "";
+    ok(!("testwine" in obj), "testwine is still in obj");
 });
 
 sync_test("detached arguments", function() {
@@ -3228,6 +3387,54 @@ sync_test("form", function() {
     ok(form[0] === "test", "form[0] = " + form[0]);
 });
 
+function test_own_props(obj, name, props, todos, flaky) {
+    var v = document.documentMode, prop, expected = {}, enumerated = Object.getOwnPropertyNames(obj).sort();
+
+    if(flaky)
+        enumerated = enumerated.filter(function(p) { return flaky.indexOf(p) === -1; });
+    if(props) {
+        for(i = 0; i < props.length; i++) {
+            prop = props[i];
+            if(Array.isArray(prop)) {
+                if(v < prop[1] || (prop.length > 2 && v > prop[2]))
+                    continue;
+                prop = prop[0];
+            }
+            expected[prop] |= 1;
+        }
+    }
+    if(todos) {
+        for(i = 0; i < todos.length; i++) {
+            prop = todos[i];
+            if(Array.isArray(prop)) {
+                if(v < prop[1] || (prop.length > 2 && v > prop[2]))
+                    continue;
+                prop = prop[0];
+            }
+            expected[prop] |= 2;  /* 2 marks todo */
+        }
+    }
+    for(i = 0; i < enumerated.length; i++) {
+        prop = enumerated[i];
+        if(!expected.hasOwnProperty(prop))
+            ok(false, prop + " is a prop of " + name);
+        else {
+            if(expected[prop] & 1) {
+                todo_wine_if(expected[prop] & 2).
+                ok(true, prop + " not a prop of " + name);
+            }else {
+                todo_wine_if(expected[prop] & 2).
+                ok(false, prop + " is a prop of " + name);
+            }
+            delete expected[prop];
+        }
+    }
+    for(prop in expected) {
+        todo_wine_if(expected[prop] & 2).
+        ok(!(expected[prop] & 1), prop + " not a prop of " + name);
+    }
+}
+
 sync_test("prototypes", function() {
     var v = document.documentMode;
     if(v < 9)
@@ -3443,4 +3650,53 @@ sync_test("prototypes", function() {
     check(Attr.prototype, Node.prototype, "attr prototype");
     check(document.createDocumentFragment(), DocumentFragment.prototype, "fragment");
     check(DocumentFragment.prototype, Node.prototype, "fragment prototype");
+});
+
+sync_test("prototype props", function() {
+    var v = document.documentMode;
+    if(v < 9)
+        return;
+
+    function check(constr, props, todos, flaky) {
+        var name = Object.prototype.toString.call(constr).slice(8, -1) + ".prototype";
+        ok(constr.prototype.constructor === constr, name + "'s constructor not original constructor");
+
+        props.push("constructor");
+        test_own_props(constr.prototype, name, props, todos, flaky);
+    }
+
+    check(CSSStyleRule, [ "readOnly", "selectorText", "style" ]);
+    check(CustomEvent, [ "detail", "initCustomEvent" ]);
+    check(DocumentType, [ "entities", "internalSubset", "name", "notations", "publicId", "systemId" ]);
+    check(Event, [
+        "AT_TARGET", "BUBBLING_PHASE", "CAPTURING_PHASE", "bubbles", "cancelBubble", "cancelable", "currentTarget",
+        "defaultPrevented", "eventPhase", "initEvent", "isTrusted", "preventDefault", "srcElement",
+        "stopImmediatePropagation", "stopPropagation", "target", "timeStamp", "type"
+    ], [ "AT_TARGET", "BUBBLING_PHASE", "CAPTURING_PHASE" ]);
+    check(HTMLUnknownElement, [ "namedRecordset", "recordset" ]);
+    check(MessageEvent, [ "data", "initMessageEvent", "origin", ["ports",10], "source" ], [ ["ports",10] ]);
+    check(MouseEvent, [
+        "altKey", "button", "buttons", "clientX", "clientY", "ctrlKey", "fromElement", "getModifierState",
+        "initMouseEvent", "layerX", "layerY", "metaKey", "offsetX", "offsetY", "pageX", "pageY", "relatedTarget",
+        "screenX", "screenY", "shiftKey", "toElement", "which", "x", "y"
+    ]);
+    check(Node, [
+        "ATTRIBUTE_NODE", "CDATA_SECTION_NODE", "COMMENT_NODE", "DOCUMENT_FRAGMENT_NODE",  "DOCUMENT_NODE",
+        "DOCUMENT_POSITION_CONTAINED_BY", "DOCUMENT_POSITION_CONTAINS", "DOCUMENT_POSITION_DISCONNECTED",
+        "DOCUMENT_POSITION_FOLLOWING", "DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC", "DOCUMENT_POSITION_PRECEDING",
+        "DOCUMENT_TYPE_NODE", "ELEMENT_NODE", "ENTITY_NODE", "ENTITY_REFERENCE_NODE", "NOTATION_NODE",
+        "PROCESSING_INSTRUCTION_NODE", "TEXT_NODE", "addEventListener", "appendChild", "attributes", "childNodes", "cloneNode",
+        "compareDocumentPosition", "dispatchEvent", "firstChild", "hasAttributes", "hasChildNodes", "insertBefore",
+        "isDefaultNamespace", "isEqualNode", "isSameNode", "isSupported", "lastChild", "localName", "lookupNamespaceURI",
+        "lookupPrefix", "namespaceURI", "nextSibling", "nodeName", "nodeType", "nodeValue", "normalize", "ownerDocument",
+        "parentNode", "prefix", "previousSibling", "removeChild", "removeEventListener", "replaceChild", "textContent"
+    ], [
+        "ATTRIBUTE_NODE", "CDATA_SECTION_NODE", "COMMENT_NODE", "DOCUMENT_FRAGMENT_NODE",  "DOCUMENT_NODE",
+        "DOCUMENT_POSITION_CONTAINED_BY", "DOCUMENT_POSITION_CONTAINS", "DOCUMENT_POSITION_DISCONNECTED",
+        "DOCUMENT_POSITION_FOLLOWING", "DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC", "DOCUMENT_POSITION_PRECEDING",
+        "DOCUMENT_TYPE_NODE", "ELEMENT_NODE", "ENTITY_NODE", "ENTITY_REFERENCE_NODE", "NOTATION_NODE",
+        "PROCESSING_INSTRUCTION_NODE", "TEXT_NODE", "hasAttributes", "normalize"
+    ]);
+    check(StorageEvent, [ "initStorageEvent", "key", "newValue", "oldValue", "storageArea", "url" ]);
+    check(UIEvent, [ "detail", "initUIEvent", "view" ], null, [ "deviceSessionId" ]);
 });

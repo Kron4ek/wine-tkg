@@ -287,6 +287,7 @@ bool hlsl_type_is_shader(const struct hlsl_type *type)
         case HLSL_CLASS_UAV:
         case HLSL_CLASS_CONSTANT_BUFFER:
         case HLSL_CLASS_BLEND_STATE:
+        case HLSL_CLASS_STREAM_OUTPUT:
         case HLSL_CLASS_VOID:
         case HLSL_CLASS_NULL:
             return false;
@@ -434,6 +435,7 @@ static void hlsl_type_calculate_reg_size(struct hlsl_ctx *ctx, struct hlsl_type 
         case HLSL_CLASS_HULL_SHADER:
         case HLSL_CLASS_GEOMETRY_SHADER:
         case HLSL_CLASS_BLEND_STATE:
+        case HLSL_CLASS_STREAM_OUTPUT:
         case HLSL_CLASS_NULL:
             break;
     }
@@ -525,6 +527,7 @@ static bool type_is_single_component(const struct hlsl_type *type)
         case HLSL_CLASS_PASS:
         case HLSL_CLASS_TECHNIQUE:
         case HLSL_CLASS_VOID:
+        case HLSL_CLASS_STREAM_OUTPUT:
             break;
     }
     vkd3d_unreachable();
@@ -680,6 +683,7 @@ unsigned int hlsl_type_get_component_offset(struct hlsl_ctx *ctx, struct hlsl_ty
             case HLSL_CLASS_SCALAR:
             case HLSL_CLASS_CONSTANT_BUFFER:
             case HLSL_CLASS_NULL:
+            case HLSL_CLASS_STREAM_OUTPUT:
                 vkd3d_unreachable();
         }
         type = next_type;
@@ -898,6 +902,22 @@ struct hlsl_type *hlsl_new_array_type(struct hlsl_ctx *ctx, struct hlsl_type *ba
     return type;
 }
 
+struct hlsl_type *hlsl_new_stream_output_type(struct hlsl_ctx *ctx,
+        enum hlsl_so_object_type so_type, struct hlsl_type *data_type)
+{
+    struct hlsl_type *type;
+
+    if (!(type = hlsl_alloc(ctx, sizeof(*type))))
+        return NULL;
+    type->class = HLSL_CLASS_STREAM_OUTPUT;
+    type->e.so.so_type = so_type;
+    type->e.so.type = data_type;
+
+    list_add_tail(&ctx->types, &type->entry);
+
+    return type;
+}
+
 struct hlsl_type *hlsl_new_struct_type(struct hlsl_ctx *ctx, const char *name,
         struct hlsl_struct_field *fields, size_t field_count)
 {
@@ -1086,6 +1106,7 @@ unsigned int hlsl_type_component_count(const struct hlsl_type *type)
         case HLSL_CLASS_PASS:
         case HLSL_CLASS_TECHNIQUE:
         case HLSL_CLASS_VOID:
+        case HLSL_CLASS_STREAM_OUTPUT:
             break;
     }
 
@@ -1156,6 +1177,11 @@ bool hlsl_types_are_equal(const struct hlsl_type *t1, const struct hlsl_type *t2
 
         case HLSL_CLASS_CONSTANT_BUFFER:
             return hlsl_types_are_equal(t1->e.resource.format, t2->e.resource.format);
+
+        case HLSL_CLASS_STREAM_OUTPUT:
+            if (t1->e.so.so_type != t2->e.so.so_type)
+                return false;
+            return hlsl_types_are_equal(t1->e.so.type, t2->e.so.type);
 
         case HLSL_CLASS_DEPTH_STENCIL_STATE:
         case HLSL_CLASS_DEPTH_STENCIL_VIEW:
@@ -2834,6 +2860,20 @@ struct vkd3d_string_buffer *hlsl_type_to_string(struct hlsl_ctx *ctx, const stru
 
         case HLSL_CLASS_ERROR:
             vkd3d_string_buffer_printf(string, "<error type>");
+            return string;
+
+        case HLSL_CLASS_STREAM_OUTPUT:
+            if (type->e.so.so_type == HLSL_STREAM_OUTPUT_POINT_STREAM)
+                vkd3d_string_buffer_printf(string, "PointStream");
+            else if (type->e.so.so_type == HLSL_STREAM_OUTPUT_LINE_STREAM)
+                vkd3d_string_buffer_printf(string, "LineStream");
+            else
+                vkd3d_string_buffer_printf(string, "TriangleStream");
+            if ((inner_string = hlsl_type_to_string(ctx, type->e.so.type)))
+            {
+                vkd3d_string_buffer_printf(string, "<%s>", inner_string->buffer);
+                hlsl_release_string_buffer(ctx, inner_string);
+            }
             return string;
 
         case HLSL_CLASS_DEPTH_STENCIL_STATE:
