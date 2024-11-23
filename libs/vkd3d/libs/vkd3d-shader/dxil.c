@@ -430,6 +430,7 @@ enum dx_intrinsic_opcode
     DX_DERIV_COARSEY                =  84,
     DX_DERIV_FINEX                  =  85,
     DX_DERIV_FINEY                  =  86,
+    DX_SAMPLE_INDEX                 =  90,
     DX_COVERAGE                     =  91,
     DX_THREAD_ID                    =  93,
     DX_GROUP_ID                     =  94,
@@ -3827,6 +3828,11 @@ static enum vkd3d_shader_register_type register_type_from_dxil_semantic_kind(
 {
     switch (sysval_semantic)
     {
+        /* VSIR does not use an I/O register for SV_SampleIndex, but its
+         * signature element has a register index of UINT_MAX and it is
+         * convenient to return a valid register type here to handle it. */
+        case VKD3D_SHADER_SV_SAMPLE_INDEX:
+            return VKD3DSPR_NULL;
         case VKD3D_SHADER_SV_COVERAGE:
             return VKD3DSPR_COVERAGE;
         case VKD3D_SHADER_SV_DEPTH:
@@ -3844,6 +3850,7 @@ static void sm6_parser_init_signature(struct sm6_parser *sm6, const struct shade
         bool is_input, enum vkd3d_shader_register_type reg_type, struct vkd3d_shader_dst_param *params)
 {
     enum vkd3d_shader_type shader_type = sm6->p.program->shader_version.type;
+    enum vkd3d_shader_register_type io_reg_type;
     bool is_patch_constant, is_control_point;
     struct vkd3d_shader_dst_param *param;
     const struct signature_element *e;
@@ -3876,9 +3883,10 @@ static void sm6_parser_init_signature(struct sm6_parser *sm6, const struct shade
 
         param = &params[i];
 
-        if (e->register_index == UINT_MAX)
+        if (e->register_index == UINT_MAX
+                && (io_reg_type = register_type_from_dxil_semantic_kind(e->sysval_semantic)) != VKD3DSPR_NULL)
         {
-            dst_param_io_init(param, e, register_type_from_dxil_semantic_kind(e->sysval_semantic));
+            dst_param_io_init(param, e, io_reg_type);
             continue;
         }
 
@@ -5795,6 +5803,34 @@ static void sm6_parser_emit_dx_sample(struct sm6_parser *sm6, enum dx_intrinsic_
     instruction_dst_param_init_ssa_vector(ins, component_count, sm6);
 }
 
+static void sm6_parser_emit_dx_sample_index(struct sm6_parser *sm6, enum dx_intrinsic_opcode op,
+        const struct sm6_value **operands, struct function_emission_state *state)
+{
+    const struct shader_signature *signature = &sm6->p.program->input_signature;
+    struct vkd3d_shader_instruction *ins = state->ins;
+    struct vkd3d_shader_src_param *src_param;
+    unsigned int element_idx;
+
+    vsir_instruction_init(ins, &sm6->p.location, VKD3DSIH_MOV);
+
+    /* SV_SampleIndex is identified in VSIR by its signature element index,
+     * but the index is not supplied as a parameter to the DXIL intrinsic. */
+    if (!vsir_signature_find_sysval(signature, VKD3D_SHADER_SV_SAMPLE_INDEX, 0, &element_idx))
+    {
+        WARN("Sample index is not in the signature.\n");
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
+                "Sample index signature element for a sample index operation is missing.");
+        return;
+    }
+
+    if (!(src_param = instruction_src_params_alloc(ins, 1, sm6)))
+        return;
+    src_param->reg = sm6->input_params[element_idx].reg;
+    src_param_init(src_param);
+
+    instruction_dst_param_init_ssa_scalar(ins, sm6);
+}
+
 static void sm6_parser_emit_dx_saturate(struct sm6_parser *sm6, enum dx_intrinsic_opcode op,
         const struct sm6_value **operands, struct function_emission_state *state)
 {
@@ -6300,6 +6336,7 @@ static const struct sm6_dx_opcode_info sm6_dx_op_table[] =
     [DX_SAMPLE_C                      ] = {"o", "HHffffiiiff", sm6_parser_emit_dx_sample},
     [DX_SAMPLE_C_LZ                   ] = {"o", "HHffffiiif", sm6_parser_emit_dx_sample},
     [DX_SAMPLE_GRAD                   ] = {"o", "HHffffiiifffffff", sm6_parser_emit_dx_sample},
+    [DX_SAMPLE_INDEX                  ] = {"i", "",     sm6_parser_emit_dx_sample_index},
     [DX_SAMPLE_LOD                    ] = {"o", "HHffffiiif", sm6_parser_emit_dx_sample},
     [DX_SATURATE                      ] = {"g", "R",    sm6_parser_emit_dx_saturate},
     [DX_SIN                           ] = {"g", "R",    sm6_parser_emit_dx_sincos},
@@ -8513,6 +8550,7 @@ static const enum vkd3d_shader_sysval_semantic sysval_semantic_table[] =
     [SEMANTIC_KIND_CLIPDISTANCE]         = VKD3D_SHADER_SV_CLIP_DISTANCE,
     [SEMANTIC_KIND_CULLDISTANCE]         = VKD3D_SHADER_SV_CULL_DISTANCE,
     [SEMANTIC_KIND_PRIMITIVEID]          = VKD3D_SHADER_SV_PRIMITIVE_ID,
+    [SEMANTIC_KIND_SAMPLEINDEX]          = VKD3D_SHADER_SV_SAMPLE_INDEX,
     [SEMANTIC_KIND_ISFRONTFACE]          = VKD3D_SHADER_SV_IS_FRONT_FACE,
     [SEMANTIC_KIND_COVERAGE]             = VKD3D_SHADER_SV_COVERAGE,
     [SEMANTIC_KIND_TARGET]               = VKD3D_SHADER_SV_TARGET,
@@ -9679,12 +9717,13 @@ static void sm6_parser_emit_dcl_tessellator_domain(struct sm6_parser *sm6,
 
     ins = sm6_parser_add_instruction(sm6, VKD3DSIH_DCL_TESSELLATOR_DOMAIN);
     ins->declaration.tessellator_domain = tessellator_domain;
+    sm6->p.program->tess_domain = tessellator_domain;
 }
 
-static void sm6_parser_validate_control_point_count(struct sm6_parser *sm6, unsigned int count,
-        const char *type)
+static void sm6_parser_validate_control_point_count(struct sm6_parser *sm6,
+        unsigned int count, bool allow_zero, const char *type)
 {
-    if (!count || count > 32)
+    if ((!count && !allow_zero) || count > 32)
     {
         WARN("%s control point count %u invalid.\n", type, count);
         vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES,
@@ -9913,7 +9952,7 @@ static enum vkd3d_tessellator_domain sm6_parser_ds_properties_init(struct sm6_pa
     }
 
     sm6_parser_emit_dcl_tessellator_domain(sm6, operands[0]);
-    sm6_parser_validate_control_point_count(sm6, operands[1], "Domain shader input");
+    sm6_parser_validate_control_point_count(sm6, operands[1], true, "Domain shader input");
     sm6->p.program->input_control_point_count = operands[1];
 
     return operands[0];
@@ -9972,9 +10011,9 @@ static enum vkd3d_tessellator_domain sm6_parser_hs_properties_init(struct sm6_pa
         }
     }
 
-    sm6_parser_validate_control_point_count(sm6, operands[1], "Hull shader input");
+    sm6_parser_validate_control_point_count(sm6, operands[1], false, "Hull shader input");
     program->input_control_point_count = operands[1];
-    sm6_parser_validate_control_point_count(sm6, operands[2], "Hull shader output");
+    sm6_parser_validate_control_point_count(sm6, operands[2], false, "Hull shader output");
     sm6_parser_emit_dcl_count(sm6, VKD3DSIH_DCL_OUTPUT_CONTROL_POINT_COUNT, operands[2]);
     program->output_control_point_count = operands[2];
     sm6_parser_emit_dcl_tessellator_domain(sm6, operands[3]);

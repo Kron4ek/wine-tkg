@@ -250,7 +250,7 @@ enum vkd3d_shader_input_sysval_semantic vkd3d_siv_from_sysval_indexed(enum vkd3d
 #define VKD3D_SPIRV_VERSION_1_0 0x00010000
 #define VKD3D_SPIRV_VERSION_1_3 0x00010300
 #define VKD3D_SPIRV_GENERATOR_ID 18
-#define VKD3D_SPIRV_GENERATOR_VERSION 13
+#define VKD3D_SPIRV_GENERATOR_VERSION 14
 #define VKD3D_SPIRV_GENERATOR_MAGIC vkd3d_make_u32(VKD3D_SPIRV_GENERATOR_VERSION, VKD3D_SPIRV_GENERATOR_ID)
 
 struct vkd3d_spirv_stream
@@ -2102,28 +2102,26 @@ static const struct vkd3d_spirv_resource_type
     SpvDim dim;
     uint32_t arrayed;
     uint32_t ms;
-
     unsigned int coordinate_component_count;
-    unsigned int offset_component_count;
 
     SpvCapability capability;
     SpvCapability uav_capability;
 }
 vkd3d_spirv_resource_type_table[] =
 {
-    {VKD3D_SHADER_RESOURCE_BUFFER,            SpvDimBuffer, 0, 0, 1, 0,
+    {VKD3D_SHADER_RESOURCE_BUFFER,            SpvDimBuffer, 0, 0, 1,
             SpvCapabilitySampledBuffer, SpvCapabilityImageBuffer},
-    {VKD3D_SHADER_RESOURCE_TEXTURE_1D,        SpvDim1D,     0, 0, 1, 1,
+    {VKD3D_SHADER_RESOURCE_TEXTURE_1D,        SpvDim1D,     0, 0, 1,
             SpvCapabilitySampled1D, SpvCapabilityImage1D},
-    {VKD3D_SHADER_RESOURCE_TEXTURE_2DMS,      SpvDim2D,     0, 1, 2, 2},
-    {VKD3D_SHADER_RESOURCE_TEXTURE_2D,        SpvDim2D,     0, 0, 2, 2},
-    {VKD3D_SHADER_RESOURCE_TEXTURE_3D,        SpvDim3D,     0, 0, 3, 3},
-    {VKD3D_SHADER_RESOURCE_TEXTURE_CUBE,      SpvDimCube,   0, 0, 3, 0},
-    {VKD3D_SHADER_RESOURCE_TEXTURE_1DARRAY,   SpvDim1D,     1, 0, 2, 1,
+    {VKD3D_SHADER_RESOURCE_TEXTURE_2DMS,      SpvDim2D,     0, 1, 2},
+    {VKD3D_SHADER_RESOURCE_TEXTURE_2D,        SpvDim2D,     0, 0, 2},
+    {VKD3D_SHADER_RESOURCE_TEXTURE_3D,        SpvDim3D,     0, 0, 3},
+    {VKD3D_SHADER_RESOURCE_TEXTURE_CUBE,      SpvDimCube,   0, 0, 3},
+    {VKD3D_SHADER_RESOURCE_TEXTURE_1DARRAY,   SpvDim1D,     1, 0, 2,
             SpvCapabilitySampled1D, SpvCapabilityImage1D},
-    {VKD3D_SHADER_RESOURCE_TEXTURE_2DARRAY,   SpvDim2D,     1, 0, 3, 2},
-    {VKD3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY, SpvDim2D,     1, 1, 3, 2},
-    {VKD3D_SHADER_RESOURCE_TEXTURE_CUBEARRAY, SpvDimCube,   1, 0, 4, 0,
+    {VKD3D_SHADER_RESOURCE_TEXTURE_2DARRAY,   SpvDim2D,     1, 0, 3},
+    {VKD3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY, SpvDim2D,     1, 1, 3},
+    {VKD3D_SHADER_RESOURCE_TEXTURE_CUBEARRAY, SpvDimCube,   1, 0, 4,
             SpvCapabilitySampledCubeArray, SpvCapabilityImageCubeArray},
 };
 
@@ -6824,14 +6822,10 @@ static void spirv_compiler_emit_dcl_gs_instances(struct spirv_compiler *compiler
     compiler->spirv_builder.invocation_count = instruction->declaration.count;
 }
 
-static void spirv_compiler_emit_dcl_tessellator_domain(struct spirv_compiler *compiler,
-        const struct vkd3d_shader_instruction *instruction)
+static void spirv_compiler_emit_tessellator_domain(struct spirv_compiler *compiler,
+        enum vkd3d_tessellator_domain domain)
 {
-    enum vkd3d_tessellator_domain domain = instruction->declaration.tessellator_domain;
     SpvExecutionMode mode;
-
-    if (compiler->shader_type == VKD3D_SHADER_TYPE_HULL && spirv_compiler_is_opengl_target(compiler))
-        return;
 
     switch (domain)
     {
@@ -8597,9 +8591,11 @@ static uint32_t spirv_compiler_emit_texel_offset(struct spirv_compiler *compiler
         const struct vkd3d_shader_instruction *instruction,
         const struct vkd3d_spirv_resource_type *resource_type_info)
 {
+    unsigned int component_count = resource_type_info->coordinate_component_count - resource_type_info->arrayed;
     const struct vkd3d_shader_texel_offset *offset = &instruction->texel_offset;
-    unsigned int component_count = resource_type_info->offset_component_count;
     int32_t data[4] = {offset->u, offset->v, offset->w, 0};
+
+    VKD3D_ASSERT(resource_type_info->dim != SpvDimCube);
     return spirv_compiler_get_constant(compiler,
             VKD3D_SHADER_COMPONENT_INT, component_count, (const uint32_t *)data);
 }
@@ -8684,9 +8680,9 @@ static void spirv_compiler_emit_sample(struct spirv_compiler *compiler,
     const struct vkd3d_shader_dst_param *dst = instruction->dst;
     const struct vkd3d_shader_src_param *src = instruction->src;
     const struct vkd3d_shader_src_param *resource, *sampler;
+    unsigned int image_operand_count = 0, component_count;
     uint32_t sampled_type_id, coordinate_id, val_id;
     SpvImageOperandsMask operands_mask = 0;
-    unsigned int image_operand_count = 0;
     struct vkd3d_shader_image image;
     uint32_t image_operands[3];
     uint32_t coordinate_mask;
@@ -8711,7 +8707,8 @@ static void spirv_compiler_emit_sample(struct spirv_compiler *compiler,
         case VKD3DSIH_SAMPLE_GRAD:
             op = SpvOpImageSampleExplicitLod;
             operands_mask |= SpvImageOperandsGradMask;
-            coordinate_mask = (1u << image.resource_type_info->offset_component_count) - 1;
+            component_count = image.resource_type_info->coordinate_component_count - image.resource_type_info->arrayed;
+            coordinate_mask = (1u << component_count) - 1;
             image_operands[image_operand_count++] = spirv_compiler_emit_load_src(compiler,
                     &src[3], coordinate_mask);
             image_operands[image_operand_count++] = spirv_compiler_emit_load_src(compiler,
@@ -8800,10 +8797,10 @@ static void spirv_compiler_emit_gather4(struct spirv_compiler *compiler,
     const struct vkd3d_shader_dst_param *dst = instruction->dst;
     const struct vkd3d_shader_src_param *src = instruction->src;
     unsigned int image_flags = VKD3D_IMAGE_FLAG_SAMPLED;
+    unsigned int component_count, component_idx;
     SpvImageOperandsMask operands_mask = 0;
     unsigned int image_operand_count = 0;
     struct vkd3d_shader_image image;
-    unsigned int component_idx;
     uint32_t image_operands[1];
     uint32_t coordinate_mask;
     bool extended_offset;
@@ -8825,10 +8822,12 @@ static void spirv_compiler_emit_gather4(struct spirv_compiler *compiler,
 
     if (offset)
     {
+        component_count = image.resource_type_info->coordinate_component_count - image.resource_type_info->arrayed;
+        VKD3D_ASSERT(image.resource_type_info->dim != SpvDimCube);
         vkd3d_spirv_enable_capability(builder, SpvCapabilityImageGatherExtended);
         operands_mask |= SpvImageOperandsOffsetMask;
         image_operands[image_operand_count++] = spirv_compiler_emit_load_src(compiler,
-                offset, (1u << image.resource_type_info->offset_component_count) - 1);
+                offset, (1u << component_count) - 1);
     }
     else if (vkd3d_shader_instruction_has_texel_offset(instruction))
     {
@@ -10236,9 +10235,6 @@ static int spirv_compiler_handle_instruction(struct spirv_compiler *compiler,
         case VKD3DSIH_DCL_OUTPUT_CONTROL_POINT_COUNT:
             spirv_compiler_emit_output_vertex_count(compiler, instruction);
             break;
-        case VKD3DSIH_DCL_TESSELLATOR_DOMAIN:
-            spirv_compiler_emit_dcl_tessellator_domain(compiler, instruction);
-            break;
         case VKD3DSIH_DCL_TESSELLATOR_OUTPUT_PRIMITIVE:
             spirv_compiler_emit_tessellator_output_primitive(compiler,
                     instruction->declaration.tessellator_output_primitive);
@@ -10739,6 +10735,9 @@ static int spirv_compiler_generate_spirv(struct spirv_compiler *compiler, struct
 
     compiler->input_control_point_count = program->input_control_point_count;
     compiler->output_control_point_count = program->output_control_point_count;
+
+    if (program->shader_version.type == VKD3D_SHADER_TYPE_HULL && !spirv_compiler_is_opengl_target(compiler))
+        spirv_compiler_emit_tessellator_domain(compiler, program->tess_domain);
 
     if (compiler->shader_type != VKD3D_SHADER_TYPE_HULL)
         spirv_compiler_emit_shader_signature_outputs(compiler);

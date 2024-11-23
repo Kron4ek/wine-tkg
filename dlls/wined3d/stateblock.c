@@ -6,7 +6,7 @@
  * Copyright 2005 Oliver Stieber
  * Copyright 2007 Stefan Dösinger for CodeWeavers
  * Copyright 2009 Henri Verbeet for CodeWeavers
- * Copyright 2019,2020,2022 Zebediah Figura for CodeWeavers
+ * Copyright 2019,2020,2022-2024 Elizabeth Figura for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -1299,6 +1299,7 @@ void CDECL wined3d_stateblock_set_vertex_shader(struct wined3d_stateblock *state
         wined3d_shader_decref(stateblock->stateblock_state.vs);
     stateblock->stateblock_state.vs = shader;
     stateblock->changed.vertexShader = TRUE;
+    stateblock->changed.ffp_vs_settings = 1;
 }
 
 static void wined3d_bitmap_set_bits(uint32_t *bitmap, unsigned int start, unsigned int count)
@@ -1439,6 +1440,7 @@ void CDECL wined3d_stateblock_set_pixel_shader(struct wined3d_stateblock *stateb
         wined3d_shader_decref(stateblock->stateblock_state.ps);
     stateblock->stateblock_state.ps = shader;
     stateblock->changed.pixelShader = TRUE;
+    stateblock->changed.ffp_ps_settings = 1;
 }
 
 HRESULT CDECL wined3d_stateblock_set_ps_consts_f(struct wined3d_stateblock *stateblock,
@@ -1573,6 +1575,9 @@ void CDECL wined3d_stateblock_set_vertex_declaration(struct wined3d_stateblock *
                     || declaration->normal != prev->normal || declaration->point_size != prev->point_size)
                 stateblock->changed.ffp_vs_settings = 1;
         }
+
+        if (declaration->position_transformed != prev->position_transformed)
+            stateblock->changed.ffp_vs_settings = 1;
     }
     else
     {
@@ -2379,10 +2384,10 @@ static void wined3d_stateblock_state_init(struct wined3d_stateblock_state *state
 
 }
 
-/* FFP push constant buffers do not have a "default" state on the CS side.
- * We need to explicitly invalidate them when initializing the context or
- * resetting. */
-static void wined3d_stateblock_invalidate_push_constants(struct wined3d_stateblock *stateblock)
+/* Some states, e.g. FFP push constant buffers, do not have a "default" state
+ * on the CS side. We need to explicitly invalidate them when initializing the
+ * context or resetting. */
+static void wined3d_stateblock_invalidate_initial_states(struct wined3d_stateblock *stateblock)
 {
     stateblock->changed.ffp_ps_constants = 1;
     stateblock->changed.lights = 1;
@@ -2392,6 +2397,8 @@ static void wined3d_stateblock_invalidate_push_constants(struct wined3d_stateblo
     memset(stateblock->changed.transform, 0xff, sizeof(stateblock->changed.transform));
     stateblock->changed.modelview_matrices = 1;
     stateblock->changed.point_scale = 1;
+    stateblock->changed.ffp_vs_settings = 1;
+    stateblock->changed.ffp_ps_settings = 1;
 }
 
 static HRESULT stateblock_init(struct wined3d_stateblock *stateblock, const struct wined3d_stateblock *device_state,
@@ -2409,7 +2416,7 @@ static HRESULT stateblock_init(struct wined3d_stateblock *stateblock, const stru
     list_init(&stateblock->changed.changed_lights);
 
     if (type == WINED3D_SBT_PRIMARY)
-        wined3d_stateblock_invalidate_push_constants(stateblock);
+        wined3d_stateblock_invalidate_initial_states(stateblock);
 
     if (type == WINED3D_SBT_RECORDED || type == WINED3D_SBT_PRIMARY)
         return WINED3D_OK;
@@ -2486,7 +2493,7 @@ void CDECL wined3d_stateblock_reset(struct wined3d_stateblock *stateblock)
     memset(&stateblock->stateblock_state, 0, sizeof(stateblock->stateblock_state));
     stateblock->stateblock_state.light_state = &stateblock->light_state;
     wined3d_stateblock_state_init(&stateblock->stateblock_state, stateblock->device, WINED3D_STATE_INIT_DEFAULT);
-    wined3d_stateblock_invalidate_push_constants(stateblock);
+    wined3d_stateblock_invalidate_initial_states(stateblock);
 }
 
 static void wined3d_device_set_base_vertex_index(struct wined3d_device *device, int base_index)
@@ -2907,6 +2914,65 @@ void CDECL wined3d_stateblock_apply_clear_state(struct wined3d_stateblock *state
 
     if (wined3d_bitmap_is_set(stateblock->changed.renderState, WINED3D_RS_SRGBWRITEENABLE))
         wined3d_device_set_render_state(device, WINED3D_RS_SRGBWRITEENABLE, state->rs[WINED3D_RS_SRGBWRITEENABLE]);
+}
+
+static struct wined3d_shader *get_ffp_vertex_shader(struct wined3d_device *device, const struct wined3d_state *state)
+{
+    static const struct wined3d_stream_info dummy_stream_info;
+    struct wined3d_ffp_vs_settings settings;
+    const struct wine_rb_entry *entry;
+    struct wined3d_ffp_vs *vs;
+
+    /* XXX: wined3d_ffp_get_vs_settings() only needs the stream info for the
+     * swizzle map, which the HLSL pipeline doesn't use (it will be computed and
+     * used later as part of struct vs_compile_args).
+     *
+     * This is nevertheless janky, and we'd like to get rid of it. Eventually
+     * once the HLSL backend is used everywhere, we can get rid of the swizzle
+     * map from wined3d_ffp_vs_settings. */
+    wined3d_ffp_get_vs_settings(state, &dummy_stream_info, &device->adapter->d3d_info, &settings);
+
+    if ((entry = wine_rb_get(&device->ffp_vertex_shaders, &settings)))
+        return WINE_RB_ENTRY_VALUE(entry, struct wined3d_ffp_vs, entry.entry)->shader;
+
+    if (!(vs = malloc(sizeof(*vs))))
+        return NULL;
+
+    vs->entry.settings = settings;
+    if (FAILED(wined3d_shader_create_ffp_vs(device, &settings, &vs->shader)))
+    {
+        free(vs);
+        return NULL;
+    }
+    if (wine_rb_put(&device->ffp_vertex_shaders, &vs->entry.settings, &vs->entry.entry) == -1)
+        ERR("Failed to insert FFP vertex shader.\n");
+
+    return vs->shader;
+}
+
+static struct wined3d_shader *get_ffp_pixel_shader(struct wined3d_device *device, const struct wined3d_state *state)
+{
+    struct ffp_frag_settings settings;
+    const struct ffp_frag_desc *desc;
+    struct wined3d_ffp_ps *ps;
+
+    wined3d_ffp_get_fs_settings(state, &device->adapter->d3d_info, &settings);
+
+    if ((desc = find_ffp_frag_shader(&device->ffp_pixel_shaders, &settings)))
+        return CONTAINING_RECORD(desc, struct wined3d_ffp_ps, entry)->shader;
+
+    if (!(ps = malloc(sizeof(*ps))))
+        return NULL;
+
+    ps->entry.settings = settings;
+    if (FAILED(wined3d_shader_create_ffp_ps(device, &settings, &ps->shader)))
+    {
+        free(ps);
+        return NULL;
+    }
+    add_ffp_frag_shader(&device->ffp_pixel_shaders, &ps->entry);
+
+    return ps->shader;
 }
 
 void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
@@ -3697,14 +3763,9 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
     if (changed->texture_matrices)
     {
         struct wined3d_ffp_vs_constants constants;
-        struct wined3d_stream_info si;
-
-        /* FIXME: This is a bit fragile. Ideally we should be calculating
-         * stream info from the stateblock state. */
-        wined3d_stream_info_from_declaration(&si, context->state, &device->adapter->d3d_info);
 
         for (i = 0; i < WINED3D_MAX_FFP_TEXTURES; ++i)
-            get_texture_matrix(&si, state, i, &constants.texture_matrices[i]);
+            get_texture_matrix(state, i, &constants.texture_matrices[i]);
         wined3d_device_context_push_constants(context,
                 WINED3D_PUSH_CONSTANTS_VS_FFP, WINED3D_SHADER_CONST_FFP_TEXMATRIX,
                 offsetof(struct wined3d_ffp_vs_constants, texture_matrices),
@@ -3751,16 +3812,40 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                 WINED3D_SHADER_CONST_FFP_PS, 0, offsetof(struct wined3d_ffp_ps_constants, color_key), &constants);
     }
 
-    if (changed->ffp_vs_settings && !state->vs)
+    /* XXX: We don't invalidate HLSL shaders for every field contained in
+     * wined3d_ffp_vs_settings / ffp_frag_settings; only the ones that the HLSL
+     * FFP pipeline cares about. The rest should eventually be removed from
+     * those structs and left only in vs_compile_args / ps_compile_args. */
+
+    if (changed->ffp_vs_settings
+            && (!state->vs || !state->vertex_declaration || state->vertex_declaration->position_transformed))
     {
-        /* Force invalidation of the vertex shader. */
-        wined3d_device_context_emit_set_shader(context, WINED3D_SHADER_TYPE_VERTEX, NULL);
+        if (device->adapter->d3d_info.ffp_hlsl)
+        {
+            struct wined3d_shader *shader = get_ffp_vertex_shader(device, device->cs->c.state);
+
+            wined3d_device_context_set_shader(context, WINED3D_SHADER_TYPE_VERTEX, shader);
+        }
+        else
+        {
+            /* Force invalidation of the vertex shader. */
+            wined3d_device_context_emit_set_shader(context, WINED3D_SHADER_TYPE_VERTEX, NULL);
+        }
     }
 
     if (changed->ffp_ps_settings && !state->ps)
     {
-        /* Force invalidation of the pixel shader. */
-        wined3d_device_context_emit_set_shader(context, WINED3D_SHADER_TYPE_PIXEL, NULL);
+        if (device->adapter->d3d_info.ffp_hlsl)
+        {
+            struct wined3d_shader *shader = get_ffp_pixel_shader(device, device->cs->c.state);
+
+            wined3d_device_context_set_shader(context, WINED3D_SHADER_TYPE_PIXEL, shader);
+        }
+        else
+        {
+            /* Force invalidation of the pixel shader. */
+            wined3d_device_context_emit_set_shader(context, WINED3D_SHADER_TYPE_PIXEL, NULL);
+        }
     }
 
     assert(list_empty(&stateblock->changed.changed_lights));

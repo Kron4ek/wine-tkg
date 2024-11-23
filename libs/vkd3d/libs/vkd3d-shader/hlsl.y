@@ -6553,6 +6553,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
     struct hlsl_semantic semantic;
     enum hlsl_buffer_type buffer_type;
     enum hlsl_sampler_dim sampler_dim;
+    enum hlsl_so_object_type so_type;
     struct hlsl_attribute *attr;
     struct parse_attribute_list attr_list;
     struct hlsl_ir_switch_case *switch_case;
@@ -6596,6 +6597,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %token KW_INLINE
 %token KW_INOUT
 %token KW_LINEAR
+%token KW_LINESTREAM
 %token KW_MATRIX
 %token KW_NAMESPACE
 %token KW_NOINTERPOLATION
@@ -6605,6 +6607,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %token KW_PACKOFFSET
 %token KW_PASS
 %token KW_PIXELSHADER
+%token KW_POINTSTREAM
 %token KW_RASTERIZERORDEREDBUFFER
 %token KW_RASTERIZERORDEREDSTRUCTUREDBUFFER
 %token KW_RASTERIZERORDEREDTEXTURE1D
@@ -6654,6 +6657,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %token KW_TEXTURE3D
 %token KW_TEXTURECUBE
 %token KW_TEXTURECUBEARRAY
+%token KW_TRIANGLESTREAM
 %token KW_TRUE
 %token KW_TYPEDEF
 %token KW_UNSIGNED
@@ -6783,6 +6787,8 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %type <sampler_dim> texture_type texture_ms_type uav_type rov_type
 
 %type <semantic> semantic
+
+%type <so_type> so_type
 
 %type <state_block> state_block
 
@@ -7805,6 +7811,20 @@ rov_type:
             $$ = HLSL_SAMPLER_DIM_3D;
         }
 
+so_type:
+      KW_POINTSTREAM
+        {
+            $$ = HLSL_STREAM_OUTPUT_POINT_STREAM;
+        }
+    | KW_LINESTREAM
+        {
+            $$ = HLSL_STREAM_OUTPUT_LINE_STREAM;
+        }
+    | KW_TRIANGLESTREAM
+        {
+            $$ = HLSL_STREAM_OUTPUT_TRIANGLE_STREAM;
+        }
+
 resource_format:
       var_modifiers type
         {
@@ -7947,6 +7967,10 @@ type_no_void:
         {
             validate_uav_type(ctx, $1, $3, &@4);
             $$ = hlsl_new_uav_type(ctx, $1, $3, true);
+        }
+    | so_type '<' type '>'
+        {
+            $$ = hlsl_new_stream_output_type(ctx, $1, $3);
         }
     | KW_RWBYTEADDRESSBUFFER
         {

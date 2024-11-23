@@ -813,8 +813,8 @@
 @ stub NtUserBroadcastThemeChangeEvent
 @ stdcall -syscall NtUserBuildHimcList(long long ptr ptr)
 @ stdcall -syscall NtUserBuildHwndList(long long long long long long ptr ptr)
-@ stub NtUserBuildNameList
-@ stub NtUserBuildPropList
+@ stdcall -syscall NtUserBuildNameList(long long ptr ptr)
+@ stdcall -syscall NtUserBuildPropList(long long ptr ptr)
 @ stub NtUserCalcMenuBar
 @ stub NtUserCalculatePopupWindowPosition
 @ stdcall -syscall NtUserCallHwnd(long long)
@@ -1246,7 +1246,7 @@
 @ stub NtUserQueryInformationThread
 @ stdcall -syscall NtUserQueryInputContext(long long)
 @ stub NtUserQuerySendMessage
-@ stub NtUserQueryWindow
+@ stdcall -syscall NtUserQueryWindow(long long)
 @ stub NtUserRaiseLowerShellWindow
 @ stdcall -syscall NtUserRealChildWindowFromPoint(long long long)
 @ stub NtUserRealInternalGetMessage

@@ -142,7 +142,7 @@ static struct signature_element *vsir_signature_find_element_by_name(
     return NULL;
 }
 
-static bool vsir_signature_find_sysval(const struct shader_signature *signature,
+bool vsir_signature_find_sysval(const struct shader_signature *signature,
         enum vkd3d_shader_sysval_semantic sysval, unsigned int semantic_index, unsigned int *element_index)
 {
     const struct signature_element *e;
@@ -743,6 +743,7 @@ static enum vkd3d_result vsir_program_lower_instructions(struct vsir_program *pr
             case VKD3DSIH_DCL_GLOBAL_FLAGS:
             case VKD3DSIH_DCL_SAMPLER:
             case VKD3DSIH_DCL_TEMPS:
+            case VKD3DSIH_DCL_TESSELLATOR_DOMAIN:
             case VKD3DSIH_DCL_THREAD_GROUP:
             case VKD3DSIH_DCL_UAV_TYPED:
                 vkd3d_shader_instruction_make_nop(ins);
@@ -1727,8 +1728,34 @@ static void shader_signature_map_patch_constant_index_ranges(struct shader_signa
 static int signature_element_register_compare(const void *a, const void *b)
 {
     const struct signature_element *e = a, *f = b;
+    int ret;
 
-    return vkd3d_u32_compare(e->register_index, f->register_index);
+    if ((ret = vkd3d_u32_compare(e->register_index, f->register_index)))
+        return ret;
+
+    /* System values like SV_RenderTargetArrayIndex and SV_ViewPortArrayIndex
+     * can get packed into the same I/O register as non-system values, but
+     * only at the end. E.g.:
+     *
+     *     vs_4_0
+     *     ...
+     *     .output
+     *     ...
+     *     .param B.x, o1.x, uint
+     *     .param C.y, o1.y, uint
+     *     .param SV_RenderTargetArrayIndex.z, o1.z, uint, RTINDEX
+     *     .text
+     *     ...
+     *     mov o1.xy, v1.xyxx
+     *     mov o1.z, v1.z
+     *     ret
+     *
+     * Because I/O normalisation doesn't split writes like the mov to o1.xy
+     * above, we want to make sure that o1.x and o1.y continue to be packed
+     * into a single register after I/O normalisation, so we order system
+     * values after non-system values here, allowing the non-system values to
+     * get merged into a single register. */
+    return vkd3d_u32_compare(f->sysval_semantic, e->sysval_semantic);
 }
 
 static int signature_element_index_compare(const void *a, const void *b)
@@ -2196,35 +2223,9 @@ static void shader_instruction_normalise_io_params(struct vkd3d_shader_instructi
     }
 }
 
-static bool use_flat_interpolation(const struct vsir_program *program,
-        struct vkd3d_shader_message_context *message_context)
-{
-    static const struct vkd3d_shader_location no_loc;
-    const struct vkd3d_shader_parameter1 *parameter;
-
-    if (!(parameter = vsir_program_get_parameter(program, VKD3D_SHADER_PARAMETER_NAME_FLAT_INTERPOLATION)))
-        return false;
-
-    if (parameter->type != VKD3D_SHADER_PARAMETER_TYPE_IMMEDIATE_CONSTANT)
-    {
-        vkd3d_shader_error(message_context, &no_loc, VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED,
-                "Unsupported flat interpolation parameter type %#x.", parameter->type);
-        return false;
-    }
-    if (parameter->data_type != VKD3D_SHADER_PARAMETER_DATA_TYPE_UINT32)
-    {
-        vkd3d_shader_error(message_context, &no_loc, VKD3D_SHADER_ERROR_VSIR_INVALID_DATA_TYPE,
-                "Invalid flat interpolation parameter data type %#x.", parameter->data_type);
-        return false;
-    }
-
-    return parameter->u.immediate_constant.u.u32;
-}
-
 static enum vkd3d_result vsir_program_normalise_io_registers(struct vsir_program *program,
         struct vsir_transformation_context *ctx)
 {
-    struct vkd3d_shader_message_context *message_context = ctx->message_context;
     struct io_normaliser normaliser = {program->instructions};
     struct vkd3d_shader_instruction *ins;
     unsigned int i;
@@ -2267,18 +2268,6 @@ static enum vkd3d_result vsir_program_normalise_io_registers(struct vsir_program
     {
         program->instructions = normaliser.instructions;
         return VKD3D_ERROR_OUT_OF_MEMORY;
-    }
-
-    if (program->shader_version.type == VKD3D_SHADER_TYPE_PIXEL
-            && program->shader_version.major < 4 && use_flat_interpolation(program, message_context))
-    {
-        for (i = 0; i < program->input_signature.element_count; ++i)
-        {
-            struct signature_element *element = &program->input_signature.elements[i];
-
-            if (!ascii_strcasecmp(element->semantic_name, "COLOR"))
-                element->interpolation_mode = VKD3DSIM_CONSTANT;
-        }
     }
 
     normaliser.phase = VKD3DSIH_INVALID;
@@ -5858,6 +5847,60 @@ static enum vkd3d_result vsir_program_materialize_undominated_ssas_to_temps(stru
     return VKD3D_OK;
 }
 
+static bool use_flat_interpolation(const struct vsir_program *program,
+        struct vkd3d_shader_message_context *message_context, bool *flat)
+{
+    static const struct vkd3d_shader_location no_loc;
+    const struct vkd3d_shader_parameter1 *parameter;
+
+    *flat = false;
+
+    if (!(parameter = vsir_program_get_parameter(program, VKD3D_SHADER_PARAMETER_NAME_FLAT_INTERPOLATION)))
+        return true;
+
+    if (parameter->type != VKD3D_SHADER_PARAMETER_TYPE_IMMEDIATE_CONSTANT)
+    {
+        vkd3d_shader_error(message_context, &no_loc, VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED,
+                "Unsupported flat interpolation parameter type %#x.", parameter->type);
+        return false;
+    }
+    if (parameter->data_type != VKD3D_SHADER_PARAMETER_DATA_TYPE_UINT32)
+    {
+        vkd3d_shader_error(message_context, &no_loc, VKD3D_SHADER_ERROR_VSIR_INVALID_DATA_TYPE,
+                "Invalid flat interpolation parameter data type %#x.", parameter->data_type);
+        return false;
+    }
+
+    *flat = parameter->u.immediate_constant.u.u32;
+    return true;
+}
+
+static enum vkd3d_result vsir_program_apply_flat_interpolation(struct vsir_program *program,
+        struct vsir_transformation_context *ctx)
+{
+    unsigned int i;
+    bool flat;
+
+    if (program->shader_version.type != VKD3D_SHADER_TYPE_PIXEL || program->shader_version.major >= 4)
+        return VKD3D_OK;
+
+    if (!use_flat_interpolation(program, ctx->message_context, &flat))
+        return VKD3D_ERROR_INVALID_ARGUMENT;
+
+    if (!flat)
+        return VKD3D_OK;
+
+    for (i = 0; i < program->input_signature.element_count; ++i)
+    {
+        struct signature_element *element = &program->input_signature.elements[i];
+
+        if (!ascii_strcasecmp(element->semantic_name, "COLOR"))
+            element->interpolation_mode = VKD3DSIM_CONSTANT;
+    }
+
+    return VKD3D_OK;
+}
+
 static enum vkd3d_result insert_alpha_test_before_ret(struct vsir_program *program,
         const struct vkd3d_shader_instruction *ret, enum vkd3d_shader_comparison_func compare_func,
         const struct vkd3d_shader_parameter1 *ref, uint32_t colour_signature_idx,
@@ -5959,9 +6002,9 @@ static enum vkd3d_result vsir_program_insert_alpha_test(struct vsir_program *pro
 {
     struct vkd3d_shader_message_context *message_context = ctx->message_context;
     const struct vkd3d_shader_parameter1 *func = NULL, *ref = NULL;
+    uint32_t colour_signature_idx, colour_temp = ~0u;
     static const struct vkd3d_shader_location no_loc;
     enum vkd3d_shader_comparison_func compare_func;
-    uint32_t colour_signature_idx, colour_temp;
     struct vkd3d_shader_instruction *ins;
     size_t new_pos;
     int ret;
@@ -6623,6 +6666,9 @@ struct validation_context
     enum vkd3d_shader_opcode *blocks;
     size_t depth;
     size_t blocks_capacity;
+
+    unsigned int outer_tess_idxs[4];
+    unsigned int inner_tess_idxs[2];
 };
 
 static void VKD3D_PRINTF_FUNC(3, 4) validator_error(struct validation_context *ctx,
@@ -7427,9 +7473,11 @@ static void vsir_validate_signature_element(struct validation_context *ctx,
         const struct shader_signature *signature, enum vsir_signature_type signature_type,
         unsigned int idx)
 {
+    enum vkd3d_tessellator_domain expected_tess_domain = VKD3D_TESSELLATOR_DOMAIN_INVALID;
     const char *signature_type_name = signature_type_names[signature_type];
     const struct signature_element *element = &signature->elements[idx];
-    bool integer_type = false;
+    bool integer_type = false, is_outer = false;
+    unsigned int semantic_index_max = 0;
 
     if (element->register_count == 0)
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
@@ -7481,12 +7529,6 @@ static void vsir_validate_signature_element(struct validation_context *ctx,
         case VKD3D_SHADER_SV_INSTANCE_ID:
         case VKD3D_SHADER_SV_IS_FRONT_FACE:
         case VKD3D_SHADER_SV_SAMPLE_INDEX:
-        case VKD3D_SHADER_SV_TESS_FACTOR_QUADEDGE:
-        case VKD3D_SHADER_SV_TESS_FACTOR_QUADINT:
-        case VKD3D_SHADER_SV_TESS_FACTOR_TRIEDGE:
-        case VKD3D_SHADER_SV_TESS_FACTOR_TRIINT:
-        case VKD3D_SHADER_SV_TESS_FACTOR_LINEDET:
-        case VKD3D_SHADER_SV_TESS_FACTOR_LINEDEN:
         case VKD3D_SHADER_SV_TARGET:
         case VKD3D_SHADER_SV_DEPTH:
         case VKD3D_SHADER_SV_COVERAGE:
@@ -7495,11 +7537,74 @@ static void vsir_validate_signature_element(struct validation_context *ctx,
         case VKD3D_SHADER_SV_STENCIL_REF:
             break;
 
+        case VKD3D_SHADER_SV_TESS_FACTOR_QUADEDGE:
+            expected_tess_domain = VKD3D_TESSELLATOR_DOMAIN_QUAD;
+            semantic_index_max = 4;
+            is_outer = true;
+            break;
+
+        case VKD3D_SHADER_SV_TESS_FACTOR_QUADINT:
+            expected_tess_domain = VKD3D_TESSELLATOR_DOMAIN_QUAD;
+            semantic_index_max = 2;
+            is_outer = false;
+            break;
+
+        case VKD3D_SHADER_SV_TESS_FACTOR_TRIEDGE:
+            expected_tess_domain = VKD3D_TESSELLATOR_DOMAIN_TRIANGLE;
+            semantic_index_max = 3;
+            is_outer = true;
+            break;
+
+        case VKD3D_SHADER_SV_TESS_FACTOR_TRIINT:
+            expected_tess_domain = VKD3D_TESSELLATOR_DOMAIN_TRIANGLE;
+            semantic_index_max = 1;
+            is_outer = false;
+            break;
+
+        case VKD3D_SHADER_SV_TESS_FACTOR_LINEDET:
+        case VKD3D_SHADER_SV_TESS_FACTOR_LINEDEN:
+            expected_tess_domain = VKD3D_TESSELLATOR_DOMAIN_LINE;
+            semantic_index_max = 2;
+            is_outer = true;
+            break;
+
         default:
             validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
                     "element %u of %s signature: Invalid system value semantic %#x.",
                     idx, signature_type_name, element->sysval_semantic);
             break;
+    }
+
+    if (expected_tess_domain != VKD3D_TESSELLATOR_DOMAIN_INVALID)
+    {
+        if (signature_type != SIGNATURE_TYPE_PATCH_CONSTANT)
+            validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
+                    "element %u of %s signature: System value semantic %#x is only valid "
+                    "in the patch constant signature.",
+                    idx, signature_type_name, element->sysval_semantic);
+
+        if (ctx->program->tess_domain != expected_tess_domain)
+            validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
+                    "element %u of %s signature: Invalid system value semantic %#x for tessellator domain %#x.",
+                    idx, signature_type_name, element->sysval_semantic, ctx->program->tess_domain);
+
+        if (element->semantic_index >= semantic_index_max)
+        {
+            validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
+                    "element %u of %s signature: Invalid semantic index %u for system value semantic %#x.",
+                    idx, signature_type_name, element->semantic_index, element->sysval_semantic);
+        }
+        else
+        {
+            unsigned int *idx_pos = &(is_outer ? ctx->outer_tess_idxs : ctx->inner_tess_idxs)[element->semantic_index];
+
+            if (*idx_pos != ~0u)
+                validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
+                        "element %u of %s signature: Duplicate semantic index %u for system value semantic %#x.",
+                        idx, signature_type_name, element->semantic_index, element->sysval_semantic);
+            else
+                *idx_pos = idx;
+        }
     }
 
     if (element->sysval_semantic < ARRAY_SIZE(sysval_validation_data))
@@ -7759,6 +7864,11 @@ static void vsir_validate_dcl_tessellator_domain(struct validation_context *ctx,
             || instruction->declaration.tessellator_domain >= VKD3D_TESSELLATOR_DOMAIN_COUNT)
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_TESSELLATION,
                 "Tessellator domain %#x is invalid.", instruction->declaration.tessellator_domain);
+
+    if (instruction->declaration.tessellator_domain != ctx->program->tess_domain)
+        validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_TESSELLATION,
+                "DCL_TESSELLATOR_DOMAIN argument %#x doesn't match the shader tessellator domain %#x.",
+                instruction->declaration.tessellator_domain, ctx->program->tess_domain);
 }
 
 static void vsir_validate_dcl_tessellator_output_primitive(struct validation_context *ctx,
@@ -8135,6 +8245,12 @@ enum vkd3d_result vsir_program_validate(struct vsir_program *program, uint64_t c
         .status = VKD3D_OK,
         .phase = VKD3DSIH_INVALID,
         .invalid_instruction_idx = true,
+        .outer_tess_idxs[0] = ~0u,
+        .outer_tess_idxs[1] = ~0u,
+        .outer_tess_idxs[2] = ~0u,
+        .outer_tess_idxs[3] = ~0u,
+        .inner_tess_idxs[0] = ~0u,
+        .inner_tess_idxs[1] = ~0u,
     };
     unsigned int i;
 
@@ -8145,12 +8261,20 @@ enum vkd3d_result vsir_program_validate(struct vsir_program *program, uint64_t c
     {
         case VKD3D_SHADER_TYPE_HULL:
         case VKD3D_SHADER_TYPE_DOMAIN:
+            if (program->tess_domain == VKD3D_TESSELLATOR_DOMAIN_INVALID
+                    || program->tess_domain >= VKD3D_TESSELLATOR_DOMAIN_COUNT)
+                validator_error(&ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_TESSELLATION,
+                        "Invalid tessellation domain %#x.", program->tess_domain);
             break;
 
         default:
             if (program->patch_constant_signature.element_count != 0)
                 validator_error(&ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
                         "Patch constant signature is only valid for hull and domain shaders.");
+
+            if (program->tess_domain != VKD3D_TESSELLATOR_DOMAIN_INVALID)
+                validator_error(&ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_TESSELLATION,
+                        "Invalid tessellation domain %#x.", program->tess_domain);
     }
 
     switch (program->shader_version.type)
@@ -8324,6 +8448,7 @@ enum vkd3d_result vsir_program_transform(struct vsir_program *program, uint64_t 
             vsir_transform(&ctx, vsir_program_flatten_control_flow_constructs);
     }
 
+    vsir_transform(&ctx, vsir_program_apply_flat_interpolation);
     vsir_transform(&ctx, vsir_program_insert_alpha_test);
     vsir_transform(&ctx, vsir_program_insert_clip_planes);
     vsir_transform(&ctx, vsir_program_insert_point_size);

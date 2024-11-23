@@ -609,31 +609,13 @@ static int base_address_compare( const void *key, const RTL_BALANCED_NODE *entry
     return 0;
 }
 
-/*************************************************************************
- *      hash_basename
- *
- * Calculates the bucket index of a dll using the basename.
- */
-static ULONG hash_basename(const WCHAR *basename)
+/* compute basename hash */
+static ULONG hash_basename( const UNICODE_STRING *basename )
 {
-    WORD version = MAKEWORD(NtCurrentTeb()->Peb->OSMinorVersion,
-                            NtCurrentTeb()->Peb->OSMajorVersion);
     ULONG hash = 0;
 
-    if (version >= 0x0602)
-    {
-        for (; *basename; basename++)
-            hash = hash * 65599 + towupper(*basename);
-    }
-    else if (version == 0x0601)
-    {
-        for (; *basename; basename++)
-            hash = hash + 65599 * towupper(*basename);
-    }
-    else
-        hash = towupper(basename[0]) - 'A';
-
-    return hash & (HASH_MAP_SIZE-1);
+    RtlHashUnicodeString( basename, TRUE, HASH_STRING_ALGORITHM_DEFAULT, &hash );
+    return hash % HASH_MAP_SIZE;
 }
 
 /*************************************************************************
@@ -671,13 +653,13 @@ static WINE_MODREF *find_basename_module( LPCWSTR name )
     if (cached_modref && RtlEqualUnicodeString( &name_str, &cached_modref->ldr.BaseDllName, TRUE ))
         return cached_modref;
 
-    mark = &hash_table[hash_basename(name)];
+    mark = &hash_table[hash_basename( &name_str )];
     for (entry = mark->Flink; entry != mark; entry = entry->Flink)
     {
         WINE_MODREF *mod = CONTAINING_RECORD(entry, WINE_MODREF, ldr.HashLinks);
         if (RtlEqualUnicodeString( &name_str, &mod->ldr.BaseDllName, TRUE ) && !mod->system)
         {
-            cached_modref = CONTAINING_RECORD(&mod->ldr, WINE_MODREF, ldr);
+            cached_modref = CONTAINING_RECORD(mod, WINE_MODREF, ldr);
             return cached_modref;
         }
     }
@@ -1632,14 +1614,10 @@ static WINE_MODREF *alloc_module( HMODULE hModule, const UNICODE_STRING *nt_name
                    &wm->ldr.InLoadOrderLinks);
     InsertTailList(&NtCurrentTeb()->Peb->LdrData->InMemoryOrderModuleList,
                    &wm->ldr.InMemoryOrderLinks);
-    InsertTailList(&hash_table[hash_basename(wm->ldr.BaseDllName.Buffer)],
-                   &wm->ldr.HashLinks);
+    InsertTailList(&hash_table[hash_basename( &wm->ldr.BaseDllName )], &wm->ldr.HashLinks);
     if (rtl_rb_tree_put( &base_address_index_tree, wm->ldr.DllBase, &wm->ldr.BaseAddressIndexNode, base_address_compare ))
         ERR( "rtl_rb_tree_put failed.\n" );
-
     /* wait until init is called for inserting into InInitializationOrderModuleList */
-    wm->ldr.InInitializationOrderLinks.Flink = NULL;
-    wm->ldr.InInitializationOrderLinks.Blink = NULL;
 
     if (!(nt->OptionalHeader.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_NX_COMPAT))
     {
@@ -4554,7 +4532,6 @@ void loader_init( CONTEXT *context, void **entry )
         if (!(tls_dirs = RtlAllocateHeap( GetProcessHeap(), HEAP_ZERO_MEMORY, tls_module_count * sizeof(*tls_dirs) )))
             NtTerminateProcess( GetCurrentProcess(), STATUS_NO_MEMORY );
 
-        /* initialize hash table */
         for (i = 0; i < HASH_MAP_SIZE; i++)
             InitializeListHead( &hash_table[i] );
 

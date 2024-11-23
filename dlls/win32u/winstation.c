@@ -179,7 +179,7 @@ static NTSTATUS find_shared_session_block( SIZE_T offset, SIZE_T size, struct se
     return status;
 }
 
-static const shared_object_t *find_shared_session_object( obj_locator_t locator )
+static const shared_object_t *find_shared_session_object( struct obj_locator locator )
 {
     const shared_object_t *object;
     struct session_block *block;
@@ -204,7 +204,7 @@ NTSTATUS get_shared_desktop( struct object_lock *lock, const desktop_shm_t **des
 
     if (!(object = data->shared_desktop))
     {
-        obj_locator_t locator;
+        struct obj_locator locator;
 
         SERVER_START_REQ( get_thread_desktop )
         {
@@ -239,7 +239,7 @@ NTSTATUS get_shared_queue( struct object_lock *lock, const queue_shm_t **queue_s
 
     if (!(object = data->shared_queue))
     {
-        obj_locator_t locator;
+        struct obj_locator locator;
 
         SERVER_START_REQ( get_msg_queue )
         {
@@ -272,7 +272,7 @@ static NTSTATUS try_get_shared_input( UINT tid, struct object_lock *lock, const 
 
     if (!(object = cache->object))
     {
-        obj_locator_t locator;
+        struct obj_locator locator;
 
         SERVER_START_REQ( get_thread_input )
         {
@@ -541,7 +541,7 @@ HDESK WINAPI NtUserGetThreadDesktop( DWORD thread )
 BOOL WINAPI NtUserSetThreadDesktop( HDESK handle )
 {
     BOOL ret, was_virtual_desktop = is_virtual_desktop();
-    obj_locator_t locator;
+    struct obj_locator locator;
 
     SERVER_START_REQ( set_thread_desktop )
     {
@@ -601,6 +601,43 @@ BOOL WINAPI NtUserSwitchDesktop( HDESK desktop )
 
     return TRUE;
 }
+
+/******************************************************************************
+ *              NtUserBuildNameList   (win32u.@)
+ */
+NTSTATUS WINAPI NtUserBuildNameList( HWINSTA handle, ULONG size, struct ntuser_name_list *list,
+                                     ULONG *ret_size )
+{
+    const ULONG header_size = offsetof( struct ntuser_name_list, strings[1] ); /* header + final null */
+    WCHAR *buffer;
+    NTSTATUS status;
+    ULONG count, result, total;
+
+    if (size <= header_size) return STATUS_INVALID_HANDLE;
+    if (!(buffer = malloc( size - header_size ))) return STATUS_NO_MEMORY;
+
+    SERVER_START_REQ( enum_winstation )
+    {
+        req->handle = wine_server_obj_handle( handle );
+        wine_server_set_reply( req, buffer, size - header_size );
+        status = wine_server_call( req );
+        result = wine_server_reply_size( reply );
+        total  = reply->total;
+        count  = reply->count;
+    }
+    SERVER_END_REQ;
+
+    if (!status || status == STATUS_BUFFER_TOO_SMALL)
+    {
+        list->size = header_size + result;
+        list->count = count;
+        memcpy( list->strings, buffer, result );
+        list->strings[result / sizeof(WCHAR)] = 0;
+        *ret_size = header_size + total;
+    }
+    return status;
+}
+
 
 /***********************************************************************
  *           NtUserGetObjectInformation   (win32u.@)
