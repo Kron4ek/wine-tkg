@@ -1979,7 +1979,7 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
     static const enum vkd3d_shader_target_type dxbc_tpf_types[] =
     {
         VKD3D_SHADER_TARGET_SPIRV_BINARY,
-#ifdef HAVE_SPIRV_TOOLS
+#if defined(HAVE_SPIRV_TOOLS) || defined(VKD3D_SHADER_UNSUPPORTED_SPIRV_PARSER)
         VKD3D_SHADER_TARGET_SPIRV_TEXT,
 #endif
         VKD3D_SHADER_TARGET_D3D_ASM,
@@ -1994,7 +1994,7 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
     static const enum vkd3d_shader_target_type hlsl_types[] =
     {
         VKD3D_SHADER_TARGET_SPIRV_BINARY,
-#ifdef HAVE_SPIRV_TOOLS
+#if defined(HAVE_SPIRV_TOOLS) || defined(VKD3D_SHADER_UNSUPPORTED_SPIRV_PARSER)
         VKD3D_SHADER_TARGET_SPIRV_TEXT,
 #endif
         VKD3D_SHADER_TARGET_D3D_ASM,
@@ -2006,7 +2006,7 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
     static const enum vkd3d_shader_target_type d3dbc_types[] =
     {
         VKD3D_SHADER_TARGET_SPIRV_BINARY,
-#ifdef HAVE_SPIRV_TOOLS
+#if defined(HAVE_SPIRV_TOOLS) || defined(VKD3D_SHADER_UNSUPPORTED_SPIRV_PARSER)
         VKD3D_SHADER_TARGET_SPIRV_TEXT,
 #endif
         VKD3D_SHADER_TARGET_D3D_ASM,
@@ -2016,7 +2016,7 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
     static const enum vkd3d_shader_target_type dxbc_dxil_types[] =
     {
         VKD3D_SHADER_TARGET_SPIRV_BINARY,
-# ifdef HAVE_SPIRV_TOOLS
+#if defined(HAVE_SPIRV_TOOLS) || defined(VKD3D_SHADER_UNSUPPORTED_SPIRV_PARSER)
         VKD3D_SHADER_TARGET_SPIRV_TEXT,
 # endif
         VKD3D_SHADER_TARGET_D3D_ASM,

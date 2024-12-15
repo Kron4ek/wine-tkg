@@ -2045,7 +2045,13 @@ static void dump_close_winstation_request( const struct close_winstation_request
 
 static void dump_set_winstation_monitors_request( const struct set_winstation_monitors_request *req )
 {
-    dump_varargs_monitor_infos( " infos=", cur_size );
+    fprintf( stderr, " increment=%d", req->increment );
+    dump_varargs_monitor_infos( ", infos=", cur_size );
+}
+
+static void dump_set_winstation_monitors_reply( const struct set_winstation_monitors_reply *req )
+{
+    dump_uint64( " serial=", &req->serial );
 }
 
 static void dump_get_process_winstation_request( const struct get_process_winstation_request *req )
@@ -3022,6 +3028,11 @@ static void dump_make_process_system_reply( const struct make_process_system_rep
     fprintf( stderr, " event=%04x", req->event );
 }
 
+static void dump_grant_process_admin_token_request( const struct grant_process_admin_token_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
 static void dump_get_token_info_request( const struct get_token_info_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
@@ -3724,6 +3735,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_release_kernel_object_request,
     (dump_func)dump_get_kernel_object_handle_request,
     (dump_func)dump_make_process_system_request,
+    (dump_func)dump_grant_process_admin_token_request,
     (dump_func)dump_get_token_info_request,
     (dump_func)dump_create_linked_token_request,
     (dump_func)dump_create_completion_request,
@@ -3944,7 +3956,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_create_winstation_reply,
     (dump_func)dump_open_winstation_reply,
     NULL,
-    NULL,
+    (dump_func)dump_set_winstation_monitors_reply,
     (dump_func)dump_get_process_winstation_reply,
     NULL,
     (dump_func)dump_enum_winstation_reply,
@@ -4030,6 +4042,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     NULL,
     (dump_func)dump_get_kernel_object_handle_reply,
     (dump_func)dump_make_process_system_reply,
+    NULL,
     (dump_func)dump_get_token_info_reply,
     (dump_func)dump_create_linked_token_reply,
     (dump_func)dump_create_completion_reply,
@@ -4336,6 +4349,7 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "release_kernel_object",
     "get_kernel_object_handle",
     "make_process_system",
+    "grant_process_admin_token",
     "get_token_info",
     "create_linked_token",
     "create_completion",

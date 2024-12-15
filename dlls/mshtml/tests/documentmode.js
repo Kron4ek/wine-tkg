@@ -252,11 +252,13 @@ sync_test("builtin_toString", function() {
 
     e = document.createElement("a");
     ok(e.toString() === "", "tag 'a' (without href) toString returned " + e.toString());
+    ok(e + "" === "", "tag 'a' (without href) value = " + e);
     e.href = "https://www.winehq.org/";
     test("tag 'a'", e, "HTMLAnchorElement", "https://www.winehq.org/");
 
     e = document.createElement("area");
     ok(e.toString() === "", "tag 'area' (without href) toString returned " + e.toString());
+    ok(e + "" === "", "tag 'area' (without href) value = " + e);
     e.href = "https://www.winehq.org/";
     test("tag 'area'", e, "HTMLAreaElement", "https://www.winehq.org/");
 
@@ -298,7 +300,7 @@ sync_test("builtin_toString", function() {
     if(clientRects) test("clientRect", clientRects[0], "ClientRect");
     if(clientRects) test("clientRects", clientRects, "ClientRectList");
     if(currentStyle) test("currentStyle", currentStyle, "MSCurrentStyleCSSProperties");
-    if(v >= 11 /* todo_wine */) test("document", document, v < 11 ? "Document" : "HTMLDocument");
+    test("document", document, v < 11 ? "Document" : "HTMLDocument");
     test("elements", document.getElementsByTagName("body"), "HTMLCollection");
     test("history", window.history, "History");
     test("implementation", document.implementation, "DOMImplementation");
@@ -517,6 +519,7 @@ sync_test("elem_props", function() {
     test_exposed("doScroll", v < 11);
     test_exposed("readyState", v < 11);
     test_exposed("clientTop", true);
+    test_exposed("ownerDocument", true);
     test_exposed("title", true);
     test_exposed("removeNode", true);
     test_exposed("replaceNode", true);
@@ -534,6 +537,25 @@ sync_test("elem_props", function() {
     test_exposed("dispatchEvent", v >= 9);
     test_exposed("msSetPointerCapture", v >= 10);
     if (v >= 9) test_exposed("spellcheck", v >= 10);
+
+    elem = document.createComment("");
+    test_exposed("atomic", v < 9);
+    test_exposed("data", true);
+    test_exposed("length", true);
+    test_exposed("text", true);
+    test_exposed("appendData", true);
+    test_exposed("deleteData", true);
+    test_exposed("insertData", true);
+    test_exposed("replaceData", true);
+    test_exposed("substringData", true);
+    test_exposed("attachEvent", v < 9);
+    test_exposed("doScroll", v < 9);
+    test_exposed("readyState", v < 9);
+    test_exposed("clientTop", v < 9);
+    test_exposed("title", v < 9);
+    test_exposed("removeNode", v < 9);
+    test_exposed("querySelectorAll", v === 8);
+    test_exposed("hasAttribute", v === 8, v === 8);
 
     elem = document.createElement("style");
     test_exposed("media", true);
@@ -585,13 +607,32 @@ sync_test("docfrag_props", function() {
 
     function test_exposed(prop, expect) {
         if(expect)
-            ok(prop in docfrag, prop + " not found in document fragent.");
+            ok(prop in docfrag, prop + " not found in document fragment.");
         else
-            ok(!(prop in docfrag), prop + " found in document fragent.");
+            ok(!(prop in docfrag), prop + " found in document fragment.");
     }
 
     var v = document.documentMode;
 
+    test_exposed("attachEvent", v < 11);
+    test_exposed("detachEvent", v < 11);
+    test_exposed("createStyleSheet", v < 9);
+    test_exposed("fileSize", v < 9);
+    test_exposed("selection", v < 9);
+    test_exposed("doctype", v < 9);
+    test_exposed("onstorage", v < 9);
+    test_exposed("textContent", v >= 9);
+    test_exposed("prefix", v >= 9);
+    test_exposed("ownerDocument", true);
+    test_exposed("removeNode", true);
+    test_exposed("replaceNode", true);
+    test_exposed("swapNode", true);
+    test_exposed("defaultView", false);
+    test_exposed("head", false);
+    test_exposed("addEventListener", v >= 9);
+    test_exposed("removeEventListener", v >= 9);
+    test_exposed("dispatchEvent", v >= 9);
+    test_exposed("createEvent", false);
     test_exposed("compareDocumentPosition", v >= 9);
 });
 
@@ -614,6 +655,7 @@ sync_test("textnode_props", function() {
     test_exposed("removeNode", true);
     test_exposed("replaceNode", true);
     test_exposed("swapNode", true);
+    test_exposed("toString", true);
     test_exposed("compareDocumentPosition", v >= 9);
     test_exposed("isEqualNode", v >= 9);
     test_exposed("prefix", v >= 9);
@@ -652,7 +694,11 @@ sync_test("window_props", function() {
     test_exposed("performance", true);
     test_exposed("console", v >= 10);
     test_exposed("matchMedia", v >= 10);
+    test_exposed("Document", v >= 9);
+    test_exposed("HTMLDocument", v === 8 || v >= 11, v === 8);
     test_exposed("MutationObserver", v >= 11);
+    test_exposed("PageTransitionEvent", v >= 11);
+    test_exposed("ProgressEvent", v >= 10);
 });
 
 sync_test("domimpl_props", function() {
@@ -769,42 +815,95 @@ sync_test("xhr open", function() {
 });
 
 sync_test("style_props", function() {
-    var style = document.body.style, currentStyle = document.body.currentStyle, computedStyle = window.getComputedStyle ? window.getComputedStyle(document.body) : undefined;
+    var r, style = document.body.style, currentStyle = document.body.currentStyle, computedStyle = window.getComputedStyle ? window.getComputedStyle(document.body) : undefined;
 
-    function test_exposed(prop, expect_style, expect_currentStyle, expect_computedStyle) {
-        if(expect_style)
-            ok(prop in style, prop + " not found in style object.");
-        else
-            ok(!(prop in style), prop + " found in style object.");
-        if(expect_currentStyle)
-            ok(prop in currentStyle, prop + " not found in currentStyle object.");
-        else
-            ok(!(prop in currentStyle), prop + " found in currentStyle object.");
-        if(computedStyle) {
-            if(expect_computedStyle)
-                ok(prop in computedStyle, prop + " not found in computedStyle object.");
-            else
-                ok(!(prop in computedStyle), prop + " found in computedStyle object.");
+    function test_exposed(prop, expect_style, expect_currentStyle, expect_computedStyle, own_prop) {
+        if(own_prop === undefined)
+            own_prop = (v < 9);
+        function test(prop, obj, expect, name) {
+            if(!expect)
+                ok(!(prop in obj), prop + " found in " + name + " object.");
+            else {
+                ok(prop in obj, prop + " not found in " + name + " object.");
+                if(own_prop) {
+                    ok(Object.prototype.hasOwnProperty.call(obj, prop), prop + " not prop of " + name + " object.");
+                    if(Object.getOwnPropertyDescriptor) {
+                        var desc = Object.getOwnPropertyDescriptor(obj, prop);
+                        if(name === "computedStyle" && prop.indexOf("-") === -1) {
+                            todo_wine.
+                            ok(desc === undefined, prop + " of " + name + " object is not undefined.");
+                            return;
+                        }
+                        ok(desc.value === obj[prop], prop + " of " + name + " object value = ." + desc.value + ", expected " + obj[prop]);
+                        ok(!("get" in desc), prop + " of " + name + " object has a getter.");
+                        ok(!("set" in desc), prop + " of " + name + " object has a setter.");
+                        ok(desc.writable === true, prop + " of " + name + " object not writable.");
+                        ok(desc.enumerable === true, prop + " of " + name + " object not enumerable.");
+                        ok(desc.configurable === true, prop + " of " + name + " object not configurable.");
+                    }
+                }
+            }
         }
+
+        test(prop, style, expect_style, "style");
+        test(prop, currentStyle, expect_currentStyle, "currentStyle");
+        if(computedStyle)
+            test(prop, computedStyle, expect_computedStyle, "computedStyle");
     }
 
     var v = document.documentMode;
 
-    test_exposed("removeAttribute", true, broken(true) ? v >= 9 : false /* todo_wine */, false);
+    test_exposed("removeAttribute", true, v >= 9, false);
+    test_exposed("setExpression", v < 9, false, false);
     test_exposed("zIndex", true, true, true);
-    test_exposed("z-index", true, true, true);
-    test_exposed("filter", true, true, broken(true) ? v >= 10 : v >= 9 /* todo_wine */);
+    test_exposed("z-index", true, true, true, true);
+    test_exposed("filter", true, true, v >= 10);
     test_exposed("pixelTop", true, false, false);
-    test_exposed("float", true, true, true);
+    test_exposed("float", true, true, true, true);
     test_exposed("css-float", false, false, false);
     test_exposed("style-float", false, false, false);
     test_exposed("setProperty", v >= 9, v >= 9, v >= 9);
     test_exposed("removeProperty", v >= 9, v >= 9, v >= 9);
-    test_exposed("background-clip", v >= 9, v >= 9, v >= 9);
+    test_exposed("background-clip", v >= 9, v >= 9, v >= 9, true);
     test_exposed("msTransform", v >= 9, v >= 9, v >= 9);
     test_exposed("msTransition", v >= 10, v >= 10, v >= 10);
     test_exposed("transform", v >= 10, v >= 10, v >= 10);
     test_exposed("transition", v >= 10, v >= 10, v >= 10);
+
+    if(Object.getOwnPropertyNames) {
+        r = Object.getOwnPropertyNames(style);
+        ok(!r.length, "style has own props: " + r);
+        r = Object.getOwnPropertyNames(currentStyle);
+        ok(!r.length, "currentStyle has own props: " + r);
+        r = Object.getOwnPropertyNames(computedStyle);
+        ok(!r.length, "computedStyle has own props: " + r);
+
+        r = Object.getOwnPropertyDescriptor(style, "z-index");
+        ok(r.value === "", "style z-index value = " + r.value);
+        style.zIndex = 1;
+        r = Object.getOwnPropertyDescriptor(style, "z-index");
+        ok(r.value === 1, "style z-index value after set = " + r.value);
+
+        Object.defineProperty(style, "z-index", { get: function() { return "42"; }, configurable: true });
+        todo_wine.
+        ok(style.zIndex === 1, "style zIndex after defineProperty = " + style.zIndex);
+        todo_wine.
+        ok(style["z-index"] === "42", "style z-index after defineProperty = " + style["z-index"]);
+
+        r = Object.getOwnPropertyDescriptor(style, "z-index");
+        todo_wine.
+        ok(!("value" in r), "style z-index after defineProperty still has value");
+        todo_wine.
+        ok(typeof(r.get) === "function", "style z-index after defineProperty not a getter");
+
+        r = delete style["z-index"];
+        ok(r === true, "delete style z-index returned " + r);
+        ok(style["z-index"] === 1, "style z-index after delete = " + style["z-index"]);
+
+        r = Object.getOwnPropertyNames(style);
+        todo_wine.
+        ok(!r.length, "style has own props after delete: " + r);
+    }
 });
 
 sync_test("createElement_inline_attr", function() {
@@ -3456,11 +3555,13 @@ sync_test("prototypes", function() {
     check(Node.prototype, Object.prototype, "node prototype");
     check(sessionStorage, Storage.prototype, "storage");
     check(Storage.prototype, Object.prototype, "storage prototype");
-    if(v >= 11) {
+    if(v < 11)
+        check(document, Document.prototype, "html document");
+    else {
         check(document, HTMLDocument.prototype, "html document");
         check(HTMLDocument.prototype, Document.prototype, "html document prototype");
-        check(Document.prototype, Node.prototype, "document prototype");
     }
+    check(Document.prototype, Node.prototype, "document prototype");
     check(window, Window.prototype, "window");
     check(Window.prototype, Object.prototype, "window prototype");
     check(new XMLHttpRequest(), XMLHttpRequest.prototype, "xhr");
@@ -3665,20 +3766,195 @@ sync_test("prototype props", function() {
         test_own_props(constr.prototype, name, props, todos, flaky);
     }
 
+    check(CharacterData, [ "appendData", "data", "deleteData", "insertData", "length", "replaceData", "substringData" ]);
+    check(Comment, [ "text" ]);
+    check(CSSStyleDeclaration, [
+        ["alignContent",11], ["alignItems",11], ["alignSelf",11], "alignmentBaseline", ["animation",10], ["animationDelay",10],
+        ["animationDirection",10], ["animationDuration",10], ["animationFillMode",10], ["animationIterationCount",10], ["animationName",10],
+        ["animationPlayState",10], ["animationTimingFunction",10], ["backfaceVisibility",10], "background", "backgroundAttachment",
+        "backgroundClip", "backgroundColor", "backgroundImage", "backgroundOrigin", "backgroundPosition", "backgroundRepeat", "backgroundSize",
+        "baselineShift", "border", "borderBottom", "borderBottomColor", "borderBottomLeftRadius", "borderBottomRightRadius", "borderBottomStyle",
+        "borderBottomWidth", "borderCollapse", "borderColor", ["borderImage",11], ["borderImageOutset",11], ["borderImageRepeat",11],
+        ["borderImageSlice",11], ["borderImageSource",11], ["borderImageWidth",11], "borderLeft", "borderLeftColor", "borderLeftStyle",
+        "borderLeftWidth", "borderRadius", "borderRight", "borderRightColor", "borderRightStyle", "borderRightWidth", "borderSpacing",
+        "borderStyle", "borderTop", "borderTopColor", "borderTopLeftRadius", "borderTopRightRadius", "borderTopStyle", "borderTopWidth",
+        "borderWidth", "bottom", "boxShadow", "boxSizing", ["breakAfter",10], ["breakBefore",10], ["breakInside",10], "captionSide", "clear",
+        "clip", "clipPath", "clipRule", "color", ["colorInterpolationFilters",10], ["columnCount",10], ["columnFill",10], ["columnGap",10],
+        ["columnRule",10], ["columnRuleColor",10], ["columnRuleStyle",10], ["columnRuleWidth",10], ["columnSpan",10], ["columnWidth",10],
+        ["columns",10], "content", "counterIncrement", "counterReset", "cssFloat", "cssText", "cursor", "direction", "display", "dominantBaseline",
+        "emptyCells", ["enableBackground",10], "fill", "fillOpacity", "fillRule", ["filter",10], ["flex",11], ["flexBasis",11], ["flexDirection",11],
+        ["flexFlow",11], ["flexGrow",11], ["flexShrink",11], ["flexWrap",11], ["floodColor",10], ["floodOpacity",10], "font", "fontFamily",
+        ["fontFeatureSettings",10], "fontSize", "fontSizeAdjust", "fontStretch", "fontStyle", "fontVariant", "fontWeight", "getPropertyPriority",
+        "getPropertyValue", "glyphOrientationHorizontal", "glyphOrientationVertical", "height", "item", ["justifyContent",11], "kerning", "left",
+        "length", "letterSpacing", ["lightingColor",10], "lineHeight", "listStyle", "listStyleImage", "listStylePosition", "listStyleType", "margin",
+        "marginBottom", "marginLeft", "marginRight", "marginTop", "marker", "markerEnd", "markerMid", "markerStart", "mask", "maxHeight", "maxWidth",
+        "minHeight", "minWidth", ["msAnimation",10], ["msAnimationDelay",10], ["msAnimationDirection",10], ["msAnimationDuration",10],
+        ["msAnimationFillMode",10], ["msAnimationIterationCount",10], ["msAnimationName",10], ["msAnimationPlayState",10], ["msAnimationTimingFunction",10],
+        ["msBackfaceVisibility",10], ["msContentZoomChaining",10], ["msContentZoomLimit",10], ["msContentZoomLimitMax",10], ["msContentZoomLimitMin",10],
+        ["msContentZoomSnap",10], ["msContentZoomSnapPoints",10], ["msContentZoomSnapType",10], ["msContentZooming",10], ["msFlex",10], ["msFlexAlign",10],
+        ["msFlexDirection",10], ["msFlexFlow",10], ["msFlexItemAlign",10], ["msFlexLinePack",10], ["msFlexNegative",10], ["msFlexOrder",10],
+        ["msFlexPack",10], ["msFlexPositive",10], ["msFlexPreferredSize",10], ["msFlexWrap",10], ["msFlowFrom",10], ["msFlowInto",10],
+        ["msFontFeatureSettings",10], ["msGridColumn",10], ["msGridColumnAlign",10], ["msGridColumnSpan",10], ["msGridColumns",10], ["msGridRow",10],
+        ["msGridRowAlign",10], ["msGridRowSpan",10], ["msGridRows",10], ["msHighContrastAdjust",10], ["msHyphenateLimitChars",10],
+        ["msHyphenateLimitLines",10], ["msHyphenateLimitZone",10], ["msHyphens",10], ["msImeAlign",11], ["msOverflowStyle",10], ["msPerspective",10],
+        ["msPerspectiveOrigin",10], ["msScrollChaining",10], ["msScrollLimit",10], ["msScrollLimitXMax",10], ["msScrollLimitXMin",10],
+        ["msScrollLimitYMax",10], ["msScrollLimitYMin",10], ["msScrollRails",10], ["msScrollSnapPointsX",10], ["msScrollSnapPointsY",10],
+        ["msScrollSnapType",10], ["msScrollSnapX",10], ["msScrollSnapY",10], ["msScrollTranslation",10], ["msTextCombineHorizontal",11],
+        ["msTextSizeAdjust",11], ["msTouchAction",10], ["msTouchSelect",10], "msTransform", "msTransformOrigin", ["msTransformStyle",10], ["msTransition",10],
+        ["msTransitionDelay",10], ["msTransitionDuration",10], ["msTransitionProperty",10], ["msTransitionTimingFunction",10], ["msUserSelect",10],
+        ["msWrapFlow",10], ["msWrapMargin",10], ["msWrapThrough",10], "opacity", ["order",11], "orphans", "outline", "outlineColor", "outlineStyle",
+        "outlineWidth", "overflow", "overflowX", "overflowY", "padding", "paddingBottom", "paddingLeft", "paddingRight", "paddingTop", "pageBreakAfter",
+        "pageBreakBefore", "pageBreakInside", "parentRule", ["perspective",10], ["perspectiveOrigin",10], "pointerEvents", "position", "quotes",
+        "removeProperty", "right", "rubyAlign", "rubyOverhang", "rubyPosition", "setProperty", "stopColor", "stopOpacity", "stroke", "strokeDasharray",
+        "strokeDashoffset", "strokeLinecap", "strokeLinejoin", "strokeMiterlimit", "strokeOpacity", "strokeWidth", "tableLayout", "textAlign", "textAlignLast",
+        "textAnchor", "textDecoration", "textIndent", "textJustify", "textOverflow", ["textShadow",10], "textTransform", "textUnderlinePosition", "top",
+        ["touchAction",11], ["transform",10], ["transformOrigin",10], ["transformStyle",10], ["transition",10], ["transitionDelay",10], ["transitionDuration",10],
+        ["transitionProperty",10], ["transitionTimingFunction",10], "unicodeBidi", "verticalAlign", "visibility", "whiteSpace", "widows", "width", "wordBreak",
+        "wordSpacing", "wordWrap", "zIndex"
+    ], [
+        ["alignContent",11], ["alignItems",11], ["alignSelf",11], ["borderImage",11], ["borderImageOutset",11], ["borderImageRepeat",11], ["borderImageSlice",11],
+        ["borderImageSource",11], ["borderImageWidth",11], ["flex",11], ["flexBasis",11], ["flexDirection",11], ["flexFlow",11], ["flexGrow",11], ["flexShrink",11],
+        ["flexWrap",11], ["justifyContent",11], ["msImeAlign",11], ["msTextCombineHorizontal",11], ["msTextSizeAdjust",11], ["order",11], ["touchAction",11]
+    ]);
+    check(CSSStyleSheet, [
+        "addImport", "addPageRule", "addRule", "cssRules", "cssText", "deleteRule", "href", "id", "imports", "insertRule",
+        "isAlternate", "isPrefAlternate", "ownerRule", "owningElement", "pages", "readOnly", "removeImport", "removeRule", "rules"
+    ], [ "addPageRule", "href", "isAlternate", "isPrefAlternate", "pages" ]);
     check(CSSStyleRule, [ "readOnly", "selectorText", "style" ]);
     check(CustomEvent, [ "detail", "initCustomEvent" ]);
+    check(Document, [
+        "Script", "URL", "URLUnencoded", "activeElement", "adoptNode", "alinkColor", "all", "anchors", "applets", ["attachEvent",9,10],
+        "bgColor", "body", ["captureEvents",11], "characterSet", "charset", ["clear",10], "close", "compatMode", "compatible", "cookie",
+        "createAttribute", "createAttributeNS", "createCDATASection", "createComment", "createDocumentFragment", "createElement",
+        "createElementNS", "createEvent", ["createEventObject",9,10], "createNodeIterator", "createProcessingInstruction", "createRange",
+        ["createStyleSheet",9,10], "createTextNode", "createTreeWalker", "defaultCharset", "defaultView", "designMode",
+        ["detachEvent",9,10], "dir", "doctype", "documentElement", "documentMode", "domain", "elementFromPoint", "embeds", "execCommand",
+        "execCommandShowHelp", "fgColor", "fileCreatedDate", "fileModifiedDate", ["fileSize",9,10], "fileUpdatedDate", ["fireEvent",9,10],
+        "focus", "forms", "frames", "getElementById", "getElementsByClassName", "getElementsByName", "getElementsByTagName",
+        "getElementsByTagNameNS", "getSelection", "hasFocus", "head", ["hidden",10], "images", "implementation", "importNode",
+        "inputEncoding", "lastModified", "linkColor", "links", "location", "media", "mimeType", ["msCSSOMElementFloatMetrics",10],
+        "msCapsLockWarningOff", ["msElementsFromPoint",10], ["msElementsFromRect",10], ["msExitFullscreen",11], ["msFullscreenElement",11],
+        ["msFullscreenEnabled",11], ["msHidden",10], ["msVisibilityState",10], "nameProp", ["namespaces",9,9], "onabort", "onactivate",
+        ["onafterupdate",9,10], "onbeforeactivate", "onbeforedeactivate", ["onbeforeeditfocus",9,10], ["onbeforeupdate",9,10], "onblur",
+        "oncanplay", "oncanplaythrough", ["oncellchange",9,10], "onchange", "onclick", "oncontextmenu", ["oncontrolselect",9,10],
+        ["ondataavailable",9,10], ["ondatasetchanged",9,10], ["ondatasetcomplete",9,10], "ondblclick", "ondeactivate", "ondrag", "ondragend",
+        "ondragenter", "ondragleave", "ondragover", "ondragstart", "ondrop", "ondurationchange", "onemptied", "onended", "onerror",
+        ["onerrorupdate",9,10], "onfocus", "onfocusin", "onfocusout", "onhelp", "oninput", "onkeydown", "onkeypress", "onkeyup", "onload",
+        "onloadeddata", "onloadedmetadata", "onloadstart", "onmousedown", "onmousemove", "onmouseout", "onmouseover", "onmouseup",
+        "onmousewheel", ["onmscontentzoom",10], ["onmsfullscreenchange",11], ["onmsfullscreenerror",11], ["onmsgesturechange",10],
+        ["onmsgesturedoubletap",10], ["onmsgestureend",10], ["onmsgesturehold",10], ["onmsgesturestart",10], ["onmsgesturetap",10],
+        ["onmsinertiastart",10], ["onmsmanipulationstatechanged",10], ["onmspointercancel",10], ["onmspointerdown",10],
+        ["onmspointerenter",11], ["onmspointerhover",10,10,v == 10], ["onmspointerleave",11], ["onmspointermove",10], ["onmspointerout",10],
+        ["onmspointerover",10], ["onmspointerup",10], "onmssitemodejumplistitemremoved", "onmsthumbnailclick", "onpause", "onplay",
+        "onplaying", ["onpointercancel",11], ["onpointerdown",11], ["onpointerenter",11], ["onpointerleave",11], ["onpointermove",11],
+        ["onpointerout",11], ["onpointerover",11], ["onpointerup",11], "onprogress", ["onpropertychange",9,10], "onratechange",
+        "onreadystatechange", "onreset", ["onrowenter",9,10], ["onrowexit",9,10], ["onrowsdelete",9,10], ["onrowsinserted",9,10], "onscroll",
+        "onseeked", "onseeking", "onselect", "onselectionchange", "onselectstart", "onstalled", "onstop", "onstoragecommit", "onsubmit",
+        "onsuspend", "ontimeupdate", "onvolumechange", "onwaiting", "open", "parentWindow", "plugins", "protocol", "queryCommandEnabled",
+        "queryCommandIndeterm", "queryCommandState", "queryCommandSupported", "queryCommandText", "queryCommandValue", "querySelector",
+        "querySelectorAll", "readyState", "referrer", "releaseCapture", ["releaseEvents",11], "removeNode", "replaceNode", "rootElement",
+        "scripts", "security", ["selection",9,10], "styleSheets", "swapNode", "title", "uniqueID", "updateSettings", ["visibilityState",10],
+        "vlinkColor", "write", "writeln", "xmlEncoding", "xmlStandalone", "xmlVersion"
+    ], [
+        ["captureEvents",11], "createNodeIterator", "createRange", "createTreeWalker", ["hidden",10], "msCapsLockWarningOff",
+        ["msCSSOMElementFloatMetrics",10], ["msElementsFromPoint",10], ["msElementsFromRect",10], ["msExitFullscreen",11],
+        ["msFullscreenElement",11], ["msFullscreenEnabled",11], ["msHidden",10], ["msVisibilityState",10], ["onmscontentzoom",10],
+        ["onmsfullscreenchange",11], ["onmsfullscreenerror",11], ["onmsgesturechange",10], ["onmsgesturedoubletap",10], ["onmsgestureend",10],
+        ["onmsgesturehold",10], ["onmsgesturestart",10], ["onmsgesturetap",10], ["onmsinertiastart",10], ["onmsmanipulationstatechanged",10],
+        ["onmspointercancel",10], ["onmspointerdown",10], ["onmspointerenter",11], ["onmspointerhover",10,10], ["onmspointerleave",11],
+        ["onmspointermove",10], ["onmspointerout",10], ["onmspointerover",10], ["onmspointerup",10], ["onpointercancel",11], ["onpointerdown",11],
+        ["onpointerenter",11], ["onpointerleave",11], ["onpointermove",11], ["onpointerout",11], ["onpointerover",11], ["onpointerup",11],
+        ["releaseEvents",11], "rootElement", ["visibilityState",10]
+    ]);
+    check(DocumentFragment, [ ["attachEvent",9,10], ["detachEvent",9,10], "querySelector", "querySelectorAll", "removeNode", "replaceNode", "swapNode" ]);
     check(DocumentType, [ "entities", "internalSubset", "name", "notations", "publicId", "systemId" ]);
+    check(Element, [
+        "childElementCount", "clientHeight", "clientLeft", "clientTop", "clientWidth", ["fireEvent",9,10], "firstElementChild",
+        "getAttribute", "getAttributeNS", "getAttributeNode", "getAttributeNodeNS", "getBoundingClientRect", "getClientRects",
+        "getElementsByTagName", "getElementsByTagNameNS", "hasAttribute", "hasAttributeNS", "lastElementChild",
+        ["msContentZoomFactor",10], ["msGetRegionContent",10], ["msGetUntransformedBounds",11], "msMatchesSelector",
+        ["msRegionOverflow",10], ["msReleasePointerCapture",10], ["msRequestFullscreen",11], ["msSetPointerCapture",10],
+        ["msZoomTo",11], "nextElementSibling", ["ongotpointercapture",11], ["onlostpointercapture",11], ["onmsgesturechange",10],
+        ["onmsgesturedoubletap",10], ["onmsgestureend",10], ["onmsgesturehold",10], ["onmsgesturestart",10], ["onmsgesturetap",10],
+        ["onmsgotpointercapture",10], ["onmsinertiastart",10], ["onmslostpointercapture",10], ["onmspointercancel",10],
+        ["onmspointerdown",10], ["onmspointerenter",11], ["onmspointerhover",10,10], ["onmspointerleave",11], ["onmspointermove",10],
+        ["onmspointerout",10], ["onmspointerover",10], ["onmspointerup",10], ["onpointercancel",11], ["onpointerdown",11],
+        ["onpointerenter",11], ["onpointerleave",11], ["onpointermove",11], ["onpointerout",11], ["onpointerover",11],
+        ["onpointerup",11], "previousElementSibling", "querySelector", "querySelectorAll", ["releasePointerCapture",11],
+        "removeAttribute", "removeAttributeNS", "removeAttributeNode", "scrollHeight", "scrollLeft", "scrollTop", "scrollWidth",
+        "setAttribute", "setAttributeNS", "setAttributeNode", "setAttributeNodeNS", ["setPointerCapture",11], "tagName"
+    ], [
+        ["msContentZoomFactor",10], ["msGetRegionContent",10], ["msGetUntransformedBounds",11], ["msRegionOverflow",10],
+        ["msRequestFullscreen",11], ["msZoomTo",11], ["ongotpointercapture",11], ["onlostpointercapture",11],
+        ["onmspointerenter",11], ["onmspointerleave",11], ["onpointercancel",11], ["onpointerdown",11], ["onpointerenter",11],
+        ["onpointerleave",11], ["onpointermove",11], ["onpointerout",11], ["onpointerover",11], ["onpointerup",11],
+        ["releasePointerCapture",11], ["setPointerCapture",11]
+    ]);
     check(Event, [
         "AT_TARGET", "BUBBLING_PHASE", "CAPTURING_PHASE", "bubbles", "cancelBubble", "cancelable", "currentTarget",
         "defaultPrevented", "eventPhase", "initEvent", "isTrusted", "preventDefault", "srcElement",
         "stopImmediatePropagation", "stopPropagation", "target", "timeStamp", "type"
     ], [ "AT_TARGET", "BUBBLING_PHASE", "CAPTURING_PHASE" ]);
+    if(v >= 11)
+        check(HTMLDocument, []);
+    check(HTMLElement, [
+        "accessKey", ["addBehavior",9,10], ["addFilter",9,9], ["all",9,10], "applyElement", ["attachEvent",9,10], ["behaviorUrns",9,10], "blur",
+        "canHaveChildren", "canHaveHTML", "children", ["classList",10], "className", "clearAttributes", "click", "componentFromPoint", "contains",
+        "contentEditable", "createControlRange", "currentStyle", ["dataset",11], ["detachEvent",9,10], "dir", "disabled", ["doScroll",9,10],
+        ["document",9,9], "dragDrop", ["draggable",10], ["filters",9,9], "focus", "getAdjacentText", "getElementsByClassName", ["hidden",11],
+        "hideFocus", "id", "innerHTML", "innerText", "insertAdjacentElement", "insertAdjacentHTML", "insertAdjacentText", "isContentEditable",
+        "isDisabled", "isMultiLine", "isTextEdit", "lang", "language", "mergeAttributes", ["msGetInputContext",11], "offsetHeight", "offsetLeft",
+        "offsetParent", "offsetTop", "offsetWidth", "onabort", "onactivate", ["onafterupdate",9,10], "onbeforeactivate", "onbeforecopy",
+        "onbeforecut", "onbeforedeactivate", ["onbeforeeditfocus",9,10], "onbeforepaste", ["onbeforeupdate",9,10], "onblur", "oncanplay",
+        "oncanplaythrough", ["oncellchange",9,10], "onchange", "onclick", "oncontextmenu", ["oncontrolselect",9,10], "oncopy", ["oncuechange",10],
+        "oncut", ["ondataavailable",9,10], ["ondatasetchanged",9,10], ["ondatasetcomplete",9,10], "ondblclick", "ondeactivate", "ondrag",
+        "ondragend", "ondragenter", "ondragleave", "ondragover", "ondragstart", "ondrop", "ondurationchange", "onemptied", "onended", "onerror",
+        ["onerrorupdate",9,10], ["onfilterchange",9,10], "onfocus", "onfocusin", "onfocusout", "onhelp", "oninput", "onkeydown", "onkeypress",
+        "onkeyup", ["onlayoutcomplete",9,10], "onload", "onloadeddata", "onloadedmetadata", "onloadstart", ["onlosecapture",9,10],
+        "onmousedown", "onmouseenter", "onmouseleave", "onmousemove", "onmouseout", "onmouseover", "onmouseup", "onmousewheel", ["onmove",9,10],
+        ["onmoveend",9,10], ["onmovestart",9,10], ["onmscontentzoom",10], ["onmsmanipulationstatechanged",10], "onpaste", "onpause", "onplay",
+        "onplaying", "onprogress", ["onpropertychange",9,10], "onratechange", ["onreadystatechange",9,10], "onreset", ["onresize",9,10],
+        ["onresizeend",9,10], ["onresizestart",9,10], ["onrowenter",9,10], ["onrowexit",9,10], ["onrowsdelete",9,10], ["onrowsinserted",9,10],
+        "onscroll", "onseeked", "onseeking", "onselect", "onselectstart", "onstalled", "onsubmit", "onsuspend", "ontimeupdate", "onvolumechange",
+        "onwaiting", "outerHTML", "outerText", "parentElement", "parentTextEdit", ["readyState",9,10], "recordNumber", "releaseCapture",
+        ["removeBehavior",9,10], ["removeFilter",9,9], "removeNode", "replaceAdjacentText", "replaceNode", "runtimeStyle", ["scopeName",9,9],
+        "scrollIntoView", "setActive", "setCapture", "sourceIndex", ["spellcheck",10], "style", "swapNode", "tabIndex", ["tagUrn",9,9], "title",
+        "uniqueID", "uniqueNumber"
+    ], [ ["dataset",11], ["draggable",10], ["hidden",11], ["msGetInputContext",11], ["onmscontentzoom",10] ]);
+    check(HTMLTableCellElement, [
+        "abbr", "align", "axis", "background", "bgColor", "borderColor", "borderColorDark", "borderColorLight",
+        "cellIndex", "ch", "chOff", "colSpan", "headers", "height", "noWrap", "rowSpan", "scope", "vAlign", "width"
+    ], [ "abbr", "axis", "ch", "chOff", "headers", "scope" ]);
+    check(HTMLTableDataCellElement, []);
     check(HTMLUnknownElement, [ "namedRecordset", "recordset" ]);
+    check(KeyboardEvent, [
+        "DOM_KEY_LOCATION_JOYSTICK", "DOM_KEY_LOCATION_LEFT", "DOM_KEY_LOCATION_MOBILE",
+        "DOM_KEY_LOCATION_NUMPAD", "DOM_KEY_LOCATION_RIGHT", "DOM_KEY_LOCATION_STANDARD",
+        "altKey", "char", "charCode", "ctrlKey", "getModifierState", "initKeyboardEvent",
+        "key", "keyCode", "locale", "location", "metaKey", "repeat", "shiftKey", "which"
+    ], [
+        "DOM_KEY_LOCATION_JOYSTICK", "DOM_KEY_LOCATION_LEFT", "DOM_KEY_LOCATION_MOBILE",
+        "DOM_KEY_LOCATION_NUMPAD", "DOM_KEY_LOCATION_RIGHT", "DOM_KEY_LOCATION_STANDARD"
+    ]);
     check(MessageEvent, [ "data", "initMessageEvent", "origin", ["ports",10], "source" ], [ ["ports",10] ]);
     check(MouseEvent, [
         "altKey", "button", "buttons", "clientX", "clientY", "ctrlKey", "fromElement", "getModifierState",
         "initMouseEvent", "layerX", "layerY", "metaKey", "offsetX", "offsetY", "pageX", "pageY", "relatedTarget",
         "screenX", "screenY", "shiftKey", "toElement", "which", "x", "y"
+    ]);
+    check(MSCSSProperties, [
+        "accelerator", "backgroundPositionX", "backgroundPositionY", ["behavior",9,10], ["filter",9,9], "getAttribute",
+        "imeMode", "layoutFlow", "layoutGrid", "layoutGridChar", "layoutGridLine", "layoutGridMode", "layoutGridType",
+        "lineBreak", "msBlockProgression", "msInterpolationMode", "removeAttribute", "scrollbar3dLightColor",
+        "scrollbarArrowColor", "scrollbarBaseColor", "scrollbarDarkShadowColor", "scrollbarFaceColor",
+        "scrollbarHighlightColor", "scrollbarShadowColor", "scrollbarTrackColor", "setAttribute", "styleFloat",
+        "textAutospace", "textJustifyTrim", "textKashida", "textKashidaSpace", "writingMode", "zoom"
+    ]);
+    check(MSCurrentStyleCSSProperties, [ "blockDirection", "clipBottom", "clipLeft", "clipRight", "clipTop", "hasLayout" ]);
+    check(MSStyleCSSProperties, [
+        "pixelBottom", "pixelHeight", "pixelLeft", "pixelRight", "pixelTop", "pixelWidth", "posBottom",
+        "posHeight", "posLeft", "posRight", "posTop", "posWidth", "textDecorationBlink", "textDecorationLineThrough",
+        "textDecorationNone", "textDecorationOverline", "textDecorationUnderline"
     ]);
     check(Node, [
         "ATTRIBUTE_NODE", "CDATA_SECTION_NODE", "COMMENT_NODE", "DOCUMENT_FRAGMENT_NODE",  "DOCUMENT_NODE",
@@ -3695,8 +3971,14 @@ sync_test("prototype props", function() {
         "DOCUMENT_POSITION_CONTAINED_BY", "DOCUMENT_POSITION_CONTAINS", "DOCUMENT_POSITION_DISCONNECTED",
         "DOCUMENT_POSITION_FOLLOWING", "DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC", "DOCUMENT_POSITION_PRECEDING",
         "DOCUMENT_TYPE_NODE", "ELEMENT_NODE", "ENTITY_NODE", "ENTITY_REFERENCE_NODE", "NOTATION_NODE",
-        "PROCESSING_INSTRUCTION_NODE", "TEXT_NODE", "hasAttributes", "normalize"
+        "PROCESSING_INSTRUCTION_NODE", "TEXT_NODE"
     ]);
+    if(v >= 11)
+        check(PageTransitionEvent, [ "persisted" ]);
+    if(v >= 10)
+        check(ProgressEvent, [ "initProgressEvent", "lengthComputable", "loaded", "total" ]);
     check(StorageEvent, [ "initStorageEvent", "key", "newValue", "oldValue", "storageArea", "url" ]);
+    check(StyleSheet, [ "disabled", "href", "media", "ownerNode", "parentStyleSheet", "title", "type" ]);
+    check(Text, [ "removeNode", "replaceNode", "replaceWholeText", "splitText", "swapNode", "wholeText" ], [ "replaceWholeText", "wholeText" ]);
     check(UIEvent, [ "detail", "initUIEvent", "view" ], null, [ "deviceSessionId" ]);
 });

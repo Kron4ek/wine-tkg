@@ -24,6 +24,7 @@
 #define COBJMACROS
 #define OEMRESOURCE
 #include <windows.h>
+#include <winternl.h>
 #include <rpc.h>
 #include <shlobj.h>
 #include <shellapi.h>
@@ -1213,6 +1214,7 @@ void manage_desktop( WCHAR *arg )
     HMODULE shell32;
     HANDLE thread;
     DWORD id;
+    NTSTATUS status;
 
     /* get the rest of the command line (if any) */
     while (*p && !is_whitespace(*p)) p++;
@@ -1264,6 +1266,10 @@ void manage_desktop( WCHAR *arg )
         }
         SetThreadDesktop( desktop );
     }
+
+    /* the desktop process should always have an admin token */
+    status = NtSetInformationProcess( GetCurrentProcess(), ProcessWineGrantAdminToken, NULL, 0 );
+    if (status) WARN( "couldn't set admin token for desktop, error %08lx\n", status );
 
     /* create the desktop window */
     hwnd = CreateWindowExW( 0, DESKTOP_CLASS_ATOM, NULL,

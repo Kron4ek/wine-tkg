@@ -3824,7 +3824,7 @@ static void src_params_init_from_operands(struct vkd3d_shader_src_param *src_par
 }
 
 static enum vkd3d_shader_register_type register_type_from_dxil_semantic_kind(
-        enum vkd3d_shader_sysval_semantic sysval_semantic)
+        enum vkd3d_shader_sysval_semantic sysval_semantic, bool is_input)
 {
     switch (sysval_semantic)
     {
@@ -3834,7 +3834,7 @@ static enum vkd3d_shader_register_type register_type_from_dxil_semantic_kind(
         case VKD3D_SHADER_SV_SAMPLE_INDEX:
             return VKD3DSPR_NULL;
         case VKD3D_SHADER_SV_COVERAGE:
-            return VKD3DSPR_COVERAGE;
+            return is_input ? VKD3DSPR_COVERAGE : VKD3DSPR_SAMPLEMASK;
         case VKD3D_SHADER_SV_DEPTH:
             return VKD3DSPR_DEPTHOUT;
         case VKD3D_SHADER_SV_DEPTH_GREATER_EQUAL:
@@ -3884,7 +3884,7 @@ static void sm6_parser_init_signature(struct sm6_parser *sm6, const struct shade
         param = &params[i];
 
         if (e->register_index == UINT_MAX
-                && (io_reg_type = register_type_from_dxil_semantic_kind(e->sysval_semantic)) != VKD3DSPR_NULL)
+                && (io_reg_type = register_type_from_dxil_semantic_kind(e->sysval_semantic, is_input)) != VKD3DSPR_NULL)
         {
             dst_param_io_init(param, e, io_reg_type);
             continue;
@@ -9348,7 +9348,7 @@ static void signature_element_read_additional_element_values(struct signature_el
 }
 
 static enum vkd3d_result sm6_parser_read_signature(struct sm6_parser *sm6, const struct sm6_metadata_value *m,
-        struct shader_signature *s, enum vkd3d_tessellator_domain tessellator_domain)
+        struct shader_signature *s, enum vkd3d_tessellator_domain tessellator_domain, bool is_input)
 {
     unsigned int i, j, column_count, operand_count, index;
     const struct sm6_metadata_node *node, *element_node;
@@ -9466,7 +9466,7 @@ static enum vkd3d_result sm6_parser_read_signature(struct sm6_parser *sm6, const
 
         if ((is_register = e->register_index == UINT_MAX))
         {
-            if (register_type_from_dxil_semantic_kind(e->sysval_semantic) == VKD3DSPR_INVALID)
+            if (register_type_from_dxil_semantic_kind(e->sysval_semantic, is_input) == VKD3DSPR_INVALID)
             {
                 WARN("Unhandled I/O register semantic kind %u.\n", j);
                 vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_SIGNATURE,
@@ -9578,17 +9578,17 @@ static enum vkd3d_result sm6_parser_signatures_init(struct sm6_parser *sm6, cons
     }
 
     if (m->u.node->operand_count && (ret = sm6_parser_read_signature(sm6, m->u.node->operands[0],
-            &program->input_signature, tessellator_domain)) < 0)
+            &program->input_signature, tessellator_domain, true)) < 0)
     {
         return ret;
     }
     if (m->u.node->operand_count > 1 && (ret = sm6_parser_read_signature(sm6, m->u.node->operands[1],
-            &program->output_signature, tessellator_domain)) < 0)
+            &program->output_signature, tessellator_domain, false)) < 0)
     {
         return ret;
     }
     if (m->u.node->operand_count > 1 && (ret = sm6_parser_read_signature(sm6, m->u.node->operands[2],
-            &program->patch_constant_signature, tessellator_domain)) < 0)
+            &program->patch_constant_signature, tessellator_domain, false)) < 0)
     {
         return ret;
     }
@@ -9745,6 +9745,8 @@ static void sm6_parser_emit_dcl_tessellator_partitioning(struct sm6_parser *sm6,
 
     ins = sm6_parser_add_instruction(sm6, VKD3DSIH_DCL_TESSELLATOR_PARTITIONING);
     ins->declaration.tessellator_partitioning = tessellator_partitioning;
+
+    sm6->p.program->tess_partitioning = tessellator_partitioning;
 }
 
 static void sm6_parser_emit_dcl_tessellator_output_primitive(struct sm6_parser *sm6,
@@ -9761,6 +9763,8 @@ static void sm6_parser_emit_dcl_tessellator_output_primitive(struct sm6_parser *
 
     ins = sm6_parser_add_instruction(sm6, VKD3DSIH_DCL_TESSELLATOR_OUTPUT_PRIMITIVE);
     ins->declaration.tessellator_output_primitive = primitive;
+
+    sm6->p.program->tess_output_primitive = primitive;
 }
 
 static void sm6_parser_emit_dcl_max_tessellation_factor(struct sm6_parser *sm6, struct sm6_metadata_value *m)
@@ -10352,7 +10356,7 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, struct vsir_pro
     /* Estimate instruction count to avoid reallocation in most shaders. */
     count = max(token_count, 400) - 400;
     if (!vsir_program_init(program, compile_info, &version,
-            (count + (count >> 2)) / 2u + 10, VSIR_CF_BLOCKS, VSIR_FULLY_NORMALISED_IO))
+            (count + (count >> 2)) / 2u + 10, VSIR_CF_BLOCKS, VSIR_NORMALISED_SM6))
         return VKD3D_ERROR_OUT_OF_MEMORY;
     vkd3d_shader_parser_init(&sm6->p, program, message_context, compile_info->source_name);
     sm6->ptr = &sm6->start[1];
@@ -10379,6 +10383,7 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, struct vsir_pro
     *input_signature = dxbc_desc->input_signature;
     *output_signature = dxbc_desc->output_signature;
     *patch_constant_signature = dxbc_desc->patch_constant_signature;
+    program->features = dxbc_desc->features;
     memset(dxbc_desc, 0, sizeof(*dxbc_desc));
 
     block = &sm6->root_block;

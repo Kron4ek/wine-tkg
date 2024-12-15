@@ -2484,12 +2484,13 @@ static NTSTATUS get_mountmgr_fs_info( HANDLE handle, int fd, struct mountmgr_uni
     char *unix_name;
     HANDLE mountmgr;
     unsigned int status;
-    int letter;
+    int letter = -1;
 
-    if ((status = server_get_unix_name( handle, &unix_name ))) return status;
-    letter = find_dos_device( unix_name );
-    free( unix_name );
-
+    if (!server_get_unix_name( handle, &unix_name ))
+    {
+        letter = find_dos_device( unix_name );
+        free( unix_name );
+    }
     memset( drive, 0, sizeof(*drive) );
     if (letter == -1)
     {
@@ -5576,8 +5577,6 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             char *unix_name;
 
             if (fd_get_file_info( fd, options, &st, &attr ) == -1) status = errno_to_status( errno );
-            else if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
-                status = STATUS_INVALID_INFO_CLASS;
             else if (!(status = server_get_unix_name( handle, &unix_name )))
             {
                 LONG name_len = len - FIELD_OFFSET(FILE_ALL_INFORMATION, NameInformation.FileName);
@@ -5594,6 +5593,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                 free( unix_name );
                 io->Information = FIELD_OFFSET(FILE_ALL_INFORMATION, NameInformation.FileName) + name_len;
             }
+            else if (status == STATUS_OBJECT_TYPE_MISMATCH) status = STATUS_INVALID_INFO_CLASS;
         }
         break;
     case FileNameInformation:
@@ -5608,6 +5608,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                 free( unix_name );
                 io->Information = FIELD_OFFSET(FILE_NAME_INFORMATION, FileName) + name_len;
             }
+            else if (status == STATUS_OBJECT_TYPE_MISMATCH) status = STATUS_INVALID_INFO_CLASS;
         }
         break;
     case FileNetworkOpenInformation:
@@ -5617,20 +5618,14 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
 
             if (!(status = server_get_unix_name( handle, &unix_name )))
             {
-                ULONG attributes;
-                struct stat st;
-
-                if (get_file_info( unix_name, &st, &attributes ) == -1)
-                    status = errno_to_status( errno );
-                else if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
-                    status = STATUS_INVALID_INFO_CLASS;
+                if (get_file_info( unix_name, &st, &attr ) == -1) status = errno_to_status( errno );
                 else
                 {
                     FILE_BASIC_INFORMATION basic;
                     FILE_STANDARD_INFORMATION std;
 
-                    fill_file_info( &st, attributes, &basic, FileBasicInformation );
-                    fill_file_info( &st, attributes, &std, FileStandardInformation );
+                    fill_file_info( &st, attr, &basic, FileBasicInformation );
+                    fill_file_info( &st, attr, &std, FileStandardInformation );
 
                     info->CreationTime   = basic.CreationTime;
                     info->LastAccessTime = basic.LastAccessTime;
@@ -5642,6 +5637,7 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                 }
                 free( unix_name );
             }
+            else if (status == STATUS_OBJECT_TYPE_MISMATCH) status = STATUS_INVALID_INFO_CLASS;
         }
         break;
     case FileIdInformation:
@@ -7646,10 +7642,24 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
  */
 NTSTATUS WINAPI NtFlushBuffersFile( HANDLE handle, IO_STATUS_BLOCK *io )
 {
+    return NtFlushBuffersFileEx( handle, 0, NULL, 0, io );
+}
+
+
+/******************************************************************************
+ *              NtFlushBuffersFileEx   (NTDLL.@)
+ */
+NTSTATUS WINAPI NtFlushBuffersFileEx( HANDLE handle, ULONG flags, void *params, ULONG size, IO_STATUS_BLOCK *io )
+{
     NTSTATUS ret;
     HANDLE wait_handle;
     enum server_fd_type type;
     int fd, needs_close;
+
+    TRACE( "(%p,0x%08x,%p,0x%08x,%p)\n", handle, (int)flags, params, (int)size, io );
+
+    if (flags) FIXME( "flags 0x%08x ignored\n", (int)flags );
+    if (params || size) FIXME( "params %p/0x%08x ignored\n", params, (int)size );
 
     if (!io || !virtual_check_buffer_for_write( io, sizeof(*io) )) return STATUS_ACCESS_VIOLATION;
 

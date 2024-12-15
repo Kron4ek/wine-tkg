@@ -1191,6 +1191,43 @@ static const IHTMLDOMNode3Vtbl HTMLDOMNode3Vtbl = {
     HTMLDOMNode3_isSupported
 };
 
+static inline HTMLDOMNode *impl_from_IWineHTMLDOMNodePrivate(IWineHTMLDOMNodePrivate *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDOMNode, IWineHTMLDOMNodePrivate_iface);
+}
+
+DISPEX_IDISPATCH_IMPL(HTMLDOMNode_private, IWineHTMLDOMNodePrivate, impl_from_IWineHTMLDOMNodePrivate(iface)->event_target.dispex)
+
+static HRESULT WINAPI HTMLDOMNode_private_get_hasAttributes(IWineHTMLDOMNodePrivate *iface, VARIANT_BOOL *p)
+{
+    HTMLDOMNode *This = impl_from_IWineHTMLDOMNodePrivate(iface);
+
+    FIXME("(%p)->(%p)\n", This, p);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI HTMLDOMNode_private_normalize(IWineHTMLDOMNodePrivate *iface)
+{
+    HTMLDOMNode *This = impl_from_IWineHTMLDOMNodePrivate(iface);
+
+    FIXME("(%p)\n", This);
+
+    return E_NOTIMPL;
+}
+
+static const IWineHTMLDOMNodePrivateVtbl HTMLDOMNode_private_vtbl = {
+    HTMLDOMNode_private_QueryInterface,
+    HTMLDOMNode_private_AddRef,
+    HTMLDOMNode_private_Release,
+    HTMLDOMNode_private_GetTypeInfoCount,
+    HTMLDOMNode_private_GetTypeInfo,
+    HTMLDOMNode_private_GetIDsOfNames,
+    HTMLDOMNode_private_Invoke,
+    HTMLDOMNode_private_get_hasAttributes,
+    HTMLDOMNode_private_normalize,
+};
+
 static inline HTMLDOMNode *HTMLDOMNode_from_DispatchEx(DispatchEx *iface)
 {
     return CONTAINING_RECORD(iface, HTMLDOMNode, event_target.dispex);
@@ -1210,6 +1247,8 @@ void *HTMLDOMNode_query_interface(DispatchEx *dispex, REFIID riid)
         return &This->IHTMLDOMNode2_iface;
     if(IsEqualGUID(&IID_IHTMLDOMNode3, riid))
         return &This->IHTMLDOMNode3_iface;
+    if(IsEqualGUID(&IID_IWineHTMLDOMNodePrivate, riid))
+        return &This->IWineHTMLDOMNodePrivate_iface;
 
     return EventTarget_query_interface(&This->event_target, riid);
 }
@@ -1261,10 +1300,11 @@ void HTMLDOMNode_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
     };
 
     dispex_info_add_interface(info, IHTMLDOMNode_tid, mode >= COMPAT_MODE_IE9 ? ie9_hooks : NULL);
+    dispex_info_add_interface(info, IHTMLDOMNode2_tid, NULL);
 
     if(mode >= COMPAT_MODE_IE9) {
-        dispex_info_add_interface(info, IHTMLDOMNode2_tid, NULL);
         dispex_info_add_interface(info, IHTMLDOMNode3_tid, NULL);
+        dispex_info_add_interface(info, IWineHTMLDOMNodePrivate_tid, NULL);
     }
 
     EventTarget_init_dispex_info(info, mode);
@@ -1284,6 +1324,7 @@ void HTMLDOMNode_Init(HTMLDocumentNode *doc, HTMLDOMNode *node, nsIDOMNode *nsno
     node->IHTMLDOMNode_iface.lpVtbl = &HTMLDOMNodeVtbl;
     node->IHTMLDOMNode2_iface.lpVtbl = &HTMLDOMNode2Vtbl;
     node->IHTMLDOMNode3_iface.lpVtbl = &HTMLDOMNode3Vtbl;
+    node->IWineHTMLDOMNodePrivate_iface.lpVtbl = &HTMLDOMNode_private_vtbl;
 
     init_event_target(&node->event_target, dispex_data, doc->script_global);
 

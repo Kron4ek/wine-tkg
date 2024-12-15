@@ -527,6 +527,7 @@ static BOOL image_check_debug_link_gnu_id(const WCHAR* file, struct image_file_m
 {
     struct image_section_map buildid_sect;
     DWORD read_bytes;
+    GUID guid;
     HANDLE handle;
     WCHAR *path;
     WORD magic;
@@ -545,6 +546,9 @@ static BOOL image_check_debug_link_gnu_id(const WCHAR* file, struct image_file_m
         ret = elf_map_handle(handle, fmap);
     CloseHandle(handle);
 
+    if (ret && pe_has_buildid_debug(fmap, &guid))
+        return TRUE;
+
     if (ret && image_find_section(fmap, ".note.gnu.build-id", &buildid_sect))
     {
         const UINT32* note;
@@ -557,12 +561,13 @@ static BOOL image_check_debug_link_gnu_id(const WCHAR* file, struct image_file_m
             {
                 if (note[1] == idlen && !memcmp(note + 3 + ((note[0] + 3) >> 2), id, idlen))
                     return TRUE;
-                WARN("mismatch in buildid information for %s\n", debugstr_w(file));
             }
         }
         image_unmap_section(&buildid_sect);
         image_unmap_file(fmap);
     }
+    if (ret)
+        WARN("mismatch in buildid information for %s\n", debugstr_w(file));
     return FALSE;
 }
 
@@ -664,69 +669,75 @@ static WCHAR* append_hex(WCHAR* dst, const BYTE* id, const BYTE* end)
     return dst;
 }
 
-/******************************************************************
- *		image_locate_build_id_target
- *
- * Try to find the .so file containing the debug info out of the build-id note information
- */
-static struct image_file_map* image_locate_build_id_target(const BYTE* id, unsigned idlen)
+static BOOL image_locate_build_id_target_in_dir(struct image_file_map *fmap_link, const BYTE* id, unsigned idlen, const WCHAR *from)
 {
-    struct image_file_map* fmap_link = NULL;
-    DWORD sz;
-    WCHAR* p;
-    WCHAR* z;
+    size_t from_len = wcslen(from);
+    BOOL found = FALSE;
+    WCHAR *p, *z;
 
-    fmap_link = HeapAlloc(GetProcessHeap(), 0, sizeof(*fmap_link));
-    if (!fmap_link) return NULL;
-
-    p = malloc(sizeof(L"/usr/lib/debug/.build-id/") +
-               (idlen * 2 + 1) * sizeof(WCHAR) + sizeof(L".debug"));
-    if (!p) goto fail;
-    wcscpy(p, L"/usr/lib/debug/.build-id/");
-    z = p + wcslen(p);
-    if (idlen)
+    if ((p = malloc((from_len + idlen * 2 + 1) * sizeof(WCHAR) + sizeof(L".debug"))))
     {
+        memcpy(p, from, from_len * sizeof(WCHAR));
+        z = p + from_len;
         z = append_hex(z, id, id + 1);
         if (idlen > 1)
         {
             *z++ = L'/';
             z = append_hex(z, id + 1, id + idlen);
         }
-    }
-    wcscpy(z, L".debug");
-    TRACE("checking %s\n", debugstr_w(p));
+        wcscpy(z, L".debug");
+        TRACE("checking %s\n", debugstr_w(p));
+        found = image_check_debug_link_gnu_id(p, fmap_link, id, idlen);
 
-    if (image_check_debug_link_gnu_id(p, fmap_link, id, idlen))
-    {
         free(p);
-        return fmap_link;
     }
+    return found;
+}
+
+/******************************************************************
+ *		image_locate_build_id_target
+ *
+ * Try to find an image file containing the debug info out of the build-id
+ * note information.
+ */
+static struct image_file_map* image_locate_build_id_target(const BYTE* id, unsigned idlen)
+{
+    struct image_file_map* fmap_link;
+    DWORD sz;
+
+    if (!idlen) return NULL;
+
+    if (!(fmap_link = HeapAlloc(GetProcessHeap(), 0, sizeof(*fmap_link))))
+        return NULL;
+    if (image_locate_build_id_target_in_dir(fmap_link, id, idlen, L"/usr/lib/debug/.build-id/"))
+        return fmap_link;
+    if (image_locate_build_id_target_in_dir(fmap_link, id, idlen, L"/usr/lib/.build-id/"))
+        return fmap_link;
 
     sz = GetEnvironmentVariableW(L"WINEHOMEDIR", NULL, 0);
     if (sz)
     {
-        z = realloc(p, sz * sizeof(WCHAR) +
-                    sizeof(L"\\.cache\\debuginfod_client\\") +
-                    idlen * 2 * sizeof(WCHAR) + sizeof(L"\\debuginfo") + 500);
-        if (!z) goto fail;
-        p = z;
-        GetEnvironmentVariableW(L"WINEHOMEDIR", p, sz);
-        z = p + sz - 1;
-        wcscpy(z, L"\\.cache\\debuginfod_client\\");
-        z += wcslen(z);
-        z = append_hex(z, id, id + idlen);
-        wcscpy(z, L"\\debuginfo");
-        TRACE("checking %ls\n", p);
-        if (image_check_debug_link_gnu_id(p, fmap_link, id, idlen))
+        WCHAR *p, *z;
+        p = malloc(sz * sizeof(WCHAR) +
+                   sizeof(L"\\.cache\\debuginfod_client\\") +
+                   idlen * 2 * sizeof(WCHAR) + sizeof(L"\\debuginfo") + 500);
+        if (p && GetEnvironmentVariableW(L"WINEHOMEDIR", p, sz) == sz - 1)
         {
+            BOOL found;
+
+            wcscpy(p + sz - 1, L"\\.cache\\debuginfod_client\\");
+            z = p + wcslen(p);
+            z = append_hex(z, id, id + idlen);
+            wcscpy(z, L"\\debuginfo");
+            TRACE("checking %ls\n", p);
+            found = image_check_debug_link_gnu_id(p, fmap_link, id, idlen);
             free(p);
-            return fmap_link;
+            if (found) return fmap_link;
         }
     }
 
     TRACE("not found\n");
-fail:
-    free(p);
+
     HeapFree(GetProcessHeap(), 0, fmap_link);
     return NULL;
 }
@@ -838,7 +849,18 @@ BOOL image_check_alternate(struct image_file_map* fmap, const struct module* mod
     struct image_file_map* fmap_link = NULL;
 
     /* if present, add the .gnu_debuglink file as an alternate to current one */
-    if (image_find_section(fmap, ".note.gnu.build-id", &buildid_sect))
+    if (fmap->modtype == DMT_PE)
+    {
+        GUID guid;
+
+        if (pe_has_buildid_debug(fmap, &guid))
+        {
+            /* reorder bytes to match little endian order */
+            fmap_link = image_locate_build_id_target((const BYTE*)&guid, sizeof(guid));
+        }
+    }
+    /* if present, add the .note.gnu.build-id as an alternate to current one */
+    if (!fmap_link && image_find_section(fmap, ".note.gnu.build-id", &buildid_sect))
     {
         const UINT32* note;
 

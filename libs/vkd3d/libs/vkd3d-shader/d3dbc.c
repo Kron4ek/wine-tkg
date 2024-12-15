@@ -235,7 +235,7 @@ static const struct vkd3d_sm1_opcode_info vs_opcode_table[] =
     /* Arithmetic */
     {VKD3D_SM1_OP_NOP,          0, 0, VKD3DSIH_NOP},
     {VKD3D_SM1_OP_MOV,          1, 1, VKD3DSIH_MOV},
-    {VKD3D_SM1_OP_MOVA,         1, 1, VKD3DSIH_MOVA,         {2, 0}, {~0u, ~0u}},
+    {VKD3D_SM1_OP_MOVA,         1, 1, VKD3DSIH_MOVA,         {2, 0}},
     {VKD3D_SM1_OP_ADD,          1, 2, VKD3DSIH_ADD},
     {VKD3D_SM1_OP_SUB,          1, 2, VKD3DSIH_SUB},
     {VKD3D_SM1_OP_MAD,          1, 3, VKD3DSIH_MAD},
@@ -248,22 +248,22 @@ static const struct vkd3d_sm1_opcode_info vs_opcode_table[] =
     {VKD3D_SM1_OP_MAX,          1, 2, VKD3DSIH_MAX},
     {VKD3D_SM1_OP_SLT,          1, 2, VKD3DSIH_SLT},
     {VKD3D_SM1_OP_SGE,          1, 2, VKD3DSIH_SGE},
-    {VKD3D_SM1_OP_ABS,          1, 1, VKD3DSIH_ABS},
+    {VKD3D_SM1_OP_ABS,          1, 1, VKD3DSIH_ABS,          {2, 0}},
     {VKD3D_SM1_OP_EXP,          1, 1, VKD3DSIH_EXP},
     {VKD3D_SM1_OP_LOG,          1, 1, VKD3DSIH_LOG},
     {VKD3D_SM1_OP_EXPP,         1, 1, VKD3DSIH_EXPP},
     {VKD3D_SM1_OP_LOGP,         1, 1, VKD3DSIH_LOGP},
     {VKD3D_SM1_OP_LIT,          1, 1, VKD3DSIH_LIT},
     {VKD3D_SM1_OP_DST,          1, 2, VKD3DSIH_DST},
-    {VKD3D_SM1_OP_LRP,          1, 3, VKD3DSIH_LRP},
+    {VKD3D_SM1_OP_LRP,          1, 3, VKD3DSIH_LRP,          {2, 0}},
     {VKD3D_SM1_OP_FRC,          1, 1, VKD3DSIH_FRC},
-    {VKD3D_SM1_OP_POW,          1, 2, VKD3DSIH_POW},
-    {VKD3D_SM1_OP_CRS,          1, 2, VKD3DSIH_CRS},
-    {VKD3D_SM1_OP_SGN,          1, 3, VKD3DSIH_SGN,          {2, 0}, {  2,   1}},
-    {VKD3D_SM1_OP_SGN,          1, 1, VKD3DSIH_SGN,          {3, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_NRM,          1, 1, VKD3DSIH_NRM,},
-    {VKD3D_SM1_OP_SINCOS,       1, 3, VKD3DSIH_SINCOS,       {2, 0}, {  2,   1}},
-    {VKD3D_SM1_OP_SINCOS,       1, 1, VKD3DSIH_SINCOS,       {3, 0}, {~0u, ~0u}},
+    {VKD3D_SM1_OP_POW,          1, 2, VKD3DSIH_POW,          {2, 0}},
+    {VKD3D_SM1_OP_CRS,          1, 2, VKD3DSIH_CRS,          {2, 0}},
+    {VKD3D_SM1_OP_SGN,          1, 3, VKD3DSIH_SGN,          {2, 0}, {2, 1}},
+    {VKD3D_SM1_OP_SGN,          1, 1, VKD3DSIH_SGN,          {3, 0}},
+    {VKD3D_SM1_OP_NRM,          1, 1, VKD3DSIH_NRM,          {2, 0}},
+    {VKD3D_SM1_OP_SINCOS,       1, 3, VKD3DSIH_SINCOS,       {2, 0}, {2, 1}},
+    {VKD3D_SM1_OP_SINCOS,       1, 1, VKD3DSIH_SINCOS,       {3, 0}},
     /* Matrix */
     {VKD3D_SM1_OP_M4x4,         1, 2, VKD3DSIH_M4x4},
     {VKD3D_SM1_OP_M4x3,         1, 2, VKD3DSIH_M4x3},
@@ -274,27 +274,27 @@ static const struct vkd3d_sm1_opcode_info vs_opcode_table[] =
     {VKD3D_SM1_OP_DCL,          0, 0, VKD3DSIH_DCL},
     /* Constant definitions */
     {VKD3D_SM1_OP_DEF,          1, 1, VKD3DSIH_DEF},
-    {VKD3D_SM1_OP_DEFB,         1, 1, VKD3DSIH_DEFB},
-    {VKD3D_SM1_OP_DEFI,         1, 1, VKD3DSIH_DEFI},
+    {VKD3D_SM1_OP_DEFB,         1, 1, VKD3DSIH_DEFB,         {2, 0}},
+    {VKD3D_SM1_OP_DEFI,         1, 1, VKD3DSIH_DEFI,         {2, 0}},
     /* Control flow */
-    {VKD3D_SM1_OP_REP,          0, 1, VKD3DSIH_REP,          {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_ENDREP,       0, 0, VKD3DSIH_ENDREP,       {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_IF,           0, 1, VKD3DSIH_IF,           {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_IFC,          0, 2, VKD3DSIH_IFC,          {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_ELSE,         0, 0, VKD3DSIH_ELSE,         {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_ENDIF,        0, 0, VKD3DSIH_ENDIF,        {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_BREAK,        0, 0, VKD3DSIH_BREAK,        {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_BREAKC,       0, 2, VKD3DSIH_BREAKC,       {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_BREAKP,       0, 1, VKD3DSIH_BREAKP},
-    {VKD3D_SM1_OP_CALL,         0, 1, VKD3DSIH_CALL,         {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_CALLNZ,       0, 2, VKD3DSIH_CALLNZ,       {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_LOOP,         0, 2, VKD3DSIH_LOOP,         {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_RET,          0, 0, VKD3DSIH_RET,          {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_ENDLOOP,      0, 0, VKD3DSIH_ENDLOOP,      {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_LABEL,        0, 1, VKD3DSIH_LABEL,        {2, 0}, {~0u, ~0u}},
+    {VKD3D_SM1_OP_REP,          0, 1, VKD3DSIH_REP,          {2, 0}},
+    {VKD3D_SM1_OP_ENDREP,       0, 0, VKD3DSIH_ENDREP,       {2, 0}},
+    {VKD3D_SM1_OP_IF,           0, 1, VKD3DSIH_IF,           {2, 0}},
+    {VKD3D_SM1_OP_IFC,          0, 2, VKD3DSIH_IFC,          {2, 1}},
+    {VKD3D_SM1_OP_ELSE,         0, 0, VKD3DSIH_ELSE,         {2, 0}},
+    {VKD3D_SM1_OP_ENDIF,        0, 0, VKD3DSIH_ENDIF,        {2, 0}},
+    {VKD3D_SM1_OP_BREAK,        0, 0, VKD3DSIH_BREAK,        {2, 1}},
+    {VKD3D_SM1_OP_BREAKC,       0, 2, VKD3DSIH_BREAKC,       {2, 1}},
+    {VKD3D_SM1_OP_BREAKP,       0, 1, VKD3DSIH_BREAKP,       {2, 1}},
+    {VKD3D_SM1_OP_CALL,         0, 1, VKD3DSIH_CALL,         {2, 0}},
+    {VKD3D_SM1_OP_CALLNZ,       0, 2, VKD3DSIH_CALLNZ,       {2, 0}},
+    {VKD3D_SM1_OP_LOOP,         0, 2, VKD3DSIH_LOOP,         {2, 0}},
+    {VKD3D_SM1_OP_RET,          0, 0, VKD3DSIH_RET,          {2, 0}},
+    {VKD3D_SM1_OP_ENDLOOP,      0, 0, VKD3DSIH_ENDLOOP,      {2, 0}},
+    {VKD3D_SM1_OP_LABEL,        0, 1, VKD3DSIH_LABEL,        {2, 0}},
 
-    {VKD3D_SM1_OP_SETP,         1, 2, VKD3DSIH_SETP},
-    {VKD3D_SM1_OP_TEXLDL,       1, 2, VKD3DSIH_TEXLDL,       {3, 0}, {~0u, ~0u}},
+    {VKD3D_SM1_OP_SETP,         1, 2, VKD3DSIH_SETP,         {2, 1}},
+    {VKD3D_SM1_OP_TEXLDL,       1, 2, VKD3DSIH_TEXLDL,       {3, 0}},
     {0,                         0, 0, VKD3DSIH_INVALID},
 };
 
@@ -307,89 +307,84 @@ static const struct vkd3d_sm1_opcode_info ps_opcode_table[] =
     {VKD3D_SM1_OP_SUB,          1, 2, VKD3DSIH_SUB},
     {VKD3D_SM1_OP_MAD,          1, 3, VKD3DSIH_MAD},
     {VKD3D_SM1_OP_MUL,          1, 2, VKD3DSIH_MUL},
-    {VKD3D_SM1_OP_RCP,          1, 1, VKD3DSIH_RCP},
-    {VKD3D_SM1_OP_RSQ,          1, 1, VKD3DSIH_RSQ},
+    {VKD3D_SM1_OP_RCP,          1, 1, VKD3DSIH_RCP,          {2, 0}},
+    {VKD3D_SM1_OP_RSQ,          1, 1, VKD3DSIH_RSQ,          {2, 0}},
     {VKD3D_SM1_OP_DP3,          1, 2, VKD3DSIH_DP3},
-    {VKD3D_SM1_OP_DP4,          1, 2, VKD3DSIH_DP4},
-    {VKD3D_SM1_OP_MIN,          1, 2, VKD3DSIH_MIN},
-    {VKD3D_SM1_OP_MAX,          1, 2, VKD3DSIH_MAX},
-    {VKD3D_SM1_OP_SLT,          1, 2, VKD3DSIH_SLT},
-    {VKD3D_SM1_OP_SGE,          1, 2, VKD3DSIH_SGE},
-    {VKD3D_SM1_OP_ABS,          1, 1, VKD3DSIH_ABS},
-    {VKD3D_SM1_OP_EXP,          1, 1, VKD3DSIH_EXP},
-    {VKD3D_SM1_OP_LOG,          1, 1, VKD3DSIH_LOG},
-    {VKD3D_SM1_OP_EXPP,         1, 1, VKD3DSIH_EXPP},
-    {VKD3D_SM1_OP_LOGP,         1, 1, VKD3DSIH_LOGP},
-    {VKD3D_SM1_OP_DST,          1, 2, VKD3DSIH_DST},
+    {VKD3D_SM1_OP_DP4,          1, 2, VKD3DSIH_DP4,          {1, 2}},
+    {VKD3D_SM1_OP_MIN,          1, 2, VKD3DSIH_MIN,          {2, 0}},
+    {VKD3D_SM1_OP_MAX,          1, 2, VKD3DSIH_MAX,          {2, 0}},
+    {VKD3D_SM1_OP_ABS,          1, 1, VKD3DSIH_ABS,          {2, 0}},
+    {VKD3D_SM1_OP_EXP,          1, 1, VKD3DSIH_EXP,          {2, 0}},
+    {VKD3D_SM1_OP_LOG,          1, 1, VKD3DSIH_LOG,          {2, 0}},
     {VKD3D_SM1_OP_LRP,          1, 3, VKD3DSIH_LRP},
-    {VKD3D_SM1_OP_FRC,          1, 1, VKD3DSIH_FRC},
-    {VKD3D_SM1_OP_CND,          1, 3, VKD3DSIH_CND,          {1, 0}, {  1,   4}},
-    {VKD3D_SM1_OP_CMP,          1, 3, VKD3DSIH_CMP,          {1, 2}, {  3,   0}},
-    {VKD3D_SM1_OP_POW,          1, 2, VKD3DSIH_POW},
-    {VKD3D_SM1_OP_CRS,          1, 2, VKD3DSIH_CRS},
-    {VKD3D_SM1_OP_NRM,          1, 1, VKD3DSIH_NRM},
-    {VKD3D_SM1_OP_SINCOS,       1, 3, VKD3DSIH_SINCOS,       {2, 0}, {  2,   1}},
-    {VKD3D_SM1_OP_SINCOS,       1, 1, VKD3DSIH_SINCOS,       {3, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_DP2ADD,       1, 3, VKD3DSIH_DP2ADD,       {2, 0}, {~0u, ~0u}},
+    {VKD3D_SM1_OP_FRC,          1, 1, VKD3DSIH_FRC,          {2, 0}},
+    {VKD3D_SM1_OP_CND,          1, 3, VKD3DSIH_CND,          {1, 0}, {1, 4}},
+    {VKD3D_SM1_OP_CMP,          1, 3, VKD3DSIH_CMP,          {1, 2}},
+    {VKD3D_SM1_OP_POW,          1, 2, VKD3DSIH_POW,          {2, 0}},
+    {VKD3D_SM1_OP_CRS,          1, 2, VKD3DSIH_CRS,          {2, 0}},
+    {VKD3D_SM1_OP_NRM,          1, 1, VKD3DSIH_NRM,          {2, 0}},
+    {VKD3D_SM1_OP_SINCOS,       1, 3, VKD3DSIH_SINCOS,       {2, 0}, {2, 1}},
+    {VKD3D_SM1_OP_SINCOS,       1, 1, VKD3DSIH_SINCOS,       {3, 0}},
+    {VKD3D_SM1_OP_DP2ADD,       1, 3, VKD3DSIH_DP2ADD,       {2, 0}},
     /* Matrix */
-    {VKD3D_SM1_OP_M4x4,         1, 2, VKD3DSIH_M4x4},
-    {VKD3D_SM1_OP_M4x3,         1, 2, VKD3DSIH_M4x3},
-    {VKD3D_SM1_OP_M3x4,         1, 2, VKD3DSIH_M3x4},
-    {VKD3D_SM1_OP_M3x3,         1, 2, VKD3DSIH_M3x3},
-    {VKD3D_SM1_OP_M3x2,         1, 2, VKD3DSIH_M3x2},
+    {VKD3D_SM1_OP_M4x4,         1, 2, VKD3DSIH_M4x4,         {2, 0}},
+    {VKD3D_SM1_OP_M4x3,         1, 2, VKD3DSIH_M4x3,         {2, 0}},
+    {VKD3D_SM1_OP_M3x4,         1, 2, VKD3DSIH_M3x4,         {2, 0}},
+    {VKD3D_SM1_OP_M3x3,         1, 2, VKD3DSIH_M3x3,         {2, 0}},
+    {VKD3D_SM1_OP_M3x2,         1, 2, VKD3DSIH_M3x2,         {2, 0}},
     /* Declarations */
-    {VKD3D_SM1_OP_DCL,          0, 0, VKD3DSIH_DCL},
+    {VKD3D_SM1_OP_DCL,          0, 0, VKD3DSIH_DCL,          {2, 0}},
     /* Constant definitions */
     {VKD3D_SM1_OP_DEF,          1, 1, VKD3DSIH_DEF},
-    {VKD3D_SM1_OP_DEFB,         1, 1, VKD3DSIH_DEFB},
-    {VKD3D_SM1_OP_DEFI,         1, 1, VKD3DSIH_DEFI},
+    {VKD3D_SM1_OP_DEFB,         1, 1, VKD3DSIH_DEFB,         {2, 0}},
+    {VKD3D_SM1_OP_DEFI,         1, 1, VKD3DSIH_DEFI,         {2, 1}},
     /* Control flow */
-    {VKD3D_SM1_OP_REP,          0, 1, VKD3DSIH_REP,          {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_ENDREP,       0, 0, VKD3DSIH_ENDREP,       {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_IF,           0, 1, VKD3DSIH_IF,           {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_IFC,          0, 2, VKD3DSIH_IFC,          {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_ELSE,         0, 0, VKD3DSIH_ELSE,         {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_ENDIF,        0, 0, VKD3DSIH_ENDIF,        {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_BREAK,        0, 0, VKD3DSIH_BREAK,        {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_BREAKC,       0, 2, VKD3DSIH_BREAKC,       {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_BREAKP,       0, 1, VKD3DSIH_BREAKP},
-    {VKD3D_SM1_OP_CALL,         0, 1, VKD3DSIH_CALL,         {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_CALLNZ,       0, 2, VKD3DSIH_CALLNZ,       {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_LOOP,         0, 2, VKD3DSIH_LOOP,         {3, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_RET,          0, 0, VKD3DSIH_RET,          {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_ENDLOOP,      0, 0, VKD3DSIH_ENDLOOP,      {3, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_LABEL,        0, 1, VKD3DSIH_LABEL,        {2, 1}, {~0u, ~0u}},
+    {VKD3D_SM1_OP_REP,          0, 1, VKD3DSIH_REP,          {2, 1}},
+    {VKD3D_SM1_OP_ENDREP,       0, 0, VKD3DSIH_ENDREP,       {2, 1}},
+    {VKD3D_SM1_OP_IF,           0, 1, VKD3DSIH_IF,           {2, 1}},
+    {VKD3D_SM1_OP_IFC,          0, 2, VKD3DSIH_IFC,          {2, 1}},
+    {VKD3D_SM1_OP_ELSE,         0, 0, VKD3DSIH_ELSE,         {2, 1}},
+    {VKD3D_SM1_OP_ENDIF,        0, 0, VKD3DSIH_ENDIF,        {2, 1}},
+    {VKD3D_SM1_OP_BREAK,        0, 0, VKD3DSIH_BREAK,        {2, 1}},
+    {VKD3D_SM1_OP_BREAKC,       0, 2, VKD3DSIH_BREAKC,       {2, 1}},
+    {VKD3D_SM1_OP_BREAKP,       0, 1, VKD3DSIH_BREAKP,       {2, 1}},
+    {VKD3D_SM1_OP_CALL,         0, 1, VKD3DSIH_CALL,         {2, 1}},
+    {VKD3D_SM1_OP_CALLNZ,       0, 2, VKD3DSIH_CALLNZ,       {2, 1}},
+    {VKD3D_SM1_OP_LOOP,         0, 2, VKD3DSIH_LOOP,         {3, 0}},
+    {VKD3D_SM1_OP_RET,          0, 0, VKD3DSIH_RET,          {2, 1}},
+    {VKD3D_SM1_OP_ENDLOOP,      0, 0, VKD3DSIH_ENDLOOP,      {3, 0}},
+    {VKD3D_SM1_OP_LABEL,        0, 1, VKD3DSIH_LABEL,        {2, 1}},
     /* Texture */
-    {VKD3D_SM1_OP_TEXCOORD,     1, 0, VKD3DSIH_TEXCOORD,     {0, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXCOORD,     1, 1, VKD3DSIH_TEXCOORD,     {1 ,4}, {  1,   4}},
-    {VKD3D_SM1_OP_TEXKILL,      1, 0, VKD3DSIH_TEXKILL,      {1 ,0}, {  3,   0}},
-    {VKD3D_SM1_OP_TEX,          1, 0, VKD3DSIH_TEX,          {0, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEX,          1, 1, VKD3DSIH_TEX,          {1, 4}, {  1,   4}},
-    {VKD3D_SM1_OP_TEX,          1, 2, VKD3DSIH_TEX,          {2, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_TEXBEM,       1, 1, VKD3DSIH_TEXBEM,       {0, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXBEML,      1, 1, VKD3DSIH_TEXBEML,      {1, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXREG2AR,    1, 1, VKD3DSIH_TEXREG2AR,    {1, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXREG2GB,    1, 1, VKD3DSIH_TEXREG2GB,    {1, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXREG2RGB,   1, 1, VKD3DSIH_TEXREG2RGB,   {1, 2}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXM3x2PAD,   1, 1, VKD3DSIH_TEXM3x2PAD,   {1, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXM3x2TEX,   1, 1, VKD3DSIH_TEXM3x2TEX,   {1, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXM3x3PAD,   1, 1, VKD3DSIH_TEXM3x3PAD,   {1, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXM3x3DIFF,  1, 1, VKD3DSIH_TEXM3x3DIFF,  {0, 0}, {  0,   0}},
-    {VKD3D_SM1_OP_TEXM3x3SPEC,  1, 2, VKD3DSIH_TEXM3x3SPEC,  {1, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXM3x3VSPEC, 1, 1, VKD3DSIH_TEXM3x3VSPEC, {1, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXM3x3TEX,   1, 1, VKD3DSIH_TEXM3x3TEX,   {1, 0}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXDP3TEX,    1, 1, VKD3DSIH_TEXDP3TEX,    {1, 2}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXM3x2DEPTH, 1, 1, VKD3DSIH_TEXM3x2DEPTH, {1, 3}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXDP3,       1, 1, VKD3DSIH_TEXDP3,       {1, 2}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXM3x3,      1, 1, VKD3DSIH_TEXM3x3,      {1, 2}, {  1,   3}},
-    {VKD3D_SM1_OP_TEXDEPTH,     1, 0, VKD3DSIH_TEXDEPTH,     {1, 4}, {  1,   4}},
-    {VKD3D_SM1_OP_BEM,          1, 2, VKD3DSIH_BEM,          {1, 4}, {  1,   4}},
-    {VKD3D_SM1_OP_DSX,          1, 1, VKD3DSIH_DSX,          {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_DSY,          1, 1, VKD3DSIH_DSY,          {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_TEXLDD,       1, 4, VKD3DSIH_TEXLDD,       {2, 1}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_SETP,         1, 2, VKD3DSIH_SETP},
-    {VKD3D_SM1_OP_TEXLDL,       1, 2, VKD3DSIH_TEXLDL,       {3, 0}, {~0u, ~0u}},
-    {VKD3D_SM1_OP_PHASE,        0, 0, VKD3DSIH_PHASE},
+    {VKD3D_SM1_OP_TEXCOORD,     1, 0, VKD3DSIH_TEXCOORD,     {0, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXCOORD,     1, 1, VKD3DSIH_TEXCOORD,     {1, 4}, {1, 4}},
+    {VKD3D_SM1_OP_TEXKILL,      1, 0, VKD3DSIH_TEXKILL,      {1, 0}},
+    {VKD3D_SM1_OP_TEX,          1, 0, VKD3DSIH_TEX,          {0, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEX,          1, 1, VKD3DSIH_TEX,          {1, 4}, {1, 4}},
+    {VKD3D_SM1_OP_TEX,          1, 2, VKD3DSIH_TEX,          {2, 0}},
+    {VKD3D_SM1_OP_TEXBEM,       1, 1, VKD3DSIH_TEXBEM,       {0, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXBEML,      1, 1, VKD3DSIH_TEXBEML,      {1, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXREG2AR,    1, 1, VKD3DSIH_TEXREG2AR,    {1, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXREG2GB,    1, 1, VKD3DSIH_TEXREG2GB,    {1, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXREG2RGB,   1, 1, VKD3DSIH_TEXREG2RGB,   {1, 2}, {1, 3}},
+    {VKD3D_SM1_OP_TEXM3x2PAD,   1, 1, VKD3DSIH_TEXM3x2PAD,   {1, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXM3x2TEX,   1, 1, VKD3DSIH_TEXM3x2TEX,   {1, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXM3x3PAD,   1, 1, VKD3DSIH_TEXM3x3PAD,   {1, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXM3x3DIFF,  1, 1, VKD3DSIH_TEXM3x3DIFF,  {0, 0}, {0, 0}},
+    {VKD3D_SM1_OP_TEXM3x3SPEC,  1, 2, VKD3DSIH_TEXM3x3SPEC,  {1, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXM3x3VSPEC, 1, 1, VKD3DSIH_TEXM3x3VSPEC, {1, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXM3x3TEX,   1, 1, VKD3DSIH_TEXM3x3TEX,   {1, 0}, {1, 3}},
+    {VKD3D_SM1_OP_TEXDP3TEX,    1, 1, VKD3DSIH_TEXDP3TEX,    {1, 2}, {1, 3}},
+    {VKD3D_SM1_OP_TEXM3x2DEPTH, 1, 1, VKD3DSIH_TEXM3x2DEPTH, {1, 3}, {1, 3}},
+    {VKD3D_SM1_OP_TEXDP3,       1, 1, VKD3DSIH_TEXDP3,       {1, 2}, {1, 3}},
+    {VKD3D_SM1_OP_TEXM3x3,      1, 1, VKD3DSIH_TEXM3x3,      {1, 2}, {1, 3}},
+    {VKD3D_SM1_OP_TEXDEPTH,     1, 0, VKD3DSIH_TEXDEPTH,     {1, 4}, {1, 4}},
+    {VKD3D_SM1_OP_BEM,          1, 2, VKD3DSIH_BEM,          {1, 4}, {1, 4}},
+    {VKD3D_SM1_OP_DSX,          1, 1, VKD3DSIH_DSX,          {2, 1}},
+    {VKD3D_SM1_OP_DSY,          1, 1, VKD3DSIH_DSY,          {2, 1}},
+    {VKD3D_SM1_OP_TEXLDD,       1, 4, VKD3DSIH_TEXLDD,       {2, 1}},
+    {VKD3D_SM1_OP_SETP,         1, 2, VKD3DSIH_SETP,         {2, 1}},
+    {VKD3D_SM1_OP_TEXLDL,       1, 2, VKD3DSIH_TEXLDL,       {3, 0}},
+    {VKD3D_SM1_OP_PHASE,        0, 0, VKD3DSIH_PHASE,        {1, 4}, {1, 4}},
     {0,                         0, 0, VKD3DSIH_INVALID},
 };
 
@@ -638,7 +633,32 @@ static void add_signature_mask(struct vkd3d_shader_sm1_parser *sm1, bool output,
         return;
     }
 
+    /* Normally VSIR mandates that the register mask is a subset of the usage
+     * mask, and the usage mask is a subset of the signature mask. This is
+     * doesn't always happen with SM1-3 registers, because of the limited
+     * flexibility with expressing swizzles.
+     *
+     * For example it's easy to find shaders like this:
+     *   ps_3_0
+     *   [...]
+     *   dcl_texcoord0 v0
+     *   [...]
+     *   texld r2.xyzw, v0.xyzw, s1.xyzw
+     *   [...]
+     *
+     * The dcl_textcoord0 instruction secretly has a .xy mask, which is used to
+     * compute the signature mask, but the texld instruction apparently uses all
+     * the components. Of course the last two components are ignored, but
+     * formally they seem to be used. So we end up with a signature element with
+     * mask .xy and usage mask .xyzw.
+     *
+     * In order to avoid this problem, when generating VSIR code with SM4
+     * normalisation level we remove the unused components in the write mask. We
+     * don't do that when targetting the SM1 normalisation level (i.e., when
+     * disassembling) so as to generate the same disassembly code as native. */
     element->used_mask |= mask;
+    if (program->normalisation_level >= VSIR_NORMALISED_SM4)
+        element->used_mask &= element->mask;
 }
 
 static bool add_signature_element_from_register(struct vkd3d_shader_sm1_parser *sm1,
@@ -968,6 +988,8 @@ static void shader_sm1_read_dst_param(struct vkd3d_shader_sm1_parser *sm1, const
 
     if (dst_param->reg.type == VKD3DSPR_RASTOUT && dst_param->reg.idx[0].offset == VSIR_RASTOUT_POINT_SIZE)
         sm1->p.program->has_point_size = true;
+    if (dst_param->reg.type == VKD3DSPR_RASTOUT && dst_param->reg.idx[0].offset == VSIR_RASTOUT_FOG)
+        sm1->p.program->has_fog = true;
 }
 
 static void shader_sm1_read_semantic(struct vkd3d_shader_sm1_parser *sm1,
@@ -1268,6 +1290,7 @@ static enum vkd3d_result shader_sm1_init(struct vkd3d_shader_sm1_parser *sm1, st
         const struct vkd3d_shader_compile_info *compile_info, struct vkd3d_shader_message_context *message_context)
 {
     const struct vkd3d_shader_location location = {.source_name = compile_info->source_name};
+    enum vsir_normalisation_level normalisation_level;
     const uint32_t *code = compile_info->source.code;
     size_t code_size = compile_info->source.size;
     struct vkd3d_shader_version version;
@@ -1318,9 +1341,13 @@ static enum vkd3d_result shader_sm1_init(struct vkd3d_shader_sm1_parser *sm1, st
     sm1->start = &code[1];
     sm1->end = &code[token_count];
 
+    normalisation_level = VSIR_NORMALISED_SM1;
+    if (compile_info->target_type != VKD3D_SHADER_TARGET_D3D_ASM)
+        normalisation_level = VSIR_NORMALISED_SM4;
+
     /* Estimate instruction count to avoid reallocation in most shaders. */
     if (!vsir_program_init(program, compile_info, &version,
-            code_size != ~(size_t)0 ? token_count / 4u + 4 : 16, VSIR_CF_STRUCTURED, VSIR_NOT_NORMALISED))
+            code_size != ~(size_t)0 ? token_count / 4u + 4 : 16, VSIR_CF_STRUCTURED, normalisation_level))
         return VKD3D_ERROR_OUT_OF_MEMORY;
 
     vkd3d_shader_parser_init(&sm1->p, program, message_context, compile_info->source_name);
@@ -1573,9 +1600,14 @@ D3DXPARAMETER_CLASS hlsl_sm1_class(const struct hlsl_type *type)
     vkd3d_unreachable();
 }
 
-D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
+D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type, bool is_combined_sampler)
 {
-    switch (type->class)
+    enum hlsl_type_class class = type->class;
+
+    if (is_combined_sampler)
+        class = HLSL_CLASS_TEXTURE;
+
+    switch (class)
     {
         case HLSL_CLASS_SCALAR:
         case HLSL_CLASS_VECTOR:
@@ -1642,7 +1674,7 @@ D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
             break;
 
         case HLSL_CLASS_ARRAY:
-            return hlsl_sm1_base_type(type->e.array.type);
+            return hlsl_sm1_base_type(type->e.array.type, is_combined_sampler);
 
         case HLSL_CLASS_STRUCT:
             return D3DXPT_VOID;
@@ -1680,7 +1712,8 @@ D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type)
     vkd3d_unreachable();
 }
 
-static void write_sm1_type(struct vkd3d_bytecode_buffer *buffer, struct hlsl_type *type, unsigned int ctab_start)
+static void write_sm1_type(struct vkd3d_bytecode_buffer *buffer,
+        struct hlsl_type *type, bool is_combined_sampler, unsigned int ctab_start)
 {
     const struct hlsl_type *array_type = hlsl_get_multiarray_element_type(type);
     unsigned int array_size = hlsl_get_multiarray_size(type);
@@ -1700,7 +1733,7 @@ static void write_sm1_type(struct vkd3d_bytecode_buffer *buffer, struct hlsl_typ
             struct hlsl_struct_field *field = &array_type->e.record.fields[i];
 
             field->name_bytecode_offset = put_string(buffer, field->name);
-            write_sm1_type(buffer, field->type, ctab_start);
+            write_sm1_type(buffer, field->type, false, ctab_start);
         }
 
         fields_offset = bytecode_align(buffer) - ctab_start;
@@ -1714,7 +1747,8 @@ static void write_sm1_type(struct vkd3d_bytecode_buffer *buffer, struct hlsl_typ
         }
     }
 
-    type->bytecode_offset = put_u32(buffer, vkd3d_make_u32(hlsl_sm1_class(type), hlsl_sm1_base_type(array_type)));
+    type->bytecode_offset = put_u32(buffer,
+            vkd3d_make_u32(hlsl_sm1_class(type), hlsl_sm1_base_type(array_type, is_combined_sampler)));
     put_u32(buffer, vkd3d_make_u32(type->dimy, type->dimx));
     put_u32(buffer, vkd3d_make_u32(array_size, field_count));
     put_u32(buffer, fields_offset);
@@ -1751,7 +1785,7 @@ static void sm1_sort_externs(struct hlsl_ctx *ctx)
     list_move_tail(&ctx->extern_vars, &sorted);
 }
 
-void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer)
+static void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer)
 {
     size_t ctab_offset, ctab_start, ctab_end, vars_offset, vars_start, size_offset, creator_offset, offset;
     unsigned int uniform_count = 0;
@@ -1839,7 +1873,7 @@ void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buff
             name_offset = put_string(buffer, var->name);
             set_u32(buffer, var_offset, name_offset - ctab_start);
 
-            write_sm1_type(buffer, var->data_type, ctab_start);
+            write_sm1_type(buffer, var->data_type, var->is_combined_sampler, ctab_start);
             set_u32(buffer, var_offset + 3 * sizeof(uint32_t), var->data_type->bytecode_offset - ctab_start);
 
             if (var->default_values)
@@ -1908,6 +1942,21 @@ void write_sm1_uniforms(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buff
 
     ctab_end = bytecode_align(buffer);
     set_u32(buffer, size_offset, vkd3d_make_u32(VKD3D_SM1_OP_COMMENT, (ctab_end - ctab_offset) / sizeof(uint32_t)));
+}
+
+void sm1_generate_ctab(struct hlsl_ctx *ctx, struct vkd3d_shader_code *ctab)
+{
+    struct vkd3d_bytecode_buffer buffer = {0};
+
+    write_sm1_uniforms(ctx, &buffer);
+    if (buffer.status)
+    {
+        vkd3d_free(buffer.data);
+        ctx->result = buffer.status;
+        return;
+    }
+    ctab->code = buffer.data;
+    ctab->size = buffer.size;
 }
 
 static uint32_t sm1_encode_register_type(enum vkd3d_shader_register_type type)

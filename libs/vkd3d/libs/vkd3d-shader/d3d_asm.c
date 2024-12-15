@@ -49,7 +49,7 @@ static const char * const shader_opcode_names[] =
     [VKD3DSIH_BFREV                           ] = "bfrev",
     [VKD3DSIH_BRANCH                          ] = "branch",
     [VKD3DSIH_BREAK                           ] = "break",
-    [VKD3DSIH_BREAKC                          ] = "breakc",
+    [VKD3DSIH_BREAKC                          ] = "break",
     [VKD3DSIH_BREAKP                          ] = "breakp",
     [VKD3DSIH_BUFINFO                         ] = "bufinfo",
     [VKD3DSIH_CALL                            ] = "call",
@@ -183,7 +183,7 @@ static const char * const shader_opcode_names[] =
     [VKD3DSIH_IDIV                            ] = "idiv",
     [VKD3DSIH_IEQ                             ] = "ieq",
     [VKD3DSIH_IF                              ] = "if",
-    [VKD3DSIH_IFC                             ] = "ifc",
+    [VKD3DSIH_IFC                             ] = "if",
     [VKD3DSIH_IGE                             ] = "ige",
     [VKD3DSIH_ILT                             ] = "ilt",
     [VKD3DSIH_IMAD                            ] = "imad",
@@ -815,7 +815,7 @@ static void shader_print_dcl_usage(struct vkd3d_d3d_asm_compiler *compiler,
             usage = "tessfactor";
             break;
         case VKD3D_DECL_USAGE_POSITIONT:
-            usage = "positionT";
+            usage = "positiont";
             indexed = true;
             break;
         case VKD3D_DECL_USAGE_FOG:
@@ -2547,6 +2547,33 @@ static void trace_signature(const struct shader_signature *signature, const char
     vkd3d_string_buffer_cleanup(&buffer);
 }
 
+static void trace_io_declarations(const struct vsir_program *program)
+{
+    struct vkd3d_string_buffer buffer;
+    bool empty = true;
+    unsigned int i;
+
+    vkd3d_string_buffer_init(&buffer);
+
+    vkd3d_string_buffer_printf(&buffer, "Input/output declarations:");
+
+    for (i = 0; i < sizeof(program->io_dcls) * CHAR_BIT; ++i)
+    {
+        if (bitmap_is_set(program->io_dcls, i))
+        {
+            empty = false;
+            vkd3d_string_buffer_printf(&buffer, " %u", i);
+        }
+    }
+
+    if (empty)
+        vkd3d_string_buffer_printf(&buffer, " empty");
+
+    TRACE("%s\n", buffer.buffer);
+
+    vkd3d_string_buffer_cleanup(&buffer);
+}
+
 void vsir_program_trace(const struct vsir_program *program)
 {
     const unsigned int flags = VSIR_ASM_FLAG_DUMP_TYPES | VSIR_ASM_FLAG_DUMP_ALL_INDICES;
@@ -2556,6 +2583,7 @@ void vsir_program_trace(const struct vsir_program *program)
     trace_signature(&program->input_signature, "Input");
     trace_signature(&program->output_signature, "Output");
     trace_signature(&program->patch_constant_signature, "Patch-constant");
+    trace_io_declarations(program);
 
     if (d3d_asm_compile(program, NULL, &code, flags) != VKD3D_OK)
         return;

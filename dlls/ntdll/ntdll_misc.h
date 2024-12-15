@@ -112,6 +112,11 @@ static inline TEB64 *NtCurrentTeb64(void) { return NULL; }
 static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiBatchCount; }
 #endif
 
+static inline void *get_rva( HMODULE module, DWORD va )
+{
+    return (void *)((char *)module + va);
+}
+
 /* version */
 extern const char * CDECL wine_get_version(void);
 extern const char * CDECL wine_get_build_id(void);
@@ -169,6 +174,9 @@ extern void heap_thread_detach(void);
 
 extern NTSTATUS arm64ec_process_init( HMODULE module );
 extern NTSTATUS arm64ec_thread_init(void);
+extern IMAGE_ARM64EC_METADATA *arm64ec_get_module_metadata( HMODULE module );
+extern void arm64ec_update_hybrid_metadata( void *module, IMAGE_NT_HEADERS *nt,
+                                            const IMAGE_ARM64EC_METADATA *metadata );
 extern void invoke_arm64ec_syscall(void);
 
 extern void *__os_arm64x_check_call;
