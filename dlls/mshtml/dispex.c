@@ -438,7 +438,8 @@ static void add_func_info(dispex_data_t *data, tid_t tid, const FUNCDESC *desc, 
     }
 }
 
-static HRESULT process_interface(dispex_data_t *data, tid_t tid, ITypeInfo *disp_typeinfo, const dispex_hook_t *hooks)
+static HRESULT process_interface(dispex_data_t *data, tid_t tid, ITypeInfo *disp_typeinfo, const dispex_hook_t *hooks,
+                                 const DISPID *allow_list)
 {
     unsigned i = 7; /* skip IDispatch functions */
     ITypeInfo *typeinfo;
@@ -451,6 +452,7 @@ static HRESULT process_interface(dispex_data_t *data, tid_t tid, ITypeInfo *disp
 
     while(1) {
         const dispex_hook_t *hook = NULL;
+        const DISPID *dispid = NULL;
 
         hres = ITypeInfo_GetFuncDesc(typeinfo, i++, &funcdesc);
         if(FAILED(hres))
@@ -463,6 +465,17 @@ static HRESULT process_interface(dispex_data_t *data, tid_t tid, ITypeInfo *disp
             }
             if(hook->dispid == DISPID_UNKNOWN)
                 hook = NULL;
+        }
+
+        if(allow_list) {
+            for(dispid = allow_list; *dispid != DISPID_UNKNOWN; dispid++) {
+                if(*dispid == funcdesc->memid)
+                    break;
+            }
+            if(*dispid == DISPID_UNKNOWN) {
+                ITypeInfo_ReleaseFuncDesc(typeinfo, funcdesc);
+                continue;
+            }
         }
 
         if(!hook || hook->invoke || hook->name) {
@@ -480,7 +493,16 @@ void dispex_info_add_interface(dispex_data_t *info, tid_t tid, const dispex_hook
 {
     HRESULT hres;
 
-    hres = process_interface(info, tid, NULL, hooks);
+    hres = process_interface(info, tid, NULL, hooks, NULL);
+    if(FAILED(hres))
+        ERR("process_interface failed: %08lx\n", hres);
+}
+
+void dispex_info_add_dispids(dispex_data_t *info, tid_t tid, const DISPID *dispids)
+{
+    HRESULT hres;
+
+    hres = process_interface(info, tid, NULL, NULL, dispids);
     if(FAILED(hres))
         ERR("process_interface failed: %08lx\n", hres);
 }
@@ -574,7 +596,7 @@ static dispex_data_t *preprocess_dispex_data(dispex_static_data_t *desc, compat_
 
     if(desc->iface_tids) {
         for(tid = desc->iface_tids; *tid; tid++) {
-            hres = process_interface(data, *tid, dti, NULL);
+            hres = process_interface(data, *tid, dti, NULL, NULL);
             if(FAILED(hres))
                 break;
         }
@@ -1839,34 +1861,6 @@ HRESULT remove_attribute(DispatchEx *This, DISPID id, VARIANT_BOOL *success)
     }
 }
 
-HRESULT dispex_to_string(DispatchEx *dispex, BSTR *ret)
-{
-    static const WCHAR prefix[8] = L"[object ";
-    static const WCHAR suffix[] = L"]";
-    WCHAR buf[ARRAY_SIZE(prefix) + ARRAY_SIZE(dispex->info->desc->prototype_name) + ARRAY_SIZE(suffix)], *p = buf;
-    compat_mode_t compat_mode = dispex_compat_mode(dispex);
-    const char *name = dispex->info->name;
-
-    if(!ret)
-        return E_INVALIDARG;
-
-    memcpy(p, prefix, sizeof(prefix));
-    p += ARRAY_SIZE(prefix);
-    if(compat_mode < COMPAT_MODE_IE9)
-        p--;
-    else {
-        if(dispex->info->vtbl->get_name)
-            name = dispex->info->vtbl->get_name(dispex);
-        while(*name)
-            *p++ = *name++;
-        assert(p + ARRAY_SIZE(suffix) - buf <= ARRAY_SIZE(buf));
-    }
-    memcpy(p, suffix, sizeof(suffix));
-
-    *ret = SysAllocString(buf);
-    return *ret ? S_OK : E_OUTOFMEMORY;
-}
-
 static dispex_data_t *ensure_dispex_info(dispex_static_data_t *desc, compat_mode_t compat_mode)
 {
     if(!desc->info_cache[compat_mode]) {
@@ -1911,22 +1905,23 @@ static BOOL ensure_real_info(DispatchEx *dispex)
     compat_mode_t compat_mode;
     HTMLInnerWindow *script_global;
     DispatchEx *prototype = NULL;
+    dispex_static_data_t *data;
 
     if(dispex->info != dispex->info->desc->delayed_init_info)
         return TRUE;
 
-    script_global = dispex->info->vtbl->get_script_global(dispex);
+    script_global = dispex->info->vtbl->get_script_global(dispex, &data);
     compat_mode = script_global->doc->document_mode;
 
-    if(compat_mode >= COMPAT_MODE_IE9 && dispex->info->desc->id) {
-        HRESULT hres = get_prototype(script_global, dispex->info->desc->id, &prototype);
+    if(compat_mode >= COMPAT_MODE_IE9 && data->id) {
+        HRESULT hres = get_prototype(script_global, data->id, &prototype);
         if(FAILED(hres)) {
             ERR("could not get prototype: %08lx\n", hres);
             return FALSE;
         }
     }
 
-    if (!(dispex->info = ensure_dispex_info(dispex->info->desc, compat_mode)))
+    if(!(dispex->info = ensure_dispex_info(data, compat_mode)))
         return FALSE;
     init_host_object(dispex, script_global, prototype);
     return TRUE;
@@ -1937,6 +1932,37 @@ compat_mode_t dispex_compat_mode(DispatchEx *dispex)
     if(!ensure_real_info(dispex))
         return COMPAT_MODE_NONE;
     return dispex->info->compat_mode;
+}
+
+HRESULT dispex_to_string(DispatchEx *dispex, BSTR *ret)
+{
+    static const WCHAR prefix[8] = L"[object ";
+    static const WCHAR suffix[] = L"]";
+    WCHAR buf[ARRAY_SIZE(prefix) + ARRAY_SIZE(dispex->info->desc->prototype_name) + ARRAY_SIZE(suffix)], *p = buf;
+    compat_mode_t compat_mode = dispex_compat_mode(dispex);
+    const char *name;
+
+    if(!ret)
+        return E_INVALIDARG;
+
+    memcpy(p, prefix, sizeof(prefix));
+    p += ARRAY_SIZE(prefix);
+    if(compat_mode < COMPAT_MODE_IE9)
+        p--;
+    else {
+        if(!ensure_real_info(dispex))
+            return E_OUTOFMEMORY;
+        name = dispex->info->name;
+        if(dispex->info->vtbl->get_name)
+            name = dispex->info->vtbl->get_name(dispex);
+        while(*name)
+            *p++ = *name++;
+        assert(p + ARRAY_SIZE(suffix) - buf <= ARRAY_SIZE(buf));
+    }
+    memcpy(p, suffix, sizeof(suffix));
+
+    *ret = SysAllocString(buf);
+    return *ret ? S_OK : E_OUTOFMEMORY;
 }
 
 static inline DispatchEx *impl_from_IWineJSDispatchHost(IWineJSDispatchHost *iface)

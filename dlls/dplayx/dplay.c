@@ -2116,10 +2116,13 @@ static HRESULT DP_IF_CreatePlayer( IDirectPlayImpl *This, DPID *lpidPlayer,
     return DPERR_UNINITIALIZED;
   }
 
+  EnterCriticalSection( &This->lock );
   if( !This->dp2->bConnectionOpen )
   {
+    LeaveCriticalSection( &This->lock );
     return DPERR_INVALIDPARAM;
   }
+  LeaveCriticalSection( &This->lock );
 
   if( lpidPlayer == NULL )
   {
@@ -2948,8 +2951,13 @@ static HRESULT DP_IF_EnumSessions( IDirectPlayImpl *This, DPSESSIONDESC2 *sdesc,
         return DPERR_INVALIDPARAM;
 
     /* Can't enumerate if the interface is already open */
+    EnterCriticalSection( &This->lock );
     if ( This->dp2->bConnectionOpen )
+    {
+        LeaveCriticalSection( &This->lock );
         return DPERR_GENERIC;
+    }
+    LeaveCriticalSection( &This->lock );
 
     /* The loading of a lobby provider _seems_ to require a backdoor loading
      * of the service provider to also associate with this DP object. This is
@@ -3746,11 +3754,14 @@ static HRESULT DP_SecureOpen( IDirectPlayImpl *This, const DPSESSIONDESC2 *lpsd,
     return DPERR_UNINITIALIZED;
   }
 
+  EnterCriticalSection( &This->lock );
   if( This->dp2->bConnectionOpen )
   {
     TRACE( ": rejecting already open connection.\n" );
+    LeaveCriticalSection( &This->lock );
     return DPERR_ALREADYINITIALIZED;
   }
+  LeaveCriticalSection( &This->lock );
 
   /* If we're enumerating, kill the thread */
   DP_KillEnumSessionThread( This );
@@ -5959,9 +5970,75 @@ static HRESULT WINAPI IDirectPlay4Impl_GetMessageQueue( IDirectPlay4 *iface, DPI
         DWORD flags, DWORD *msgs, DWORD *bytes )
 {
     IDirectPlayImpl *This = impl_from_IDirectPlay4( iface );
+    struct PlayerList *playerFrom = NULL;
+    struct PlayerList *playerTo = NULL;
     HRESULT hr = DP_OK;
 
-    FIXME( "(%p)->(0x%08lx,0x%08lx,0x%08lx,%p,%p): semi-stub\n", This, from, to, flags, msgs, bytes );
+    TRACE( "(%p)->(0x%08lx,0x%08lx,0x%08lx,%p,%p)\n", This, from, to, flags, msgs, bytes );
+
+    if ( This->dp2->connectionInitialized == NO_PROVIDER )
+        return DPERR_UNINITIALIZED;
+
+    if ( !flags )
+        flags = DPMESSAGEQUEUE_SEND;
+
+    if ( flags != DPMESSAGEQUEUE_SEND && flags != DPMESSAGEQUEUE_RECEIVE )
+        return DPERR_INVALIDFLAGS;
+
+    EnterCriticalSection( &This->lock );
+
+    if ( to )
+    {
+        playerTo = DP_FindPlayer( This, to );
+        if ( !playerTo )
+        {
+            LeaveCriticalSection( &This->lock );
+            return DPERR_INVALIDPLAYER;
+        }
+    }
+
+    if ( from )
+    {
+        playerFrom = DP_FindPlayer( This, from );
+        if ( !playerFrom )
+        {
+            LeaveCriticalSection( &This->lock );
+            return DPERR_INVALIDPLAYER;
+        }
+    }
+
+    if ( flags & DPMESSAGEQUEUE_RECEIVE )
+    {
+        DWORD byteCount = 0;
+        DWORD msgCount = 0;
+        struct DPMSG *msg;
+
+        if ( playerTo && !(playerTo->lpPData->dwFlags & DPPLAYER_LOCAL) )
+        {
+            LeaveCriticalSection( &This->lock );
+            return DPERR_INVALIDPLAYER;
+        }
+
+        for ( msg = DPQ_FIRST( This->dp2->receiveMsgs ); msg; msg = DPQ_NEXT( msg->msgs ) )
+        {
+            if( from && msg->fromId != from )
+                continue;
+            if( to && msg->toId != to )
+                continue;
+
+            ++msgCount;
+            byteCount += msg->copyMessage( NULL, msg->msg, msg->genericSize, FALSE );
+        }
+
+        if ( msgs )
+            *msgs = msgCount;
+        if ( bytes )
+            *bytes = byteCount;
+
+        LeaveCriticalSection( &This->lock );
+
+        return DP_OK;
+    }
 
     /* FIXME: Do we need to do from and to sanity checking here? */
     /* FIXME: What about sends which are not immediate? */
@@ -5984,6 +6061,8 @@ static HRESULT WINAPI IDirectPlay4Impl_GetMessageQueue( IDirectPlay4 *iface, DPI
     }
     else
         FIXME( "No SP for GetMessageQueue - fake some data\n" );
+
+    LeaveCriticalSection( &This->lock );
 
     return hr;
 }

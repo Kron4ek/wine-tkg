@@ -1,7 +1,7 @@
 /*
- * Runtime Classes for windows.networking.hostname.dll
+ * Runtime Classes for windows.networking.connectivity.dll
  *
- * Copyright (C) 2023 Mohamad Al-Jaf
+ * Copyright (C) 2024 Mohamad Al-Jaf
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -20,9 +20,4 @@
 
 #pragma makedep register
 
-#ifdef __WIDL__
-#pragma winrt ns_prefix
-#endif
-
-#define DO_NO_IMPORTS
 #include "windows.networking.connectivity.idl"

@@ -489,7 +489,7 @@
 @ stdcall EnumWindows(ptr long)
 @ stdcall EqualRect(ptr ptr)
 # @ stub EvaluateProximityToPolygon
-# @ stub EvaluateProximityToRect
+@ stdcall EvaluateProximityToRect(ptr ptr ptr)
 @ stdcall ExcludeUpdateRgn(long long) NtUserExcludeUpdateRgn
 @ stdcall ExitWindowsEx(long long)
 @ stdcall FillRect(long ptr long)
@@ -895,7 +895,7 @@
 @ stdcall OpenWindowStationA(str long long)
 @ stdcall OpenWindowStationW(wstr long long)
 @ stdcall PackDDElParam(long long long)
-# @ stub PackTouchHitTestingProximityEvaluation
+@ stdcall PackTouchHitTestingProximityEvaluation(ptr ptr)
 @ stdcall PaintDesktop(long)
 # @ stub PaintMenuBar
 # @ stub PaintMonitor

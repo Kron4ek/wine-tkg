@@ -44,9 +44,6 @@
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 
-#define VK_NO_PROTOTYPES
-#define WINE_VK_HOST
-
 #include "x11drv.h"
 #include "winreg.h"
 #include "xcomposite.h"
@@ -777,6 +774,7 @@ void X11DRV_ThreadDetach(void)
     {
         if (data->xim) XCloseIM( data->xim );
         if (data->font_set) XFreeFontSet( data->display, data->font_set );
+        if (data->net_supported) XFree( data->net_supported );
         XSync( gdi_display, False ); /* make sure XReparentWindow requests have completed before closing the thread display */
         XCloseDisplay( data->display );
         free( data );
@@ -841,8 +839,10 @@ struct x11drv_thread_data *x11drv_init_thread_data(void)
     set_queue_display_fd( data->display );
     NtUserGetThreadInfo()->driver_data = (UINT_PTR)data;
 
+    XSelectInput( data->display, DefaultRootWindow( data->display ), PropertyChangeMask );
     if (use_xim) xim_thread_attach( data );
     x11drv_xinput2_init( data );
+    net_supported_init( data );
 
     return data;
 }

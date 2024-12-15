@@ -475,7 +475,11 @@ static bool add_explicit_conversion(struct hlsl_ctx *ctx, struct hlsl_block *blo
     for (i = 0; i < arrays->count; ++i)
     {
         if (arrays->sizes[i] == HLSL_ARRAY_ELEMENTS_COUNT_IMPLICIT)
+        {
             hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE, "Implicit size arrays not allowed in casts.");
+            dst_type = ctx->builtin_types.error;
+            break;
+        }
         dst_type = hlsl_new_array_type(ctx, dst_type, arrays->sizes[i]);
     }
 
@@ -551,13 +555,6 @@ static bool append_conditional_break(struct hlsl_ctx *ctx, struct hlsl_block *co
     return true;
 }
 
-enum loop_type
-{
-    LOOP_FOR,
-    LOOP_WHILE,
-    LOOP_DO_WHILE
-};
-
 static void check_attribute_list_for_duplicates(struct hlsl_ctx *ctx, const struct parse_attribute_list *attrs)
 {
     unsigned int i, j;
@@ -573,8 +570,8 @@ static void check_attribute_list_for_duplicates(struct hlsl_ctx *ctx, const stru
     }
 }
 
-static void resolve_loop_continue(struct hlsl_ctx *ctx, struct hlsl_block *block, enum loop_type type,
-        struct hlsl_block *cond, struct hlsl_block *iter)
+static void resolve_loop_continue(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        enum hlsl_loop_type type, struct hlsl_block *cond)
 {
     struct hlsl_ir_node *instr, *next;
 
@@ -584,8 +581,8 @@ static void resolve_loop_continue(struct hlsl_ctx *ctx, struct hlsl_block *block
         {
             struct hlsl_ir_if *iff = hlsl_ir_if(instr);
 
-            resolve_loop_continue(ctx, &iff->then_block, type, cond, iter);
-            resolve_loop_continue(ctx, &iff->else_block, type, cond, iter);
+            resolve_loop_continue(ctx, &iff->then_block, type, cond);
+            resolve_loop_continue(ctx, &iff->else_block, type, cond);
         }
         else if (instr->type == HLSL_IR_JUMP)
         {
@@ -595,7 +592,7 @@ static void resolve_loop_continue(struct hlsl_ctx *ctx, struct hlsl_block *block
             if (jump->type != HLSL_IR_JUMP_UNRESOLVED_CONTINUE)
                 continue;
 
-            if (type == LOOP_DO_WHILE)
+            if (type == HLSL_LOOP_DO_WHILE)
             {
                 if (!hlsl_clone_block(ctx, &cond_block, cond))
                     return;
@@ -606,13 +603,6 @@ static void resolve_loop_continue(struct hlsl_ctx *ctx, struct hlsl_block *block
                 }
                 list_move_before(&instr->entry, &cond_block.instrs);
             }
-            else if (type == LOOP_FOR)
-            {
-                if (!hlsl_clone_block(ctx, &cond_block, iter))
-                    return;
-                list_move_before(&instr->entry, &cond_block.instrs);
-            }
-            jump->type = HLSL_IR_JUMP_CONTINUE;
         }
     }
 }
@@ -678,8 +668,6 @@ static struct hlsl_default_value evaluate_static_expression(struct hlsl_ctx *ctx
                 hlsl_error(ctx, &node->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
                         "Expected literal expression.");
                 break;
-            case HLSL_IR_VSIR_INSTRUCTION_REF:
-                vkd3d_unreachable();
         }
     }
 
@@ -738,11 +726,11 @@ static unsigned int evaluate_static_expression_as_uint(struct hlsl_ctx *ctx, str
     return res.number.u;
 }
 
-static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
+static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum hlsl_loop_type type,
         const struct parse_attribute_list *attributes, struct hlsl_block *init, struct hlsl_block *cond,
         struct hlsl_block *iter, struct hlsl_block *body, const struct vkd3d_shader_location *loc)
 {
-    enum hlsl_ir_loop_unroll_type unroll_type = HLSL_IR_LOOP_UNROLL;
+    enum hlsl_loop_unroll_type unroll_type = HLSL_LOOP_UNROLL;
     unsigned int i, unroll_limit = 0;
     struct hlsl_ir_node *loop;
 
@@ -773,11 +761,11 @@ static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
                 hlsl_block_cleanup(&expr);
             }
 
-            unroll_type = HLSL_IR_LOOP_FORCE_UNROLL;
+            unroll_type = HLSL_LOOP_FORCE_UNROLL;
         }
         else if (!strcmp(attr->name, "loop"))
         {
-            unroll_type = HLSL_IR_LOOP_FORCE_LOOP;
+            unroll_type = HLSL_LOOP_FORCE_LOOP;
         }
         else if (!strcmp(attr->name, "fastopt")
                 || !strcmp(attr->name, "allow_uav_condition"))
@@ -790,7 +778,7 @@ static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
         }
     }
 
-    resolve_loop_continue(ctx, body, type, cond, iter);
+    resolve_loop_continue(ctx, body, type, cond);
 
     if (!init && !(init = make_empty_block(ctx)))
         goto oom;
@@ -798,15 +786,12 @@ static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum loop_type type,
     if (!append_conditional_break(ctx, cond))
         goto oom;
 
-    if (iter)
-        hlsl_block_add_block(body, iter);
-
-    if (type == LOOP_DO_WHILE)
+    if (type == HLSL_LOOP_DO_WHILE)
         list_move_tail(&body->instrs, &cond->instrs);
     else
         list_move_head(&body->instrs, &cond->instrs);
 
-    if (!(loop = hlsl_new_loop(ctx, body, unroll_type, unroll_limit, loc)))
+    if (!(loop = hlsl_new_loop(ctx, iter, body, unroll_type, unroll_limit, loc)))
         goto oom;
     hlsl_block_add_instr(init, loop);
 
@@ -860,6 +845,7 @@ static struct hlsl_ir_node *get_swizzle(struct hlsl_ctx *ctx, struct hlsl_ir_nod
     if (value->data_type->class == HLSL_CLASS_MATRIX)
     {
         /* Matrix swizzle */
+        struct hlsl_matrix_swizzle s;
         bool m_swizzle;
         unsigned int inc, x, y;
 
@@ -890,10 +876,11 @@ static struct hlsl_ir_node *get_swizzle(struct hlsl_ctx *ctx, struct hlsl_ir_nod
 
             if (x >= value->data_type->dimx || y >= value->data_type->dimy)
                 return NULL;
-            swiz |= (y << 4 | x) << component * 8;
+            s.components[component].x = x;
+            s.components[component].y = y;
             component++;
         }
-        return hlsl_new_swizzle(ctx, swiz, component, value, loc);
+        return hlsl_new_matrix_swizzle(ctx, s, component, value, loc);
     }
 
     /* Vector swizzle */
@@ -922,8 +909,7 @@ static struct hlsl_ir_node *get_swizzle(struct hlsl_ctx *ctx, struct hlsl_ir_nod
 
             if (s >= value->data_type->dimx)
                 return NULL;
-            swiz |= s << component * 2;
-            component++;
+            hlsl_swizzle_set_component(&swiz, component++, s);
         }
         if (valid)
             return hlsl_new_swizzle(ctx, swiz, component, value, loc);
@@ -1192,6 +1178,8 @@ static bool gen_struct_fields(struct hlsl_ctx *ctx, struct parse_fields *fields,
                 {
                     hlsl_error(ctx, &v->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                             "Implicit size arrays not allowed in struct fields.");
+                    field->type = ctx->builtin_types.error;
+                    break;
                 }
 
                 field->type = hlsl_new_array_type(ctx, field->type, v->arrays.sizes[k]);
@@ -1282,6 +1270,12 @@ static bool add_typedef(struct hlsl_ctx *ctx, struct hlsl_type *const orig_type,
             {
                 hlsl_error(ctx, &v->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                         "Implicit size arrays not allowed in typedefs.");
+                if (!(type = hlsl_type_clone(ctx, ctx->builtin_types.error, 0, 0)))
+                {
+                    free_parse_variable_def(v);
+                    ret = false;
+                }
+                break;
             }
 
             if (!(type = hlsl_new_array_type(ctx, type, v->arrays.sizes[i])))
@@ -2092,8 +2086,8 @@ static bool invert_swizzle(uint32_t *swizzle, unsigned int *writemask, unsigned 
     {
         if (*writemask & (1 << i))
         {
-            unsigned int s = (*swizzle >> (i * 2)) & 3;
-            new_swizzle |= s << (bit++ * 2);
+            unsigned int s = hlsl_swizzle_get_component(*swizzle, i);
+            hlsl_swizzle_set_component(&new_swizzle, bit++, s);
             if (new_writemask & (1 << s))
                 return false;
             new_writemask |= 1 << s;
@@ -2107,9 +2101,9 @@ static bool invert_swizzle(uint32_t *swizzle, unsigned int *writemask, unsigned 
     {
         for (j = 0; j < width; ++j)
         {
-            unsigned int s = (new_swizzle >> (j * 2)) & 3;
+            unsigned int s = hlsl_swizzle_get_component(new_swizzle, j);
             if (s == i)
-                inverted |= j << (bit++ * 2);
+                hlsl_swizzle_set_component(&inverted, bit++, j);
         }
     }
 
@@ -2119,22 +2113,22 @@ static bool invert_swizzle(uint32_t *swizzle, unsigned int *writemask, unsigned 
     return true;
 }
 
-static bool invert_swizzle_matrix(uint32_t *swizzle, unsigned int *writemask, unsigned int *ret_width)
+static bool invert_swizzle_matrix(const struct hlsl_matrix_swizzle *swizzle,
+        uint32_t *ret_inverted, unsigned int *writemask, unsigned int *ret_width)
 {
-    /* swizzle is 8 bits per component, each component is (from LSB) 4 bits X, then 4 bits Y.
-     * components are indexed by their sources. i.e. the first component comes from the first
-     * component of the rhs. */
-    unsigned int i, j, bit = 0, inverted = 0, width, new_writemask = 0, new_swizzle = 0;
+    unsigned int i, j, bit = 0, inverted = 0, width, new_writemask = 0;
+    struct hlsl_matrix_swizzle new_swizzle = {0};
 
     /* First, we filter the swizzle to remove components that aren't enabled by writemask. */
     for (i = 0; i < 4; ++i)
     {
         if (*writemask & (1 << i))
         {
-            unsigned int s = (*swizzle >> (i * 8)) & 0xff;
-            unsigned int x = s & 0xf, y = (s >> 4) & 0xf;
+            unsigned int x = swizzle->components[i].x;
+            unsigned int y = swizzle->components[i].y;
             unsigned int idx = x + y * 4;
-            new_swizzle |= s << (bit++ * 8);
+
+            new_swizzle.components[bit++] = swizzle->components[i];
             if (new_writemask & (1 << idx))
                 return false;
             new_writemask |= 1 << idx;
@@ -2142,22 +2136,22 @@ static bool invert_swizzle_matrix(uint32_t *swizzle, unsigned int *writemask, un
     }
     width = bit;
 
-    /* Then we invert the swizzle. The resulting swizzle has 2 bits per component, because it's for the
-     * incoming vector. */
+    /* Then we invert the swizzle. The resulting swizzle uses a uint32_t
+     * vector format, because it's for the incoming vector. */
     bit = 0;
     for (i = 0; i < 16; ++i)
     {
         for (j = 0; j < width; ++j)
         {
-            unsigned int s = (new_swizzle >> (j * 8)) & 0xff;
-            unsigned int x = s & 0xf, y = (s >> 4) & 0xf;
+            unsigned int x = new_swizzle.components[j].x;
+            unsigned int y = new_swizzle.components[j].y;
             unsigned int idx = x + y * 4;
             if (idx == i)
-                inverted |= j << (bit++ * 2);
+                hlsl_swizzle_set_component(&inverted, bit++, j);
         }
     }
 
-    *swizzle = inverted;
+    *ret_inverted = inverted;
     *writemask = new_writemask;
     *ret_width = width;
     return true;
@@ -2211,28 +2205,34 @@ static bool add_assignment(struct hlsl_ctx *ctx, struct hlsl_block *block, struc
         {
             struct hlsl_ir_swizzle *swizzle = hlsl_ir_swizzle(lhs);
             struct hlsl_ir_node *new_swizzle;
-            uint32_t s = swizzle->swizzle;
+            uint32_t s;
 
             VKD3D_ASSERT(!matrix_writemask);
 
             if (swizzle->val.node->data_type->class == HLSL_CLASS_MATRIX)
             {
+                struct hlsl_matrix_swizzle ms = swizzle->u.matrix;
+
                 if (swizzle->val.node->type != HLSL_IR_LOAD && swizzle->val.node->type != HLSL_IR_INDEX)
                 {
                     hlsl_fixme(ctx, &lhs->loc, "Unhandled source of matrix swizzle.");
                     return false;
                 }
-                if (!invert_swizzle_matrix(&s, &writemask, &width))
+                if (!invert_swizzle_matrix(&ms, &s, &writemask, &width))
                 {
                     hlsl_error(ctx, &lhs->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_WRITEMASK, "Invalid writemask for matrix.");
                     return false;
                 }
                 matrix_writemask = true;
             }
-            else if (!invert_swizzle(&s, &writemask, &width))
+            else
             {
-                hlsl_error(ctx, &lhs->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_WRITEMASK, "Invalid writemask.");
-                return false;
+                s = swizzle->u.vector;
+                if (!invert_swizzle(&s, &writemask, &width))
+                {
+                    hlsl_error(ctx, &lhs->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_WRITEMASK, "Invalid writemask.");
+                    return false;
+                }
             }
 
             if (!(new_swizzle = hlsl_new_swizzle(ctx, s, width, rhs, &swizzle->node.loc)))
@@ -2670,26 +2670,30 @@ static void declare_var(struct hlsl_ctx *ctx, struct parse_variable_def *v)
                 {
                     hlsl_error(ctx, &v->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                             "Only innermost array size can be implicit.");
-                    v->initializer.args_count = 0;
+                    type = ctx->builtin_types.error;
+                    break;
                 }
                 else if (elem_components == 0)
                 {
                     hlsl_error(ctx, &v->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                             "Cannot declare an implicit size array of a size 0 type.");
-                    v->initializer.args_count = 0;
+                    type = ctx->builtin_types.error;
+                    break;
                 }
                 else if (size == 0)
                 {
                     hlsl_error(ctx, &v->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                             "Implicit size arrays need to be initialized.");
-                    v->initializer.args_count = 0;
+                    type = ctx->builtin_types.error;
+                    break;
                 }
                 else if (size % elem_components != 0)
                 {
                     hlsl_error(ctx, &v->loc, VKD3D_SHADER_ERROR_HLSL_WRONG_PARAMETER_COUNT,
                             "Cannot initialize implicit size array with %u components, expected a multiple of %u.",
                             size, elem_components);
-                    v->initializer.args_count = 0;
+                    type = ctx->builtin_types.error;
+                    break;
                 }
                 else
                 {
@@ -2908,7 +2912,8 @@ static struct hlsl_block *initialize_vars(struct hlsl_ctx *ctx, struct list *var
                 v->initializer.args[0] = node_from_block(v->initializer.instrs);
             }
 
-            initialize_var(ctx, var, &v->initializer, is_default_values_initializer);
+            if (var->data_type->class != HLSL_CLASS_ERROR)
+                initialize_var(ctx, var, &v->initializer, is_default_values_initializer);
 
             if (is_default_values_initializer)
             {
@@ -2997,9 +3002,16 @@ static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
         const char *name, const struct parse_initializer *args, bool is_compile,
         const struct vkd3d_shader_location *loc)
 {
-    struct hlsl_ir_function_decl *decl, *compatible_match = NULL;
+    struct hlsl_ir_function_decl *decl;
+    struct vkd3d_string_buffer *s;
     struct hlsl_ir_function *func;
     struct rb_entry *entry;
+    size_t i;
+    struct
+    {
+        struct hlsl_ir_function_decl **candidates;
+        size_t count, capacity;
+    } candidates = {0};
 
     if (!(entry = rb_get(&ctx->functions, name)))
         return NULL;
@@ -3007,18 +3019,41 @@ static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
 
     LIST_FOR_EACH_ENTRY(decl, &func->overloads, struct hlsl_ir_function_decl, entry)
     {
-        if (func_is_compatible_match(ctx, decl, is_compile, args))
+        if (!func_is_compatible_match(ctx, decl, is_compile, args))
+            continue;
+
+        if (!(hlsl_array_reserve(ctx, (void **)&candidates.candidates,
+                &candidates.capacity, candidates.count + 1, sizeof(decl))))
         {
-            if (compatible_match)
+            vkd3d_free(candidates.candidates);
+            return NULL;
+        }
+        candidates.candidates[candidates.count++] = decl;
+    }
+
+    if (!candidates.count)
+        return NULL;
+
+    if (candidates.count > 1)
+    {
+        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_AMBIGUOUS_CALL, "Ambiguous function call.");
+        if ((s = hlsl_get_string_buffer(ctx)))
+        {
+            hlsl_note(ctx, loc, VKD3D_SHADER_LOG_ERROR, "Candidates are:");
+            for (i = 0; i < candidates.count; ++i)
             {
-                hlsl_fixme(ctx, loc, "Prioritize between multiple compatible function overloads.");
-                break;
+                hlsl_dump_ir_function_decl(ctx, s, candidates.candidates[i]);
+                hlsl_note(ctx, loc, VKD3D_SHADER_LOG_ERROR, "    %s;", s->buffer);
+                vkd3d_string_buffer_clear(s);
             }
-            compatible_match = decl;
+            hlsl_release_string_buffer(ctx, s);
         }
     }
 
-    return compatible_match;
+    decl = candidates.candidates[0];
+    vkd3d_free(candidates.candidates);
+
+    return decl;
 }
 
 static struct hlsl_ir_node *hlsl_new_void_expr(struct hlsl_ctx *ctx, const struct vkd3d_shader_location *loc)
@@ -5447,6 +5482,17 @@ static struct hlsl_block *add_constructor(struct hlsl_ctx *ctx, struct hlsl_type
     struct hlsl_ir_load *load;
     struct hlsl_ir_var *var;
 
+    if (!hlsl_is_numeric_type(type))
+    {
+        struct vkd3d_string_buffer *string;
+
+        if ((string = hlsl_type_to_string(ctx, type)))
+            hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                    "Constructor data type %s is not numeric.", string->buffer);
+        hlsl_release_string_buffer(ctx, string);
+        return NULL;
+    }
+
     if (!(var = hlsl_new_synthetic_var(ctx, "constructor", type, loc)))
         return NULL;
 
@@ -7690,7 +7736,10 @@ parameter_decl:
                 {
                     hlsl_error(ctx, &@3, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                             "Implicit size arrays not allowed in function parameters.");
+                    type = ctx->builtin_types.error;
+                    break;
                 }
+
                 type = hlsl_new_array_type(ctx, type, $4.sizes[i]);
             }
             vkd3d_free($4.sizes);
@@ -8112,14 +8161,9 @@ typedef:
             }
 
             if (modifiers)
-            {
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
                         "Storage modifiers are not allowed on typedefs.");
-                LIST_FOR_EACH_ENTRY_SAFE(v, v_next, $4, struct parse_variable_def, entry)
-                    vkd3d_free(v);
-                vkd3d_free($4);
-                YYABORT;
-            }
+
             if (!add_typedef(ctx, type, $4))
                 YYABORT;
         }
@@ -8777,25 +8821,25 @@ if_body:
 loop_statement:
       attribute_list_optional loop_scope_start KW_WHILE '(' expr ')' statement
         {
-            $$ = create_loop(ctx, LOOP_WHILE, &$1, NULL, $5, NULL, $7, &@3);
+            $$ = create_loop(ctx, HLSL_LOOP_WHILE, &$1, NULL, $5, NULL, $7, &@3);
             hlsl_pop_scope(ctx);
             cleanup_parse_attribute_list(&$1);
         }
     | attribute_list_optional loop_scope_start KW_DO statement KW_WHILE '(' expr ')' ';'
         {
-            $$ = create_loop(ctx, LOOP_DO_WHILE, &$1, NULL, $7, NULL, $4, &@3);
+            $$ = create_loop(ctx, HLSL_LOOP_DO_WHILE, &$1, NULL, $7, NULL, $4, &@3);
             hlsl_pop_scope(ctx);
             cleanup_parse_attribute_list(&$1);
         }
     | attribute_list_optional loop_scope_start KW_FOR '(' expr_statement expr_statement expr_optional ')' statement
         {
-            $$ = create_loop(ctx, LOOP_FOR, &$1, $5, $6, $7, $9, &@3);
+            $$ = create_loop(ctx, HLSL_LOOP_FOR, &$1, $5, $6, $7, $9, &@3);
             hlsl_pop_scope(ctx);
             cleanup_parse_attribute_list(&$1);
         }
     | attribute_list_optional loop_scope_start KW_FOR '(' declaration expr_statement expr_optional ')' statement
         {
-            $$ = create_loop(ctx, LOOP_FOR, &$1, $5, $6, $7, $9, &@3);
+            $$ = create_loop(ctx, HLSL_LOOP_FOR, &$1, $5, $6, $7, $9, &@3);
             hlsl_pop_scope(ctx);
             cleanup_parse_attribute_list(&$1);
         }
@@ -9003,17 +9047,24 @@ primary_expr:
             struct hlsl_ir_load *load;
             struct hlsl_ir_var *var;
 
-            if (!(var = hlsl_get_var(ctx->cur_scope, $1)))
+            if ((var = hlsl_get_var(ctx->cur_scope, $1)))
+            {
+                vkd3d_free($1);
+
+                if (!(load = hlsl_new_var_load(ctx, var, &@1)))
+                    YYABORT;
+                if (!($$ = make_block(ctx, &load->node)))
+                    YYABORT;
+            }
+            else
             {
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_NOT_DEFINED, "Variable \"%s\" is not defined.", $1);
                 vkd3d_free($1);
-                YYABORT;
+
+                if (!($$ = make_empty_block(ctx)))
+                    YYABORT;
+                $$->value = ctx->error_instr;
             }
-            vkd3d_free($1);
-            if (!(load = hlsl_new_var_load(ctx, var, &@1)))
-                YYABORT;
-            if (!($$ = make_block(ctx, &load->node)))
-                YYABORT;
         }
     | '(' expr ')'
         {
@@ -9173,23 +9224,8 @@ postfix_expr:
     | var_modifiers type '(' initializer_expr_list ')'
         {
             if ($1)
-            {
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
                         "Modifiers are not allowed on constructors.");
-                free_parse_initializer(&$4);
-                YYABORT;
-            }
-            if (!hlsl_is_numeric_type($2))
-            {
-                struct vkd3d_string_buffer *string;
-
-                if ((string = hlsl_type_to_string(ctx, $2)))
-                    hlsl_error(ctx, &@2, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                            "Constructor data type %s is not numeric.", string->buffer);
-                hlsl_release_string_buffer(ctx, string);
-                free_parse_initializer(&$4);
-                YYABORT;
-            }
 
             if (!($$ = add_constructor(ctx, $2, &$4, &@2)))
             {
@@ -9257,11 +9293,8 @@ unary_expr:
     | '(' var_modifiers type arrays ')' unary_expr
         {
             if ($2)
-            {
                 hlsl_error(ctx, &@2, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
                         "Modifiers are not allowed on casts.");
-                YYABORT;
-            }
 
             if (!add_explicit_conversion(ctx, $6, $3, &$4, &@3))
             {
@@ -9405,10 +9438,7 @@ assignment_expr:
             struct hlsl_ir_node *lhs = node_from_block($1), *rhs = node_from_block($3);
 
             if (lhs->data_type->modifiers & HLSL_MODIFIER_CONST)
-            {
                 hlsl_error(ctx, &@2, VKD3D_SHADER_ERROR_HLSL_MODIFIES_CONST, "Statement modifies a const expression.");
-                YYABORT;
-            }
             hlsl_block_add_block($3, $1);
             destroy_block($1);
             if (!add_assignment(ctx, $3, lhs, $2, rhs))

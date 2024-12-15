@@ -27,6 +27,7 @@
 #include "shlobj.h"
 #include "wine/list.h"
 #include "wine/vulkan.h"
+#include "wine/vulkan_driver.h"
 
 
 #define WM_POPUPSYSTEMMENU  0x0313
@@ -109,7 +110,7 @@ struct user_thread_info
     struct ntuser_thread_info     client_info;            /* Data shared with client */
     HANDLE                        server_queue;           /* Handle to server-side queue */
     DWORD                         last_getmsg_time;       /* Get/PeekMessage last request time */
-    DWORD                         last_driver_time;       /* Get/PeekMessage driver event time */
+    LONGLONG                      last_driver_time;       /* Get/PeekMessage driver event time */
     WORD                          hook_call_depth;        /* Number of recursively called hook procs */
     WORD                          hook_unicode;           /* Is current hook unicode? */
     HHOOK                         hook;                   /* Current hook */
@@ -223,8 +224,8 @@ extern int peek_message( MSG *msg, const struct peek_message_filter *filter, BOO
 extern LRESULT system_tray_call( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, void *data );
 
 /* vulkan.c */
-extern void *(*p_vkGetDeviceProcAddr)(VkDevice, const char *);
-extern void *(*p_vkGetInstanceProcAddr)(VkInstance, const char *);
+extern PFN_vkGetDeviceProcAddr p_vkGetDeviceProcAddr;
+extern PFN_vkGetInstanceProcAddr p_vkGetInstanceProcAddr;
 
 extern BOOL vulkan_init(void);
 extern void vulkan_detach_surfaces( struct list *surfaces );

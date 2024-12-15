@@ -1473,16 +1473,21 @@ static void vkd3d_device_vk_heaps_descriptor_limits_init(struct vkd3d_device_des
         uav_divisor = properties->maxDescriptorSetUpdateAfterBindSampledImages >= (3u << 20) ? 3 : 2;
     }
 
-    limits->uniform_buffer_max_descriptors = min(properties->maxDescriptorSetUpdateAfterBindUniformBuffers,
-            properties->maxPerStageDescriptorUpdateAfterBindUniformBuffers - root_provision);
-    limits->sampled_image_max_descriptors = min(properties->maxDescriptorSetUpdateAfterBindSampledImages,
-            properties->maxPerStageDescriptorUpdateAfterBindSampledImages / srv_divisor - root_provision);
-    limits->storage_buffer_max_descriptors = min(properties->maxDescriptorSetUpdateAfterBindStorageBuffers,
-            properties->maxPerStageDescriptorUpdateAfterBindStorageBuffers - root_provision);
-    limits->storage_image_max_descriptors = min(properties->maxDescriptorSetUpdateAfterBindStorageImages,
-            properties->maxPerStageDescriptorUpdateAfterBindStorageImages / uav_divisor - root_provision);
-    limits->sampler_max_descriptors = min(properties->maxDescriptorSetUpdateAfterBindSamplers,
-            properties->maxPerStageDescriptorUpdateAfterBindSamplers - root_provision);
+    limits->uniform_buffer_max_descriptors = min(min(properties->maxDescriptorSetUpdateAfterBindUniformBuffers,
+            properties->maxPerStageDescriptorUpdateAfterBindUniformBuffers - root_provision),
+            VKD3D_MAX_DESCRIPTOR_SET_CBVS_SRVS_UAVS);
+    limits->sampled_image_max_descriptors = min(min(properties->maxDescriptorSetUpdateAfterBindSampledImages,
+            properties->maxPerStageDescriptorUpdateAfterBindSampledImages / srv_divisor - root_provision),
+            VKD3D_MAX_DESCRIPTOR_SET_CBVS_SRVS_UAVS);
+    limits->storage_buffer_max_descriptors = min(min(properties->maxDescriptorSetUpdateAfterBindStorageBuffers,
+            properties->maxPerStageDescriptorUpdateAfterBindStorageBuffers - root_provision),
+            VKD3D_MAX_DESCRIPTOR_SET_CBVS_SRVS_UAVS);
+    limits->storage_image_max_descriptors = min(min(properties->maxDescriptorSetUpdateAfterBindStorageImages,
+            properties->maxPerStageDescriptorUpdateAfterBindStorageImages / uav_divisor - root_provision),
+            VKD3D_MAX_DESCRIPTOR_SET_CBVS_SRVS_UAVS);
+    limits->sampler_max_descriptors = min(min(properties->maxDescriptorSetUpdateAfterBindSamplers,
+            properties->maxPerStageDescriptorUpdateAfterBindSamplers - root_provision),
+            VKD3D_MAX_DESCRIPTOR_SET_CBVS_SRVS_UAVS);
     limits->sampler_max_descriptors = min(limits->sampler_max_descriptors, VKD3D_MAX_DESCRIPTOR_SET_SAMPLERS);
 }
 
@@ -2677,39 +2682,16 @@ static void vkd3d_time_domains_init(struct d3d12_device *device)
 static void device_init_descriptor_pool_sizes(struct d3d12_device *device)
 {
     const struct vkd3d_device_descriptor_limits *limits = &device->vk_info.descriptor_limits;
-    VkDescriptorPoolSize *pool_sizes = device->vk_pool_sizes;
+    unsigned int *pool_sizes = device->vk_pool_limits;
 
-    if (device->use_vk_heaps)
-    {
-        pool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
-        pool_sizes[0].descriptorCount = min(limits->storage_image_max_descriptors,
-                VKD3D_MAX_UAV_CLEAR_DESCRIPTORS_PER_TYPE);
-        pool_sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        pool_sizes[1].descriptorCount = pool_sizes[0].descriptorCount;
-        pool_sizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-        pool_sizes[2].descriptorCount = min(limits->sampler_max_descriptors, D3D12_MAX_LIVE_STATIC_SAMPLERS);
-        device->vk_pool_count = 3;
-        return;
-    }
-
-    VKD3D_ASSERT(ARRAY_SIZE(device->vk_pool_sizes) >= 6);
-    pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    pool_sizes[0].descriptorCount = min(limits->uniform_buffer_max_descriptors,
+    pool_sizes[VKD3D_SHADER_DESCRIPTOR_TYPE_CBV] = min(limits->uniform_buffer_max_descriptors,
             VKD3D_MAX_VIRTUAL_HEAP_DESCRIPTORS_PER_TYPE);
-    pool_sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
-    pool_sizes[1].descriptorCount = min(limits->sampled_image_max_descriptors,
+    pool_sizes[VKD3D_SHADER_DESCRIPTOR_TYPE_SRV] = min(limits->sampled_image_max_descriptors,
             VKD3D_MAX_VIRTUAL_HEAP_DESCRIPTORS_PER_TYPE);
-    pool_sizes[2].type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    pool_sizes[2].descriptorCount = pool_sizes[1].descriptorCount;
-    pool_sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
-    pool_sizes[3].descriptorCount = min(limits->storage_image_max_descriptors,
+    pool_sizes[VKD3D_SHADER_DESCRIPTOR_TYPE_UAV] = min(limits->storage_image_max_descriptors,
             VKD3D_MAX_VIRTUAL_HEAP_DESCRIPTORS_PER_TYPE);
-    pool_sizes[4].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    pool_sizes[4].descriptorCount = pool_sizes[3].descriptorCount;
-    pool_sizes[5].type = VK_DESCRIPTOR_TYPE_SAMPLER;
-    pool_sizes[5].descriptorCount = min(limits->sampler_max_descriptors,
+    pool_sizes[VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER] = min(limits->sampler_max_descriptors,
             VKD3D_MAX_VIRTUAL_HEAP_DESCRIPTORS_PER_TYPE);
-    device->vk_pool_count = 6;
 };
 
 static void vkd3d_desc_object_cache_init(struct vkd3d_desc_object_cache *cache, size_t size)
