@@ -207,15 +207,15 @@ static BOOL needs_client_window_clipping( HWND hwnd )
     release_win_data( data );
     OffsetRect( &client, -client.left, -client.top );
 
-    if (!(hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_CLIPCHILDREN ))) return FALSE;
+    if (!(hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_USESTYLE ))) return FALSE;
     if ((region = NtGdiCreateRectRgn( 0, 0, 0, 0 )))
     {
         ret = NtGdiGetRandomRgn( hdc, region, SYSRGN | NTGDI_RGN_MONITOR_DPI );
-        if (ret > 0 && (ret = NtGdiGetRgnBox( region, &rect )) <= NULLREGION) ret = 0;
+        if (ret > 0 && (ret = NtGdiGetRgnBox( region, &rect )) < NULLREGION) ret = 0;
         if (ret == SIMPLEREGION && EqualRect( &rect, &client )) ret = 0;
         NtGdiDeleteObjectApp( region );
     }
-    NtGdiDeleteObjectApp( hdc );
+    NtUserReleaseDC( hwnd, hdc );
 
     return ret > 0;
 }

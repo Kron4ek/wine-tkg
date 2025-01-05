@@ -2998,6 +2998,122 @@ static bool func_is_compatible_match(struct hlsl_ctx *ctx, const struct hlsl_ir_
     return true;
 }
 
+static enum hlsl_base_type hlsl_base_type_class(enum hlsl_base_type t)
+{
+    switch (t)
+    {
+        case HLSL_TYPE_HALF:
+        case HLSL_TYPE_FLOAT:
+        case HLSL_TYPE_DOUBLE:
+            return HLSL_TYPE_FLOAT;
+
+        case HLSL_TYPE_INT:
+        case HLSL_TYPE_UINT:
+            return HLSL_TYPE_INT;
+
+        case HLSL_TYPE_BOOL:
+            return HLSL_TYPE_BOOL;
+    }
+
+    return 0;
+}
+
+static unsigned int hlsl_base_type_width(enum hlsl_base_type t)
+{
+    switch (t)
+    {
+        case HLSL_TYPE_HALF:
+            return 16;
+
+        case HLSL_TYPE_FLOAT:
+        case HLSL_TYPE_INT:
+        case HLSL_TYPE_UINT:
+        case HLSL_TYPE_BOOL:
+            return 32;
+
+        case HLSL_TYPE_DOUBLE:
+            return 64;
+    }
+
+    return 0;
+}
+
+static int function_parameter_compare(const struct hlsl_ir_var *candidate,
+        const struct hlsl_ir_var *ref, const struct hlsl_ir_node *arg)
+{
+    struct
+    {
+        enum hlsl_base_type type;
+        enum hlsl_base_type class;
+        unsigned int count, width;
+    } c, r, a;
+    int ret;
+
+    /* TODO: Non-numeric types. */
+    if (!hlsl_is_numeric_type(arg->data_type))
+        return 0;
+
+    c.type = candidate->data_type->e.numeric.type;
+    c.class = hlsl_base_type_class(c.type);
+    c.count = hlsl_type_component_count(candidate->data_type);
+    c.width = hlsl_base_type_width(c.type);
+
+    r.type = ref->data_type->e.numeric.type;
+    r.class = hlsl_base_type_class(r.type);
+    r.count = hlsl_type_component_count(ref->data_type);
+    r.width = hlsl_base_type_width(r.type);
+
+    a.type = arg->data_type->e.numeric.type;
+    a.class = hlsl_base_type_class(a.type);
+    a.count = hlsl_type_component_count(arg->data_type);
+    a.width = hlsl_base_type_width(a.type);
+
+    /* Prefer candidates without component count narrowing. E.g., given an
+     * float4 argument, half4 is a better match than float2. */
+    if ((ret = (a.count > r.count) - (a.count > c.count)))
+        return ret;
+
+    /* Prefer candidates with matching component type classes. E.g., given a
+     * float argument, double is a better match than int. */
+    if ((ret = (a.class == c.class) - (a.class == r.class)))
+        return ret;
+
+    /* Prefer candidates with matching component types. E.g., given an int
+     * argument, int4 is a better match than uint4. */
+    if ((ret = (a.type == c.type) - (a.type == r.type)))
+        return ret;
+
+    /* Prefer candidates without component type narrowing. E.g., given a float
+     * argument, double is a better match than half. */
+    if ((ret = (a.width > r.width) - (a.width > c.width)))
+        return ret;
+
+    /* Prefer candidates without component count widening. E.g. given a float
+     * argument, float is a better match than float2. */
+    return (a.count < r.count) - (a.count < c.count);
+}
+
+static int function_compare(const struct hlsl_ir_function_decl *candidate,
+        const struct hlsl_ir_function_decl *ref, const struct parse_initializer *args)
+{
+    bool any_worse = false, any_better = false;
+    unsigned int i;
+    int ret;
+
+    for (i = 0; i < args->args_count; ++i)
+    {
+        ret = function_parameter_compare(candidate->parameters.vars[i], ref->parameters.vars[i], args->args[i]);
+        if (ret < 0)
+            any_worse = true;
+        else if (ret > 0)
+            any_better = true;
+    }
+
+    /* We consider a candidate better if at least one parameter is a better
+     * match, and none are a worse match. */
+    return any_better - any_worse;
+}
+
 static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
         const char *name, const struct parse_initializer *args, bool is_compile,
         const struct vkd3d_shader_location *loc)
@@ -3006,6 +3122,7 @@ static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
     struct vkd3d_string_buffer *s;
     struct hlsl_ir_function *func;
     struct rb_entry *entry;
+    int compare;
     size_t i;
     struct
     {
@@ -3021,6 +3138,23 @@ static struct hlsl_ir_function_decl *find_function_call(struct hlsl_ctx *ctx,
     {
         if (!func_is_compatible_match(ctx, decl, is_compile, args))
             continue;
+
+        if (candidates.count)
+        {
+            compare = function_compare(decl, candidates.candidates[0], args);
+
+            /* The candidate is worse; skip it. */
+            if (compare < 0)
+                continue;
+
+            /* The candidate is better; replace the current candidates. */
+            if (compare > 0)
+            {
+                candidates.candidates[0] = decl;
+                candidates.count = 1;
+                continue;
+            }
+        }
 
         if (!(hlsl_array_reserve(ctx, (void **)&candidates.candidates,
                 &candidates.capacity, candidates.count + 1, sizeof(decl))))
@@ -5990,6 +6124,87 @@ static bool add_gather_method_call(struct hlsl_ctx *ctx, struct hlsl_block *bloc
     return true;
 }
 
+static bool add_gather_cmp_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block, struct hlsl_ir_node *object,
+        const char *name, const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    const struct hlsl_type *object_type = object->data_type;
+    struct hlsl_resource_load_params load_params = {0};
+    unsigned int sampler_dim, offset_dim;
+    const struct hlsl_type *sampler_type;
+    struct hlsl_ir_node *load;
+
+    sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
+    offset_dim = hlsl_offset_dim_count(object_type->sampler_dim);
+
+    if (!strcmp(name, "GatherCmpGreen"))
+        load_params.type = HLSL_RESOURCE_GATHER_CMP_GREEN;
+    else if (!strcmp(name, "GatherCmpBlue"))
+        load_params.type = HLSL_RESOURCE_GATHER_CMP_BLUE;
+    else if (!strcmp(name, "GatherCmpAlpha"))
+        load_params.type = HLSL_RESOURCE_GATHER_CMP_ALPHA;
+    else
+        load_params.type = HLSL_RESOURCE_GATHER_CMP_RED;
+
+    if (!strcmp(name, "GatherCmp") || !offset_dim)
+    {
+        if (params->args_count < 3 || params->args_count > 4 + !!offset_dim)
+        {
+            hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_WRONG_PARAMETER_COUNT,
+                    "Wrong number of arguments to method '%s': expected from 3 to %u, but got %u.",
+                    name, 4 + !!offset_dim, params->args_count);
+            return false;
+        }
+    }
+    else if (params->args_count < 3 || params->args_count == 6 || params->args_count > 8)
+    {
+        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_WRONG_PARAMETER_COUNT,
+                "Wrong number of arguments to method '%s': expected 3, 4, 5, 7, or 8, but got %u.",
+                name, params->args_count);
+        return false;
+    }
+
+    if (params->args_count == 5 || params->args_count == 8)
+    {
+        hlsl_fixme(ctx, loc, "Tiled resource status argument.");
+    }
+    else if (offset_dim && params->args_count > 3)
+    {
+        if (!(load_params.texel_offset = add_implicit_conversion(ctx, block, params->args[3],
+                hlsl_get_vector_type(ctx, HLSL_TYPE_INT, offset_dim), loc)))
+            return false;
+    }
+
+    sampler_type = params->args[0]->data_type;
+    if (sampler_type->class != HLSL_CLASS_SAMPLER || sampler_type->sampler_dim != HLSL_SAMPLER_DIM_COMPARISON)
+    {
+        struct vkd3d_string_buffer *string;
+
+        if ((string = hlsl_type_to_string(ctx, sampler_type)))
+            hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                    "Wrong type for argument 0 of %s(): expected 'SamplerComparisonState', but got '%s'.",
+                    name, string->buffer);
+        hlsl_release_string_buffer(ctx, string);
+        return false;
+    }
+
+    if (!(load_params.coords = add_implicit_conversion(ctx, block, params->args[1],
+            hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, sampler_dim), loc)))
+        return false;
+
+    if (!(load_params.cmp = add_implicit_conversion(ctx, block, params->args[2],
+            hlsl_get_scalar_type(ctx, HLSL_TYPE_FLOAT), loc)))
+        return false;
+
+    load_params.format = hlsl_get_vector_type(ctx, object_type->e.resource.format->e.numeric.type, 4);
+    load_params.resource = object;
+    load_params.sampler = params->args[0];
+
+    if (!(load = hlsl_new_resource_load(ctx, &load_params, loc)))
+        return false;
+    hlsl_block_add_instr(block, load);
+    return true;
+}
+
 static bool add_assignment_from_component(struct hlsl_ctx *ctx, struct hlsl_block *instrs, struct hlsl_ir_node *dest,
         struct hlsl_ir_node *src, unsigned int component, const struct vkd3d_shader_location *loc)
 {
@@ -6357,6 +6572,11 @@ texture_methods[] =
     { "Gather",             add_gather_method_call,        "00010101001000" },
     { "GatherAlpha",        add_gather_method_call,        "00010101001000" },
     { "GatherBlue",         add_gather_method_call,        "00010101001000" },
+    { "GatherCmp",          add_gather_cmp_method_call,    "00010101001000" },
+    { "GatherCmpAlpha",     add_gather_cmp_method_call,    "00010101001000" },
+    { "GatherCmpBlue",      add_gather_cmp_method_call,    "00010101001000" },
+    { "GatherCmpGreen",     add_gather_cmp_method_call,    "00010101001000" },
+    { "GatherCmpRed",       add_gather_cmp_method_call,    "00010101001000" },
     { "GatherGreen",        add_gather_method_call,        "00010101001000" },
     { "GatherRed",          add_gather_method_call,        "00010101001000" },
 

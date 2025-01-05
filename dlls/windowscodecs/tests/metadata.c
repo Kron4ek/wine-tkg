@@ -34,6 +34,15 @@
 #include "initguid.h"
 DEFINE_GUID(IID_MdbrUnknown, 0x00240e6f,0x3f23,0x4432,0xb0,0xcc,0x48,0xd5,0xbb,0xff,0x6c,0x36);
 
+#define expect_ref(obj,ref) expect_ref_((IUnknown *)obj, ref, __LINE__)
+static void expect_ref_(IUnknown *obj, ULONG ref, int line)
+{
+    ULONG refcount;
+    IUnknown_AddRef(obj);
+    refcount = IUnknown_Release(obj);
+    ok_(__FILE__, line)(refcount == ref, "Expected refcount %ld, got %ld.\n", ref, refcount);
+}
+
 #define check_interface(a, b, c) check_interface_(__LINE__, a, b, c)
 static void check_interface_(unsigned int line, void *iface_ptr, REFIID iid, BOOL supported)
 {
@@ -47,6 +56,41 @@ static void check_interface_(unsigned int line, void *iface_ptr, REFIID iid, BOO
     ok_(__FILE__, line)(hr == expected_hr, "Got hr %#lx, expected %#lx.\n", hr, expected_hr);
     if (SUCCEEDED(hr))
         IUnknown_Release(unk);
+}
+
+#define check_persist_options(a, b) check_persist_options_(__LINE__, a, b)
+static void check_persist_options_(unsigned int line, void *iface_ptr, DWORD expected_options)
+{
+    IWICStreamProvider *stream_provider;
+    IUnknown *iface = iface_ptr;
+    DWORD options;
+    HRESULT hr;
+
+    if (SUCCEEDED(IUnknown_QueryInterface(iface, &IID_IWICStreamProvider, (void **)&stream_provider)))
+    {
+        hr = IWICStreamProvider_GetPersistOptions(stream_provider, &options);
+        ok_(__FILE__, line)(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        if (hr == S_OK)
+            ok_(__FILE__, line)(options == expected_options, "Unexpected options %#lx.\n", options);
+        IWICStreamProvider_Release(stream_provider);
+    }
+    else
+        ok_(__FILE__, line)(0, "IWICStreamProvider is not supported.\n");
+}
+
+static HRESULT get_persist_stream(void *iface_ptr, IStream **stream)
+{
+    IWICStreamProvider *stream_provider;
+    IUnknown *iface = iface_ptr;
+    HRESULT hr = E_UNEXPECTED;
+
+    if (SUCCEEDED(IUnknown_QueryInterface(iface, &IID_IWICStreamProvider, (void **)&stream_provider)))
+    {
+        hr = IWICStreamProvider_GetStream(stream_provider, stream);
+        IWICStreamProvider_Release(stream_provider);
+    }
+
+    return hr;
 }
 
 #define compare_blob(a,b,c) compare_blob_(__LINE__,a,b,c)
@@ -265,9 +309,10 @@ static IStream *create_stream(const char *data, int data_size)
     return stream;
 }
 
-static void load_stream(IWICMetadataReader *reader, const char *data, int data_size, DWORD persist_options)
+static void load_stream(void *iface_ptr, const char *data, int data_size, DWORD persist_options)
 {
     IWICStreamProvider *stream_provider;
+    IUnknown *iface = iface_ptr;
     HRESULT hr;
     IWICPersistStream *persist;
     IStream *stream, *stream2;
@@ -280,13 +325,13 @@ static void load_stream(IWICMetadataReader *reader, const char *data, int data_s
     if (!stream)
         return;
 
-    hr = IWICMetadataReader_QueryInterface(reader, &IID_IWICPersistStream, (void**)&persist);
+    hr = IUnknown_QueryInterface(iface, &IID_IWICPersistStream, (void **)&persist);
     ok(hr == S_OK, "QueryInterface failed, hr=%lx\n", hr);
 
     hr = IWICPersistStream_LoadEx(persist, NULL, NULL, 0);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
-    hr = IWICMetadataReader_QueryInterface(reader, &IID_IWICStreamProvider, (void **)&stream_provider);
+    hr = IUnknown_QueryInterface(iface, &IID_IWICStreamProvider, (void **)&stream_provider);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     memset(&guid, 0, sizeof(guid));
@@ -334,14 +379,25 @@ static void load_stream(IWICMetadataReader *reader, const char *data, int data_s
     todo_wine
     ok(flags == persist_options, "Unexpected options %#lx.\n", flags);
 
-    stream2 = NULL;
-    hr = IWICStreamProvider_GetStream(stream_provider, &stream2);
-    todo_wine
-    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine
-    ok(stream2 == stream, "Unexpected stream pointer.\n");
-    if (stream2)
-        IStream_Release(stream2);
+    if (persist_options & WICPersistOptionNoCacheStream)
+    {
+        stream2 = (void *)0xdeadbeef;
+        hr = IWICStreamProvider_GetStream(stream_provider, &stream2);
+        todo_wine
+        ok(hr == WINCODEC_ERR_STREAMNOTAVAILABLE, "Unexpected hr %#lx.\n", hr);
+        ok(stream2 == (void *)0xdeadbeef, "Unexpected stream pointer.\n");
+    }
+    else
+    {
+        stream2 = NULL;
+        hr = IWICStreamProvider_GetStream(stream_provider, &stream2);
+        todo_wine
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        todo_wine
+        ok(stream2 == stream, "Unexpected stream pointer.\n");
+        if (stream2)
+            IStream_Release(stream2);
+    }
 
     IWICStreamProvider_Release(stream_provider);
     IWICPersistStream_Release(persist);
@@ -515,7 +571,9 @@ static void test_metadata_unknown(void)
     IWICEnumMetadataItem *enumerator;
     PROPVARIANT schema, id, value;
     IWICMetadataWriter *writer;
+    IWICPersistStream *persist;
     ULONG items_returned;
+    UINT count;
 
     hr = CoCreateInstance(&CLSID_WICUnknownMetadataReader, NULL, CLSCTX_INPROC_SERVER,
         &IID_IWICMetadataReader, (void**)&reader);
@@ -577,6 +635,19 @@ static void test_metadata_unknown(void)
         IWICEnumMetadataItem_Release(enumerator);
     }
 
+    hr = IWICMetadataReader_QueryInterface(reader, &IID_IWICPersistStream, (void **)&persist);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IWICMetadataReader_GetCount(reader, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count == 1, "Unexpected count %u.\n", count);
+    hr = IWICPersistStream_LoadEx(persist, NULL, NULL, 0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IWICMetadataReader_GetCount(reader, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    todo_wine
+    ok(count == 1, "Unexpected count %u.\n", count);
+    IWICPersistStream_Release(persist);
+
     IWICMetadataReader_Release(reader);
 
     hr = CoCreateInstance(&CLSID_WICUnknownMetadataWriter, NULL, CLSCTX_INPROC_SERVER,
@@ -591,6 +662,9 @@ static void test_metadata_unknown(void)
     check_interface(writer, &IID_IPersistStream, TRUE);
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
+
+    load_stream(writer, metadata_unknown, sizeof(metadata_unknown), 0);
+    load_stream(writer, metadata_unknown, sizeof(metadata_unknown), WICPersistOptionNoCacheStream);
 
     IWICMetadataWriter_Release(writer);
 }
@@ -740,6 +814,9 @@ static void test_metadata_tEXt(void)
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
 
+    load_stream(writer, metadata_tEXt, sizeof(metadata_tEXt), 0);
+    load_stream(writer, metadata_tEXt, sizeof(metadata_tEXt), WICPersistOptionNoCacheStream);
+
     IWICMetadataWriter_Release(writer);
 }
 
@@ -812,6 +889,9 @@ static void test_metadata_gAMA(void)
     check_interface(writer, &IID_IPersistStream, TRUE);
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
+
+    load_stream(writer, metadata_gAMA, sizeof(metadata_gAMA), 0);
+    load_stream(writer, metadata_gAMA, sizeof(metadata_gAMA), WICPersistOptionNoCacheStream);
 
     IWICMetadataWriter_Release(writer);
 }
@@ -897,6 +977,9 @@ static void test_metadata_cHRM(void)
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
 
+    load_stream(writer, metadata_cHRM, sizeof(metadata_cHRM), 0);
+    load_stream(writer, metadata_cHRM, sizeof(metadata_cHRM), WICPersistOptionNoCacheStream);
+
     IWICMetadataWriter_Release(writer);
 }
 
@@ -965,6 +1048,9 @@ static void test_metadata_hIST(void)
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
 
+    load_stream(writer, metadata_hIST, sizeof(metadata_hIST), 0);
+    load_stream(writer, metadata_hIST, sizeof(metadata_hIST), WICPersistOptionNoCacheStream);
+
     IWICMetadataWriter_Release(writer);
 }
 
@@ -1022,6 +1108,9 @@ static void test_metadata_tIME(void)
     check_interface(writer, &IID_IPersistStream, TRUE);
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
+
+    load_stream(writer, metadata_tIME, sizeof(metadata_tIME), 0);
+    load_stream(writer, metadata_tIME, sizeof(metadata_tIME), WICPersistOptionNoCacheStream);
 
     IWICMetadataWriter_Release(writer);
 }
@@ -1192,6 +1281,8 @@ static void test_ifd_content(IWICMetadataReader *reader)
     memcpy(IFD_data_swapped, &IFD_data, sizeof(IFD_data));
     byte_swap_ifd_data(IFD_data_swapped);
     load_stream(reader, IFD_data_swapped, sizeof(IFD_data), WICPersistOptionBigEndian);
+    todo_wine
+    check_persist_options(reader, WICPersistOptionBigEndian);
     hr = IWICMetadataReader_GetCount(reader, &count);
     ok(hr == S_OK, "GetCount error %#lx\n", hr);
     ok(count == ARRAY_SIZE(td), "unexpected count %u\n", count);
@@ -1323,6 +1414,9 @@ static void test_metadata_Ifd(void)
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
 
+    load_stream(writer, (const char *)&IFD_data, sizeof(IFD_data), 0);
+    load_stream(writer, (const char *)&IFD_data, sizeof(IFD_data), WICPersistOptionNoCacheStream);
+
     IWICMetadataWriter_Release(writer);
 }
 
@@ -1375,6 +1469,9 @@ static void test_metadata_Exif(void)
     todo_wine
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
 
+    load_stream(writer, (const char *)&IFD_data, sizeof(IFD_data), 0);
+    load_stream(writer, (const char *)&IFD_data, sizeof(IFD_data), WICPersistOptionNoCacheStream);
+
     IWICMetadataWriter_Release(writer);
 }
 
@@ -1425,6 +1522,9 @@ static void test_metadata_Gps(void)
     check_interface(writer, &IID_IPersistStream, TRUE);
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
+
+    load_stream(writer, (const char *)&IFD_data, sizeof(IFD_data), 0);
+    load_stream(writer, (const char *)&IFD_data, sizeof(IFD_data), WICPersistOptionNoCacheStream);
 
     IWICMetadataWriter_Release(writer);
 }
@@ -1510,12 +1610,13 @@ static void test_create_reader_from_container(void)
     IWICComponentFactory_Release(factory);
 }
 
-static void test_create_reader(void)
+static void test_CreateMetadataReader(void)
 {
+    IWICPersistStream *persist_stream;
     IWICComponentFactory *factory;
     IWICMetadataReader *reader;
+    IStream *stream, *stream2;
     LARGE_INTEGER pos;
-    IStream *stream;
     UINT count = 0;
     GUID format;
     HRESULT hr;
@@ -1533,6 +1634,15 @@ static void test_create_reader(void)
     hr = IWICComponentFactory_CreateMetadataReader(factory, &format, NULL, 0, stream, &reader);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
+    hr = get_persist_stream(reader, &stream2);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        ok(stream == stream2, "Unexpected stream.\n");
+        IStream_Release(stream2);
+    }
+
     hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(IsEqualGUID(&format, &GUID_MetadataFormatUnknown), "Unexpected format %s.\n", wine_dbgstr_guid(&format));
@@ -1545,6 +1655,10 @@ static void test_create_reader(void)
     hr = IWICComponentFactory_CreateMetadataReader(factory, &GUID_MetadataFormatChunktEXt,
             NULL, 0, NULL, &reader);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = get_persist_stream(reader, &stream2);
+    todo_wine
+    ok(hr == WINCODEC_ERR_STREAMNOTAVAILABLE, "Unexpected hr %#lx.\n", hr);
 
     hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -1605,6 +1719,53 @@ static void test_create_reader(void)
     hr = IWICComponentFactory_CreateMetadataReader(factory, &GUID_MetadataFormatApp1, NULL, 0, stream, &reader);
     todo_wine
     ok(hr == WINCODEC_ERR_BADMETADATAHEADER, "Unexpected hr %#lx.\n", hr);
+
+    /* With and without caching */
+    hr = IStream_Seek(stream, pos, STREAM_SEEK_SET, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IWICComponentFactory_CreateMetadataReader(factory, &GUID_MetadataFormatChunktEXt, NULL,
+            WICPersistOptionNoCacheStream, stream, &reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IWICMetadataReader_GetCount(reader, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count == 1, "Unexpected count %u.\n", count);
+
+    hr = get_persist_stream(reader, &stream2);
+    todo_wine
+    ok(hr == WINCODEC_ERR_STREAMNOTAVAILABLE, "Unexpected hr %#lx.\n", hr);
+
+    hr = IWICMetadataReader_QueryInterface(reader, &IID_IWICPersistStream, (void **)&persist_stream);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IWICPersistStream_LoadEx(persist_stream, stream, NULL, 0);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = get_persist_stream(reader, &stream2);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (SUCCEEDED(hr))
+    {
+        ok(stream == stream2, "Unexpected stream.\n");
+        IStream_Release(stream2);
+    }
+
+    /* Going from caching to no caching. */
+    hr = IStream_Seek(stream, pos, STREAM_SEEK_SET, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IWICPersistStream_LoadEx(persist_stream, stream, NULL, WICPersistOptionNoCacheStream);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = get_persist_stream(reader, &stream2);
+    todo_wine
+    ok(hr == WINCODEC_ERR_STREAMNOTAVAILABLE, "Unexpected hr %#lx.\n", hr);
+    todo_wine
+    check_persist_options(reader, WICPersistOptionNoCacheStream);
+
+    IWICPersistStream_Release(persist_stream);
+
+    IWICMetadataReader_Release(reader);
 
     IStream_Release(stream);
 
@@ -2402,6 +2563,8 @@ static void test_metadata_LSD(void)
 
     hr = IWICPersistStream_Load(persist, stream);
     ok(hr == S_OK, "Load error %#lx\n", hr);
+    todo_wine
+    check_persist_options(reader, 0);
 
     IWICPersistStream_Release(persist);
 
@@ -2443,6 +2606,9 @@ static void test_metadata_LSD(void)
     check_interface(writer, &IID_IPersistStream, TRUE);
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
+
+    load_stream(writer, LSD_data, sizeof(LSD_data), 0);
+    load_stream(writer, LSD_data, sizeof(LSD_data), WICPersistOptionNoCacheStream);
 
     IWICMetadataWriter_Release(writer);
 }
@@ -2498,6 +2664,8 @@ static void test_metadata_IMD(void)
 
     hr = IWICPersistStream_Load(persist, stream);
     ok(hr == S_OK, "Load error %#lx\n", hr);
+    todo_wine
+    check_persist_options(reader, 0);
 
     IWICPersistStream_Release(persist);
 
@@ -2539,6 +2707,9 @@ static void test_metadata_IMD(void)
     check_interface(writer, &IID_IPersistStream, TRUE);
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
+
+    load_stream(writer, IMD_data, sizeof(IMD_data), 0);
+    load_stream(writer, IMD_data, sizeof(IMD_data), WICPersistOptionNoCacheStream);
 
     IWICMetadataWriter_Release(writer);
 }
@@ -2591,6 +2762,8 @@ static void test_metadata_GCE(void)
 
     hr = IWICPersistStream_Load(persist, stream);
     ok(hr == S_OK, "Load error %#lx\n", hr);
+    todo_wine
+    check_persist_options(reader, 0);
 
     IWICPersistStream_Release(persist);
 
@@ -2632,6 +2805,9 @@ static void test_metadata_GCE(void)
     check_interface(writer, &IID_IPersistStream, TRUE);
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
+
+    load_stream(writer, GCE_data, sizeof(GCE_data), 0);
+    load_stream(writer, GCE_data, sizeof(GCE_data), WICPersistOptionNoCacheStream);
 
     IWICMetadataWriter_Release(writer);
 }
@@ -2682,6 +2858,8 @@ static void test_metadata_APE(void)
 
     hr = IWICPersistStream_Load(persist, stream);
     ok(hr == S_OK, "Load error %#lx\n", hr);
+    todo_wine
+    check_persist_options(reader, 0);
 
     IWICPersistStream_Release(persist);
 
@@ -2736,6 +2914,9 @@ static void test_metadata_APE(void)
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
 
+    load_stream(writer, APE_data, sizeof(APE_data), 0);
+    load_stream(writer, APE_data, sizeof(APE_data), WICPersistOptionNoCacheStream);
+
     IWICMetadataWriter_Release(writer);
 }
 
@@ -2784,6 +2965,8 @@ static void test_metadata_GIF_comment(void)
 
     hr = IWICPersistStream_Load(persist, stream);
     ok(hr == S_OK, "Load error %#lx\n", hr);
+    todo_wine
+    check_persist_options(reader, 0);
 
     IWICPersistStream_Release(persist);
 
@@ -2835,6 +3018,9 @@ static void test_metadata_GIF_comment(void)
     check_interface(writer, &IID_IPersistStream, TRUE);
     check_interface(writer, &IID_IWICPersistStream, TRUE);
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
+
+    load_stream(writer, GIF_comment_data, sizeof(GIF_comment_data), 0);
+    load_stream(writer, GIF_comment_data, sizeof(GIF_comment_data), WICPersistOptionNoCacheStream);
 
     IWICMetadataWriter_Release(writer);
 }
@@ -3776,8 +3962,16 @@ static const struct app1_data
     ULONG ifd0_offset;
 
     USHORT ifd0_count;
-    struct IFD_entry ifd0[2];
+    struct IFD_entry ifd0[4];
     ULONG next_IFD;
+
+    USHORT exif_ifd_count;
+    struct IFD_entry exif_ifd[1];
+    ULONG next_IFD_2;
+
+    USHORT gps_ifd_count;
+    struct IFD_entry gps_ifd[1];
+    ULONG next_IFD_3;
 }
 app1_data =
 {
@@ -3787,18 +3981,37 @@ app1_data =
     0x8,
 
     /* IFD 0 */
-    2,
+    4,
     {
-        { 0x100, IFD_LONG, 1, 222 }, /* IMAGEWIDTH */
-        { 0x101, IFD_LONG, 1, 333 }, /* IMAGELENGTH */
+        { 0x100,  IFD_LONG, 1, 222 }, /* IMAGEWIDTH */
+        { 0x101,  IFD_LONG, 1, 333 }, /* IMAGELENGTH */
+        /* Exif IFD pointer */
+        { 0x8769, IFD_LONG, 1, FIELD_OFFSET(struct app1_data, exif_ifd_count) - 6 },
+        /* GPS IFD pointer */
+        { 0x8825, IFD_LONG, 1, FIELD_OFFSET(struct app1_data, gps_ifd_count) - 6 },
     },
-    0
+    0,
+
+    /* Exif IFD */
+    1,
+    {
+        { 0x200, IFD_SHORT, 1, 444 },
+    },
+    0,
+
+    /* GPS IFD */
+    1,
+    {
+        { 0x300, IFD_SHORT, 1, 555 },
+    },
+    0,
 };
 #include "poppack.h"
 
 static void test_metadata_App1(void)
 {
-    IWICMetadataReader *reader, *reader2;
+    IWICMetadataReader *reader, *ifd_reader, *exif_reader, *gps_reader;
+    IStream *app1_stream, *stream2;
     IWICMetadataWriter *writer;
     PROPVARIANT id, value;
     GUID format;
@@ -3833,6 +4046,9 @@ static void test_metadata_App1(void)
     test_reader_container_format(reader, &GUID_ContainerFormatJpeg);
 
     load_stream(reader, (const char *)&app1_data, sizeof(app1_data), 0);
+    check_persist_options(reader, 0);
+    hr = get_persist_stream(reader, &app1_stream);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     hr = IWICMetadataReader_GetCount(reader, &count);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -3850,40 +4066,123 @@ static void test_metadata_App1(void)
     ok(value.vt == VT_UNKNOWN, "Unexpected value type: %u.\n", value.vt);
     ok(!!value.punkVal, "Unexpected value.\n");
 
-    hr = IUnknown_QueryInterface(value.punkVal, &IID_IWICMetadataReader, (void **)&reader2);
+    hr = IUnknown_QueryInterface(value.punkVal, &IID_IWICMetadataReader, (void **)&ifd_reader);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     PropVariantClear(&value);
 
-    hr = IWICMetadataReader_GetMetadataFormat(reader2, &format);
+    hr = IWICMetadataReader_GetMetadataFormat(ifd_reader, &format);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(IsEqualGUID(&format, &GUID_MetadataFormatIfd), "Unexpected format %s.\n", wine_dbgstr_guid(&format));
+    check_persist_options(ifd_reader, 0);
 
-    hr = IWICMetadataReader_GetCount(reader2, &count);
+    hr = get_persist_stream(ifd_reader, &stream2);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    ok(count == 2, "Unexpected count %u.\n", count);
+    ok(!!stream2 && stream2 != app1_stream, "Unexpected stream %p.\n", stream2);
+    IStream_Release(stream2);
+
+    hr = IWICMetadataReader_GetCount(ifd_reader, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count == 4, "Unexpected count %u.\n", count);
 
     PropVariantInit(&id);
     PropVariantInit(&value);
-    hr = IWICMetadataReader_GetValueByIndex(reader2, 0, NULL, &id, &value);
+    hr = IWICMetadataReader_GetValueByIndex(ifd_reader, 0, NULL, &id, &value);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     ok(id.vt == VT_UI2, "Unexpected id type: %u.\n", id.vt);
-    ok(id.uiVal == 0x100, "Unexpected id %u.\n", id.uiVal);
+    ok(id.uiVal == 0x100, "Unexpected id %#x.\n", id.uiVal);
     ok(value.vt == VT_UI4, "Unexpected value type: %u.\n", value.vt);
     ok(value.ulVal == 222, "Unexpected value %lu.\n", value.ulVal);
 
     PropVariantInit(&id);
     PropVariantInit(&value);
-    hr = IWICMetadataReader_GetValueByIndex(reader2, 1, NULL, &id, &value);
+    hr = IWICMetadataReader_GetValueByIndex(ifd_reader, 1, NULL, &id, &value);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     ok(id.vt == VT_UI2, "Unexpected id type: %u.\n", id.vt);
-    ok(id.uiVal == 0x101, "Unexpected id %u.\n", id.uiVal);
+    ok(id.uiVal == 0x101, "Unexpected id %#x.\n", id.uiVal);
     ok(value.vt == VT_UI4, "Unexpected value type: %u.\n", value.vt);
     ok(value.ulVal == 333, "Unexpected value %lu.\n", value.ulVal);
 
-    IWICMetadataReader_Release(reader2);
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+    hr = IWICMetadataReader_GetValueByIndex(ifd_reader, 2, NULL, &id, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
+    ok(id.vt == VT_UI2, "Unexpected id type: %u.\n", id.vt);
+    ok(id.uiVal == 0x8769, "Unexpected id %#x.\n", id.uiVal);
+    ok(value.vt == VT_UNKNOWN, "Unexpected value type: %u.\n", value.vt);
+    hr = IUnknown_QueryInterface(value.punkVal, &IID_IWICMetadataReader, (void **)&exif_reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    PropVariantClear(&value);
+
+    /* Exif IFD */
+    hr = IWICMetadataReader_GetMetadataFormat(exif_reader, &format);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatExif), "Unexpected format %s.\n", wine_dbgstr_guid(&format));
+    check_persist_options(exif_reader, 0);
+
+    hr = get_persist_stream(exif_reader, &stream2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!stream2 && stream2 != app1_stream, "Unexpected stream.\n");
+    IStream_Release(stream2);
+
+    hr = IWICMetadataReader_GetCount(exif_reader, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count == 1, "Unexpected count %u.\n", count);
+
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+    hr = IWICMetadataReader_GetValueByIndex(exif_reader, 0, NULL, &id, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    ok(id.vt == VT_UI2, "Unexpected id type: %u.\n", id.vt);
+    ok(id.uiVal == 0x200, "Unexpected id %#x.\n", id.uiVal);
+    ok(value.vt == VT_UI2, "Unexpected value type: %u.\n", value.vt);
+    ok(value.ulVal == 444, "Unexpected value %lu.\n", value.ulVal);
+
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+    hr = IWICMetadataReader_GetValueByIndex(ifd_reader, 3, NULL, &id, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    ok(id.vt == VT_UI2, "Unexpected id type: %u.\n", id.vt);
+    ok(id.uiVal == 0x8825, "Unexpected id %#x.\n", id.uiVal);
+    ok(value.vt == VT_UNKNOWN, "Unexpected value type: %u.\n", value.vt);
+    hr = IUnknown_QueryInterface(value.punkVal, &IID_IWICMetadataReader, (void **)&gps_reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    PropVariantClear(&value);
+
+    /* GPS IFD */
+    hr = IWICMetadataReader_GetMetadataFormat(gps_reader, &format);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatGps), "Unexpected format %s.\n", wine_dbgstr_guid(&format));
+    check_persist_options(gps_reader, 0);
+
+    hr = get_persist_stream(gps_reader, &stream2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!stream2 && stream2 != app1_stream, "Unexpected stream.\n");
+    IStream_Release(stream2);
+
+    hr = IWICMetadataReader_GetCount(gps_reader, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count == 1, "Unexpected count %u.\n", count);
+
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+    hr = IWICMetadataReader_GetValueByIndex(gps_reader, 0, NULL, &id, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    ok(id.vt == VT_UI2, "Unexpected id type: %u.\n", id.vt);
+    ok(id.uiVal == 0x300, "Unexpected id %#x.\n", id.uiVal);
+    ok(value.vt == VT_UI2, "Unexpected value type: %u.\n", value.vt);
+    ok(value.ulVal == 555, "Unexpected value %lu.\n", value.ulVal);
+
+    IWICMetadataReader_Release(gps_reader);
+    IWICMetadataReader_Release(exif_reader);
+    IWICMetadataReader_Release(ifd_reader);
+
+    IStream_Release(app1_stream);
     IWICMetadataReader_Release(reader);
 
     hr = CoCreateInstance(&CLSID_WICApp1MetadataWriter, NULL, CLSCTX_INPROC_SERVER,
@@ -3899,6 +4198,273 @@ static void test_metadata_App1(void)
     check_interface(writer, &IID_IWICStreamProvider, TRUE);
 
     IWICMetadataWriter_Release(writer);
+}
+
+static void test_CreateMetadataWriterFromReader(void)
+{
+    IWICComponentFactory *factory;
+    IWICMetadataReader *reader;
+    IWICMetadataWriter *writer;
+    IStream *stream, *stream2;
+    PROPVARIANT id, value;
+    GUID format;
+    HRESULT hr;
+    UINT count;
+    char *data;
+
+    hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IWICComponentFactory, (void **)&factory);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* tEXt, uninitialized */
+    hr = IWICComponentFactory_CreateMetadataReader(factory, &GUID_MetadataFormatChunktEXt,
+            NULL, 0, NULL, &reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    todo_wine
+    check_persist_options(reader, 0);
+
+    hr = IWICComponentFactory_CreateMetadataWriterFromReader(factory, reader, NULL, &writer);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (FAILED(hr))
+    {
+        IWICMetadataReader_Release(reader);
+        IWICComponentFactory_Release(factory);
+        return;
+    }
+
+    IWICMetadataReader_Release(reader);
+
+    check_persist_options(writer, 0);
+    IWICMetadataWriter_Release(writer);
+
+    /* tEXt, loaded */
+    stream = create_stream(metadata_tEXt, sizeof(metadata_tEXt));
+    hr = IWICComponentFactory_CreateMetadataReader(factory, &GUID_MetadataFormatChunktEXt,
+            NULL, 0, stream, &reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_persist_options(reader, 0);
+    IStream_Release(stream);
+
+    hr = IWICComponentFactory_CreateMetadataWriterFromReader(factory, NULL, NULL, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IWICComponentFactory_CreateMetadataWriterFromReader(factory, NULL, NULL, &writer);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IWICComponentFactory_CreateMetadataWriterFromReader(factory, reader, NULL, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    expect_ref(reader, 1);
+    hr = IWICComponentFactory_CreateMetadataWriterFromReader(factory, reader, NULL, &writer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    expect_ref(reader, 1);
+
+    hr = IWICMetadataReader_GetCount(reader, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count == 1, "Unexpected count %u.\n", count);
+
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+    hr = IWICMetadataReader_GetValueByIndex(reader, 0, NULL, &id, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(id.vt == VT_LPSTR, "Unexpected id type %u.\n", id.vt);
+    ok(!strcmp(id.pszVal, "winetest"), "Unexpected id %s.\n", wine_dbgstr_a(id.pszVal));
+    ok(value.vt == VT_LPSTR, "Unexpected value type %u.\n", value.vt);
+    ok(!strcmp(value.pszVal, "value"), "Unexpected value %s.\n", wine_dbgstr_a(value.pszVal));
+    PropVariantClear(&id);
+    PropVariantClear(&value);
+
+    hr = IWICMetadataWriter_GetMetadataFormat(writer, &format);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatChunktEXt), "Unexpected format %s.\n", wine_dbgstr_guid(&format));
+
+    hr = IWICMetadataWriter_GetCount(writer, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count == 1, "Unexpected count %u.\n", count);
+
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+    hr = IWICMetadataWriter_GetValueByIndex(writer, 0, NULL, &id, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(id.vt == VT_LPSTR, "Unexpected id type %u.\n", id.vt);
+    ok(!strcmp(id.pszVal, "winetest"), "Unexpected id %s.\n", wine_dbgstr_a(id.pszVal));
+    ok(value.vt == VT_LPSTR, "Unexpected value type %u.\n", value.vt);
+    ok(!strcmp(value.pszVal, "value"), "Unexpected value %s.\n", wine_dbgstr_a(value.pszVal));
+    PropVariantClear(&id);
+    PropVariantClear(&value);
+
+    IWICMetadataWriter_Release(writer);
+    IWICMetadataReader_Release(reader);
+
+    /* App1 reader */
+    stream = create_stream((const char *)&app1_data, sizeof(app1_data));
+    hr = IWICComponentFactory_CreateMetadataReader(factory, &GUID_MetadataFormatApp1,
+            NULL, 0, stream, &reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IWICComponentFactory_CreateMetadataWriterFromReader(factory, reader, NULL, &writer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatApp1), "Unexpected format %s.\n", wine_dbgstr_guid(&format));
+
+    hr = IWICMetadataWriter_GetCount(writer, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count == 1, "Unexpected count %u.\n", count);
+
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+    hr = IWICMetadataReader_GetValueByIndex(reader, 0, NULL, &id, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(id.vt == VT_UI2, "Unexpected id type %u.\n", id.vt);
+    ok(value.vt == VT_UNKNOWN, "Unexpected value type %u.\n", value.vt);
+    check_interface(value.punkVal, &IID_IWICMetadataReader, TRUE);
+    check_interface(value.punkVal, &IID_IWICMetadataWriter, FALSE);
+    PropVariantClear(&value);
+
+    hr = IWICMetadataWriter_GetMetadataFormat(writer, &format);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatApp1), "Unexpected format %s.\n", wine_dbgstr_guid(&format));
+
+    hr = IWICMetadataWriter_GetCount(writer, &count);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(count == 1, "Unexpected count %u.\n", count);
+
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+    hr = IWICMetadataWriter_GetValueByIndex(writer, 0, NULL, &id, &value);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(id.vt == VT_UI2, "Unexpected id type %u.\n", id.vt);
+    ok(value.vt == VT_UNKNOWN, "Unexpected value type %u.\n", value.vt);
+    check_interface(value.punkVal, &IID_IWICMetadataReader, TRUE);
+    check_interface(value.punkVal, &IID_IWICMetadataWriter, TRUE);
+    check_persist_options(value.punkVal, 0);
+    PropVariantClear(&value);
+
+    hr = get_persist_stream(writer, &stream2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(stream2 != stream, "Unexpected stream.\n");
+    IStream_Release(stream2);
+
+    IWICMetadataWriter_Release(writer);
+    IWICMetadataReader_Release(reader);
+    IStream_Release(stream);
+
+    /* Big-endian IFD */
+    data = malloc(sizeof(IFD_data));
+    memcpy(data, &IFD_data, sizeof(IFD_data));
+    byte_swap_ifd_data(data);
+
+    hr = IWICComponentFactory_CreateMetadataReader(factory, &GUID_MetadataFormatIfd,
+            NULL, 0, NULL, &reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    load_stream(reader, data, sizeof(IFD_data), WICPersistOptionBigEndian);
+    check_persist_options(reader, WICPersistOptionBigEndian);
+    free(data);
+
+    hr = IWICComponentFactory_CreateMetadataWriterFromReader(factory, reader, NULL, &writer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_persist_options(writer, WICPersistOptionBigEndian);
+    IWICMetadataWriter_Release(writer);
+
+    IWICMetadataReader_Release(reader);
+
+    IWICComponentFactory_Release(factory);
+}
+
+static void test_CreateMetadataWriter(void)
+{
+    static const struct options_test
+    {
+        const GUID *clsid;
+        DWORD options;
+    }
+    options_tests[] =
+    {
+        { &GUID_MetadataFormatApp1, WICPersistOptionBigEndian },
+        { &GUID_MetadataFormatIfd, WICPersistOptionBigEndian },
+        { &GUID_MetadataFormatChunktEXt, WICPersistOptionBigEndian },
+        { &GUID_MetadataFormatApp1, WICPersistOptionNoCacheStream },
+        { &GUID_MetadataFormatIfd, WICPersistOptionNoCacheStream },
+        { &GUID_MetadataFormatChunktEXt, WICPersistOptionNoCacheStream },
+        { &GUID_MetadataFormatApp1, 0x100 },
+    };
+    IWICStreamProvider *stream_provider;
+    IWICComponentFactory *factory;
+    IWICMetadataWriter *writer;
+    IStream *stream;
+    unsigned int i;
+    GUID format;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IWICComponentFactory, (void **)&factory);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    for (i = 0; i < ARRAY_SIZE(options_tests); ++i)
+    {
+        const struct options_test *test = &options_tests[i];
+
+        hr = IWICComponentFactory_CreateMetadataWriter(factory, test->clsid, NULL, test->options, &writer);
+        todo_wine
+        ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    }
+
+    hr = IWICComponentFactory_CreateMetadataWriter(factory, &GUID_MetadataFormatChunktEXt, NULL, 0, &writer);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (FAILED(hr))
+    {
+        IWICComponentFactory_Release(factory);
+        return;
+    }
+    check_persist_options(writer, 0);
+
+    hr = IWICMetadataWriter_QueryInterface(writer, &IID_IWICStreamProvider, (void **)&stream_provider);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    stream = (void *)0xdeadbeef;
+    hr = IWICStreamProvider_GetStream(stream_provider, &stream);
+    ok(hr == WINCODEC_ERR_STREAMNOTAVAILABLE, "Unexpected hr %#lx.\n", hr);
+    ok(stream == (void *)0xdeadbeef, "Unexpected stream.\n");
+
+    IWICStreamProvider_Release(stream_provider);
+
+    hr = IWICMetadataWriter_GetMetadataFormat(writer, &format);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatChunktEXt), "Unexpected format %s.\n", wine_dbgstr_guid(&format));
+
+    IWICMetadataWriter_Release(writer);
+
+    /* Invalid format */
+    hr = IWICComponentFactory_CreateMetadataWriter(factory, &IID_IUnknown, NULL, 0, &writer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IWICMetadataWriter_GetMetadataFormat(writer, &format);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatUnknown), "Unexpected format %s.\n", wine_dbgstr_guid(&format));
+    IWICMetadataWriter_Release(writer);
+
+    writer = (void *)0xdeadbeef;
+    hr = IWICComponentFactory_CreateMetadataWriter(factory, &IID_IUnknown, NULL, WICMetadataCreationFailUnknown, &writer);
+    ok(hr == WINCODEC_ERR_COMPONENTNOTFOUND, "Unexpected hr %#lx.\n", hr);
+    ok(writer == (void *)0xdeadbeef, "Unexpected pointer.\n");
+
+    /* App1 */
+    hr = IWICComponentFactory_CreateMetadataWriter(factory, &GUID_MetadataFormatApp1, NULL, 0, &writer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_persist_options(writer, 0);
+    IWICMetadataWriter_Release(writer);
+
+    /* Ifd */
+    hr = IWICComponentFactory_CreateMetadataWriter(factory, &GUID_MetadataFormatIfd, NULL, 0, &writer);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_persist_options(writer, 0);
+    IWICMetadataWriter_Release(writer);
+
+    IWICComponentFactory_Release(factory);
 }
 
 START_TEST(metadata)
@@ -3919,7 +4485,7 @@ START_TEST(metadata)
     test_metadata_Exif();
     test_metadata_Gps();
     test_create_reader_from_container();
-    test_create_reader();
+    test_CreateMetadataReader();
     test_metadata_png();
     test_metadata_gif();
     test_metadata_LSD();
@@ -3929,6 +4495,8 @@ START_TEST(metadata)
     test_metadata_GIF_comment();
     test_metadata_writer();
     test_metadata_App1();
+    test_CreateMetadataWriterFromReader();
+    test_CreateMetadataWriter();
 
     CoUninitialize();
 }

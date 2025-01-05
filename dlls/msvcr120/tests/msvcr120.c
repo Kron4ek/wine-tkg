@@ -1837,9 +1837,10 @@ static void test_gmtime64(void)
 
 static void test__fsopen(void)
 {
-    int i;
+    int i, ret;
     FILE *f;
     wchar_t wpath[MAX_PATH];
+    HANDLE h;
     static const struct {
         const char *loc;
         const char *path;
@@ -1858,12 +1859,21 @@ static void test__fsopen(void)
         }
 
         memset(wpath, 0, sizeof(wpath));
-        ok(MultiByteToWideChar(CP_ACP, 0, tests[i].path, -1, wpath, MAX_PATH),
-            "MultiByteToWideChar failed on %s with locale %s: %lx\n",
+        ret = MultiByteToWideChar(CP_ACP, 0, tests[i].path, -1, wpath, MAX_PATH);
+        ok(ret, "MultiByteToWideChar failed on %s with locale %s: %lx\n",
             tests[i].path, tests[i].loc, GetLastError());
 
-        f = p__fsopen(tests[i].path, "w", SH_DENYNO);
-        ok(!!f, "failed to create %s with locale %s\n", tests[i].path, tests[i].loc);
+        h = CreateFileW(wpath, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE)
+        {
+            skip("can't create test file (%s)\n", wine_dbgstr_w(wpath));
+            continue;
+        }
+        CloseHandle(h);
+
+        f = p__fsopen(tests[i].path, "r", SH_DENYNO);
+        ok(!!f, "failed to create %s with locale %s\n", wine_dbgstr_a(tests[i].path), tests[i].loc);
         p_fclose(f);
 
         f = p__wfsopen(wpath, L"r", SH_DENYNO);
