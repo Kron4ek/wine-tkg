@@ -7301,7 +7301,6 @@ static SpvOp spirv_compiler_map_alu_instruction(const struct vkd3d_shader_instru
         {VKD3DSIH_DDIV,       SpvOpFDiv},
         {VKD3DSIH_DIV,        SpvOpFDiv},
         {VKD3DSIH_DMUL,       SpvOpFMul},
-        {VKD3DSIH_DTOF,       SpvOpFConvert},
         {VKD3DSIH_DTOI,       SpvOpConvertFToS},
         {VKD3DSIH_DTOU,       SpvOpConvertFToU},
         {VKD3DSIH_FREM,       SpvOpFRem},
@@ -7939,6 +7938,7 @@ static void spirv_compiler_emit_ftoi(struct spirv_compiler *compiler,
     uint32_t src_type_id, dst_type_id, condition_type_id;
     enum vkd3d_shader_component_type component_type;
     unsigned int component_count;
+    uint32_t write_mask;
 
     VKD3D_ASSERT(instruction->dst_count == 1);
     VKD3D_ASSERT(instruction->src_count == 1);
@@ -7948,21 +7948,23 @@ static void spirv_compiler_emit_ftoi(struct spirv_compiler *compiler,
      * and for NaN to yield zero. */
 
     component_count = vsir_write_mask_component_count(dst->write_mask);
-    src_type_id = spirv_compiler_get_type_id_for_reg(compiler, &src->reg, dst->write_mask);
-    dst_type_id = spirv_compiler_get_type_id_for_dst(compiler, dst);
-    src_id = spirv_compiler_emit_load_src(compiler, src, dst->write_mask);
 
     if (src->reg.data_type == VKD3D_DATA_DOUBLE)
     {
+        write_mask = vkd3d_write_mask_from_component_count(component_count);
         int_min_id = spirv_compiler_get_constant_double_vector(compiler, -2147483648.0, component_count);
         float_max_id = spirv_compiler_get_constant_double_vector(compiler, 2147483648.0, component_count);
     }
     else
     {
+        write_mask = dst->write_mask;
         int_min_id = spirv_compiler_get_constant_float_vector(compiler, -2147483648.0f, component_count);
         float_max_id = spirv_compiler_get_constant_float_vector(compiler, 2147483648.0f, component_count);
     }
 
+    src_type_id = spirv_compiler_get_type_id_for_reg(compiler, &src->reg, write_mask);
+    dst_type_id = spirv_compiler_get_type_id_for_dst(compiler, dst);
+    src_id = spirv_compiler_emit_load_src(compiler, src, write_mask);
     val_id = vkd3d_spirv_build_op_glsl_std450_max(builder, src_type_id, src_id, int_min_id);
 
     /* VSIR allows the destination of a signed conversion to be unsigned. */
@@ -7992,6 +7994,7 @@ static void spirv_compiler_emit_ftou(struct spirv_compiler *compiler,
     const struct vkd3d_shader_src_param *src = instruction->src;
     uint32_t src_type_id, dst_type_id, condition_type_id;
     unsigned int component_count;
+    uint32_t write_mask;
 
     VKD3D_ASSERT(instruction->dst_count == 1);
     VKD3D_ASSERT(instruction->src_count == 1);
@@ -8001,21 +8004,23 @@ static void spirv_compiler_emit_ftou(struct spirv_compiler *compiler,
      * and for NaN to yield zero. */
 
     component_count = vsir_write_mask_component_count(dst->write_mask);
-    src_type_id = spirv_compiler_get_type_id_for_reg(compiler, &src->reg, dst->write_mask);
-    dst_type_id = spirv_compiler_get_type_id_for_dst(compiler, dst);
-    src_id = spirv_compiler_emit_load_src(compiler, src, dst->write_mask);
 
     if (src->reg.data_type == VKD3D_DATA_DOUBLE)
     {
+        write_mask = vkd3d_write_mask_from_component_count(component_count);
         zero_id = spirv_compiler_get_constant_double_vector(compiler, 0.0, component_count);
         float_max_id = spirv_compiler_get_constant_double_vector(compiler, 4294967296.0, component_count);
     }
     else
     {
+        write_mask = dst->write_mask;
         zero_id = spirv_compiler_get_constant_float_vector(compiler, 0.0f, component_count);
         float_max_id = spirv_compiler_get_constant_float_vector(compiler, 4294967296.0f, component_count);
     }
 
+    src_type_id = spirv_compiler_get_type_id_for_reg(compiler, &src->reg, write_mask);
+    dst_type_id = spirv_compiler_get_type_id_for_dst(compiler, dst);
+    src_id = spirv_compiler_emit_load_src(compiler, src, write_mask);
     val_id = vkd3d_spirv_build_op_glsl_std450_max(builder, src_type_id, src_id, zero_id);
 
     uint_max_id = spirv_compiler_get_constant_uint_vector(compiler, UINT_MAX, component_count);
@@ -8025,6 +8030,29 @@ static void spirv_compiler_emit_ftou(struct spirv_compiler *compiler,
 
     val_id = vkd3d_spirv_build_op_tr1(builder, &builder->function_stream, SpvOpConvertFToU, dst_type_id, val_id);
     val_id = vkd3d_spirv_build_op_select(builder, dst_type_id, condition_id, uint_max_id, val_id);
+
+    spirv_compiler_emit_store_dst(compiler, dst, val_id);
+}
+
+static void spirv_compiler_emit_dtof(struct spirv_compiler *compiler,
+        const struct vkd3d_shader_instruction *instruction)
+{
+    struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
+    const struct vkd3d_shader_dst_param *dst = instruction->dst;
+    const struct vkd3d_shader_src_param *src = instruction->src;
+    uint32_t type_id, val_id, src_id;
+    unsigned int component_count;
+    uint32_t write_mask;
+
+    component_count = vsir_write_mask_component_count(dst->write_mask);
+    write_mask = vkd3d_write_mask_from_component_count(component_count);
+
+    src_id = spirv_compiler_emit_load_src(compiler, src, write_mask);
+
+    type_id = vkd3d_spirv_get_type_id(builder, VKD3D_SHADER_COMPONENT_FLOAT, component_count);
+    val_id = vkd3d_spirv_build_op_tr1(builder, &builder->function_stream, SpvOpFConvert, type_id, src_id);
+    if (instruction->flags & VKD3DSI_PRECISE_XYZW)
+        vkd3d_spirv_build_op_decorate(builder, val_id, SpvDecorationNoContraction, NULL, 0);
 
     spirv_compiler_emit_store_dst(compiler, dst, val_id);
 }
@@ -10419,7 +10447,6 @@ static int spirv_compiler_handle_instruction(struct spirv_compiler *compiler,
         case VKD3DSIH_DDIV:
         case VKD3DSIH_DIV:
         case VKD3DSIH_DMUL:
-        case VKD3DSIH_DTOF:
         case VKD3DSIH_FREM:
         case VKD3DSIH_FTOD:
         case VKD3DSIH_IADD:
@@ -10506,6 +10533,9 @@ static int spirv_compiler_handle_instruction(struct spirv_compiler *compiler,
         case VKD3DSIH_DTOU:
         case VKD3DSIH_FTOU:
             spirv_compiler_emit_ftou(compiler, instruction);
+            break;
+        case VKD3DSIH_DTOF:
+            spirv_compiler_emit_dtof(compiler, instruction);
             break;
         case VKD3DSIH_DEQO:
         case VKD3DSIH_DGEO:

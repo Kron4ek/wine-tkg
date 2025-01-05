@@ -48,7 +48,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(exec);
 
 typedef UINT_PTR (*SHELL_ExecuteW32)(const WCHAR *lpCmd, WCHAR *env, BOOL shWait,
 			    const SHELLEXECUTEINFOW *sei, LPSHELLEXECUTEINFOW sei_out);
-extern BOOL WINAPI PathResolveAW(void *path, const void **paths, DWORD flags);
+extern BOOL WINAPI PathResolveW(void *path, const WCHAR **paths, DWORD flags);
 extern BOOL WINAPI PathFileExistsDefExtW(LPWSTR lpszPath,DWORD dwWhich);
 
 static inline BOOL isSpace(WCHAR c)
@@ -636,7 +636,7 @@ static UINT SHELL_FindExecutable(LPCWSTR lpPath, LPCWSTR lpFile, LPCWSTR lpVerb,
         {
             TRACE("ASDF %s\n", debugstr_w(lpPath));
             PathCombineW(xlpFile, lpPath, lpFile);
-            if (PathFileExistsDefExtW(xlpFile, 0xbf))
+            if (PathFileExistsDefExtW(xlpFile, 0xbf) || PathFileExistsW(xlpFile))
             {
                 GetFullPathNameW(xlpFile, ARRAY_SIZE(xlpFile), xlpFile, NULL);
                 found = TRUE;
@@ -645,7 +645,7 @@ static UINT SHELL_FindExecutable(LPCWSTR lpPath, LPCWSTR lpFile, LPCWSTR lpVerb,
         if (!found)
         {
             lstrcpyW(xlpFile, lpFile);
-            if (PathFileExistsDefExtW(xlpFile, 0xbf))
+            if (PathFileExistsDefExtW(xlpFile, 0xbf) || PathFileExistsW(xlpFile))
             {
                 GetFullPathNameW(xlpFile, ARRAY_SIZE(xlpFile), xlpFile, NULL);
                 found = TRUE;
@@ -669,7 +669,7 @@ static UINT SHELL_FindExecutable(LPCWSTR lpPath, LPCWSTR lpFile, LPCWSTR lpVerb,
         else
             search_paths[0] = curdir;
         lstrcpyW(xlpFile, lpFile);
-        if (PathResolveAW(xlpFile, (const void **)search_paths, PRF_TRYPROGRAMEXTENSIONS | PRF_VERIFYEXISTS))
+        if (PathResolveW(xlpFile, search_paths, PRF_TRYPROGRAMEXTENSIONS | PRF_VERIFYEXISTS))
         {
             TRACE("PathResolveAW returned non-zero\n");
             lpFile = xlpFile;
@@ -1545,7 +1545,7 @@ static UINT_PTR SHELL_quote_and_execute( LPCWSTR wcmd, LPCWSTR wszParameters, LP
         lstrcatW(wszQuotedCmd, L" ");
         lstrcatW(wszQuotedCmd, wszParameters);
     }
-    TRACE("%s/%s => %s/%s\n", debugstr_w(wszApplicationName), debugstr_w(psei->lpVerb), debugstr_w(wszQuotedCmd), debugstr_w(wszKeyname));
+    TRACE("app %s verb %s => cmd %s key %s\n", debugstr_w(wszApplicationName), debugstr_w(psei->lpVerb), debugstr_w(wszQuotedCmd), debugstr_w(wszKeyname));
     if (*wszKeyname)
         retval = execute_from_key(wszKeyname, wszApplicationName, env, psei->lpParameters, wcmd, execfunc, psei, psei_out);
     else

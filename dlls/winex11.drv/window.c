@@ -1638,8 +1638,6 @@ BOOL X11DRV_GetWindowStateUpdates( HWND hwnd, UINT *state_cmd, UINT *config_cmd,
 {
     struct x11drv_win_data *data;
 
-    TRACE( "hwnd %p, state_cmd %p, config_cmd %p, rect %p\n", hwnd, state_cmd, config_cmd, rect );
-
     if (!(data = get_win_data( hwnd ))) return FALSE;
 
     *state_cmd = window_update_client_state( data );
@@ -1648,7 +1646,7 @@ BOOL X11DRV_GetWindowStateUpdates( HWND hwnd, UINT *state_cmd, UINT *config_cmd,
 
     release_win_data( data );
 
-    TRACE( "returning state_cmd %#x, config_cmd %#x, rect %s\n", *state_cmd, *config_cmd, wine_dbgstr_rect(rect) );
+    TRACE( "hwnd %p, returning state_cmd %#x, config_cmd %#x, rect %s\n", hwnd, *state_cmd, *config_cmd, wine_dbgstr_rect(rect) );
     return *state_cmd || *config_cmd;
 }
 
@@ -3000,6 +2998,8 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_hint, UIN
     struct window_rects old_rects;
     BOOL was_fullscreen;
 
+    sync_gl_drawable( hwnd, FALSE );
+
     if (!(data = get_win_data( hwnd ))) return;
 
     old_style = new_style & ~(WS_VISIBLE | WS_MINIMIZE | WS_MAXIMIZE);
@@ -3018,7 +3018,6 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_hint, UIN
     XFlush( gdi_display );  /* make sure painting is done before we move the window */
 
     sync_client_position( data, &old_rects );
-    sync_gl_drawable( hwnd, FALSE );
 
     if (!data->whole_window)
     {

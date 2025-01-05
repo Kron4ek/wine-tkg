@@ -1,9 +1,9 @@
-The Wine development release 10.0-rc2 is now available.
+The Wine development release 10.0-rc4 is now available.
 
 What's new in this release:
   - Bug fixes only, we are in code freeze.
 
-The source is available at <https://dl.winehq.org/wine/source/10.0/wine-10.0-rc2.tar.xz>
+The source is available at <https://dl.winehq.org/wine/source/10.0/wine-10.0-rc4.tar.xz>
 
 Binary packages for various distributions will be available
 from the respective [download sites][1].
@@ -15,108 +15,78 @@ See the file [AUTHORS][3] for the complete list.
 
 [1]: https://gitlab.winehq.org/wine/wine/-/wikis/Download
 [2]: https://gitlab.winehq.org/wine/wine/-/wikis/Documentation
-[3]: https://gitlab.winehq.org/wine/wine/-/raw/wine-10.0-rc2/AUTHORS
+[3]: https://gitlab.winehq.org/wine/wine/-/raw/wine-10.0-rc4/AUTHORS
 
 ----------------------------------------------------------------
 
-### Bugs fixed in 10.0-rc2 (total 21):
+### Bugs fixed in 10.0-rc4 (total 13):
 
- - #28861  Final Fantasy XI hangs after character selection
- - #47640  No Man's Sky (Beyond) does not start anymore: Unable to initialize Vulkan (vkEnumerateInstanceExtensionProperties failed)
- - #51998  Unable to start CloneCD
- - #53453  Command & Conquer 3: Tiberium Wars - fails to start (splash screen not even shown)
- - #54437  ntoskrnl.exe:ntoskrnl breaks test_rawinput() [(RIM|WM)_INPUT] in user32:input for non-English locales on Windows 7
- - #55583  d3d8:device - test_wndproc() often is missing a WM_WINDOWPOSCHANGING in Wine
- - #56056  Exiting IrfanView full screen mode creates a redundant task bar "Untitled window" item which is not clickable
- - #56325  Prefix path string in wineboot dialog is cut off
- - #56940  vs_community.exe halts:"The application cannot find one of its required files, possibly because it was unable to create it in the folder."
- - #57216  Mouse wheel input in IL-2 1946 is not applied consistently to UI elements and throttle
- - #57285  Foxit Reader - maximized view don't work properly
- - #57384  The shareware installer for Daytona (16-bit) hangs at the end of installing.
- - #57418  PlayOnline Viewer throws an application error at launch.
- - #57442  Several applications: abnormal input delay with Wine
- - #57481  Prey (2016) X11 fullscreen fails in 9.22
- - #57503  World in conflict has a frozen screen -  updating only when alt-tabbing out and in
- - #57504  Possible regression with Unity3D games: Framedrops when moving cursor.
- - #57506  Wine doesn't show any window
- - #57524  Commit c9592bae7f475c1b208de0a72ed29e94e3017094 breaks VKB Gladiator HIDRAW support
- - #57527  Drop-down list appears behind the main window
- - #57530  Regression: Tiny extra form displays in Delphi programs
+ - #37372  Unexpected order of results in wildcard expansion
+ - #48877  Melodyne crashes when using the Pitch tool
+ - #51656  Gaea Installer crashes in riched when pressing enter
+ - #52447  64-bit .NET framework 2.0 installer hangs while generating/installing native images of 'System.Windows.Forms' assembly into GAC
+ - #53405  Into The Breach freezes when enabling fullscreen
+ - #54342  ws2_32:sock - test_WSARecv() sometimes fails with "got apc_count 1." on Windows
+ - #56531  Final Fantasy XI Online: Some textures are transparent, malformed, or misplaced.
+ - #56533  Final Fantasy XI Online: Incorrect/corrupt textures shown on models.
+ - #56885  WinCatalog has a crash at startup
+ - #57248  Rhinoceros 8.11 installer crashes on start
+ - #57568  Arcanum (and many other titles) crashes on start
+ - #57577  Minimised applications are restored with -4 vertical pixels.
+ - #57587  10.0-rc1 regression (dsoundrender): no audio or hangs in some videos
 
-### Changes since 10.0-rc1:
+### Changes since 10.0-rc3:
 ```
-Alexandre Julliard (7):
-      user32: Fixup forwarded functions on 32-bit.
-      ntoskrnl: Support relative driver paths.
-      ntoskrnl: Fix off-by-one error in buffer size.
-      wineboot: Always wrap the wait dialog text.
-      wineboot: Resize the wait dialog to accommodate the text size.
-      wineboot: Scale the wait dialog icon with the dialog size.
-      winetest: Filter out color escapes for junit output.
+Alexandre Julliard (3):
+      Update copyright info for 2025.
+      ntdll: Set the processor architecture variable from the current arch.
+      xml: Disable the non-determinist schema check.
 
-Eric Pouech (2):
-      dbghelp: Fix error handling in PDB/FPO unwinder.
-      dbghelp: Lower vector allocation for local variables.
+André Zwing (6):
+      bluetoothapis/tests: Don't test functions directly when reporting GetLastError().
+      kernel32/tests: Don't test functions directly when reporting GetLastError().
+      iphlpapi/tests: Don't test functions directly when reporting GetLastError().
+      msvcr120/tests: Don't test function directly when reporting GetLastError().
+      msvcp140/tests: Don't test function directly when reporting GetLastError().
+      msvcp120/tests: Don't test function directly when reporting GetLastError().
 
-Esme Povirk (1):
-      mscoree: Use correct variable for codebase path.
+Bernhard Übelacker (7):
+      mfplat/tests: Fix copy-paste release calls.
+      dwrite: Avoid stack-buffer-overflow in arabic_setup_masks.
+      comctl32/tests: Fix test array size (ASan).
+      comctl32/tests: Use sufficient user data buffer in the Tab tests (ASan).
+      comctl32/tests: Mark a test as broken on Windows.
+      dwrite: Fix off-by-one clustermap indexing (ASan).
+      uiautomationcore: Fix a double-free of advisers array (ASan).
 
-Gabriel Ivăncescu (1):
-      mshtml: Remove unused MutationObserver DISPID and related hook.
+Elizabeth Figura (1):
+      qasf/dmowrapper: Acquire new output samples for each ProcessOutput() call.
 
-Gerald Pfeifer (1):
-      webservices: Rename a struct member from bool to boolean.
+Eric Pouech (1):
+      kernelbase: Don't free pathname if query failed.
 
-Jacek Caban (1):
-      configure: Define _load_config_used symbol in the cross-compiler test program.
+Etaash Mathamsetty (1):
+      nsiproxy: Set rcv/xmit speed to 1000000 on linux.
 
-Louis Lenders (1):
-      shell32: Remove trailing spaces in SHELL_execute.
+Floris Renaud (1):
+      po: Update Dutch translation.
 
-Marcus Meissner (1):
-      ucrtbase/tests: Use correct size to GetEnvironmentVariableW.
+Jinoh Kang (1):
+      user32/tests: Force window to be visible in subtest_swp_paint_regions.
 
-Nikolay Sivov (8):
-      windowscodecs/tests: Use test context in a few metadata tests.
-      windowscodecs/tests: Add some tests for GetContainerFormats().
-      windowscodecs/tests: Use a helper instead of a macro.
-      windowscodecs/tests: Remove endianess compile time checks from the tests.
-      windowscodecs/tests: Move IFD data tests to a helper.
-      windowscodecs/tests: Run data test on the Exif reader.
-      windowscodecs/tests: Add some tests for the Gps reader.
-      windowscodecs/tests: Add some tests for the App1 reader.
+Piotr Caban (2):
+      msvcr120/tests: Skip _fsopen tests if file can't be created.
+      msvcp120/tests: Skip _Fiopen tests if file can't be created.
 
-Piotr Caban (1):
-      msvcrt: Don't leak find handle or error in _findfirst().
+Rémi Bernon (6):
+      winex11: Improve GetWindowStateUpdates traces.
+      win32u: Check window state updates again after applying new state.
+      win32u: Don't overwrite dummy vulkan window.
+      win32u: Always update the surface regions in apply_window_pos.
+      server: Remove now unnecessary needs_update member.
+      winex11: Don't re-create the GL drawable if pixel format didn't change.
 
-Rémi Bernon (17):
-      win32u: Skip updating the cache on driver load if we're already updating it.
-      win32u: Release the Win16 mutex when yielding in peek_message.
-      win32u: Copy the shape from the old surface when surface is recreated.
-      server: Force surface region update when window region is modified.
-      win32u: Extend display_lock CS around winstation check.
-      server: Add a winstation monitor update serial counter.
-      win32u: Use the winstation monitor update serial to detect updates.
-      winex11: Request window config when it needs to be raised.
-      winebus: Wait until the device is started before processing reports.
-      dmloader: Remove redundant flag.
-      winex11: Fixup window config size back to 0x0 if we've requested 1x1.
-      winex11: Always check if the GL drawable offscreen state needs to be changed.
-      winex11: Skip offscreening if the children don't require clipping.
-      dinput: Queue the relative wheel motion as event data.
-      explorer: Avoid hiding the taskbar if it's enabled.
-      server: Allow merging WM_MOUSEMOVE across internal messages.
-      winex11: Fix inconsistent coordinates when reparenting host window.
-
-Vibhav Pant (3):
-      winebth.sys: Fix new bluetooth events being incorrect set due to variable shadowing.
-      winebth.sys: Set the Information field in the IRP's STATUS_BLOCK after handling IOCTL_BTH_GET_LOCAL_INFO.
-      winebth.sys: Use the correct byte-ordering for setting the radio's address property.
-
-William Horvath (2):
-      include: Use inline assembly on Clang MSVC mode in YieldProcessor().
-      win32u: Check for driver events more often.
-
-Zhiyi Zhang (1):
-      win32u: Use width and height to check if the display mode is vertical.
+Zhiyi Zhang (2):
+      d2d1/tests: Remove a duplicate test.
+      dxgi: Support more feature levels in debug_feature_level().
 ```

@@ -2624,9 +2624,7 @@ static void shader_generate_glsl_declarations(const struct wined3d_context_gl *c
                 break;
         }
 
-        if (gl_info->supported[ARB_BINDLESS_TEXTURE])
-            shader_addline(buffer, "layout(bindless_sampler) ");
-        else if (shader_glsl_use_layout_binding_qualifier(gl_info))
+        if (shader_glsl_use_layout_binding_qualifier(gl_info))
             shader_glsl_append_sampler_binding_qualifier(buffer, &context_gl->c, version, entry->bind_idx);
         shader_addline(buffer, "uniform %s%s %s_sampler%u;\n",
                 sampler_type_prefix, sampler_type, prefix, entry->bind_idx);
@@ -7798,8 +7796,6 @@ static void shader_glsl_generate_colour_key_test(struct wined3d_string_buffer *b
 static void shader_glsl_enable_extensions(struct wined3d_string_buffer *buffer,
         const struct wined3d_gl_info *gl_info)
 {
-    if (gl_info->supported[ARB_BINDLESS_TEXTURE])
-        shader_addline(buffer, "#extension GL_ARB_bindless_texture : enable\n");
     if (gl_info->supported[ARB_CULL_DISTANCE])
         shader_addline(buffer, "#extension GL_ARB_cull_distance : enable\n");
     if (gl_info->supported[ARB_GPU_SHADER5])
@@ -9902,7 +9898,6 @@ static GLuint shader_glsl_generate_ffp_fragment_shader(struct shader_glsl_priv *
         }
         if (sampler_type)
         {
-            /* We don't use bindless samplers for FFP shaders. */
             if (shader_glsl_use_layout_binding_qualifier(gl_info))
                 shader_glsl_append_sampler_binding_qualifier(buffer, &context_gl->c, NULL, stage);
             shader_addline(buffer, "uniform sampler%s ps_sampler%u;\n", sampler_type, stage);
@@ -10972,60 +10967,6 @@ static void shader_glsl_update_graphics_program(struct shader_glsl_priv *priv,
     context_gl->c.shader_update_mask |= (1u << WINED3D_SHADER_TYPE_COMPUTE);
 }
 
-static void shader_glsl_load_bindless_samplers(struct shader_glsl_priv *priv, struct wined3d_context_gl *context_gl,
-        const struct wined3d_state *state, enum wined3d_shader_type shader_type)
-{
-    const struct wined3d_device_gl *device_gl = wined3d_device_gl(context_gl->c.device);
-    const struct glsl_context_data *ctx_data = context_gl->c.shader_backend_data;
-    const struct wined3d_shader *shader = state->shader[shader_type];
-    const struct wined3d_gl_info *gl_info = context_gl->gl_info;
-    const char *prefix = shader_glsl_get_prefix(shader_type);
-    struct wined3d_string_buffer *sampler_name;
-
-    /* Note that we don't use bindless samplers for FFP shaders. */
-    if (!shader)
-        return;
-
-    sampler_name = string_buffer_get(&priv->string_buffers);
-
-    for (unsigned int i = 0; i < shader->reg_maps.sampler_map.count; ++i)
-    {
-        const struct wined3d_shader_sampler_map_entry *entry = &shader->reg_maps.sampler_map.entries[i];
-        struct wined3d_shader_resource_view *view;
-        struct wined3d_sampler *sampler;
-        GLuint64 handle;
-        GLint name_loc;
-
-        /* No need to bother with the texture unit map; we're binding directly to uniforms. */
-
-        string_buffer_sprintf(sampler_name, "%s_sampler%u", prefix, entry->bind_idx);
-        name_loc = GL_EXTCALL(glGetUniformLocation(ctx_data->glsl_program->id, sampler_name->buffer));
-        if (name_loc == -1)
-            continue;
-
-        if ((view = state->shader_resource_view[shader_type][entry->resource_idx]))
-        {
-            if (entry->sampler_idx == WINED3D_SAMPLER_DEFAULT)
-                sampler = device_gl->d.default_sampler;
-            else if (!(sampler = state->sampler[shader_type][entry->sampler_idx]))
-                sampler = device_gl->d.null_sampler;
-
-            handle = wined3d_shader_resource_view_gl_get_bindless_handle(
-                    wined3d_shader_resource_view_gl(view), wined3d_sampler_gl(sampler), context_gl);
-        }
-        else
-        {
-            WARN("No resource view bound at index %u, %u.\n", shader_type, entry->resource_idx);
-            handle = wined3d_device_gl_get_dummy_bindless_handle(device_gl,
-                    shader->reg_maps.resource_info[entry->resource_idx].type);
-        }
-        GL_EXTCALL(glUniformHandleui64ARB(name_loc, handle));
-        checkGLcall("glUniformHandleui64ARB");
-    }
-
-    string_buffer_release(&priv->string_buffers, sampler_name);
-}
-
 static void shader_glsl_apply_draw_state(void *shader_priv, struct wined3d_context *context,
         const struct wined3d_state *state)
 {
@@ -11037,12 +10978,6 @@ static void shader_glsl_apply_draw_state(void *shader_priv, struct wined3d_conte
 
     if (context->constant_update_mask)
         shader_glsl_load_constants(priv, context, state);
-
-    if (context->update_shader_resource_bindings && context_gl->gl_info->supported[ARB_BINDLESS_TEXTURE])
-    {
-        for (unsigned int type = 0; type < WINED3D_SHADER_TYPE_GRAPHICS_COUNT; ++type)
-            shader_glsl_load_bindless_samplers(priv, context_gl, state, type);
-    }
 }
 
 static void shader_glsl_update_compute_program(struct shader_glsl_priv *priv,
@@ -11079,9 +11014,6 @@ static void shader_glsl_apply_compute_state(void *shader_priv, struct wined3d_co
 
     if (context_gl->c.shader_update_mask & (1u << WINED3D_SHADER_TYPE_COMPUTE))
         shader_glsl_update_compute_program(priv, context_gl, state);
-
-    if (context->update_compute_shader_resource_bindings && context_gl->gl_info->supported[ARB_BINDLESS_TEXTURE])
-        shader_glsl_load_bindless_samplers(priv, context_gl, state, WINED3D_SHADER_TYPE_COMPUTE);
 }
 
 /* "context" is not necessarily the currently active context. */
@@ -12093,9 +12025,20 @@ static const struct wined3d_state_entry_template glsl_vertex_pipe_vp_states[] =
     /* Viewport */
     {STATE_VIEWPORT,                                             {STATE_VIEWPORT,                                             glsl_vertex_pipe_viewport}, WINED3D_GL_EXT_NONE        },
     /* Fog */
+    {STATE_RENDER(WINED3D_RS_AMBIENTMATERIALSOURCE),             {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_RENDER(WINED3D_RS_COLORVERTEX),                       {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_RENDER(WINED3D_RS_DIFFUSEMATERIALSOURCE),             {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_RENDER(WINED3D_RS_EMISSIVEMATERIALSOURCE),            {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_FOGENABLE),                         {STATE_RENDER(WINED3D_RS_FOGENABLE),                         state_nop              }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_FOGTABLEMODE),                      {STATE_RENDER(WINED3D_RS_FOGTABLEMODE),                      glsl_vertex_pipe_shader}, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_FOGVERTEXMODE),                     {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_RENDER(WINED3D_RS_LIGHTING),                          {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_RENDER(WINED3D_RS_LOCALVIEWER),                       {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_RENDER(WINED3D_RS_NORMALIZENORMALS),                  {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_RENDER(WINED3D_RS_RANGEFOGENABLE),                    {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_RENDER(WINED3D_RS_SPECULARENABLE),                    {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_RENDER(WINED3D_RS_SPECULARMATERIALSOURCE),            {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_RENDER(WINED3D_RS_VERTEXBLEND),                       {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_CLIPPING),                          {STATE_RENDER(WINED3D_RS_CLIPPING),                          state_clipping         }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_CLIPPLANEENABLE),                   {STATE_RENDER(WINED3D_RS_CLIPPING),                          NULL                   }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_POINTSIZE),                         {STATE_RENDER(WINED3D_RS_POINTSIZE_MIN),                     NULL                   }, WINED3D_GL_EXT_NONE          },
@@ -12106,6 +12049,14 @@ static const struct wined3d_state_entry_template glsl_vertex_pipe_vp_states[] =
     {STATE_RENDER(WINED3D_RS_POINTSIZE_MAX),                     {STATE_RENDER(WINED3D_RS_POINTSIZE_MIN),                     NULL                   }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_SHADEMODE),                         {STATE_RENDER(WINED3D_RS_SHADEMODE),                         glsl_vertex_pipe_shademode}, WINED3D_GLSL_130          },
     {STATE_RENDER(WINED3D_RS_SHADEMODE),                         {STATE_RENDER(WINED3D_RS_SHADEMODE),                         glsl_vertex_pipe_nop   }, WINED3D_GL_EXT_NONE          },
+    {STATE_TEXTURESTAGE(0, WINED3D_TSS_TEXCOORD_INDEX),          {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_TEXTURESTAGE(1, WINED3D_TSS_TEXCOORD_INDEX),          {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_TEXTURESTAGE(2, WINED3D_TSS_TEXCOORD_INDEX),          {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_TEXTURESTAGE(3, WINED3D_TSS_TEXCOORD_INDEX),          {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_TEXTURESTAGE(4, WINED3D_TSS_TEXCOORD_INDEX),          {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_TEXTURESTAGE(5, WINED3D_TSS_TEXCOORD_INDEX),          {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_TEXTURESTAGE(6, WINED3D_TSS_TEXCOORD_INDEX),          {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
+    {STATE_TEXTURESTAGE(7, WINED3D_TSS_TEXCOORD_INDEX),          {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
     {0 /* Terminate */,                                          {0,                                                          NULL                   }, WINED3D_GL_EXT_NONE          },
 };
 
@@ -12355,6 +12306,7 @@ static const struct wined3d_state_entry_template glsl_fragment_pipe_state_templa
     {STATE_RENDER(WINED3D_RS_ALPHAREF),                         {STATE_RENDER(WINED3D_RS_ALPHAREF),                          glsl_fragment_pipe_core_alpha_test_ref }, WINED3D_GL_EXT_NONE },
     {STATE_RENDER(WINED3D_RS_ALPHATESTENABLE),                  {STATE_RENDER(WINED3D_RS_ALPHATESTENABLE),                   glsl_fragment_pipe_alpha_test          }, WINED3D_GL_LEGACY_CONTEXT},
     {STATE_RENDER(WINED3D_RS_ALPHATESTENABLE),                  {STATE_RENDER(WINED3D_RS_ALPHATESTENABLE),                   glsl_fragment_pipe_core_alpha_test     }, WINED3D_GL_EXT_NONE },
+    {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                   {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    state_nop                              }, WINED3D_GL_EXT_NONE },
     {STATE_RENDER(WINED3D_RS_FOGENABLE),                        {STATE_RENDER(WINED3D_RS_FOGENABLE),                         glsl_fragment_pipe_fog                 }, WINED3D_GL_EXT_NONE },
     {STATE_RENDER(WINED3D_RS_FOGTABLEMODE),                     {STATE_RENDER(WINED3D_RS_FOGTABLEMODE),                      glsl_fragment_pipe_fog                 }, WINED3D_GL_EXT_NONE },
     {STATE_RENDER(WINED3D_RS_FOGVERTEXMODE),                    {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                                   }, WINED3D_GL_EXT_NONE },
@@ -12366,6 +12318,78 @@ static const struct wined3d_state_entry_template glsl_fragment_pipe_state_templa
     {STATE_RENDER(WINED3D_RS_FOGDENSITY),                       {STATE_RENDER(WINED3D_RS_FOGDENSITY),                        glsl_fragment_pipe_fogparams           }, WINED3D_GL_EXT_NONE },
     {STATE_RENDER(WINED3D_RS_POINTSPRITEENABLE),                {STATE_RENDER(WINED3D_RS_POINTSPRITEENABLE),                 glsl_fragment_pipe_shader              }, ARB_POINT_SPRITE    },
     {STATE_RENDER(WINED3D_RS_POINTSPRITEENABLE),                {STATE_RENDER(WINED3D_RS_POINTSPRITEENABLE),                 glsl_fragment_pipe_shader              }, WINED3D_GL_VERSION_2_0},
+    {STATE_TEXTURESTAGE(0, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(1, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(2, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(3, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(4, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(5, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(6, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(7, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(0, WINED3D_TSS_ALPHA_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(1, WINED3D_TSS_ALPHA_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(2, WINED3D_TSS_ALPHA_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(3, WINED3D_TSS_ALPHA_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(4, WINED3D_TSS_ALPHA_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(5, WINED3D_TSS_ALPHA_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(6, WINED3D_TSS_ALPHA_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(7, WINED3D_TSS_ALPHA_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(0, WINED3D_TSS_ALPHA_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(1, WINED3D_TSS_ALPHA_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(2, WINED3D_TSS_ALPHA_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(3, WINED3D_TSS_ALPHA_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(4, WINED3D_TSS_ALPHA_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(5, WINED3D_TSS_ALPHA_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(6, WINED3D_TSS_ALPHA_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(7, WINED3D_TSS_ALPHA_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(0, WINED3D_TSS_ALPHA_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(1, WINED3D_TSS_ALPHA_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(2, WINED3D_TSS_ALPHA_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(3, WINED3D_TSS_ALPHA_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(4, WINED3D_TSS_ALPHA_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(5, WINED3D_TSS_ALPHA_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(6, WINED3D_TSS_ALPHA_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(7, WINED3D_TSS_ALPHA_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(0, WINED3D_TSS_COLOR_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(1, WINED3D_TSS_COLOR_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(2, WINED3D_TSS_COLOR_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(3, WINED3D_TSS_COLOR_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(4, WINED3D_TSS_COLOR_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(5, WINED3D_TSS_COLOR_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(6, WINED3D_TSS_COLOR_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(7, WINED3D_TSS_COLOR_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(0, WINED3D_TSS_COLOR_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(1, WINED3D_TSS_COLOR_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(2, WINED3D_TSS_COLOR_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(3, WINED3D_TSS_COLOR_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(4, WINED3D_TSS_COLOR_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(5, WINED3D_TSS_COLOR_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(6, WINED3D_TSS_COLOR_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(7, WINED3D_TSS_COLOR_ARG1),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(0, WINED3D_TSS_COLOR_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(1, WINED3D_TSS_COLOR_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(2, WINED3D_TSS_COLOR_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(3, WINED3D_TSS_COLOR_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(4, WINED3D_TSS_COLOR_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(5, WINED3D_TSS_COLOR_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(6, WINED3D_TSS_COLOR_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(7, WINED3D_TSS_COLOR_ARG2),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(0, WINED3D_TSS_COLOR_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(1, WINED3D_TSS_COLOR_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(2, WINED3D_TSS_COLOR_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(3, WINED3D_TSS_COLOR_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(4, WINED3D_TSS_COLOR_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(5, WINED3D_TSS_COLOR_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(6, WINED3D_TSS_COLOR_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(7, WINED3D_TSS_COLOR_OP),               {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(0, WINED3D_TSS_RESULT_ARG),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(1, WINED3D_TSS_RESULT_ARG),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(2, WINED3D_TSS_RESULT_ARG),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(3, WINED3D_TSS_RESULT_ARG),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(4, WINED3D_TSS_RESULT_ARG),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(5, WINED3D_TSS_RESULT_ARG),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(6, WINED3D_TSS_RESULT_ARG),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
+    {STATE_TEXTURESTAGE(7, WINED3D_TSS_RESULT_ARG),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
     {STATE_TEXTURESTAGE(0,WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS), {STATE_TEXTURESTAGE(0, WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS), glsl_fragment_pipe_tex_transform       }, WINED3D_GL_EXT_NONE },
     {STATE_TEXTURESTAGE(1,WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS), {STATE_TEXTURESTAGE(1, WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS), glsl_fragment_pipe_tex_transform       }, WINED3D_GL_EXT_NONE },
     {STATE_TEXTURESTAGE(2,WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS), {STATE_TEXTURESTAGE(2, WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS), glsl_fragment_pipe_tex_transform       }, WINED3D_GL_EXT_NONE },

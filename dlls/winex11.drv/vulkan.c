@@ -224,7 +224,7 @@ static void X11DRV_vulkan_surface_presented( HWND hwnd, void *private, VkResult 
     vulkan_surface_update_offscreen( hwnd, surface );
 
     if (!surface->offscreen) return;
-    if (!(hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_CLIPCHILDREN ))) return;
+    if (!(hdc = NtUserGetDCEx( hwnd, 0, DCX_CACHE | DCX_USESTYLE ))) return;
     window = X11DRV_get_whole_window( toplevel );
     region = get_dc_monitor_region( hwnd, hdc );
 
@@ -246,7 +246,7 @@ static void X11DRV_vulkan_surface_presented( HWND hwnd, void *private, VkResult 
                      surface->hdc_src, 0, 0, surface->rect.right, surface->rect.bottom, SRCCOPY, 0 );
 
     if (region) NtGdiDeleteObjectApp( region );
-    if (hdc) NtGdiDeleteObjectApp( hdc );
+    if (hdc) NtUserReleaseDC( hwnd, hdc );
 }
 
 static VkBool32 X11DRV_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice phys_dev,
