@@ -610,8 +610,8 @@ static uint32_t get_fx_4_numeric_type_description(const struct hlsl_type *type, 
             return 0;
     }
 
-    value |= (type->dimy & 0x7) << FX_4_NUMERIC_ROWS_SHIFT;
-    value |= (type->dimx & 0x7) << FX_4_NUMERIC_COLUMNS_SHIFT;
+    value |= (type->e.numeric.dimy & 0x7) << FX_4_NUMERIC_ROWS_SHIFT;
+    value |= (type->e.numeric.dimx & 0x7) << FX_4_NUMERIC_COLUMNS_SHIFT;
     if (type->modifiers & HLSL_MODIFIER_COLUMN_MAJOR)
         value |= FX_4_NUMERIC_COLUMN_MAJOR_MASK;
 
@@ -1047,13 +1047,13 @@ static uint32_t write_fx_2_parameter(const struct hlsl_type *type, const char *n
     switch (type->class)
     {
         case HLSL_CLASS_VECTOR:
-            put_u32(buffer, type->dimx);
-            put_u32(buffer, type->dimy);
+            put_u32(buffer, type->e.numeric.dimx);
+            put_u32(buffer, type->e.numeric.dimy);
             break;
         case HLSL_CLASS_SCALAR:
         case HLSL_CLASS_MATRIX:
-            put_u32(buffer, type->dimy);
-            put_u32(buffer, type->dimx);
+            put_u32(buffer, type->e.numeric.dimy);
+            put_u32(buffer, type->e.numeric.dimx);
             break;
         case HLSL_CLASS_STRUCT:
             put_u32(buffer, type->e.record.field_count);

@@ -198,7 +198,6 @@ static void msl_print_register_name(struct vkd3d_string_buffer *buffer,
                             vkd3d_string_buffer_printf(buffer, "uint4(%#xu, %#xu, %#xu, %#xu)",
                                     reg->u.immconst_u32[0], reg->u.immconst_u32[1],
                                     reg->u.immconst_u32[2], reg->u.immconst_u32[3]);
-                            vkd3d_string_buffer_printf(buffer, "%#xu", reg->u.immconst_u32[0]);
                             break;
                         case VKD3D_DATA_FLOAT:
                             vkd3d_string_buffer_printf(buffer, "as_type<float4>(uint4(%#xu, %#xu, %#xu, %#xu))",

@@ -1180,8 +1180,8 @@ static void shader_print_register(struct vkd3d_d3d_asm_compiler *compiler, const
             bool is_sm_5_1 = vkd3d_shader_ver_ge(&compiler->shader_version, 5, 1);
 
             if (reg->idx[0].rel_addr || reg->type == VKD3DSPR_IMMCONSTBUFFER
-                    || reg->type == VKD3DSPR_INCONTROLPOINT || (reg->type == VKD3DSPR_INPUT
-                    && (compiler->shader_version.type == VKD3D_SHADER_TYPE_GEOMETRY
+                    || reg->type == VKD3DSPR_INCONTROLPOINT || reg->type == VKD3DSPR_OUTCONTROLPOINT
+                    || (reg->type == VKD3DSPR_INPUT && (compiler->shader_version.type == VKD3D_SHADER_TYPE_GEOMETRY
                     || compiler->shader_version.type == VKD3D_SHADER_TYPE_HULL)))
             {
                 vkd3d_string_buffer_printf(buffer, "%s", compiler->colours.reset);
