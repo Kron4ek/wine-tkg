@@ -578,8 +578,9 @@ static HRESULT d3d12_root_signature_info_from_desc(struct d3d12_root_signature_i
             goto done;
     }
 
-    qsort(info->ranges, info->range_count, sizeof(*info->ranges),
-            d3d12_root_signature_info_range_compare);
+    if (info->ranges)
+        qsort(info->ranges, info->range_count, sizeof(*info->ranges),
+                d3d12_root_signature_info_range_compare);
 
     for (i = D3D12_SHADER_VISIBILITY_VERTEX; i <= D3D12_SHADER_VISIBILITY_MESH; ++i)
     {

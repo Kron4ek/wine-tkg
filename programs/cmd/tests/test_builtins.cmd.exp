@@ -482,6 +482,16 @@ FAILURE 1
 FAILURE 1
 SUCCESS 0
 FAILURE 1024
+SUCCESS 0
+SUCCESS 0
+FAILURE 666
+FAILURE 2
+FAILURE 666
+FAILURE 666
+FAILURE 1
+FAILURE 666
+FAILURE 666
+FAILURE 1
 foo@space@
 SUCCESS 0
 foo@space@
@@ -1587,6 +1597,7 @@ C r
 foo bar baz
 c:\
 ------ skip option
+c
 c
 no output
 no output

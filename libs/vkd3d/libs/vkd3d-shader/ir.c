@@ -2031,7 +2031,8 @@ static bool shader_signature_merge(struct shader_signature *s, uint8_t range_map
     element_count = s->element_count;
     if (!(elements = vkd3d_malloc(element_count * sizeof(*elements))))
         return false;
-    memcpy(elements, s->elements, element_count * sizeof(*elements));
+    if (element_count)
+        memcpy(elements, s->elements, element_count * sizeof(*elements));
 
     for (i = 0; i < element_count; ++i)
         elements[i].sort_index = i;
@@ -3836,7 +3837,8 @@ static enum vkd3d_result vsir_cfg_structure_list_append_from_region(struct vsir_
             sizeof(*list->structures)))
         return VKD3D_ERROR_OUT_OF_MEMORY;
 
-    memcpy(&list->structures[list->count], begin, size * sizeof(*begin));
+    if (size)
+        memcpy(&list->structures[list->count], begin, size * sizeof(*begin));
 
     list->count += size;
 
@@ -4773,7 +4775,8 @@ static enum vkd3d_result vsir_cfg_generate_synthetic_loop_intervals(struct vsir_
         }
     }
 
-    qsort(cfg->loop_intervals, cfg->loop_interval_count, sizeof(*cfg->loop_intervals), compare_loop_intervals);
+    if (cfg->loop_intervals)
+        qsort(cfg->loop_intervals, cfg->loop_interval_count, sizeof(*cfg->loop_intervals), compare_loop_intervals);
 
     if (TRACE_ON())
         for (i = 0; i < cfg->loop_interval_count; ++i)

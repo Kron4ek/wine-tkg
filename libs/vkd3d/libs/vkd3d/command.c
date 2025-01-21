@@ -327,8 +327,11 @@ static void *vkd3d_fence_worker_main(void *arg)
     struct vkd3d_waiting_fence *old_fences, *cur_fences = NULL;
     struct vkd3d_fence_worker *worker = arg;
     unsigned int i;
+    bool timeline;
 
     vkd3d_set_thread_name("vkd3d_fence");
+
+    timeline = worker->device->vk_info.KHR_timeline_semaphore;
 
     for (;;)
     {
@@ -357,7 +360,12 @@ static void *vkd3d_fence_worker_main(void *arg)
         vkd3d_mutex_unlock(&worker->mutex);
 
         for (i = 0; i < cur_fence_count; ++i)
-            worker->wait_for_gpu_fence(worker, &cur_fences[i]);
+        {
+            if (timeline)
+                vkd3d_wait_for_gpu_timeline_semaphore(worker, &cur_fences[i]);
+            else
+                vkd3d_wait_for_gpu_fence(worker, &cur_fences[i]);
+        }
     }
 
     vkd3d_free(cur_fences);
@@ -379,9 +387,6 @@ static HRESULT vkd3d_fence_worker_start(struct vkd3d_fence_worker *worker,
     worker->fences = NULL;
     worker->fences_size = 0;
 
-    worker->wait_for_gpu_fence = device->vk_info.KHR_timeline_semaphore
-            ? vkd3d_wait_for_gpu_timeline_semaphore : vkd3d_wait_for_gpu_fence;
-
     vkd3d_mutex_init(&worker->mutex);
 
     vkd3d_cond_init(&worker->cond);
@@ -399,6 +404,7 @@ static HRESULT vkd3d_fence_worker_start(struct vkd3d_fence_worker *worker,
 static HRESULT vkd3d_fence_worker_stop(struct vkd3d_fence_worker *worker,
         struct d3d12_device *device)
 {
+    unsigned int i;
     HRESULT hr;
 
     TRACE("worker %p.\n", worker);
@@ -415,6 +421,9 @@ static HRESULT vkd3d_fence_worker_stop(struct vkd3d_fence_worker *worker,
 
     vkd3d_mutex_destroy(&worker->mutex);
     vkd3d_cond_destroy(&worker->cond);
+
+    for (i = 0; i < worker->fence_count; ++i)
+        d3d12_fence_decref(worker->fences[i].fence);
 
     vkd3d_free(worker->fences);
 
@@ -556,7 +565,8 @@ static void d3d12_fence_destroy_vk_objects(struct d3d12_fence *fence)
         fence->old_vk_fences[i] = VK_NULL_HANDLE;
     }
 
-    d3d12_fence_garbage_collect_vk_semaphores_locked(fence, true);
+    if (!device->vk_info.KHR_timeline_semaphore)
+        d3d12_fence_garbage_collect_vk_semaphores_locked(fence, true);
     VK_CALL(vkDestroySemaphore(device->vk_device, fence->timeline_semaphore, NULL));
 
     vkd3d_mutex_unlock(&fence->mutex);
@@ -6450,6 +6460,7 @@ static void d3d12_command_queue_destroy_op(struct vkd3d_cs_op_data *op)
             break;
 
         case VKD3D_CS_OP_SIGNAL:
+        case VKD3D_CS_OP_SIGNAL_ON_CPU:
             d3d12_fence_decref(op->u.signal.fence);
             break;
 
@@ -7440,6 +7451,7 @@ static HRESULT d3d12_command_queue_flush_ops_locked(struct d3d12_command_queue *
     struct vkd3d_cs_op_data *op;
     struct d3d12_fence *fence;
     unsigned int i;
+    HRESULT hr;
 
     queue->is_flushing = true;
 
@@ -7471,6 +7483,11 @@ static HRESULT d3d12_command_queue_flush_ops_locked(struct d3d12_command_queue *
 
                 case VKD3D_CS_OP_SIGNAL:
                     d3d12_command_queue_signal(queue, op->u.signal.fence, op->u.signal.value);
+                    break;
+
+                case VKD3D_CS_OP_SIGNAL_ON_CPU:
+                    if (FAILED(hr = d3d12_fence_Signal(&op->u.signal.fence->ID3D12Fence1_iface, op->u.signal.value)))
+                        ERR("Failed to signal fence %p, hr %s.\n", op->u.signal.fence, debugstr_hresult(hr));
                     break;
 
                 case VKD3D_CS_OP_EXECUTE:
@@ -7613,6 +7630,36 @@ void vkd3d_release_vk_queue(ID3D12CommandQueue *queue)
     struct d3d12_command_queue *d3d12_queue = impl_from_ID3D12CommandQueue(queue);
 
     return vkd3d_queue_release(d3d12_queue->vkd3d_queue);
+}
+
+HRESULT vkd3d_queue_signal_on_cpu(ID3D12CommandQueue *iface, ID3D12Fence *fence_iface, uint64_t value)
+{
+    struct d3d12_command_queue *command_queue = impl_from_ID3D12CommandQueue(iface);
+    struct d3d12_fence *fence = unsafe_impl_from_ID3D12Fence(fence_iface);
+    struct vkd3d_cs_op_data *op;
+    HRESULT hr = S_OK;
+
+    TRACE("iface %p, fence %p, value %#"PRIx64".\n", iface, fence_iface, value);
+
+    vkd3d_mutex_lock(&command_queue->op_mutex);
+
+    if (!(op = d3d12_command_queue_op_array_require_space(&command_queue->op_queue)))
+    {
+        ERR("Failed to add op.\n");
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+    op->opcode = VKD3D_CS_OP_SIGNAL_ON_CPU;
+    op->u.signal.fence = fence;
+    op->u.signal.value = value;
+
+    d3d12_fence_incref(fence);
+
+    d3d12_command_queue_submit_locked(command_queue);
+
+done:
+    vkd3d_mutex_unlock(&command_queue->op_mutex);
+    return hr;
 }
 
 /* ID3D12CommandSignature */

@@ -7259,12 +7259,13 @@ static void spirv_compiler_emit_shader_epilogue_invocation(struct spirv_compiler
 
 static void spirv_compiler_emit_hull_shader_main(struct spirv_compiler *compiler)
 {
+    size_t table_count = compiler->offset_info.descriptor_table_count;
     struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
     uint32_t void_id;
 
     /* If a patch constant function used descriptor indexing the offsets must be reloaded. */
-    memset(compiler->descriptor_offset_ids, 0, compiler->offset_info.descriptor_table_count
-            * sizeof(*compiler->descriptor_offset_ids));
+    if (table_count)
+        memset(compiler->descriptor_offset_ids, 0, table_count * sizeof(*compiler->descriptor_offset_ids));
     vkd3d_spirv_builder_begin_main_function(builder);
     vkd3d_spirv_build_op_label(builder, vkd3d_spirv_alloc_id(builder));
 
@@ -10922,7 +10923,8 @@ static int spirv_compiler_generate_spirv(struct spirv_compiler *compiler, struct
     compiler->input_control_point_count = program->input_control_point_count;
     compiler->output_control_point_count = program->output_control_point_count;
 
-    if (program->shader_version.type == VKD3D_SHADER_TYPE_HULL && !spirv_compiler_is_opengl_target(compiler))
+    if (program->shader_version.type == VKD3D_SHADER_TYPE_DOMAIN
+            || (program->shader_version.type == VKD3D_SHADER_TYPE_HULL && !spirv_compiler_is_opengl_target(compiler)))
         spirv_compiler_emit_tessellator_domain(compiler, program->tess_domain);
 
     if (compiler->shader_type != VKD3D_SHADER_TYPE_HULL)

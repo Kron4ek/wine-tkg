@@ -1324,8 +1324,6 @@ static RETURN_CODE run_full_path(const WCHAR *file, WCHAR *full_cmdline, BOOL ca
             TRACE("Batch completed, but was not 'called' so skipping outer batch too\n");
             context->skip_rest = TRUE;
         }
-        if (return_code != RETURN_CODE_ABORTED)
-            errorlevel = return_code;
         return return_code;
     }
 
@@ -2120,9 +2118,8 @@ static CMD_FOR_CONTROL *for_control_parse(WCHAR *opts_var)
             p[len - 1] = L'\0';
             p++;
         }
-        for ( ; *p; p = end)
+        for ( ; *(p = WCMD_skip_leading_spaces(p)); p = end)
         {
-            p = WCMD_skip_leading_spaces(p);
             /* Save End of line character (Ignore line if first token (based on delims) starts with it) */
             if ((end = for_fileset_option_split(p, L"eol=")))
             {
@@ -2539,6 +2536,11 @@ static BOOL node_builder_generate(struct node_builder *builder, CMD_NODE **node)
     }
     else
     {
+        if (!builder->num) /* line without tokens */
+        {
+            *node = NULL;
+            return TRUE;
+        }
         if (node_builder_parse(builder, 0, node) &&
             builder->pos + 1 >= builder->num) /* consumed all tokens? */
             return TRUE;

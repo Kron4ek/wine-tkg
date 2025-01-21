@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Вс 05 янв 2025 17:12:36 UTC :
+# Last wine-tkg-staging-fsync-git configuration - Вт 21 янв 2025 20:46:44 UTC :
 
 Local cfg files used
 
-Wine (plain) version: 10.0rc4.r0.g9008e655e4e
-Using wine-staging patchset (version 10.0rc4.r0.gc263c6fa)
+Wine (plain) version: 10.0.r0.gb0738596750
+Using wine-staging patchset (version 10.0.r0.g05bc4b82)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -28,6 +28,7 @@ Applied hotfix a608ef1.mypatch
 Applied hotfix opencl-fixup.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
 Applied hotfix HACK-user32-Always-call-get_message-request-after-waiting.mypatch
+Applied your own patch crypt32.mypatch
 Applied your own patch hags.mypatch
 Applied your own patch win32u-hdr.mypatch
 
