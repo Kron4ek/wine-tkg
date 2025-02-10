@@ -145,6 +145,13 @@ enum hlsl_regset
     HLSL_REGSET_LAST = HLSL_REGSET_NUMERIC,
 };
 
+enum hlsl_array_type
+{
+    HLSL_ARRAY_GENERIC,
+    HLSL_ARRAY_PATCH_INPUT,
+    HLSL_ARRAY_PATCH_OUTPUT,
+};
+
 /* An HLSL source-level data type, including anonymous structs and typedefs. */
 struct hlsl_type
 {
@@ -195,6 +202,7 @@ struct hlsl_type
             struct hlsl_type *type;
             /* Array length, or HLSL_ARRAY_ELEMENTS_COUNT_IMPLICIT if it is not known yet at parse time. */
             unsigned int elements_count;
+            enum hlsl_array_type array_type;
         } array;
         /* Additional information if the class is HLSL_CLASS_TEXTURE or
          * HLSL_CLASS_UAV. */
@@ -1147,11 +1155,34 @@ struct hlsl_ctx
      *   compute shader profiles. It is set using the numthreads() attribute in the entry point. */
     uint32_t thread_count[3];
 
+    /* Declared information in tessellation shaders.
+     *
+     * The following fields are specific to hull shaders: output_control_point_count,
+     * output_control_point_type, output_primitive, partitioning, and patch_constant_func.
+     *
+     * The output_control_point_count and output_control_point_type fields correspond to the return
+     * type and the "outputcontrolpoints" attribute of a hull shader's control point function,
+     * respectively. Moreover, if an OutputPatch parameter is declared in the hull shader's patch
+     * constant function, its type and element count must match these fields.
+     *
+     * The input_control_point_count and input_control_point_type fields are specified by the
+     * InputPatch parameter in hull shaders, or by the _OutputPatch_ parameter in domain
+     * shaders.
+     *
+     * For input_ and output_control_point_count, the value UINT_MAX indicates that the value is
+     * unknown or not set by the shader. */
     enum vkd3d_tessellator_domain domain;
     unsigned int output_control_point_count;
+    struct hlsl_type *output_control_point_type;
     enum vkd3d_shader_tessellator_output_primitive output_primitive;
     enum vkd3d_shader_tessellator_partitioning partitioning;
     struct hlsl_ir_function_decl *patch_constant_func;
+    unsigned int input_control_point_count;
+    struct hlsl_type *input_control_point_type;
+
+    /* Whether the current function being processed during HLSL codegen is
+     * the patch constant function in a hull shader. */
+    bool is_patch_constant_func;
 
     /* In some cases we generate opcodes by parsing an HLSL function and then
      * invoking it. If not NULL, this field is the name of the function that we
@@ -1469,7 +1500,7 @@ const char *hlsl_node_type_to_string(enum hlsl_ir_node_type type);
 struct hlsl_ir_node *hlsl_add_conditional(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_ir_node *condition, struct hlsl_ir_node *if_true, struct hlsl_ir_node *if_false);
 void hlsl_add_function(struct hlsl_ctx *ctx, char *name, struct hlsl_ir_function_decl *decl);
-bool hlsl_add_var(struct hlsl_ctx *ctx, struct hlsl_ir_var *decl, bool local_var);
+void hlsl_add_var(struct hlsl_ctx *ctx, struct hlsl_ir_var *decl);
 
 void hlsl_block_cleanup(struct hlsl_block *block);
 bool hlsl_clone_block(struct hlsl_ctx *ctx, struct hlsl_block *dst_block, const struct hlsl_block *src_block);
@@ -1527,7 +1558,8 @@ struct hlsl_type *hlsl_get_element_type_from_path_index(struct hlsl_ctx *ctx, co
 
 const char *hlsl_jump_type_to_string(enum hlsl_ir_jump_type type);
 
-struct hlsl_type *hlsl_new_array_type(struct hlsl_ctx *ctx, struct hlsl_type *basic_type, unsigned int array_size);
+struct hlsl_type *hlsl_new_array_type(struct hlsl_ctx *ctx, struct hlsl_type *basic_type,
+        unsigned int array_size, enum hlsl_array_type array_type);
 struct hlsl_ir_node *hlsl_new_binary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op, struct hlsl_ir_node *arg1,
         struct hlsl_ir_node *arg2);
 struct hlsl_ir_node *hlsl_new_bool_constant(struct hlsl_ctx *ctx, bool b, const struct vkd3d_shader_location *loc);
@@ -1659,6 +1691,7 @@ unsigned int hlsl_type_major_size(const struct hlsl_type *type);
 unsigned int hlsl_type_element_count(const struct hlsl_type *type);
 bool hlsl_type_is_resource(const struct hlsl_type *type);
 bool hlsl_type_is_shader(const struct hlsl_type *type);
+bool hlsl_type_is_patch_array(const struct hlsl_type *type);
 unsigned int hlsl_type_get_sm4_offset(const struct hlsl_type *type, unsigned int offset);
 bool hlsl_types_are_equal(const struct hlsl_type *t1, const struct hlsl_type *t2);
 

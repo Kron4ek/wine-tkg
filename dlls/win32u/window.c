@@ -788,8 +788,10 @@ BOOL is_window_unicode( HWND hwnd )
     return ret;
 }
 
-/* see EnableWindow */
-BOOL enable_window( HWND hwnd, BOOL enable )
+/*****************************************************************
+ *           NtUserEnableWindow (win32u.@)
+ */
+BOOL WINAPI NtUserEnableWindow( HWND hwnd, BOOL enable )
 {
     BOOL ret;
 
@@ -4532,8 +4534,10 @@ static UINT window_min_maximize( HWND hwnd, UINT cmd, RECT *rect )
     return swp_flags;
 }
 
-/* see ArrangeIconicWindows */
-static UINT arrange_iconic_windows( HWND parent )
+/***********************************************************************
+ *           NtUserArrangeIconicWindows (win32u.@)
+ */
+UINT WINAPI NtUserArrangeIconicWindows( HWND parent )
 {
     int width, height, count = 0;
     MINIMIZEDMETRICS metrics;
@@ -4830,8 +4834,10 @@ BOOL WINAPI NtUserShowWindow( HWND hwnd, INT cmd )
     return send_message( hwnd, WM_WINE_SHOWWINDOW, cmd, 0 );
 }
 
-/* see ShowOwnedPopups */
-BOOL show_owned_popups( HWND owner, BOOL show )
+/***********************************************************************
+ *           NtUserShowOwnedPopups (win32u.@)
+ */
+BOOL WINAPI NtUserShowOwnedPopups( HWND owner, BOOL show )
 {
     int count = 0;
     HWND *win_array = list_window_children( 0 );
@@ -4927,8 +4933,10 @@ BOOL WINAPI NtUserFlashWindowEx( FLASHWINFO *info )
     }
 }
 
-/* see GetWindowContextHelpId */
-DWORD get_window_context_help_id( HWND hwnd )
+/***********************************************************************
+ *           NtUserGetWindowContextHelpId   (win32u.@)
+ */
+DWORD WINAPI NtUserGetWindowContextHelpId( HWND hwnd )
 {
     DWORD retval;
     WND *win = get_win_ptr( hwnd );
@@ -4943,8 +4951,10 @@ DWORD get_window_context_help_id( HWND hwnd )
     return retval;
 }
 
-/* see SetWindowContextHelpId */
-static BOOL set_window_context_help_id( HWND hwnd, DWORD id )
+/***********************************************************************
+ *           NtUserSetWindowContextHelpId   (win32u.@)
+ */
+BOOL WINAPI NtUserSetWindowContextHelpId( HWND hwnd, DWORD id )
 {
     WND *win = get_win_ptr( hwnd );
     if (!win || win == WND_DESKTOP) return FALSE;
@@ -5016,7 +5026,7 @@ static void send_destroy_message( HWND hwnd, BOOL winevent )
     info.cbSize = sizeof(info);
     if (NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ))
     {
-        if (hwnd == info.hwndCaret) destroy_caret();
+        if (hwnd == info.hwndCaret) NtUserDestroyCaret();
         if (hwnd == info.hwndActive) activate_other_window( hwnd );
     }
 
@@ -5823,12 +5833,6 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
         activate_other_window( hwnd );
         return 0;
 
-    case NtUserCallHwnd_ArrangeIconicWindows:
-        return arrange_iconic_windows( hwnd );
-
-    case NtUserCallHwnd_DrawMenuBar:
-        return draw_menu_bar( hwnd );
-
     case NtUserCallHwnd_GetDpiForWindow:
         return get_dpi_for_window( hwnd );
 
@@ -5844,9 +5848,6 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
     case NtUserCallHwnd_GetMDIClientInfo:
         if (!(win_get_flags( hwnd ) & WIN_ISMDICLIENT)) return 0;
         return get_window_long_ptr( hwnd, sizeof(void *), FALSE );
-
-    case NtUserCallHwnd_GetWindowContextHelpId:
-        return get_window_context_help_id( hwnd );
 
     case NtUserCallHwnd_GetWindowDpiAwarenessContext:
         return get_window_dpi_awareness_context( hwnd );
@@ -5875,12 +5876,6 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
     case NtUserCallHwnd_SetForegroundWindow:
         return set_foreground_window( hwnd, FALSE );
 
-    case NtUserCallHwnd_SetProgmanWindow:
-        return HandleToUlong( set_progman_window( hwnd ));
-
-    case NtUserCallHwnd_SetTaskmanWindow:
-        return HandleToUlong( set_taskman_window( hwnd ));
-
     /* temporary exports */
     case NtUserGetFullWindowHandle:
         return HandleToUlong( get_full_window_handle( hwnd ));
@@ -5906,9 +5901,6 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
     {
     case NtUserCallHwndParam_ClientToScreen:
         return client_to_screen( hwnd, (POINT *)param );
-
-    case NtUserCallHwndParam_EnableWindow:
-        return enable_window( hwnd, param );
 
     case NtUserCallHwndParam_GetChildRect:
         return get_window_rect_rel( hwnd, COORDS_PARENT, (RECT *)param, get_thread_dpi() );
@@ -5993,12 +5985,6 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
         NtUserSetWindowLongPtr( hwnd, sizeof(void *), param, FALSE );
         return win_set_flags( hwnd, WIN_ISMDICLIENT, 0 );
 
-    case NtUserCallHwndParam_SetWindowContextHelpId:
-        return set_window_context_help_id( hwnd, param );
-
-    case NtUserCallHwndParam_ShowOwnedPopups:
-        return show_owned_popups( hwnd, param );
-
     case NtUserCallHwndParam_SendHardwareInput:
     {
         struct send_hardware_input_params *params = (void *)param;
@@ -6064,7 +6050,7 @@ BOOL WINAPI NtUserDragDetect( HWND hwnd, int x, int y )
         {
             if (msg.message == WM_LBUTTONUP)
             {
-                release_capture();
+                NtUserReleaseCapture();
                 return FALSE;
             }
             if (msg.message == WM_MOUSEMOVE)
@@ -6074,7 +6060,7 @@ BOOL WINAPI NtUserDragDetect( HWND hwnd, int x, int y )
                 tmp.y = (short)HIWORD( msg.lParam );
                 if (!PtInRect( &rect, tmp ))
                 {
-                    release_capture();
+                    NtUserReleaseCapture();
                     return TRUE;
                 }
             }
@@ -6215,7 +6201,10 @@ HWND get_progman_window(void)
     return ret;
 }
 
-HWND set_progman_window( HWND hwnd )
+/***********************************************************************
+ *            NtUserSetProgmanWindow (win32u.@)
+ */
+HWND WINAPI NtUserSetProgmanWindow( HWND hwnd )
 {
     SERVER_START_REQ(set_desktop_shell_windows)
     {
@@ -6241,7 +6230,10 @@ HWND get_taskman_window(void)
     return ret;
 }
 
-HWND set_taskman_window( HWND hwnd )
+/***********************************************************************
+ *            NtUserSetTaskmanWindow (win32u.@)
+ */
+HWND WINAPI NtUserSetTaskmanWindow( HWND hwnd )
 {
     /* hwnd = MSTaskSwWClass
      *        |-> SysTabControl32

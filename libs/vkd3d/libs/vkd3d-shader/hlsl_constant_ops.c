@@ -148,15 +148,7 @@ static bool fold_cast(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
     float f = 0.0f;
     int32_t i = 0;
 
-    if (dst_type->e.numeric.dimx != src->node.data_type->e.numeric.dimx
-            || dst_type->e.numeric.dimy != src->node.data_type->e.numeric.dimy)
-    {
-        FIXME("Cast from %s to %s.\n", debug_hlsl_type(ctx, src->node.data_type),
-                debug_hlsl_type(ctx, dst_type));
-        return false;
-    }
-
-    for (k = 0; k < dst_type->e.numeric.dimx; ++k)
+    for (k = 0; k < src->node.data_type->e.numeric.dimx; ++k)
     {
         switch (src->node.data_type->e.numeric.type)
         {
@@ -221,6 +213,13 @@ static bool fold_cast(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
                 break;
         }
     }
+
+    if (src->node.data_type->e.numeric.dimx == 1)
+    {
+        for (k = 1; k < dst_type->e.numeric.dimx; ++k)
+            dst->u[k] = dst->u[0];
+    }
+
     return true;
 }
 

@@ -85,6 +85,8 @@ extern HRESULT attributes_GetItemByIndex(struct attributes *object, UINT32 index
         PROPVARIANT *value);
 extern HRESULT attributes_CopyAllItems(struct attributes *object, IMFAttributes *dest);
 
+extern HRESULT map_http_error(DWORD http_error);
+
 static inline BOOL mf_array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
 {
     size_t new_capacity, max_capacity;

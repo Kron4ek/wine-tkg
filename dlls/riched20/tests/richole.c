@@ -33,6 +33,7 @@
 #include <tom.h>
 #include <imm.h>
 #include <textserv.h>
+#include <ntuser.h>
 #include <wine/test.h>
 
 #define EXPECT_TODO_WINE 0x80000000UL
@@ -601,6 +602,304 @@ static HRESULT testoleobj_Create( struct testoleobj **objptr )
     obj->ref = 1;
     obj->IViewObject_iface.lpVtbl = &testoleobj_IViewObject_Vtbl;
 
+    return S_OK;
+}
+
+struct reole_dataobject
+{
+    IDataObject IDataObject_iface;
+    LONG ref;
+
+    struct format_entry **entries;
+    DWORD entry_count;
+};
+
+struct reole_fmt_iterator
+{
+    IEnumFORMATETC IEnumFORMATETC_iface;
+    LONG ref;
+
+    struct reole_dataobject *dataobject;
+    DWORD current_entry;
+};
+
+static inline struct reole_fmt_iterator *impl_from_IEnumFORMATETC(IEnumFORMATETC *iface)
+{
+    return CONTAINING_RECORD(iface, struct reole_fmt_iterator, IEnumFORMATETC_iface);
+}
+
+static inline struct reole_dataobject *impl_from_IDataObject(IDataObject *iface)
+{
+    return CONTAINING_RECORD(iface, struct reole_dataobject, IDataObject_iface);
+}
+
+static HRESULT STDMETHODCALLTYPE reole_fmt_iterator_QueryInterface(IEnumFORMATETC *iface, REFIID iid, void **obj)
+{
+    struct reole_fmt_iterator *This = impl_from_IEnumFORMATETC(iface);
+
+    if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &IID_IEnumFORMATETC))
+    {
+        IEnumFORMATETC_AddRef(&This->IEnumFORMATETC_iface);
+        *obj = &This->IEnumFORMATETC_iface;
+        return S_OK;
+    }
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE reole_fmt_iterator_AddRef(IEnumFORMATETC *iface)
+{
+    struct reole_fmt_iterator *This = impl_from_IEnumFORMATETC(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
+    return ref;
+}
+
+static ULONG STDMETHODCALLTYPE reole_fmt_iterator_Release(IEnumFORMATETC *iface)
+{
+    struct reole_fmt_iterator *This = impl_from_IEnumFORMATETC(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
+
+    if (!ref)
+    {
+        IDataObject_Release(&This->dataobject->IDataObject_iface);
+        free(This);
+    }
+    return ref;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_fmt_iterator_Next(IEnumFORMATETC *iface, ULONG count, FORMATETC *formats, ULONG *ret)
+{
+    struct reole_fmt_iterator *This = impl_from_IEnumFORMATETC(iface);
+    UINT i;
+
+    for (i = 0; i < count && (This->current_entry + i) < This->dataobject->entry_count; i++)
+    {
+        formats[i].cfFormat = This->dataobject->entries[This->current_entry + i]->format;
+        formats[i].ptd = NULL;
+        formats[i].dwAspect = DVASPECT_CONTENT;
+        formats[i].lindex = -1;
+        formats[i].tymed = TYMED_HGLOBAL;
+    }
+
+    This->current_entry += i;
+    if (ret) *ret = i;
+    return (i == count) ? S_OK : S_FALSE;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_fmt_iterator_Skip(IEnumFORMATETC *iface, ULONG count)
+{
+    struct reole_fmt_iterator *This = impl_from_IEnumFORMATETC(iface);
+
+    if (This->current_entry + count < This->dataobject->entry_count)
+    {
+        This->current_entry += count;
+        return S_OK;
+    }
+    else
+    {
+        This->current_entry = This->dataobject->entry_count;
+        return S_FALSE;
+    }
+}
+
+static HRESULT STDMETHODCALLTYPE reole_fmt_iterator_Reset(IEnumFORMATETC *iface)
+{
+    struct reole_fmt_iterator *This = impl_from_IEnumFORMATETC(iface);
+    This->current_entry = 0;
+    return S_OK;
+}
+
+static HRESULT reole_fmt_iterator_Create(struct reole_dataobject *dataobject, struct reole_fmt_iterator **iterator);
+
+static HRESULT STDMETHODCALLTYPE reole_fmt_iterator_Clone(IEnumFORMATETC *iface, IEnumFORMATETC **out)
+{
+    HRESULT hr;
+    struct reole_fmt_iterator *cloned;
+    struct reole_fmt_iterator *This = impl_from_IEnumFORMATETC(iface);
+    hr = reole_fmt_iterator_Create(This->dataobject, &cloned);
+    if (SUCCEEDED(hr))
+    {
+        cloned->current_entry = This->current_entry;
+        *out = &cloned->IEnumFORMATETC_iface;
+    }
+    return hr;
+}
+
+static const IEnumFORMATETCVtbl reole_fmt_iterator_vtbl =
+{
+    reole_fmt_iterator_QueryInterface,
+    reole_fmt_iterator_AddRef,
+    reole_fmt_iterator_Release,
+    reole_fmt_iterator_Next,
+    reole_fmt_iterator_Skip,
+    reole_fmt_iterator_Reset,
+    reole_fmt_iterator_Clone,
+};
+
+static HRESULT reole_fmt_iterator_Create(struct reole_dataobject *dataobject, struct reole_fmt_iterator **iterator)
+{
+    struct reole_fmt_iterator *it;
+    if (!(it = calloc(sizeof(struct reole_fmt_iterator), 1))) return E_OUTOFMEMORY;
+    it->IEnumFORMATETC_iface.lpVtbl = &reole_fmt_iterator_vtbl;
+    it->ref = 1;
+    it->dataobject = dataobject;
+    IDataObject_AddRef(&dataobject->IDataObject_iface);
+    it->current_entry = 0;
+    *iterator = it;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_dataobject_QueryInterface(IDataObject *iface, REFIID riid, void **obj)
+{
+    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDataObject)) {
+        IDataObject_AddRef(iface);
+        *obj = iface;
+        return S_OK;
+    }
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE reole_dataobject_AddRef(IDataObject *iface)
+{
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
+    return ref;
+}
+
+static ULONG STDMETHODCALLTYPE reole_dataobject_Release(IDataObject *iface)
+{
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
+    if (!ref) free(This);
+    return ref;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_dataobject_GetData(IDataObject *iface, FORMATETC *format, STGMEDIUM *medium)
+{
+    UINT i;
+    HRESULT hr;
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    if (FAILED(hr = IDataObject_QueryGetData(iface, format))) return hr;
+    for (i = 0; i < This->entry_count; i++)
+    {
+        if (format->cfFormat == This->entries[i]->format)
+        {
+            medium->tymed = TYMED_HGLOBAL;
+            medium->hGlobal = GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT, This->entries[i]->size);
+            if (medium->hGlobal == NULL) return E_OUTOFMEMORY;
+            memcpy(GlobalLock(medium->hGlobal), This->entries[i]->data, This->entries[i]->size);
+            GlobalUnlock(medium->hGlobal);
+            medium->pUnkForRelease = 0;
+            return S_OK;
+        }
+    }
+    return DATA_E_FORMATETC;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_dataobject_GetDataHere(IDataObject *iface, FORMATETC *format, STGMEDIUM *medium)
+{
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    trace("this %p, format %p, medium %p stub!\n", This, format, medium);
+    return DATA_E_FORMATETC;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_dataobject_QueryGetData(IDataObject *iface, FORMATETC *format)
+{
+    UINT i;
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    if (format->tymed && !(format->tymed & TYMED_HGLOBAL))
+    {
+        trace("only HGLOBAL medium types supported right now\n");
+        return DV_E_TYMED;
+    }
+    for (i = 0; i < This->entry_count; i++)
+    {
+        if (format->cfFormat == This->entries[i]->format)
+            return S_OK;
+    }
+    return DV_E_FORMATETC;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_dataobject_GetCanonicalFormatEtc(IDataObject *iface, FORMATETC *format, FORMATETC *out)
+{
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    trace("this %p, format %p, out %p stub!\n", This, format, out);
+    out->ptd = NULL;
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_dataobject_SetData(IDataObject *iface, FORMATETC *format, STGMEDIUM *medium, BOOL release)
+{
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    trace("this %p, format %p, medium %p, release %u stub!\n", This, format, medium, release);
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_dataobject_EnumFormatEtc(IDataObject *iface, DWORD direction, IEnumFORMATETC **out)
+{
+    HRESULT hr;
+    struct reole_fmt_iterator *it;
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    if (direction != DATADIR_GET)
+    {
+        trace("only the get direction is implemented\n");
+        return E_NOTIMPL;
+    }
+    hr = reole_fmt_iterator_Create(This, &it);
+    if (SUCCEEDED(hr))
+        *out = &it->IEnumFORMATETC_iface;
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_dataobject_DAdvise(IDataObject *iface, FORMATETC *format, DWORD flags,
+                                                          IAdviseSink *sink, DWORD *connection)
+{
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    trace("dataobject %p, format %p, flags %#lx, sink %p, connection %p stub!\n",
+           This, format, flags, sink, connection);
+    return OLE_E_ADVISENOTSUPPORTED;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_dataobject_DUnadvise(IDataObject *iface, DWORD connection)
+{
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    trace("this %p, connection %lu stub!\n", This, connection);
+    return OLE_E_ADVISENOTSUPPORTED;
+}
+
+static HRESULT STDMETHODCALLTYPE reole_dataobject_EnumDAdvise(IDataObject *iface, IEnumSTATDATA **advise)
+{
+    struct reole_dataobject *This = impl_from_IDataObject(iface);
+    trace("this %p, advise %p stub!\n", This, advise);
+    return OLE_E_ADVISENOTSUPPORTED;
+}
+
+static IDataObjectVtbl reole_dataobject_vtbl =
+{
+    reole_dataobject_QueryInterface,
+    reole_dataobject_AddRef,
+    reole_dataobject_Release,
+    reole_dataobject_GetData,
+    reole_dataobject_GetDataHere,
+    reole_dataobject_QueryGetData,
+    reole_dataobject_GetCanonicalFormatEtc,
+    reole_dataobject_SetData,
+    reole_dataobject_EnumFormatEtc,
+    reole_dataobject_DAdvise,
+    reole_dataobject_DUnadvise,
+    reole_dataobject_EnumDAdvise,
+};
+
+static HRESULT reole_dataobject_Create(struct reole_dataobject **dataobject, struct format_entry **entries, DWORD entry_count)
+{
+    struct reole_dataobject *This;
+    if (!(This = calloc(sizeof(struct reole_dataobject), 1))) return E_OUTOFMEMORY;
+    This->IDataObject_iface.lpVtbl = &reole_dataobject_vtbl;
+    This->ref = 1;
+    This->entries = entries;
+    This->entry_count = entry_count;
+    *dataobject = This;
     return S_OK;
 }
 
@@ -5035,6 +5334,67 @@ static void test_clipboard(void)
   ITextRange_Release(range);
 }
 
+static struct format_entry* alloc_format_entry(UINT format, UINT size, const char *data)
+{
+    struct format_entry *entry = calloc(1, sizeof(struct format_entry) + size);
+    if (entry == NULL)
+        return NULL;
+    entry->format = format;
+    entry->size = size;
+    memcpy(&entry->data, data, size);
+    return entry;
+}
+
+static void test_import_data(void)
+{
+  static const char text_abc[] = "abc";
+  IRichEditOle *reole = NULL;
+  ITextDocument *doc = NULL;
+  ITextSelection *selection;
+  HRESULT hr;
+  HWND hwnd;
+  char buffer[1024] = "";
+  struct format_entry *text_entry;
+  struct reole_dataobject *dataobject;
+
+  text_entry = alloc_format_entry(CF_TEXT, 3, "cd");
+  ok(text_entry != NULL, "failed to create text_entry\n");
+  hr = reole_dataobject_Create(&dataobject, &text_entry, 1);
+  ok(hr == S_OK, "reole_dataobject_Create failed\n");
+  create_interfaces(&hwnd, &reole, &doc, &selection);
+
+  /* Test our IDataObject */
+  SendMessageA(hwnd, WM_SETTEXT, 0, (LPARAM)"");
+  hr = IRichEditOle_ImportDataObject(reole, &dataobject->IDataObject_iface, 0, NULL);
+  ok(hr == S_OK, "got hr 0x%08lx\n", hr);
+  SendMessageA(hwnd, WM_GETTEXT, ARRAY_SIZE(buffer), (LPARAM)buffer);
+  ok(strcmp(buffer, "cd") == 0, "text shouldn't be %s", buffer);
+
+  /* Try import CF_BITMAP which doesn't exist in our IDataObject */
+  hr = IRichEditOle_ImportDataObject(reole, &dataobject->IDataObject_iface, CF_BITMAP, NULL);
+  ok(hr == DV_E_FORMATETC, "got hr 0x%08lx\n", hr);
+
+  /* When IDataObject is NULL, IRichEditOle::ImportDataObject() will import from the clipboard */
+  SendMessageA(hwnd, WM_SETTEXT, 0, (LPARAM)text_abc);
+  hr = ITextSelection_SetStart(selection, 0);
+  ok(SUCCEEDED(hr), "got hr 0x%08lx\n", hr);
+  hr = ITextSelection_SetEnd(selection, 3);
+  ok(SUCCEEDED(hr), "got hr 0x%08lx\n", hr);
+  hr = ITextSelection_Copy(selection, NULL);
+  ok(hr == S_OK, "couldn't copy to clipboard: 0x%08lx\n", hr);
+  hr = ITextSelection_SetEnd(selection, 0);
+  ok(SUCCEEDED(hr), "got hr 0x%08lx\n", hr);
+  hr = IRichEditOle_ImportDataObject(reole, NULL, 0, NULL);
+  ok(hr == S_OK, "got 0x%08lx\n", hr);
+  memset(buffer, 0, ARRAY_SIZE(buffer));
+  SendMessageA(hwnd, WM_GETTEXT, ARRAY_SIZE(buffer), (LPARAM)buffer);
+  ok(strcmp(buffer, "abcabc") == 0, "text shouldn't be %s", buffer);
+
+  release_interfaces(&hwnd, &reole, &doc, &selection);
+  IDataObject_Release(&dataobject->IDataObject_iface);
+  free(text_entry);
+}
+
 static void subtest_undo(const char *dummy_text)
 {
   static const char *text_seq[] = {
@@ -5881,6 +6241,7 @@ START_TEST(richole)
   test_MoveEnd_story();
   test_character_movement();
   test_clipboard();
+  test_import_data();
   test_undo();
   test_undo_control();
   test_freeze();

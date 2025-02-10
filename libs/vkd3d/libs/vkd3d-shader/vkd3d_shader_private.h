@@ -166,6 +166,7 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_HLSL_INVALID_PARTITIONING        = 5038,
     VKD3D_SHADER_ERROR_HLSL_MISPLACED_SAMPLER_STATE     = 5039,
     VKD3D_SHADER_ERROR_HLSL_AMBIGUOUS_CALL              = 5040,
+    VKD3D_SHADER_ERROR_HLSL_DUPLICATE_PATCH             = 5041,
 
     VKD3D_SHADER_WARNING_HLSL_IMPLICIT_TRUNCATION       = 5300,
     VKD3D_SHADER_WARNING_HLSL_DIVISION_BY_ZERO          = 5301,
@@ -1641,7 +1642,7 @@ bool sm4_register_from_semantic_name(const struct vkd3d_shader_version *version,
 bool shader_sm4_is_scalar_register(const struct vkd3d_shader_register *reg);
 bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *sysval_semantic,
         const struct vkd3d_shader_version *version, bool semantic_compat_mapping, enum vkd3d_tessellator_domain domain,
-        const char *semantic_name, unsigned int semantic_idx, bool output, bool is_patch_constant_func);
+        const char *semantic_name, unsigned int semantic_idx, bool output, bool is_patch_constant_func, bool is_patch);
 
 int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t config_flags,
         struct vkd3d_shader_message_context *message_context, struct vsir_program *program);

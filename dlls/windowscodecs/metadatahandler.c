@@ -41,6 +41,8 @@ typedef struct MetadataHandler {
     const MetadataHandlerVtbl *vtable;
     MetadataItem *items;
     DWORD item_count;
+    DWORD persist_options;
+    IStream *stream;
     CRITICAL_SECTION lock;
 } MetadataHandler;
 
@@ -131,6 +133,8 @@ static ULONG WINAPI MetadataHandler_Release(IWICMetadataWriter *iface)
 
     if (ref == 0)
     {
+        if (This->stream)
+            IStream_Release(This->stream);
         MetadataHandler_FreeItems(This);
         This->lock.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&This->lock);
@@ -374,7 +378,19 @@ static HRESULT WINAPI MetadataHandler_LoadEx(IWICPersistStream *iface,
                 &new_items, &item_count);
     }
 
-    if (SUCCEEDED(hr))
+    if (This->stream)
+        IStream_Release(This->stream);
+    This->stream = NULL;
+
+    if (!(dwPersistOptions & WICPersistOptionNoCacheStream))
+    {
+        This->stream = stream;
+        if (This->stream)
+            IStream_AddRef(This->stream);
+    }
+    This->persist_options = dwPersistOptions & WICPersistOptionMask;
+
+    if (new_items)
     {
         MetadataHandler_FreeItems(This);
         This->items = new_items;
@@ -426,16 +442,43 @@ static ULONG WINAPI metadatahandler_stream_provider_Release(IWICStreamProvider *
 
 static HRESULT WINAPI metadatahandler_stream_provider_GetStream(IWICStreamProvider *iface, IStream **stream)
 {
-    FIXME("%p, %p stub\n", iface, stream);
+    MetadataHandler *handler = impl_from_IWICStreamProvider(iface);
+    HRESULT hr = S_OK;
 
-    return E_NOTIMPL;
+    TRACE("%p, %p.\n", iface, stream);
+
+    if (!stream)
+        return E_INVALIDARG;
+
+    EnterCriticalSection(&handler->lock);
+
+    if (handler->stream)
+    {
+        *stream = handler->stream;
+        IStream_AddRef(*stream);
+    }
+    else
+    {
+        hr = WINCODEC_ERR_STREAMNOTAVAILABLE;
+    }
+
+    LeaveCriticalSection(&handler->lock);
+
+    return hr;
 }
 
 static HRESULT WINAPI metadatahandler_stream_provider_GetPersistOptions(IWICStreamProvider *iface, DWORD *options)
 {
-    FIXME("%p, %p stub\n", iface, options);
+    MetadataHandler *handler = impl_from_IWICStreamProvider(iface);
 
-    return E_NOTIMPL;
+    TRACE("%p, %p.\n", iface, options);
+
+    if (!options)
+        return E_INVALIDARG;
+
+    *options = handler->persist_options;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI metadatahandler_stream_provider_GetPreferredVendorGUID(IWICStreamProvider *iface, GUID *guid)
@@ -472,7 +515,7 @@ HRESULT MetadataReader_Create(const MetadataHandlerVtbl *vtable, REFIID iid, voi
 
     *ppv = NULL;
 
-    This = malloc(sizeof(MetadataHandler));
+    This = calloc(1, sizeof(*This));
     if (!This) return E_OUTOFMEMORY;
 
     This->IWICMetadataWriter_iface.lpVtbl = &MetadataHandler_Vtbl;
@@ -480,8 +523,6 @@ HRESULT MetadataReader_Create(const MetadataHandlerVtbl *vtable, REFIID iid, voi
     This->IWICStreamProvider_iface.lpVtbl = &MetadataHandler_StreamProvider_Vtbl;
     This->ref = 1;
     This->vtable = vtable;
-    This->items = NULL;
-    This->item_count = 0;
 
     InitializeCriticalSectionEx(&This->lock, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO);
     This->lock.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": MetadataHandler.lock");
@@ -729,15 +770,27 @@ static HRESULT LoadUnknownMetadata(IStream *input, const GUID *preferred_vendor,
     return S_OK;
 }
 
-static const MetadataHandlerVtbl UnknownMetadataReader_Vtbl = {
-    0,
-    &CLSID_WICUnknownMetadataReader,
-    LoadUnknownMetadata
+static const MetadataHandlerVtbl UnknownMetadataReader_Vtbl =
+{
+    .clsid = &CLSID_WICUnknownMetadataReader,
+    .fnLoad = LoadUnknownMetadata
 };
 
 HRESULT UnknownMetadataReader_CreateInstance(REFIID iid, void** ppv)
 {
     return MetadataReader_Create(&UnknownMetadataReader_Vtbl, iid, ppv);
+}
+
+static const MetadataHandlerVtbl UnknownMetadataWriter_Vtbl =
+{
+    .is_writer = true,
+    .clsid = &CLSID_WICUnknownMetadataWriter,
+    .fnLoad = LoadUnknownMetadata
+};
+
+HRESULT UnknownMetadataWriter_CreateInstance(REFIID iid, void** ppv)
+{
+    return MetadataReader_Create(&UnknownMetadataWriter_Vtbl, iid, ppv);
 }
 
 #define SWAP_USHORT(x) do { if (!native_byte_order) (x) = RtlUshortByteSwap(x); } while(0)
@@ -766,6 +819,12 @@ struct IFD_entry
 #define IFD_DOUBLE 12
 #define IFD_IFD 13
 
+enum ifd_tags
+{
+    IFD_EXIF_TAG = 0x8769,
+    IFD_GPS_TAG = 0x8825,
+};
+
 static int tag_to_vt(SHORT tag)
 {
     static const int tag2vt[] =
@@ -788,13 +847,39 @@ static int tag_to_vt(SHORT tag)
     return (tag > 0 && tag <= 13) ? tag2vt[tag] : VT_BLOB;
 }
 
-static HRESULT load_IFD_entry(IStream *input, const struct IFD_entry *entry,
-                              MetadataItem *item, BOOL native_byte_order)
+static HRESULT create_stream_wrapper(IStream *input, ULONG offset, IStream **wrapper)
 {
-    ULONG count, value, i;
+    ULARGE_INTEGER start, maxsize;
+    IWICStream *wic_stream = NULL;
+    HRESULT hr;
+
+    *wrapper = NULL;
+
+    start.QuadPart = offset;
+    maxsize.QuadPart = ~0u;
+
+    hr = StreamImpl_Create(&wic_stream);
+    if (SUCCEEDED(hr))
+        hr = IWICStream_InitializeFromIStreamRegion(wic_stream, input, start, maxsize);
+
+    if (SUCCEEDED(hr))
+        hr = IWICStream_QueryInterface(wic_stream, &IID_IStream, (void **)wrapper);
+    if (wic_stream)
+        IWICStream_Release(wic_stream);
+
+    return hr;
+}
+
+static HRESULT load_IFD_entry(IStream *input, const GUID *vendor, DWORD options, const struct IFD_entry *entry,
+        MetadataItem *item, BOOL resolve_pointer_tags)
+{
+    BOOL native_byte_order = !(options & WICPersistOptionBigEndian);
+    ULONG count, value, i, bytesread;
+    IWICMetadataReader *sub_reader;
+    IStream *sub_stream;
     SHORT type;
     LARGE_INTEGER pos;
-    HRESULT hr;
+    HRESULT hr = S_OK;
 
     item->schema.vt = VT_EMPTY;
     item->id.vt = VT_UI2;
@@ -837,7 +922,7 @@ static HRESULT load_IFD_entry(IStream *input, const struct IFD_entry *entry,
         if (!item->value.caub.pElems) return E_OUTOFMEMORY;
 
         pos.QuadPart = value;
-        hr = IStream_Seek(input, pos, SEEK_SET, NULL);
+        hr = IStream_Seek(input, pos, STREAM_SEEK_SET, NULL);
         if (FAILED(hr))
         {
             CoTaskMemFree(item->value.caub.pElems);
@@ -881,7 +966,7 @@ static HRESULT load_IFD_entry(IStream *input, const struct IFD_entry *entry,
         if (!item->value.caui.pElems) return E_OUTOFMEMORY;
 
         pos.QuadPart = value;
-        hr = IStream_Seek(input, pos, SEEK_SET, NULL);
+        hr = IStream_Seek(input, pos, STREAM_SEEK_SET, NULL);
         if (FAILED(hr))
         {
             CoTaskMemFree(item->value.caui.pElems);
@@ -913,7 +998,7 @@ static HRESULT load_IFD_entry(IStream *input, const struct IFD_entry *entry,
         if (!item->value.caul.pElems) return E_OUTOFMEMORY;
 
         pos.QuadPart = value;
-        hr = IStream_Seek(input, pos, SEEK_SET, NULL);
+        hr = IStream_Seek(input, pos, STREAM_SEEK_SET, NULL);
         if (FAILED(hr))
         {
             CoTaskMemFree(item->value.caul.pElems);
@@ -943,7 +1028,7 @@ static HRESULT load_IFD_entry(IStream *input, const struct IFD_entry *entry,
             ULONGLONG ull;
 
             pos.QuadPart = value;
-            hr = IStream_Seek(input, pos, SEEK_SET, NULL);
+            hr = IStream_Seek(input, pos, STREAM_SEEK_SET, NULL);
             if (FAILED(hr)) return hr;
 
             hr = IStream_Read(input, &ull, sizeof(ull), NULL);
@@ -968,7 +1053,7 @@ static HRESULT load_IFD_entry(IStream *input, const struct IFD_entry *entry,
             if (!item->value.cauh.pElems) return E_OUTOFMEMORY;
 
             pos.QuadPart = value;
-            hr = IStream_Seek(input, pos, SEEK_SET, NULL);
+            hr = IStream_Seek(input, pos, STREAM_SEEK_SET, NULL);
             if (FAILED(hr))
             {
                 CoTaskMemFree(item->value.cauh.pElems);
@@ -1005,7 +1090,7 @@ static HRESULT load_IFD_entry(IStream *input, const struct IFD_entry *entry,
         }
 
         pos.QuadPart = value;
-        hr = IStream_Seek(input, pos, SEEK_SET, NULL);
+        hr = IStream_Seek(input, pos, STREAM_SEEK_SET, NULL);
         if (FAILED(hr))
         {
             CoTaskMemFree(item->value.pszVal);
@@ -1040,7 +1125,7 @@ static HRESULT load_IFD_entry(IStream *input, const struct IFD_entry *entry,
         }
 
         pos.QuadPart = value;
-        hr = IStream_Seek(input, pos, SEEK_SET, NULL);
+        hr = IStream_Seek(input, pos, STREAM_SEEK_SET, NULL);
         if (FAILED(hr))
         {
             CoTaskMemFree(item->value.blob.pBlobData);
@@ -1057,11 +1142,47 @@ static HRESULT load_IFD_entry(IStream *input, const struct IFD_entry *entry,
         FIXME("loading field of type %d, count %lu is not implemented\n", type, count);
         break;
     }
-    return S_OK;
+
+    switch (item->id.uiVal)
+    {
+        case IFD_EXIF_TAG:
+        case IFD_GPS_TAG:
+
+           if (!resolve_pointer_tags)
+               break;
+
+           if (item->value.vt != VT_UI4)
+               break;
+
+           hr = create_stream_wrapper(input, 0, &sub_stream);
+
+           pos.QuadPart = item->value.ulVal;
+           if (SUCCEEDED(hr))
+               hr = IStream_Seek(sub_stream, pos, STREAM_SEEK_SET, NULL);
+
+           if (SUCCEEDED(hr))
+               hr = create_metadata_reader(item->id.uiVal == IFD_EXIF_TAG ? &GUID_MetadataFormatExif : &GUID_MetadataFormatGps,
+                       vendor, options | WICMetadataCreationFailUnknown, sub_stream, &sub_reader);
+
+           if (SUCCEEDED(hr))
+           {
+               item->value.vt = VT_UNKNOWN;
+               item->value.punkVal = (IUnknown *)sub_reader;
+           }
+
+           if (sub_stream)
+               IStream_Release(sub_stream);
+
+           break;
+        default:
+           break;
+    }
+
+    return hr;
 }
 
-static HRESULT LoadIfdMetadata(IStream *input, const GUID *preferred_vendor,
-    DWORD persist_options, MetadataItem **items, DWORD *item_count)
+static HRESULT load_ifd_metadata_internal(IStream *input, const GUID *vendor,
+    DWORD persist_options, bool resolve_pointer_tags, bool writer, MetadataItem **items, DWORD *item_count)
 {
     HRESULT hr;
     MetadataItem *result;
@@ -1111,7 +1232,7 @@ static HRESULT LoadIfdMetadata(IStream *input, const GUID *preferred_vendor,
         if (!next_ifd_offset) break;
 
         pos.QuadPart = next_ifd_offset;
-        hr = IStream_Seek(input, pos, SEEK_SET, NULL);
+        hr = IStream_Seek(input, pos, STREAM_SEEK_SET, NULL);
         if (FAILED(hr)) break;
 
         hr = IStream_Read(input, &next_ifd_count, sizeof(next_ifd_count), &bytesread);
@@ -1121,7 +1242,7 @@ static HRESULT LoadIfdMetadata(IStream *input, const GUID *preferred_vendor,
         SWAP_USHORT(next_ifd_count);
 
         pos.QuadPart = next_ifd_count * sizeof(*entry);
-        hr = IStream_Seek(input, pos, SEEK_CUR, NULL);
+        hr = IStream_Seek(input, pos, STREAM_SEEK_CUR, NULL);
         if (FAILED(hr)) break;
     }
 
@@ -1140,7 +1261,7 @@ static HRESULT LoadIfdMetadata(IStream *input, const GUID *preferred_vendor,
 
     for (i = 0; i < count; i++)
     {
-        hr = load_IFD_entry(input, &entry[i], &result[i], native_byte_order);
+        hr = load_IFD_entry(input, vendor, persist_options, &entry[i], &result[i], resolve_pointer_tags);
         if (FAILED(hr))
         {
             free(entry);
@@ -1157,13 +1278,215 @@ static HRESULT LoadIfdMetadata(IStream *input, const GUID *preferred_vendor,
     return S_OK;
 }
 
+static HRESULT LoadIfdMetadataReader(IStream *input, const GUID *vendor,
+        DWORD options, MetadataItem **items, DWORD *item_count)
+{
+    TRACE("%p, %#lx.\n", input, options);
+    return load_ifd_metadata_internal(input, vendor, options, true, false, items, item_count);
+}
+
+static HRESULT LoadIfdMetadataWriter(IStream *input, const GUID *vendor,
+        DWORD options, MetadataItem **items, DWORD *item_count)
+{
+    TRACE("%p, %#lx.\n", input, options);
+    return load_ifd_metadata_internal(input, vendor, options, true, true, items, item_count);
+}
+
+static HRESULT LoadExifMetadataReader(IStream *input, const GUID *vendor,
+        DWORD options, MetadataItem **items, DWORD *item_count)
+{
+    TRACE("%p, %#lx.\n", input, options);
+
+    return load_ifd_metadata_internal(input, vendor, options, false, false, items, item_count);
+}
+
+static HRESULT LoadExifMetadataWriter(IStream *input, const GUID *vendor,
+        DWORD options, MetadataItem **items, DWORD *item_count)
+{
+    TRACE("%p, %#lx.\n", input, options);
+
+    return load_ifd_metadata_internal(input, vendor, options, false, true, items, item_count);
+}
+
+static HRESULT LoadGpsMetadataReader(IStream *input, const GUID *vendor,
+        DWORD options, MetadataItem **items, DWORD *item_count)
+{
+    TRACE("%p, %#lx.\n", input, options);
+
+    return load_ifd_metadata_internal(input, vendor, options, false, false, items, item_count);
+}
+
+static HRESULT LoadGpsMetadataWriter(IStream *input, const GUID *vendor,
+        DWORD options, MetadataItem **items, DWORD *item_count)
+{
+    TRACE("%p, %#lx.\n", input, options);
+
+    return load_ifd_metadata_internal(input, vendor, options, false, true, items, item_count);
+}
+
+static HRESULT LoadApp1Metadata(IStream *input, const GUID *vendor, DWORD options, MetadataItem **items, DWORD *item_count)
+{
+    static const char exif_header[] = {'E','x','i','f',0,0};
+    IWICMetadataReader *ifd_reader;
+    BOOL native_byte_order;
+    LARGE_INTEGER move;
+
+#include "pshpack2.h"
+    struct app1_header
+    {
+        BYTE exif_header[6];
+        BYTE bom[2];
+        USHORT marker;
+        ULONG ifd0_offset;
+    } header;
+#include "poppack.h"
+
+    IStream *ifd_stream;
+    ULONG length;
+    HRESULT hr;
+
+    if (FAILED(hr = IStream_Read(input, &header, sizeof(header), &length)))
+        return hr;
+    if (length != sizeof(header))
+        return WINCODEC_ERR_BADMETADATAHEADER;
+
+    if (memcmp(header.exif_header, exif_header, sizeof(exif_header)))
+        return WINCODEC_ERR_BADMETADATAHEADER;
+
+    options &= ~(WICPersistOptionLittleEndian | WICPersistOptionBigEndian);
+    options |= WICMetadataCreationFailUnknown;
+    if (!memcmp(header.bom, "II", 2))
+        options |= WICPersistOptionLittleEndian;
+    else if (!memcmp(header.bom, "MM", 2))
+        options |= WICPersistOptionBigEndian;
+    else
+    {
+        WARN("Unrecognized bom marker %#x%#x.\n", header.bom[0], header.bom[1]);
+        return WINCODEC_ERR_BADMETADATAHEADER;
+    }
+    native_byte_order = !(options & WICPersistOptionBigEndian);
+
+    SWAP_USHORT(header.marker);
+    SWAP_ULONG(header.ifd0_offset);
+
+    if (header.marker != 0x002a)
+    {
+        WARN("Unrecognized marker %#x.\n", header.marker);
+        return WINCODEC_ERR_BADMETADATAHEADER;
+    }
+
+    if (FAILED(hr = create_stream_wrapper(input, sizeof(exif_header), &ifd_stream)))
+        return hr;
+    move.QuadPart = header.ifd0_offset;
+    if (FAILED(hr = IStream_Seek(ifd_stream, move, STREAM_SEEK_SET, NULL)))
+    {
+        IStream_Release(ifd_stream);
+        return hr;
+    }
+
+    hr = create_metadata_reader(&GUID_MetadataFormatIfd, vendor, options, ifd_stream, &ifd_reader);
+    IStream_Release(ifd_stream);
+
+    if (FAILED(hr))
+    {
+        WARN("Failed to create IFD0 reader.\n");
+        return hr;
+    }
+
+    if (!(*items = calloc(1, sizeof(**items))))
+    {
+        IWICMetadataReader_Release(ifd_reader);
+        return E_OUTOFMEMORY;
+    }
+
+    (*items)[0].id.vt = VT_UI2;
+    (*items)[0].id.uiVal = 0;
+    (*items)[0].value.vt = VT_UNKNOWN;
+    (*items)[0].value.punkVal = (IUnknown *)ifd_reader;
+    *item_count = 1;
+
+    return S_OK;
+}
+
 static const MetadataHandlerVtbl IfdMetadataReader_Vtbl = {
     0,
     &CLSID_WICIfdMetadataReader,
-    LoadIfdMetadata
+    LoadIfdMetadataReader
 };
 
 HRESULT IfdMetadataReader_CreateInstance(REFIID iid, void **ppv)
 {
     return MetadataReader_Create(&IfdMetadataReader_Vtbl, iid, ppv);
+}
+
+static const MetadataHandlerVtbl IfdMetadataWriter_Vtbl =
+{
+    .is_writer = true,
+    &CLSID_WICIfdMetadataWriter,
+    LoadIfdMetadataWriter
+};
+
+HRESULT IfdMetadataWriter_CreateInstance(REFIID iid, void **ppv)
+{
+    return MetadataReader_Create(&IfdMetadataWriter_Vtbl, iid, ppv);
+}
+
+static const MetadataHandlerVtbl GpsMetadataReader_Vtbl =
+{
+    0,
+    &CLSID_WICGpsMetadataReader,
+    LoadGpsMetadataReader
+};
+
+HRESULT GpsMetadataReader_CreateInstance(REFIID iid, void **ppv)
+{
+    return MetadataReader_Create(&GpsMetadataReader_Vtbl, iid, ppv);
+}
+
+static const MetadataHandlerVtbl GpsMetadataWriter_Vtbl =
+{
+    .is_writer = true,
+    &CLSID_WICGpsMetadataWriter,
+    LoadGpsMetadataWriter
+};
+
+HRESULT GpsMetadataWriter_CreateInstance(REFIID iid, void **ppv)
+{
+    return MetadataReader_Create(&GpsMetadataWriter_Vtbl, iid, ppv);
+}
+
+static const MetadataHandlerVtbl ExifMetadataReader_Vtbl =
+{
+    0,
+    &CLSID_WICExifMetadataReader,
+    LoadExifMetadataReader
+};
+
+HRESULT ExifMetadataReader_CreateInstance(REFIID iid, void **ppv)
+{
+    return MetadataReader_Create(&ExifMetadataReader_Vtbl, iid, ppv);
+}
+
+static const MetadataHandlerVtbl ExifMetadataWriter_Vtbl =
+{
+    .is_writer = true,
+    &CLSID_WICExifMetadataWriter,
+    LoadExifMetadataWriter
+};
+
+HRESULT ExifMetadataWriter_CreateInstance(REFIID iid, void **ppv)
+{
+    return MetadataReader_Create(&ExifMetadataWriter_Vtbl, iid, ppv);
+}
+
+static const MetadataHandlerVtbl App1MetadataReader_Vtbl =
+{
+    0,
+    &CLSID_WICApp1MetadataReader,
+    LoadApp1Metadata
+};
+
+HRESULT App1MetadataReader_CreateInstance(REFIID iid, void **ppv)
+{
+    return MetadataReader_Create(&App1MetadataReader_Vtbl, iid, ppv);
 }

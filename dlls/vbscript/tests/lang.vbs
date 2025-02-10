@@ -1701,6 +1701,33 @@ e = err.number
 on error goto 0
 ok e = 9, "e = " & e ' VBSE_OUT_OF_BOUNDS, can only change rightmost dimension
 
+' Redim without Dim should work, even in explicit mode
+redim toCreateArr(3)
+ok ubound(toCreateArr) = 3, "ubound(toCreateArr) = " & ubound(toCreateArr)
+toCreateArr(3) = 10
+ok toCreateArr(3) = 10, "toCreateArr(3) = " & toCreateArr(3)
+
+on error resume next
+const redimConst = 3
+redim redimConst(3)
+' REF_CONST -> runtime error: Type mismatch: 'redimConst'
+ok err.number = 501, "redim <const> err.number = " & err.number
+err.clear
+redim err(3)
+' REF_DISP -> runtime error: Object doesn't support this property or method
+ok err.number = 501, "redim <err> err.number = " & err.number
+err.clear
+' TODO where should we put this compilation error test?
+' Sub redimSub
+' End Sub
+' redim redimSub(3)
+' ' REF_FUNC -> compilation error: Name redefined
+' todo_wine_ok err.number = -1, "redim <sub> err.number = " & err.number
+' err.clear
+' ' TODO how do we test the REF_OBJ case?
+on error goto 0
+
+
 sub TestReDimFixed
     on error resume next
 
@@ -2141,6 +2168,51 @@ call ok(x.getprop.getprop().prop is obj, "x.getprop.getprop().prop is not obj (e
 
 ok getVT(x) = "VT_DISPATCH*", "getVT(x) = " & getVT(x)
 todo_wine_ok getVT(x()) = "VT_BSTR", "getVT(x()) = " & getVT(x())
+
+Class TestClassVariablesMulti
+    Public pub1, pub2
+    Public pubArray(3), pubArray2(5, 10)
+    Private priv1, priv2
+    Private error, explicit, step
+    Dim dim1, dim2
+
+    Private Sub Class_Initialize()
+	pub1 = 1
+        pub2 = 2
+        pubArray(0) = 3
+        pubArray2(0, 0) = 4
+        priv1 = 5
+        priv2 = 6
+        dim1 = 7
+        dim2 = 8
+        error = 9
+        explicit = 10
+        step = 11
+    End Sub
+End Class
+
+Set x = new TestClassVariablesMulti
+call ok(x.pub1 = 1, "x.pub1 = " & x.pub1)
+call ok(x.pub2 = 2, "x.pub2 = " & x.pub2)
+call ok(ubound(x.pubArray) = 3, "ubound(x.pubArray) = " & ubound(x.pubArray))
+call ok(ubound(x.pubArray2, 1) = 5, "ubound(x.pubArray2, 1) = " & ubound(x.pubArray2, 1))
+call ok(ubound(x.pubArray2, 2) = 10, "ubound(x.pubArray2, 2) = " & ubound(x.pubArray2, 2))
+' TODO: this does not parse: accessing class variable of array type element directly
+' call ok(x.pubArray(0) = 3, "x.pubArray(0) = " & x.pubArray(0))
+call ok(x.dim1 = 7, "x.dim1 = " & x.dim1)
+call ok(x.dim2 = 8, "x.dim2 = " & x.dim2)
+
+on error resume next
+x.priv1 = 1
+call ok(err.number = 438, "err.number = " & err.number)
+err.clear
+x.priv2 = 2
+call ok(err.number = 438, "err.number = " & err.number)
+err.clear
+' TODO: set class variable of array type element directly
+x.pubArray(0) = 1
+call todo_wine_ok(err.number = 0, "set x.pubArray(0) err.number = " & err.number)
+on error goto 0
 
 funcCalled = ""
 class DefaultSubTest1

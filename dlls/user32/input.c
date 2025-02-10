@@ -103,49 +103,11 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetCursorPos( POINT *pt )
 
 
 /**********************************************************************
- *		ReleaseCapture (USER32.@)
- */
-BOOL WINAPI DECLSPEC_HOTPATCH ReleaseCapture(void)
-{
-    return NtUserReleaseCapture();
-}
-
-
-/**********************************************************************
  *		GetCapture (USER32.@)
  */
 HWND WINAPI GetCapture(void)
 {
-    GUITHREADINFO info;
-    info.cbSize = sizeof(info);
-    return NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ) ? info.hwndCapture : 0;
-}
-
-
-/*****************************************************************
- *		DestroyCaret (USER32.@)
- */
-BOOL WINAPI DestroyCaret(void)
-{
-    return NtUserDestroyCaret();
-}
-
-
-/*****************************************************************
- *		SetCaretPos (USER32.@)
- */
-BOOL WINAPI SetCaretPos( int x, int y )
-{
-    return NtUserSetCaretPos( x, y );
-}
-
-
-/*****************************************************************
- *		SetCaretBlinkTime (USER32.@)
- */
-BOOL WINAPI SetCaretBlinkTime( unsigned int time )
-{
-    return NtUserSetCaretBlinkTime( time );
+    return (HWND)NtUserGetThreadState( UserThreadStateCaptureWindow );
 }
 
 
@@ -154,7 +116,7 @@ BOOL WINAPI SetCaretBlinkTime( unsigned int time )
  */
 BOOL WINAPI GetInputState(void)
 {
-    return NtUserGetInputState();
+    return NtUserGetThreadState( UserThreadStateInputState );
 }
 
 
@@ -811,9 +773,7 @@ BOOL WINAPI SetForegroundWindow( HWND hwnd )
  */
 HWND WINAPI GetActiveWindow(void)
 {
-    GUITHREADINFO info;
-    info.cbSize = sizeof(info);
-    return NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ) ? info.hwndActive : 0;
+    return (HWND)NtUserGetThreadState( UserThreadStateActiveWindow );
 }
 
 
@@ -822,9 +782,7 @@ HWND WINAPI GetActiveWindow(void)
  */
 HWND WINAPI GetFocus(void)
 {
-    GUITHREADINFO info;
-    info.cbSize = sizeof(info);
-    return NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ) ? info.hwndFocus : 0;
+    return (HWND)NtUserGetThreadState( UserThreadStateFocusWindow );
 }
 
 
@@ -847,15 +805,6 @@ HWND WINAPI GetShellWindow(void)
 
 
 /***********************************************************************
- *           SetProgmanWindow (USER32.@)
- */
-HWND WINAPI SetProgmanWindow( HWND hwnd )
-{
-    return NtUserSetProgmanWindow( hwnd );
-}
-
-
-/***********************************************************************
  *           GetProgmanWindow (USER32.@)
  */
 HWND WINAPI GetProgmanWindow(void)
@@ -863,14 +812,6 @@ HWND WINAPI GetProgmanWindow(void)
     return NtUserGetProgmanWindow();
 }
 
-
-/***********************************************************************
- *           SetTaskmanWindow (USER32.@)
- */
-HWND WINAPI SetTaskmanWindow( HWND hwnd )
-{
-    return NtUserSetTaskmanWindow( hwnd );
-}
 
 /***********************************************************************
  *           GetTaskmanWindow (USER32.@)
