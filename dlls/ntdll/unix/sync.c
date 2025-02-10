@@ -2210,6 +2210,8 @@ NTSTATUS WINAPI NtRemoveIoCompletionEx( HANDLE handle, FILE_IO_COMPLETION_INFORM
 
     TRACE( "%p %p %u %p %p %u\n", handle, info, (int)count, written, timeout, alertable );
 
+    if (!count) return STATUS_INVALID_PARAMETER;
+
     while (i < count)
     {
         SERVER_START_REQ( remove_completion )
@@ -2941,4 +2943,16 @@ NTSTATUS WINAPI NtRollbackTransaction( HANDLE transaction, BOOLEAN wait )
     FIXME( "%p, %d stub.\n", transaction, wait );
 
     return STATUS_ACCESS_VIOLATION;
+}
+
+/***********************************************************************
+ *           NtConvertBetweenAuxiliaryCounterAndPerformanceCounter (NTDLL.@)
+ */
+NTSTATUS WINAPI NtConvertBetweenAuxiliaryCounterAndPerformanceCounter( ULONG flag, ULONGLONG *from, ULONGLONG *to, ULONGLONG *error )
+{
+    FIXME( "%#x, %p, %p, %p.\n",  (int)flag, from, to, error );
+
+    if (!from) return STATUS_ACCESS_VIOLATION;
+
+    return STATUS_NOT_SUPPORTED;
 }

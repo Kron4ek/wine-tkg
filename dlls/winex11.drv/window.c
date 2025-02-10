@@ -1460,7 +1460,8 @@ static void window_set_wm_state( struct x11drv_win_data *data, UINT new_state )
 
     data->desired_state.wm_state = new_state;
     if (!data->whole_window) return; /* no window, nothing to update */
-    if (data->wm_state_serial) return; /* another WM_STATE update is pending, wait for it to complete */
+    if (data->wm_state_serial && !data->current_state.wm_state != !data->pending_state.wm_state)
+        return; /* another map/unmap WM_STATE update is pending, wait for it to complete */
     if (old_state == new_state) return; /* states are the same, nothing to update */
 
     switch (MAKELONG(old_state, new_state))
@@ -2714,6 +2715,7 @@ void X11DRV_GetDC( HDC hdc, HWND hwnd, HWND top, const RECT *win_rect,
                    const RECT *top_rect, DWORD flags )
 {
     struct x11drv_escape_set_drawable escape;
+    struct x11drv_win_data *data;
 
     escape.code = X11DRV_SET_DRAWABLE;
     escape.mode = IncludeInferiors;
@@ -2724,19 +2726,18 @@ void X11DRV_GetDC( HDC hdc, HWND hwnd, HWND top, const RECT *win_rect,
     escape.dc_rect.right        = win_rect->right - top_rect->left;
     escape.dc_rect.bottom       = win_rect->bottom - top_rect->top;
 
-    if (top == hwnd)
+    if ((data = get_win_data( top )))
     {
-        struct x11drv_win_data *data = get_win_data( hwnd );
-
-        escape.drawable = data ? data->whole_window : X11DRV_get_whole_window( hwnd );
-
+        escape.drawable = data->whole_window;
+        escape.visual = data->vis;
         /* special case: when repainting the root window, clip out top-level windows */
-        if (data && data->whole_window == root_window) escape.mode = ClipByChildren;
+        if (top == hwnd && data->whole_window == root_window) escape.mode = ClipByChildren;
         release_win_data( data );
     }
     else
     {
         escape.drawable = X11DRV_get_whole_window( top );
+        escape.visual = default_visual; /* FIXME: use the right visual for other process window */
     }
 
     if (!escape.drawable) return; /* don't create a GC for foreign windows */

@@ -2143,18 +2143,17 @@ static const struct push_constant_info
     size_t size;
     unsigned int max_count;
     enum wined3d_shader_type shader_type;
-    enum vkd3d_shader_d3dbc_constant_register shader_binding;
 }
 wined3d_cs_push_constant_info[] =
 {
-    [WINED3D_PUSH_CONSTANTS_VS_F]       = {sizeof(struct wined3d_vec4),  WINED3D_MAX_VS_CONSTS_F, WINED3D_SHADER_TYPE_VERTEX, VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER},
-    [WINED3D_PUSH_CONSTANTS_PS_F]       = {sizeof(struct wined3d_vec4),  WINED3D_MAX_PS_CONSTS_F, WINED3D_SHADER_TYPE_PIXEL,  VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER},
-    [WINED3D_PUSH_CONSTANTS_VS_I]       = {sizeof(struct wined3d_ivec4), WINED3D_MAX_CONSTS_I,    WINED3D_SHADER_TYPE_VERTEX, VKD3D_SHADER_D3DBC_INT_CONSTANT_REGISTER},
-    [WINED3D_PUSH_CONSTANTS_PS_I]       = {sizeof(struct wined3d_ivec4), WINED3D_MAX_CONSTS_I,    WINED3D_SHADER_TYPE_PIXEL,  VKD3D_SHADER_D3DBC_INT_CONSTANT_REGISTER},
-    [WINED3D_PUSH_CONSTANTS_VS_B]       = {sizeof(BOOL),                 WINED3D_MAX_CONSTS_B,    WINED3D_SHADER_TYPE_VERTEX, VKD3D_SHADER_D3DBC_BOOL_CONSTANT_REGISTER},
-    [WINED3D_PUSH_CONSTANTS_PS_B]       = {sizeof(BOOL),                 WINED3D_MAX_CONSTS_B,    WINED3D_SHADER_TYPE_PIXEL,  VKD3D_SHADER_D3DBC_BOOL_CONSTANT_REGISTER},
-    [WINED3D_PUSH_CONSTANTS_VS_FFP]     = {1, sizeof(struct wined3d_ffp_vs_constants),            WINED3D_SHADER_TYPE_VERTEX, VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER},
-    [WINED3D_PUSH_CONSTANTS_PS_FFP]     = {1, sizeof(struct wined3d_ffp_ps_constants),            WINED3D_SHADER_TYPE_PIXEL,  VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER},
+    [WINED3D_PUSH_CONSTANTS_VS_F]       = {sizeof(struct wined3d_vec4),  WINED3D_MAX_VS_CONSTS_F, WINED3D_SHADER_TYPE_VERTEX},
+    [WINED3D_PUSH_CONSTANTS_PS_F]       = {sizeof(struct wined3d_vec4),  WINED3D_MAX_PS_CONSTS_F, WINED3D_SHADER_TYPE_PIXEL},
+    [WINED3D_PUSH_CONSTANTS_VS_I]       = {sizeof(struct wined3d_ivec4), WINED3D_MAX_CONSTS_I,    WINED3D_SHADER_TYPE_VERTEX},
+    [WINED3D_PUSH_CONSTANTS_PS_I]       = {sizeof(struct wined3d_ivec4), WINED3D_MAX_CONSTS_I,    WINED3D_SHADER_TYPE_PIXEL},
+    [WINED3D_PUSH_CONSTANTS_VS_B]       = {sizeof(BOOL),                 WINED3D_MAX_CONSTS_B,    WINED3D_SHADER_TYPE_VERTEX},
+    [WINED3D_PUSH_CONSTANTS_PS_B]       = {sizeof(BOOL),                 WINED3D_MAX_CONSTS_B,    WINED3D_SHADER_TYPE_PIXEL},
+    [WINED3D_PUSH_CONSTANTS_VS_FFP]     = {1, sizeof(struct wined3d_ffp_vs_constants),            WINED3D_SHADER_TYPE_VERTEX},
+    [WINED3D_PUSH_CONSTANTS_PS_FFP]     = {1, sizeof(struct wined3d_ffp_ps_constants),            WINED3D_SHADER_TYPE_PIXEL},
 };
 
 static bool prepare_push_constant_buffer(struct wined3d_device_context *context, enum wined3d_push_constants type)
@@ -2182,13 +2181,6 @@ static bool prepare_push_constant_buffer(struct wined3d_device_context *context,
     {
         ERR("Failed to create push constant buffer, hr %#lx.\n", hr);
         return false;
-    }
-
-    if (gpu)
-    {
-        struct wined3d_constant_buffer_state state = {.buffer = device->push_constants[type], .size = desc.byte_width};
-
-        wined3d_device_context_emit_set_constant_buffers(context, info->shader_type, info->shader_binding, 1, &state);
     }
 
     return true;
@@ -3073,6 +3065,20 @@ static void wined3d_cs_st_finish(struct wined3d_device_context *context, enum wi
 {
 }
 
+static void get_map_pitch(const struct wined3d_format *format, const struct wined3d_box *box,
+        struct wined3d_map_desc *map_desc, size_t *size)
+{
+    unsigned int height = box->bottom - box->top;
+    unsigned int width = box->right - box->left;
+    unsigned int depth = box->back - box->front;
+
+    wined3d_format_calculate_pitch(format, 1, width, height, &map_desc->row_pitch, &map_desc->slice_pitch);
+
+    *size = (depth - 1) * map_desc->slice_pitch
+            + ((height - 1) / format->block_height) * map_desc->row_pitch
+            + ((width + format->block_width - 1) / format->block_width) * format->block_byte_count;
+}
+
 static bool wined3d_cs_map_upload_bo(struct wined3d_device_context *context, struct wined3d_resource *resource,
         unsigned int sub_resource_idx, struct wined3d_map_desc *map_desc, const struct wined3d_box *box, uint32_t flags)
 {
@@ -3163,12 +3169,7 @@ static bool wined3d_cs_map_upload_bo(struct wined3d_device_context *context, str
         return true;
     }
 
-    wined3d_format_calculate_pitch(format, 1, box->right - box->left,
-            box->bottom - box->top, &map_desc->row_pitch, &map_desc->slice_pitch);
-
-    size = (box->back - box->front - 1) * map_desc->slice_pitch
-            + ((box->bottom - box->top - 1) / format->block_height) * map_desc->row_pitch
-            + ((box->right - box->left + format->block_width - 1) / format->block_width) * format->block_byte_count;
+    get_map_pitch(format, box, map_desc, &size);
 
     if (!(map_desc->data = malloc(size)))
     {
@@ -4267,12 +4268,7 @@ static bool wined3d_deferred_context_map_upload_bo(struct wined3d_device_context
     uint8_t *sysmem;
     size_t size;
 
-    wined3d_format_calculate_pitch(format, 1, box->right - box->left,
-            box->bottom - box->top, &map_desc->row_pitch, &map_desc->slice_pitch);
-
-    size = (box->back - box->front - 1) * map_desc->slice_pitch
-            + ((box->bottom - box->top - 1) / format->block_height) * map_desc->row_pitch
-            + ((box->right - box->left + format->block_width - 1) / format->block_width) * format->block_byte_count;
+    get_map_pitch(format, box, map_desc, &size);
 
     if (!(flags & WINED3D_MAP_WRITE))
     {

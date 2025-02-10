@@ -8193,6 +8193,7 @@ static void spirv_compiler_emit_comparison_instruction(struct spirv_compiler *co
     const struct vkd3d_shader_dst_param *dst = instruction->dst;
     const struct vkd3d_shader_src_param *src = instruction->src;
     uint32_t src0_id, src1_id, type_id, result_id;
+    uint32_t write_mask = dst->write_mask;
     unsigned int component_count;
     SpvOp op;
 
@@ -8223,8 +8224,21 @@ static void spirv_compiler_emit_comparison_instruction(struct spirv_compiler *co
 
     component_count = vsir_write_mask_component_count(dst->write_mask);
 
-    src0_id = spirv_compiler_emit_load_src(compiler, &src[0], dst->write_mask);
-    src1_id = spirv_compiler_emit_load_src(compiler, &src[1], dst->write_mask);
+    switch (instruction->opcode)
+    {
+        case VKD3DSIH_DEQO:
+        case VKD3DSIH_DGEO:
+        case VKD3DSIH_DLT:
+        case VKD3DSIH_DNE:
+            write_mask = vkd3d_write_mask_from_component_count(component_count);
+            break;
+
+        default:
+            break;
+    }
+
+    src0_id = spirv_compiler_emit_load_src(compiler, &src[0], write_mask);
+    src1_id = spirv_compiler_emit_load_src(compiler, &src[1], write_mask);
 
     type_id = vkd3d_spirv_get_type_id(builder, VKD3D_SHADER_COMPONENT_BOOL, component_count);
     result_id = vkd3d_spirv_build_op_tr2(builder, &builder->function_stream,

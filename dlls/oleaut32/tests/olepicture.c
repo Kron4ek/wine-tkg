@@ -303,7 +303,7 @@ test_pic(const unsigned char *imgdata, unsigned int imgsize)
 	ok (hres == S_OK, "createstreamonhglobal failed? doubt it... hres 0x%08lx\n", hres);
 
 	memset(&seekto,0,sizeof(seekto));
-	hres = IStream_Seek(stream,seekto,SEEK_CUR,&newpos1);
+	hres = IStream_Seek(stream, seekto, STREAM_SEEK_CUR, &newpos1);
 	ok (hres == S_OK, "istream seek failed? doubt it... hres 0x%08lx\n", hres);
 	test_pic_with_stream(stream, imgsize);
 	
@@ -334,7 +334,7 @@ test_pic(const unsigned char *imgdata, unsigned int imgsize)
 		ok (hres == S_OK, "createstreamonhglobal failed? doubt it... hres 0x%08lx\n", hres);
 
 		memset(&seekto,0,sizeof(seekto));
-		hres = IStream_Seek(stream,seekto,SEEK_CUR,&newpos1);
+		hres = IStream_Seek(stream, seekto, STREAM_SEEK_CUR, &newpos1);
 		ok (hres == S_OK, "istream seek failed? doubt it... hres 0x%08lx\n", hres);
 		test_pic_with_stream(stream, imgsize);
 	
@@ -371,7 +371,7 @@ static void test_empty_image(void) {
 	ok (hres == S_OK, "CreatestreamOnHGlobal failed? doubt it... hres 0x%08lx\n", hres);
 
 	memset(&seekto,0,sizeof(seekto));
-	hres = IStream_Seek(stream,seekto,SEEK_CUR,&newpos1);
+	hres = IStream_Seek(stream, seekto, STREAM_SEEK_CUR, &newpos1);
 	ok (hres == S_OK, "istream seek failed? doubt it... hres 0x%08lx\n", hres);
 
 	pvObj = NULL;
@@ -418,7 +418,7 @@ static void test_empty_image_2(void) {
 
 	memset(&seekto,0,sizeof(seekto));
 	seekto.LowPart = 42;
-	hres = IStream_Seek(stream,seekto,SEEK_CUR,&newpos1);
+	hres = IStream_Seek(stream, seekto, STREAM_SEEK_CUR, &newpos1);
 	ok (hres == S_OK, "istream seek failed? doubt it... hres 0x%08lx\n", hres);
 
 	pvObj = NULL;
@@ -1251,7 +1251,7 @@ static void test_load_save_bmp(void)
     ok(size == -1, "expected -1, got %ld\n", size);
 
     offset.QuadPart = 0;
-    hr = IStream_Seek(dst_stream, offset, SEEK_SET, NULL);
+    hr = IStream_Seek(dst_stream, offset, STREAM_SEEK_SET, NULL);
     ok(hr == S_OK, "IStream_Seek %#lx\n", hr);
 
     hr = IPicture_QueryInterface(pic, &IID_IPersistStream, (void **)&src_stream);
@@ -1334,7 +1334,7 @@ static void test_load_save_icon(void)
     ok(size == -1, "expected -1, got %ld\n", size);
 
     offset.QuadPart = 0;
-    hr = IStream_Seek(dst_stream, offset, SEEK_SET, NULL);
+    hr = IStream_Seek(dst_stream, offset, STREAM_SEEK_SET, NULL);
     ok(hr == S_OK, "IStream_Seek %#lx\n", hr);
 
     hr = IPicture_QueryInterface(pic, &IID_IPersistStream, (void **)&src_stream);
@@ -1447,7 +1447,7 @@ static void test_load_save_empty_picture(void)
 
     /* first with statable and seekable stream */
     offset.QuadPart = 0;
-    hr = IStream_Seek(dst_stream, offset, SEEK_SET, NULL);
+    hr = IStream_Seek(dst_stream, offset, STREAM_SEEK_SET, NULL);
     ok(hr == S_OK, "IStream_Seek %#lx\n", hr);
 
     pic = NULL;
@@ -1574,7 +1574,7 @@ static void test_load_save_dib(void)
         ok(size == -1, "expected -1, got %ld\n", size);
 
         offset.QuadPart = 0;
-        hr = IStream_Seek(dst_stream, offset, SEEK_SET, NULL);
+        hr = IStream_Seek(dst_stream, offset, STREAM_SEEK_SET, NULL);
         ok(hr == S_OK, "IStream_Seek %#lx\n", hr);
 
         hr = IPicture_QueryInterface(pic, &IID_IPersistStream, (void **)&src_stream);

@@ -49,7 +49,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(exec);
 typedef UINT_PTR (*SHELL_ExecuteW32)(const WCHAR *lpCmd, WCHAR *env, BOOL shWait,
 			    const SHELLEXECUTEINFOW *sei, LPSHELLEXECUTEINFOW sei_out);
 extern BOOL WINAPI PathResolveW(void *path, const WCHAR **paths, DWORD flags);
-extern BOOL WINAPI PathFileExistsDefExtW(LPWSTR lpszPath,DWORD dwWhich);
 
 static inline BOOL isSpace(WCHAR c)
 {
@@ -287,7 +286,7 @@ static HRESULT SHELL_GetPathFromIDListForExecuteW(LPCITEMIDLIST pidl, LPWSTR psz
 	hr = IShellFolder_GetDisplayNameOf(desktop, pidl, SHGDN_FORPARSING, &strret);
 
 	if (SUCCEEDED(hr))
-	    StrRetToStrNW(pszPath, uOutSize, &strret, pidl);
+	    StrRetToBufW(&strret, pidl, pszPath, uOutSize);
 
 	IShellFolder_Release(desktop);
     }

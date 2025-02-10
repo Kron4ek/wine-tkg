@@ -1600,15 +1600,6 @@ BOOL WINAPI DrawIcon( HDC hdc, INT x, INT y, HICON hIcon )
 }
 
 /***********************************************************************
- *		GetClipCursor (USER32.@)
- */
-BOOL WINAPI DECLSPEC_HOTPATCH GetClipCursor( RECT *rect )
-{
-    return NtUserGetClipCursor( rect );
-}
-
-
-/***********************************************************************
  *		SetSystemCursor (USER32.@)
  */
 BOOL WINAPI SetSystemCursor(HCURSOR hcur, DWORD id)

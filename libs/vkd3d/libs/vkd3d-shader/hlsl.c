@@ -93,7 +93,7 @@ char *hlsl_sprintf_alloc(struct hlsl_ctx *ctx, const char *fmt, ...)
     return ret;
 }
 
-bool hlsl_add_var(struct hlsl_ctx *ctx, struct hlsl_ir_var *decl, bool local_var)
+void hlsl_add_var(struct hlsl_ctx *ctx, struct hlsl_ir_var *decl)
 {
     struct hlsl_scope *scope = ctx->cur_scope;
     struct hlsl_ir_var *var;
@@ -103,21 +103,16 @@ bool hlsl_add_var(struct hlsl_ctx *ctx, struct hlsl_ir_var *decl, bool local_var
         LIST_FOR_EACH_ENTRY(var, &scope->vars, struct hlsl_ir_var, scope_entry)
         {
             if (var->name && !strcmp(decl->name, var->name))
-                return false;
-        }
-        if (local_var && scope->upper->upper == ctx->globals)
-        {
-            /* Check whether the variable redefines a function parameter. */
-            LIST_FOR_EACH_ENTRY(var, &scope->upper->vars, struct hlsl_ir_var, scope_entry)
             {
-                if (var->name && !strcmp(decl->name, var->name))
-                    return false;
+                hlsl_error(ctx, &decl->loc, VKD3D_SHADER_ERROR_HLSL_REDEFINED,
+                        "Identifier \"%s\" was already declared in this scope.", var->name);
+                hlsl_note(ctx, &var->loc, VKD3D_SHADER_LOG_ERROR, "\"%s\" was previously declared here.", var->name);
+                break;
             }
         }
     }
 
     list_add_tail(&scope->vars, &decl->scope_entry);
-    return true;
 }
 
 struct hlsl_ir_var *hlsl_get_var(struct hlsl_scope *scope, const char *name)
@@ -295,6 +290,12 @@ bool hlsl_type_is_shader(const struct hlsl_type *type)
             return false;
     }
     return false;
+}
+
+bool hlsl_type_is_patch_array(const struct hlsl_type *type)
+{
+    return type->class == HLSL_CLASS_ARRAY && (type->e.array.array_type == HLSL_ARRAY_PATCH_INPUT
+            || type->e.array.array_type == HLSL_ARRAY_PATCH_OUTPUT);
 }
 
 /* Only intended to be used for derefs (after copies have been lowered to components or vectors) or
@@ -891,7 +892,8 @@ struct hlsl_type *hlsl_get_element_type_from_path_index(struct hlsl_ctx *ctx, co
     }
 }
 
-struct hlsl_type *hlsl_new_array_type(struct hlsl_ctx *ctx, struct hlsl_type *basic_type, unsigned int array_size)
+struct hlsl_type *hlsl_new_array_type(struct hlsl_ctx *ctx, struct hlsl_type *basic_type,
+        unsigned int array_size, enum hlsl_array_type array_type)
 {
     struct hlsl_type *type;
 
@@ -902,6 +904,7 @@ struct hlsl_type *hlsl_new_array_type(struct hlsl_ctx *ctx, struct hlsl_type *ba
     type->modifiers = basic_type->modifiers;
     type->e.array.elements_count = array_size;
     type->e.array.type = basic_type;
+    type->e.array.array_type = array_type;
     type->sampler_dim = basic_type->sampler_dim;
     hlsl_type_calculate_reg_size(ctx, type);
 
@@ -1172,6 +1175,7 @@ bool hlsl_types_are_equal(const struct hlsl_type *t1, const struct hlsl_type *t2
 
         case HLSL_CLASS_ARRAY:
             return t1->e.array.elements_count == t2->e.array.elements_count
+                    && t1->e.array.array_type == t2->e.array.array_type
                     && hlsl_types_are_equal(t1->e.array.type, t2->e.array.type);
 
         case HLSL_CLASS_TECHNIQUE:
@@ -1251,6 +1255,7 @@ struct hlsl_type *hlsl_type_clone(struct hlsl_ctx *ctx, struct hlsl_type *old,
                 return NULL;
             }
             type->e.array.elements_count = old->e.array.elements_count;
+            type->e.array.array_type = old->e.array.array_type;
             break;
 
         case HLSL_CLASS_STRUCT:
@@ -2833,22 +2838,32 @@ static void hlsl_dump_type(struct vkd3d_string_buffer *buffer, const struct hlsl
             return;
 
         case HLSL_CLASS_ARRAY:
-        {
-            const struct hlsl_type *t;
-
-            for (t = type; t->class == HLSL_CLASS_ARRAY; t = t->e.array.type)
-                ;
-
-            hlsl_dump_type(buffer, t);
-            for (t = type; t->class == HLSL_CLASS_ARRAY; t = t->e.array.type)
+            if (hlsl_type_is_patch_array(type))
             {
-                if (t->e.array.elements_count == HLSL_ARRAY_ELEMENTS_COUNT_IMPLICIT)
-                    vkd3d_string_buffer_printf(buffer, "[]");
+                if (type->e.array.array_type == HLSL_ARRAY_PATCH_INPUT)
+                    vkd3d_string_buffer_printf(buffer, "InputPatch<");
                 else
-                    vkd3d_string_buffer_printf(buffer, "[%u]", t->e.array.elements_count);
+                    vkd3d_string_buffer_printf(buffer, "OutputPatch<");
+                hlsl_dump_type(buffer, type->e.array.type);
+                vkd3d_string_buffer_printf(buffer, ", %u>", type->e.array.elements_count);
+            }
+            else
+            {
+                const struct hlsl_type *t;
+
+                for (t = type; t->class == HLSL_CLASS_ARRAY; t = t->e.array.type)
+                    ;
+
+                hlsl_dump_type(buffer, t);
+                for (t = type; t->class == HLSL_CLASS_ARRAY; t = t->e.array.type)
+                {
+                    if (t->e.array.elements_count == HLSL_ARRAY_ELEMENTS_COUNT_IMPLICIT)
+                        vkd3d_string_buffer_printf(buffer, "[]");
+                    else
+                        vkd3d_string_buffer_printf(buffer, "[%u]", t->e.array.elements_count);
+                }
             }
             return;
-        }
 
         case HLSL_CLASS_STRUCT:
             vkd3d_string_buffer_printf(buffer, "<anonymous struct>");
@@ -4561,6 +4576,7 @@ static bool hlsl_ctx_init(struct hlsl_ctx *ctx, const struct vkd3d_shader_compil
     ctx->output_control_point_count = UINT_MAX;
     ctx->output_primitive = 0;
     ctx->partitioning = 0;
+    ctx->input_control_point_count = UINT_MAX;
 
     return true;
 }

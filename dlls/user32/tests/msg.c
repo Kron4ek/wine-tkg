@@ -575,9 +575,17 @@ static const struct message WmShowRestoreMaxOverlappedSeq[] = {
     { WM_GETTITLEBARINFOEX, sent|optional },
     { WM_NCPAINT, sent|beginpaint|optional },
     { WM_ERASEBKGND, sent|beginpaint|optional },
-    { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|msg_todo, 0, 0 },
+    { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam, 0, 0 },
     { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|optional, 0, 0 }, /* Win7 seems to send this twice. */
     { WM_SYNCPAINT, sent|optional },
+    { WM_WINDOWPOSCHANGING, sent|optional|wine_only },
+    { WM_WINDOWPOSCHANGED, sent|optional|wine_only },
+    { WM_MOVE, sent|defwinproc|optional|wine_only },
+    { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|optional|wine_only, 0, 0 },
+    { WM_WINDOWPOSCHANGING, sent|optional|wine_only },
+    { WM_WINDOWPOSCHANGED, sent|optional|wine_only },
+    { WM_MOVE, sent|defwinproc|optional|wine_only },
+    { EVENT_OBJECT_LOCATIONCHANGE, winevent_hook|wparam|lparam|optional|wine_only, 0, 0 },
     { 0 }
 };
 /* ShowWindow(SW_RESTORE) for a not visible minimized overlapped window */
@@ -632,6 +640,7 @@ static const struct message WmShowRestoreMinOverlappedSeq[] = {
     { WM_ACTIVATE, sent|wparam, 1 },
     { WM_GETTEXT, sent|optional },
     { WM_PAINT, sent|optional },
+    { WM_PAINT, sent|optional|wine_only },
     { WM_GETTITLEBARINFOEX, sent|optional },
     { WM_NCPAINT, sent|beginpaint|optional },
     { WM_ERASEBKGND, sent|beginpaint|optional },
@@ -2329,7 +2338,7 @@ static const struct message WmTrackPopupMenuAbort[] = {
     { 0 }
 };
 
-static BOOL after_end_dialog, test_def_id, paint_loop_done;
+static BOOL after_end_dialog, test_def_id, paint_loop_done, wm_copydata_done;
 static int sequence_cnt, sequence_size;
 static struct recvd_message* sequence;
 static int log_all_parent_messages;
@@ -5648,7 +5657,7 @@ static void test_messages(void)
     {
         ShowWindow(hwnd, SW_RESTORE);
         flush_events();
-        ok_sequence(WmShowRestoreMaxOverlappedSeq, "ShowWindow(SW_RESTORE):overlapped", TRUE);
+        ok_sequence(WmShowRestoreMaxOverlappedSeq, "ShowWindow(SW_RESTORE):overlapped", FALSE);
         flush_sequence();
     }
 
@@ -11319,6 +11328,51 @@ static LRESULT WINAPI HotkeyMsgCheckProcA(HWND hwnd, UINT message, WPARAM wParam
     return ret;
 }
 
+static LRESULT WINAPI WmCopyDataProcA(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg)
+    {
+        case WM_COPYDATA:
+        {
+            static const DWORD expected_data_sizes[3] = {0, 64, 64 * 1024 * 1024};
+            static ULONG_PTR expected_dwdata = 0;
+            COPYDATASTRUCT *cds = (COPYDATASTRUCT *)lp;
+            unsigned char *ptr;
+            unsigned int i;
+            BOOL matched;
+
+            if (cds->dwData > 2)
+                return FALSE;
+
+            ok(!wm_copydata_done, "Got unexpected wm_copydata_done.\n");
+            ok(wp == (WPARAM)GetDesktopWindow(), "Got unexpected wp.\n");
+            ok(cds->dwData == expected_dwdata, "Got unexpected dwData %Id.\n", cds->dwData);
+            expected_dwdata++;
+            ok(cds->cbData == expected_data_sizes[cds->dwData], "Got unexpected cbData %#lx.\n", cds->cbData);
+
+            if (cds->dwData)
+                ok(!!cds->lpData, "Got unexpected lpData %p.\n", cds->lpData);
+            else
+                ok(!cds->lpData, "Got unexpected lpData %p.\n", cds->lpData);
+
+            matched = TRUE;
+            for (i = 0, ptr = cds->lpData; i < cds->cbData; i++, ptr++)
+            {
+                if (*ptr != i % 0xff)
+                {
+                    matched = FALSE;
+                    break;
+                }
+            }
+            ok(matched, "Got unexpected content.\n");
+            if (cds->dwData == 2)
+                wm_copydata_done = TRUE;
+            return TRUE;
+        }
+    }
+    return DefWindowProcA(hwnd,msg,wp,lp);
+}
+
 static void register_classes(void)
 {
     WNDCLASSA cls;
@@ -11366,6 +11420,10 @@ static void register_classes(void)
 
     cls.lpfnWndProc = PaintLoopProcA;
     cls.lpszClassName = "PaintLoopWindowClass";
+    register_class(&cls);
+
+    cls.lpfnWndProc = WmCopyDataProcA;
+    cls.lpszClassName = "WmCopyDataWindowClass";
     register_class(&cls);
 
     cls.style = CS_NOCLOSE;
@@ -18823,7 +18881,7 @@ static void test_WaitForInputIdle( char *argv0 )
     {
         ResetEvent( start_event );
         ResetEvent( end_event );
-        sprintf( path, "%s msg %u", argv0, i );
+        sprintf( path, "%s msg do_wait_idle_child %u", argv0, i );
         ret = CreateProcessA( NULL, path, NULL, NULL, TRUE, 0, NULL, NULL, &startup, &pi );
         ok( ret, "CreateProcess '%s' failed err %lu.\n", path, GetLastError() );
         if (ret)
@@ -20816,6 +20874,83 @@ static void test_hook_cleanup(void)
     DestroyWindow( d.hwnd );
 }
 
+static void test_WM_COPYDATA_child(void)
+{
+    HWND hwnd;
+    MSG msg;
+
+    wm_copydata_done = FALSE;
+    hwnd = CreateWindowA("WmCopyDataWindowClass", "WmCopyDataWindow",
+                         WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, 100, 100, 0, 0, 0, NULL);
+    ok(!!hwnd, "CreateWindowA failed, error %lu\n", GetLastError());
+    while (!wm_copydata_done)
+    {
+        if (PeekMessageA(&msg, 0, 0, 0, 1))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+    }
+    DestroyWindow(hwnd);
+}
+
+static void test_WM_COPYDATA(char **argv)
+{
+    static const int LARGE_DATA_SIZE = 64 * 1024 * 1024;
+    unsigned char *ptr, *buffer;
+    unsigned int timeout = 0, i;
+    PROCESS_INFORMATION pi;
+    char cmdline[MAX_PATH];
+    STARTUPINFOA si = {0};
+    COPYDATASTRUCT cds;
+    HWND hwnd = NULL;
+    BOOL ret;
+
+    sprintf(cmdline, "%s %s test_WM_COPYDATA_child", argv[0], argv[1]);
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    ok(ret, "CreateProcessA failed, error %lu\n", GetLastError());
+
+    do
+    {
+        hwnd = FindWindowA("WmCopyDataWindowClass", "WmCopyDataWindow");
+        Sleep(100);
+        timeout += 100;
+    } while (!hwnd && timeout < 1000);
+    ok(!!hwnd, "Failed to find test window.\n");
+
+    buffer = malloc(LARGE_DATA_SIZE);
+    ok(!!buffer, "Failed to allocate memory.\n");
+    for (i = 0, ptr = buffer; i < LARGE_DATA_SIZE; i++, ptr++)
+        *ptr = i % 0xff;
+
+    /* Test a WM_COPYDATA message with no data */
+    cds.dwData = 0;
+    cds.cbData = 0;
+    cds.lpData = NULL;
+    ret = SendMessageA(hwnd, WM_COPYDATA, (WPARAM)GetDesktopWindow(), (LPARAM)&cds);
+    ok(ret, "WM_COPYDATA failed.\n");
+
+    /* Test a WM_COPYDATA message with a small amount of data */
+    cds.dwData = 1;
+    cds.cbData = 64;
+    cds.lpData = buffer;
+    ret = SendMessageA(hwnd, WM_COPYDATA, (WPARAM)GetDesktopWindow(), (LPARAM)&cds);
+    ok(ret, "WM_COPYDATA failed.\n");
+
+    /* Test a WM_COPYDATA message with a large amount of data */
+    cds.dwData = 2;
+    cds.cbData = LARGE_DATA_SIZE;
+    cds.lpData = buffer;
+    ret = SendMessageA(hwnd, WM_COPYDATA, (WPARAM)GetDesktopWindow(), (LPARAM)&cds);
+    ok(ret, "WM_COPYDATA failed.\n");
+
+    free(buffer);
+    ret = WaitForSingleObject(pi.hProcess, 1000);
+    ok(!ret, "WaitForSingleObject failed, error %ld.\n", GetLastError());
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+}
+
 START_TEST(msg)
 {
     char **test_argv;
@@ -20823,12 +20958,19 @@ START_TEST(msg)
     BOOL (WINAPI *pIsWinEventHookInstalled)(DWORD)= 0;/*GetProcAddress(user32, "IsWinEventHookInstalled");*/
     int argc;
 
-    argc = winetest_get_mainargs( &test_argv );
-    if (argc >= 3)
+    register_classes();
+
+    argc = winetest_get_mainargs(&test_argv);
+    if (argc == 3 && !strcmp(test_argv[2], "test_WM_COPYDATA_child"))
+    {
+        test_WM_COPYDATA_child();
+        return;
+    }
+    else if (argc >= 4 && !strcmp(test_argv[2], "do_wait_idle_child"))
     {
         unsigned int arg;
         /* Child process. */
-        sscanf (test_argv[2], "%d", (unsigned int *) &arg);
+        sscanf (test_argv[3], "%d", (unsigned int *) &arg);
         do_wait_idle_child( arg );
         return;
     }
@@ -20836,8 +20978,6 @@ START_TEST(msg)
     InitializeCriticalSection( &sequence_cs );
     init_procs();
     ImmDisableIME(0);
-
-    register_classes();
 
     if (pSetWinEventHook)
     {
@@ -20945,6 +21085,7 @@ START_TEST(msg)
      * which rely on active/foreground windows being correct.
      */
     test_SetForegroundWindow();
+    test_WM_COPYDATA(test_argv);
 
     UnhookWindowsHookEx(hCBT_hook);
     if (pUnhookWinEvent && hEvent_hook)

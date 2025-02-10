@@ -54,6 +54,9 @@
 #ifdef HAVE_SYS_RESOURCE_H
 # include <sys/resource.h>
 #endif
+#ifdef HAVE_SYS_AUXV_H
+# include <sys/auxv.h>
+#endif
 #ifdef __APPLE__
 # include <CoreFoundation/CoreFoundation.h>
 # include <IOKit/IOKitLib.h>
@@ -1691,6 +1694,8 @@ static WORD append_smbios_boot_info( struct smbios_buffer *buf )
 #ifdef __aarch64__
 #ifdef linux
 
+#include <asm/hwcap.h>
+
 static DWORD get_core_id_regs_arm64( struct smbios_wine_id_reg_value_arm64 *regs,
                                      WORD logical_thread_id )
 {
@@ -1707,6 +1712,12 @@ static DWORD get_core_id_regs_arm64( struct smbios_wine_id_reg_value_arm64 *regs
         fscanf( fp, "%lx", &value );
         fclose( fp );
         regs[regidx++] = (struct smbios_wine_id_reg_value_arm64){ 0x4000, value };
+    }
+
+    if (!(getauxval(AT_HWCAP) & HWCAP_CPUID))
+    {
+        WARN( "Skipping ID register population as kernel is missing emulation support.\n" );
+        return regidx;
     }
 
 #define STR(a) #a
@@ -3652,6 +3663,21 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
 
     case SystemCpuSetInformation:  /* 175 */
         return NtQuerySystemInformationEx(class, NULL, 0, info, size, ret_size);
+
+    case SystemLeapSecondInformation:  /* 206 */
+    {
+        SYSTEM_LEAP_SECOND_INFORMATION *leap = info;
+
+        len = sizeof(*leap);
+        if (size >= len)
+        {
+            FIXME( "SystemLeapSecondInformation - stub\n" );
+            leap->Enabled = TRUE;
+            leap->Flags   = 0;
+        }
+        else ret = STATUS_INFO_LENGTH_MISMATCH;
+        break;
+    }
 
     /* Wine extensions */
 

@@ -3070,7 +3070,7 @@ static bool get_insidetessfactor_sysval_semantic(enum vkd3d_shader_sysval_semant
 
 bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *sysval_semantic,
         const struct vkd3d_shader_version *version, bool semantic_compat_mapping, enum vkd3d_tessellator_domain domain,
-        const char *semantic_name, unsigned int semantic_idx, bool output, bool is_patch_constant_func)
+        const char *semantic_name, unsigned int semantic_idx, bool output, bool is_patch_constant_func, bool is_patch)
 {
     unsigned int i;
 
@@ -3131,7 +3131,21 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
         {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
         {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
     };
-    bool needs_compat_mapping = ascii_strncasecmp(semantic_name, "sv_", 3);
+    bool has_sv_prefix = !ascii_strncasecmp(semantic_name, "sv_", 3);
+
+    if (is_patch)
+    {
+        VKD3D_ASSERT(!output);
+
+        if (!ascii_strcasecmp(semantic_name, "sv_position")
+                || (semantic_compat_mapping && !ascii_strcasecmp(semantic_name, "position")))
+            *sysval_semantic = VKD3D_SHADER_SV_POSITION;
+        else if (has_sv_prefix)
+            return false;
+        else
+            *sysval_semantic = VKD3D_SHADER_SV_NONE;
+        return true;
+    }
 
     if (is_patch_constant_func)
     {
@@ -3173,7 +3187,7 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
     {
         if (!ascii_strcasecmp(semantic_name, semantics[i].name)
                 && output == semantics[i].output
-                && (semantic_compat_mapping == needs_compat_mapping || !needs_compat_mapping)
+                && (semantic_compat_mapping || has_sv_prefix)
                 && version->type == semantics[i].shader_type)
         {
             *sysval_semantic = semantics[i].semantic;
@@ -3181,7 +3195,7 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
         }
     }
 
-    if (!needs_compat_mapping)
+    if (has_sv_prefix)
         return false;
 
     *sysval_semantic = VKD3D_SHADER_SV_NONE;

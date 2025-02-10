@@ -104,6 +104,7 @@ if                      {return KW_IF;                  }
 in                      {return KW_IN;                  }
 inline                  {return KW_INLINE;              }
 inout                   {return KW_INOUT;               }
+InputPatch              {return KW_INPUTPATCH;          }
 LineStream              {return KW_LINESTREAM;          }
 linear                  {return KW_LINEAR;              }
 matrix                  {return KW_MATRIX;              }
@@ -112,6 +113,7 @@ nointerpolation         {return KW_NOINTERPOLATION;     }
 noperspective           {return KW_NOPERSPECTIVE;       }
 NULL                    {return KW_NULL;                }
 out                     {return KW_OUT;                 }
+OutputPatch             {return KW_OUTPUTPATCH;         }
 packoffset              {return KW_PACKOFFSET;          }
 pass                    {return KW_PASS;                }
 PixelShader             {return KW_PIXELSHADER;         }

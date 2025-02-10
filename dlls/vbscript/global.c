@@ -2581,10 +2581,133 @@ static HRESULT Global_Filter(BuiltinDisp *This, VARIANT *arg, unsigned args_cnt,
     return E_NOTIMPL;
 }
 
-static HRESULT Global_Join(BuiltinDisp *This, VARIANT *arg, unsigned args_cnt, VARIANT *res)
+static HRESULT Global_Join(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, VARIANT *res)
 {
-    FIXME("\n");
-    return E_NOTIMPL;
+    BSTR delimiter = NULL, output = NULL, str = NULL;
+    BOOL free_delimiter = FALSE;
+    SAFEARRAY *sa;
+    HRESULT hres;
+    LONG lbound, ubound;
+    VARIANT *data;
+    UINT total_len = 0, delimiter_len = 0, str_len;
+    WCHAR *output_ptr;
+    INT i;
+
+    assert(1 <= args_cnt && args_cnt <= 2);
+
+    switch(V_VT(args)) {
+        case VT_NULL:
+            return MAKE_VBSERROR(VBSE_ILLEGAL_NULL_USE);
+        case VT_DISPATCH:
+            return MAKE_VBSERROR(VBSE_OLE_NO_PROP_OR_METHOD);
+        case VT_VARIANT|VT_ARRAY:
+            sa = V_ARRAY(args);
+            break;
+        case VT_VARIANT|VT_ARRAY|VT_BYREF:
+            sa = *V_ARRAYREF(args);
+            break;
+        default:
+            return MAKE_VBSERROR(VBSE_TYPE_MISMATCH);
+    }
+
+    if (args_cnt == 2) {
+        if (V_VT(args + 1) == VT_NULL)
+            return MAKE_VBSERROR(VBSE_ILLEGAL_NULL_USE);
+        if (V_VT(args + 1) != VT_BSTR) {
+            hres = to_string(args + 1, &delimiter);
+            if (FAILED(hres))
+                return hres;
+        } else {
+            delimiter = V_BSTR(args + 1);
+        }
+    } else {
+        delimiter = SysAllocString(L" ");
+        if (!delimiter)
+            return E_OUTOFMEMORY;
+        free_delimiter = TRUE;
+    }
+
+    if (SafeArrayGetDim(sa) != 1) {
+        hres = MAKE_VBSERROR(VBSE_TYPE_MISMATCH);
+        goto cleanup;
+    }
+
+    hres = SafeArrayGetLBound(sa, 1, &lbound);
+    if (FAILED(hres))
+        goto cleanup;
+
+    hres = SafeArrayGetUBound(sa, 1, &ubound);
+    if (FAILED(hres))
+        goto cleanup;
+
+    hres = SafeArrayAccessData(sa, (void**)&data);
+    if (FAILED(hres))
+        goto cleanup;
+
+    delimiter_len = SysStringLen(delimiter);
+
+    for (i = lbound; i <= ubound; i++) {
+        if (V_VT(&data[i]) != VT_BSTR) {
+            hres = to_string(&data[i], &str);
+            if (FAILED(hres))
+                goto cleanup_data;
+        } else {
+            str = V_BSTR(&data[i]);
+        }
+
+        total_len += SysStringLen(str);
+        if (i > lbound)
+            total_len += delimiter_len;
+
+        if (V_VT(&data[i]) != VT_BSTR)
+            SysFreeString(str);
+    }
+
+    output = SysAllocStringLen(NULL, total_len);
+    if (!output) {
+        hres = E_OUTOFMEMORY;
+        goto cleanup_data;
+    }
+
+    output_ptr = output;
+
+    for (i = lbound; i <= ubound; i++) {
+        if (V_VT(&data[i]) != VT_BSTR) {
+            hres = to_string(&data[i], &str);
+            if (FAILED(hres))
+                goto cleanup_output;
+        } else {
+            str = V_BSTR(&data[i]);
+        }
+
+        if (i > lbound) {
+            memcpy(output_ptr, delimiter, delimiter_len * sizeof(WCHAR));
+            output_ptr += delimiter_len;
+        }
+
+        str_len = SysStringLen(str);
+        memcpy(output_ptr, str, str_len * sizeof(WCHAR));
+        output_ptr += str_len;
+
+        if (V_VT(&data[i]) != VT_BSTR)
+            SysFreeString(str);
+    }
+
+    *output_ptr = L'\0';
+    SafeArrayUnaccessData(sa);
+    if (free_delimiter)
+        SysFreeString(delimiter);
+
+    return return_bstr(res, output);
+
+cleanup_output:
+    SysFreeString(output);
+cleanup_data:
+    SafeArrayUnaccessData(sa);
+cleanup:
+    if (free_delimiter)
+        SysFreeString(delimiter);
+    return hres;
 }
 
 static HRESULT Global_Split(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, VARIANT *res)
