@@ -127,7 +127,6 @@ struct vkd3d_vulkan_info
     bool KHR_draw_indirect_count;
     bool KHR_get_memory_requirements2;
     bool KHR_image_format_list;
-    bool KHR_maintenance2;
     bool KHR_maintenance3;
     bool KHR_portability_subset;
     bool KHR_push_descriptor;

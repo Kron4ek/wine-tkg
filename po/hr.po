@@ -538,7 +538,7 @@ msgstr "Detalji"
 
 #: dlls/comctl32/comctl32.rc:31 dlls/cryptui/cryptui.rc:235
 #: programs/regedit/regedit.rc:291 programs/taskmgr/taskmgr.rc:434
-#: programs/winedbg/winedbg.rc:61 programs/winedbg/winedbg.rc:76
+#: programs/winedbg/winedbg.rc:62 programs/winedbg/winedbg.rc:77
 #: programs/wordpad/wordpad.rc:180
 msgid "Close"
 msgstr "Zatvori"
@@ -8551,7 +8551,7 @@ msgstr "Cijela mreža"
 msgid "Sound Selection"
 msgstr "Izbor zvuka"
 
-#: dlls/msacm32/msacm32.rc:39 programs/winedbg/winedbg.rc:77
+#: dlls/msacm32/msacm32.rc:39 programs/winedbg/winedbg.rc:78
 msgid "&Save As..."
 msgstr "&Spremi kao..."
 
@@ -18977,6 +18977,40 @@ msgstr "Izvodi se"
 msgid "Task"
 msgstr "Zadatak"
 
+#: programs/timeout/timeout.rc:28
+msgid "Usage: timeout /T <timeout> [</NOBREAK>]\n"
+msgstr ""
+
+#: programs/timeout/timeout.rc:29
+#, fuzzy
+#| msgid "Invalid command line.\n"
+msgid "TIMEOUT: Bad command line\n"
+msgstr "Neispravna naredbena linija.\n"
+
+#: programs/timeout/timeout.rc:30
+msgid "waiting since %d sec. "
+msgstr ""
+
+#: programs/timeout/timeout.rc:31
+msgid "press CTRL+C..."
+msgstr ""
+
+#: programs/timeout/timeout.rc:32
+#, fuzzy
+#| msgid "Press any key to continue... "
+msgid "press a key to continue..."
+msgstr "Pritisnite bilo koju tipku za nastavak... "
+
+#: programs/timeout/timeout.rc:33
+msgid "ERROR: not possible to redirect input\n"
+msgstr ""
+
+#: programs/timeout/timeout.rc:34
+msgid ""
+"ERROR: Timeout value out of range or invalid number. Valid range is -1 to "
+"99999.\n"
+msgstr ""
+
 #: programs/uninstaller/uninstaller.rc:29
 msgid "Wine Application Uninstaller"
 msgstr "Wine deinstalacijski program"
@@ -19714,11 +19748,11 @@ msgstr ""
 "wineconsole: Pokretanje programa %s neuspjelo.\n"
 "Naredba nije valjana.\n"
 
-#: programs/winedbg/winedbg.rc:50 programs/winedbg/winedbg.rc:38
+#: programs/winedbg/winedbg.rc:51 programs/winedbg/winedbg.rc:38
 msgid "Program Error"
 msgstr "Greška programa"
 
-#: programs/winedbg/winedbg.rc:55
+#: programs/winedbg/winedbg.rc:56
 msgid ""
 "The program %s has encountered a serious problem and needs to close. We are "
 "sorry for the inconvenience."
@@ -19726,7 +19760,7 @@ msgstr ""
 "Program %s je naišao na ozbiljan problem i mora biti zatvoren. Ispričavamo "
 "se zbog neugodnosti."
 
-#: programs/winedbg/winedbg.rc:59
+#: programs/winedbg/winedbg.rc:60
 msgid ""
 "This can be caused by a problem in the program or a deficiency in Wine. You "
 "may want to check the <a href=\"https://appdb.winehq.org\">Application "
@@ -19736,15 +19770,15 @@ msgstr ""
 "<a href=\"https://appdb.winehq.org\">bazu aplikacija</a>za savjete o "
 "pokretanju ovog programa."
 
-#: programs/winedbg/winedbg.rc:62
+#: programs/winedbg/winedbg.rc:63
 msgid "Show &Details"
 msgstr "Pokaži &detalje"
 
-#: programs/winedbg/winedbg.rc:67
+#: programs/winedbg/winedbg.rc:68
 msgid "Program Error Details"
 msgstr "Detalji greške programa"
 
-#: programs/winedbg/winedbg.rc:74
+#: programs/winedbg/winedbg.rc:75
 msgid ""
 "If this problem is not present under Windows and has not been reported yet, "
 "you can save the detailed information to a file using the \"Save As\" "

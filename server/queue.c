@@ -837,8 +837,8 @@ static inline unsigned int get_unique_post_id(void)
     return id;
 }
 
-/* try to merge a WM_MOUSEMOVE message with the last in the list; return 1 if successful */
-static int merge_mousemove( struct thread_input *input, const struct message *msg )
+/* lookup an already queued mouse message that matches the message, window and type */
+static struct message *find_mouse_message( struct thread_input *input, const struct message *msg )
 {
     struct message *prev;
     struct list *ptr;
@@ -849,12 +849,45 @@ static int merge_mousemove( struct thread_input *input, const struct message *ms
         if (prev->msg >> 31) continue; /* ignore internal messages */
         if (prev->msg != WM_INPUT) break;
     }
-    if (!ptr) return 0;
-    if (prev->result) return 0;
-    if (prev->win && msg->win && prev->win != msg->win) return 0;
-    if (prev->msg != msg->msg) return 0;
-    if (prev->type != msg->type) return 0;
-    /* now we can merge it */
+    if (!ptr) return NULL;
+    if (prev->result) return NULL;
+    if (prev->win && msg->win && prev->win != msg->win) return NULL;
+    if (prev->msg != msg->msg) return NULL;
+    if (prev->type != msg->type) return NULL;
+    return prev;
+}
+
+/* try to merge a WM_MOUSEWHEEL message with the last in the list; return 1 if successful */
+static int merge_mousewheel( struct thread_input *input, const struct message *msg )
+{
+    struct message *prev;
+
+    if (!(prev = find_mouse_message( input, msg ))) return 0;
+    if (prev->x != msg->x || prev->y != msg->y) return 0; /* don't merge if cursor has moved */
+
+    prev->wparam += msg->wparam; /* accumulate wheel delta */
+    prev->lparam  = msg->lparam;
+    prev->x       = msg->x;
+    prev->y       = msg->y;
+    prev->time    = msg->time;
+    if (msg->type == MSG_HARDWARE && prev->data && msg->data)
+    {
+        struct hardware_msg_data *prev_data = prev->data;
+        struct hardware_msg_data *msg_data = msg->data;
+        prev_data->info = msg_data->info;
+    }
+    list_remove( &prev->entry );
+    list_add_tail( &input->msg_list, &prev->entry );
+    return 1;
+}
+
+/* try to merge a WM_MOUSEMOVE message with the last in the list; return 1 if successful */
+static int merge_mousemove( struct thread_input *input, const struct message *msg )
+{
+    struct message *prev;
+
+    if (!(prev = find_mouse_message( input, msg ))) return 0;
+
     prev->wparam  = msg->wparam;
     prev->lparam  = msg->lparam;
     prev->x       = msg->x;
@@ -866,8 +899,8 @@ static int merge_mousemove( struct thread_input *input, const struct message *ms
         struct hardware_msg_data *msg_data = msg->data;
         prev_data->info = msg_data->info;
     }
-    list_remove( ptr );
-    list_add_tail( &input->msg_list, ptr );
+    list_remove( &prev->entry );
+    list_add_tail( &input->msg_list, &prev->entry );
     return 1;
 }
 
@@ -899,6 +932,7 @@ static int merge_unique_message( struct thread_input *input, unsigned int messag
 /* try to merge a message with the messages in the list; return 1 if successful */
 static int merge_message( struct thread_input *input, const struct message *msg )
 {
+    if (msg->msg == WM_MOUSEWHEEL) return merge_mousewheel( input, msg );
     if (msg->msg == WM_MOUSEMOVE) return merge_mousemove( input, msg );
     if (msg->msg == WM_WINE_CLIPCURSOR) return merge_unique_message( input, WM_WINE_CLIPCURSOR, msg );
     if (msg->msg == WM_WINE_SETCURSOR) return merge_unique_message( input, WM_WINE_SETCURSOR, msg );
@@ -1862,7 +1896,7 @@ found:
     msg->msg       = WM_HOTKEY;
     msg->wparam    = hotkey->id;
     msg->lparam    = ((hotkey->vkey & 0xffff) << 16) | modifiers;
-    msg->unique_id = get_unique_post_id();
+    msg->unique_id = get_unique_hw_id();
 
     free( msg->data );
     msg->data      = NULL;
@@ -2770,11 +2804,15 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
                                  struct get_message_reply *reply )
 {
     struct thread_input *input = thread->queue->input;
+    const struct rawinput_device *device;
     struct thread *win_thread;
     struct list *ptr;
     user_handle_t win;
     int clear_bits, got_one = 0;
     unsigned int msg_code;
+    int no_legacy;
+
+    no_legacy = (device = thread->process->rawinput_mouse) && (device->flags & RIDEV_NOLEGACY);
 
     ptr = list_head( &input->msg_list );
     if (hw_id)
@@ -2800,6 +2838,12 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
         struct hardware_msg_data *data = msg->data;
 
         ptr = list_next( &input->msg_list, ptr );
+        if (no_legacy && msg->msg == WM_MOUSEMOVE && msg->type == MSG_HARDWARE)
+        {
+            list_remove( &msg->entry );
+            free_message( msg );
+            continue;
+        }
         win = find_hardware_message_window( input->desktop, input, msg, &msg_code, &win_thread );
         if (!win || !win_thread)
         {

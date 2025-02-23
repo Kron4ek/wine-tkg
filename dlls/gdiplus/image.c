@@ -4181,7 +4181,8 @@ static GpStatus decode_image_png(IStream* stream, GpImage **image)
         hr = IWICBitmapFrameDecode_GetPixelFormat(frame, &format);
         if (hr == S_OK)
         {
-            if (IsEqualGUID(&format, &GUID_WICPixelFormat8bppGray))
+            if (IsEqualGUID(&format, &GUID_WICPixelFormat8bppGray) ||
+                IsEqualGUID(&format, &GUID_WICPixelFormat64bppRGBA))
                 force_conversion = TRUE;
             else if ((IsEqualGUID(&format, &GUID_WICPixelFormat8bppIndexed) ||
                       IsEqualGUID(&format, &GUID_WICPixelFormat4bppIndexed) ||

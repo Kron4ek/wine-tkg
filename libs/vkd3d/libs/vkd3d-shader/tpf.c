@@ -1051,7 +1051,8 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
                     register_idx, register_count, write_mask, e->sysval_semantic);
             return;
         }
-        if ((io_masks[register_idx + i] & write_mask) != write_mask)
+        if ((io_masks[register_idx + i] & write_mask) != write_mask
+                && (io_masks[register_idx + i] & write_mask) != 0)
         {
             WARN("No matching declaration for index range base %u, count %u, mask %#x.\n",
                     register_idx, register_count, write_mask);

@@ -225,6 +225,7 @@ struct wined3d_d3d_info
     uint32_t shader_double_precision : 1;
     uint32_t shader_output_interpolation : 1;
     uint32_t viewport_array_index_any_shader : 1;
+    uint32_t simple_instancing : 1;
     uint32_t stencil_export : 1;
     /* If zero, only conditional NPOT textures are supported, via
      * WINED3D_GL_NORMALIZED_TEXRECT. */
@@ -4479,6 +4480,7 @@ extern enum wined3d_format_id pixelformat_for_depth(DWORD depth);
 #define WINED3D_FORMAT_ATTR_HEIGHT_SCALE            0x00000200
 #define WINED3D_FORMAT_ATTR_MAPPABLE                0x00000400
 #define WINED3D_FORMAT_ATTR_CAST_TO_BLOCK           0x00000800
+#define WINED3D_FORMAT_ATTR_PLANAR                  0x00001000
 
 /* Pixel format capabilities */
 #define WINED3D_FORMAT_CAP_POSTPIXELSHADER_BLENDING     0x00000001
@@ -4546,6 +4548,9 @@ struct wined3d_format
     UINT block_width;
     UINT block_height;
     UINT block_byte_count;
+
+    enum wined3d_format_id plane_formats[2];
+    unsigned int uv_width, uv_height;
 
     enum wined3d_ffp_emit_idx emit_idx;
 

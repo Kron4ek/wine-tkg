@@ -925,9 +925,7 @@ static bool add_record_access(struct hlsl_ctx *ctx, struct hlsl_block *block, st
 
     VKD3D_ASSERT(idx < record->data_type->e.record.field_count);
 
-    if (!(c = hlsl_new_uint_constant(ctx, idx, loc)))
-        return false;
-    hlsl_block_add_instr(block, c);
+    c = hlsl_block_add_uint_constant(ctx, block, idx, loc);
 
     if (!(index = hlsl_new_index(ctx, record, c, loc)))
         return false;
@@ -2275,9 +2273,7 @@ static bool add_assignment(struct hlsl_ctx *ctx, struct hlsl_block *block, struc
             if (!(writemask & (1 << i)))
                 continue;
 
-            if (!(c = hlsl_new_uint_constant(ctx, i, &lhs->loc)))
-                return false;
-            hlsl_block_add_instr(block, c);
+            c = hlsl_block_add_uint_constant(ctx, block, i, &lhs->loc);
 
             if (!(cell = hlsl_new_index(ctx, &row->node, c, &lhs->loc)))
                 return false;
@@ -2332,9 +2328,7 @@ static bool add_increment(struct hlsl_ctx *ctx, struct hlsl_block *block, bool d
         hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_MODIFIES_CONST,
                 "Argument to %s%screment operator is const.", post ? "post" : "pre", decrement ? "de" : "in");
 
-    if (!(one = hlsl_new_int_constant(ctx, 1, loc)))
-        return false;
-    hlsl_block_add_instr(block, one);
+    one = hlsl_block_add_int_constant(ctx, block, 1, loc);
 
     if (!add_assignment(ctx, block, lhs, decrement ? ASSIGN_OP_SUB : ASSIGN_OP_ADD, one, false))
         return false;
@@ -2869,12 +2863,7 @@ static struct hlsl_block *initialize_vars(struct hlsl_ctx *ctx, struct list *var
                 continue;
             }
 
-            if (!(zero = hlsl_new_uint_constant(ctx, 0, &var->loc)))
-            {
-                free_parse_variable_def(v);
-                continue;
-            }
-            hlsl_block_add_instr(&ctx->static_initializers, zero);
+            zero = hlsl_block_add_uint_constant(ctx, &ctx->static_initializers, 0, &var->loc);
 
             if (!(cast = add_cast(ctx, &ctx->static_initializers, zero, var->data_type, &var->loc)))
             {
@@ -6377,8 +6366,8 @@ static bool add_getdimensions_method_call(struct hlsl_ctx *ctx, struct hlsl_bloc
     bool uint_resinfo, has_uint_arg, has_float_arg;
     struct hlsl_resource_load_params load_params;
     struct hlsl_ir_node *sample_info, *res_info;
-    struct hlsl_ir_node *zero = NULL, *void_ret;
     struct hlsl_type *uint_type, *float_type;
+    struct hlsl_ir_node *void_ret;
     unsigned int i, j;
     enum func_argument
     {
@@ -6478,12 +6467,7 @@ static bool add_getdimensions_method_call(struct hlsl_ctx *ctx, struct hlsl_bloc
     }
 
     if (!args[ARG_MIP_LEVEL])
-    {
-        if (!(zero = hlsl_new_uint_constant(ctx, 0, loc)))
-            return false;
-        hlsl_block_add_instr(block, zero);
-        args[ARG_MIP_LEVEL] = zero;
-    }
+        args[ARG_MIP_LEVEL] = hlsl_block_add_uint_constant(ctx, block, 0, loc);
 
     memset(&load_params, 0, sizeof(load_params));
     load_params.type = HLSL_RESOURCE_RESINFO;
@@ -6887,6 +6871,46 @@ static void check_duplicated_switch_cases(struct hlsl_ctx *ctx, const struct hls
         if (found_duplicate)
             break;
     }
+}
+
+static bool add_switch(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct parse_attribute_list *attributes, struct list *cases, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_node *selector = node_from_block(block);
+    struct hlsl_ir_node *s;
+
+    if (selector->data_type->class == HLSL_CLASS_ERROR)
+    {
+        destroy_switch_cases(cases);
+        destroy_block(block);
+        cleanup_parse_attribute_list(attributes);
+        return true;
+    }
+
+    if (!(selector = add_implicit_conversion(ctx, block, selector,
+            hlsl_get_scalar_type(ctx, HLSL_TYPE_UINT), &selector->loc)))
+    {
+        destroy_switch_cases(cases);
+        destroy_block(block);
+        cleanup_parse_attribute_list(attributes);
+        return false;
+    }
+
+    s = hlsl_new_switch(ctx, selector, cases, loc);
+
+    destroy_switch_cases(cases);
+
+    if (!s)
+    {
+        destroy_block(block);
+        cleanup_parse_attribute_list(attributes);
+        return false;
+    }
+
+    hlsl_block_add_instr(block, s);
+
+    cleanup_parse_attribute_list(attributes);
+    return true;
 }
 
 static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
@@ -9137,9 +9161,7 @@ jump_statement:
             if (!($$ = make_empty_block(ctx)))
                 YYABORT;
 
-            if (!(c = hlsl_new_uint_constant(ctx, ~0u, &@1)))
-                return false;
-            hlsl_block_add_instr($$, c);
+            c = hlsl_block_add_uint_constant(ctx, $$, ~0u, &@1);
 
             if (!(discard = hlsl_new_jump(ctx, HLSL_IR_JUMP_DISCARD_NZ, c, &@1)))
                 return false;
@@ -9237,33 +9259,10 @@ loop_statement:
 switch_statement:
       attribute_list_optional switch_scope_start KW_SWITCH '(' expr ')' '{' switch_cases '}'
         {
-            struct hlsl_ir_node *selector = node_from_block($5);
-            struct hlsl_ir_node *s;
-
-            if (!(selector = add_implicit_conversion(ctx, $5, selector, hlsl_get_scalar_type(ctx, HLSL_TYPE_UINT), &@5)))
-            {
-                destroy_switch_cases($8);
-                destroy_block($5);
-                cleanup_parse_attribute_list(&$1);
-                YYABORT;
-            }
-
-            s = hlsl_new_switch(ctx, selector, $8, &@3);
-
-            destroy_switch_cases($8);
-
-            if (!s)
-            {
-                destroy_block($5);
-                cleanup_parse_attribute_list(&$1);
-                YYABORT;
-            }
-
             $$ = $5;
-            hlsl_block_add_instr($$, s);
-
+            if (!add_switch(ctx, $$, &$1, $8, &@3))
+                YYABORT;
             hlsl_pop_scope(ctx);
-            cleanup_parse_attribute_list(&$1);
         }
 
 switch_case:
@@ -9375,21 +9374,15 @@ primary_expr:
         }
     | C_INTEGER
         {
-            struct hlsl_ir_node *c;
-
-            if (!(c = hlsl_new_int_constant(ctx, $1, &@1)))
+            if (!($$ = make_empty_block(ctx)))
                 YYABORT;
-            if (!($$ = make_block(ctx, c)))
-                YYABORT;
+            hlsl_block_add_int_constant(ctx, $$, $1, &@1);
         }
     | C_UNSIGNED
         {
-            struct hlsl_ir_node *c;
-
-            if (!(c = hlsl_new_uint_constant(ctx, $1, &@1)))
+            if (!($$ = make_empty_block(ctx)))
                 YYABORT;
-            if (!($$ = make_block(ctx, c)))
-                YYABORT;
+            hlsl_block_add_uint_constant(ctx, $$, $1, &@1);
         }
     | boolean
         {

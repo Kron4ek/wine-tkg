@@ -73,6 +73,7 @@ static const struct vkd3d_optional_extension_info optional_instance_extensions[]
 static const char * const required_device_extensions[] =
 {
     VK_KHR_MAINTENANCE1_EXTENSION_NAME,
+    VK_KHR_MAINTENANCE2_EXTENSION_NAME,
     VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME,
 };
 
@@ -91,7 +92,6 @@ static const struct vkd3d_optional_extension_info optional_device_extensions[] =
     VK_EXTENSION(KHR_DRAW_INDIRECT_COUNT, KHR_draw_indirect_count),
     VK_EXTENSION(KHR_GET_MEMORY_REQUIREMENTS_2, KHR_get_memory_requirements2),
     VK_EXTENSION(KHR_IMAGE_FORMAT_LIST, KHR_image_format_list),
-    VK_EXTENSION(KHR_MAINTENANCE2, KHR_maintenance2),
     VK_EXTENSION(KHR_MAINTENANCE3, KHR_maintenance3),
     VK_EXTENSION(KHR_PORTABILITY_SUBSET, KHR_portability_subset),
     VK_EXTENSION(KHR_PUSH_DESCRIPTOR, KHR_push_descriptor),

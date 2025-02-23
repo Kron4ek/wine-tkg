@@ -54,6 +54,7 @@ static NTSTATUS (WINAPI *pNtProtectVirtualMemory)(HANDLE, PVOID *, SIZE_T *, ULO
 static NTSTATUS (WINAPI *pNtReadVirtualMemory)(HANDLE,const void *,void *,SIZE_T, SIZE_T *);
 static NTSTATUS (WINAPI *pNtWriteVirtualMemory)(HANDLE, void *, const void *, SIZE_T, SIZE_T *);
 static BOOL  (WINAPI *pPrefetchVirtualMemory)(HANDLE, ULONG_PTR, PWIN32_MEMORY_RANGE_ENTRY, ULONG);
+static void  (WINAPI *pFlushProcessWriteBuffers)(void);
 
 /* ############################### */
 
@@ -4408,6 +4409,167 @@ static void test_ReadProcessMemory(void)
     free(buf);
 }
 
+struct sbtestshared
+{
+    /* Number of slots per thread */
+    unsigned int num_slots;
+
+    /* Number of generations (iterations per each slot) */
+    unsigned int num_generations;
+
+    /* Stores from threads */
+    LONG *wrote;
+
+    /* Observations from threads */
+    LONG *read;
+
+    /* Number of observed reorderings (witnesses) in the SB litmus test.
+     * Note: unobservable reorderings are not counted. */
+    LONG *reorderings;
+};
+
+struct sbtestparams
+{
+    struct sbtestshared *shared;
+    unsigned int th_id;
+    void (WINAPI *barrier)(void);
+};
+
+static DWORD CALLBACK sbtest_thread_proc( void *arg )
+{
+    const struct sbtestparams *params = arg;
+    const struct sbtestshared s = *params->shared;
+    const unsigned int th_id = params->th_id;
+    void (WINAPI *const barrier)(void) = params->barrier;
+    unsigned int slot = 0, gen = 0;
+
+    for (;;)
+    {
+        LONG read_l, read_r;
+
+        /* Access slots in reverse order to avoid prefetching */
+        if (!slot--)
+        {
+            if (gen++ >= s.num_generations) break;
+            slot = s.num_slots - 1;
+        }
+
+        WriteRelease(&s.wrote[th_id * s.num_slots + slot], gen);
+        (*barrier)();
+        read_l = (gen << 1) | (ReadAcquire(&s.wrote[(th_id ^ 1) * s.num_slots + slot]) == gen);
+
+        WriteRelease(&s.read[th_id * s.num_slots + slot], read_l);
+
+        while (((read_r = ReadAcquire(&s.read[(th_id ^ 1) * s.num_slots + slot])) & ~1) != (gen << 1))
+            YieldProcessor();
+
+        /* fairly distribute testing overhead across threads */
+        if ((slot & 1) == th_id)
+        {
+            if (!(read_l & 1) && !(read_r & 1))
+                InterlockedIncrement( s.reorderings );
+        }
+    }
+
+    return 0;
+}
+
+#ifdef _MSC_VER
+
+#pragma intrinsic(_ReadWriteBarrier)
+void _ReadWriteBarrier(void);
+
+static void WINAPI compiler_barrier(void)
+{
+#pragma warning(suppress:4996)
+    _ReadWriteBarrier();
+}
+
+#else  /* _MSC_VER */
+
+static void WINAPI compiler_barrier(void)
+{
+    __asm__ __volatile__("" ::: "memory");
+}
+
+#endif  /* _MSC_VER */
+
+static LONG store_buffer_litmus_test( void (*WINAPI barrier0)(void), void (*WINAPI barrier1)(void) )
+{
+    LONG reorderings = 0;
+    struct sbtestshared shared = {
+        /* Should be big enough to avoid false sharing */
+        .num_slots = 64,
+
+        /* Increase if flaky, decrease if slow */
+        .num_generations = 32768,
+
+        .reorderings = &reorderings,
+    };
+    struct sbtestparams pars[2];
+    HANDLE threads[2];
+    unsigned int i;
+    DWORD ret;
+
+    shared.wrote = VirtualAlloc( NULL, ARRAY_SIZE(threads) * shared.num_slots * sizeof(*shared.wrote),
+                                 MEM_COMMIT, PAGE_READWRITE );
+    ok( shared.wrote != NULL, "VirtualAlloc failed: %lu\n", GetLastError() );
+
+    shared.read = VirtualAlloc( NULL, ARRAY_SIZE(threads) * shared.num_slots * sizeof(*shared.read),
+                                MEM_COMMIT, PAGE_READWRITE );
+    ok( shared.read != NULL, "VirtualAlloc failed: %lu\n", GetLastError() );
+
+    for (i = 0; i < ARRAY_SIZE(threads); i++)
+    {
+        pars[i].shared = &shared;
+        pars[i].th_id = i;
+        pars[i].barrier = i == 0 ? barrier0 : barrier1;
+        threads[i] = CreateThread( NULL, 0, sbtest_thread_proc, &pars[i], 0, NULL );
+        ok( threads[i] != NULL, "CreateThread failed: %lu\n", GetLastError() );
+    }
+
+    ret = WaitForMultipleObjects( ARRAY_SIZE(threads), threads, TRUE, INFINITE );
+    ok( ret == WAIT_OBJECT_0, "WaitForMultipleObjects failed: %lu\n", GetLastError() );
+
+    ret = VirtualFree( shared.read, 0, MEM_RELEASE );
+    ok( ret, "VirtualFree failed: %lu\n", GetLastError() );
+
+    ret = VirtualFree( shared.wrote, 0, MEM_RELEASE );
+    ok( ret, "VirtualFree failed: %lu\n", GetLastError() );
+
+    return reorderings;
+}
+
+static void test_FlushProcessWriteBuffers(void)
+{
+    LONG reorderings;
+    unsigned int i;
+
+    if (!pFlushProcessWriteBuffers)
+    {
+        win_skip("no FlushProcessWriteBuffers in kernel32\n");
+        return;
+    }
+
+    /* simple stress test */
+    for (i = 0; i < 128; i++)
+    {
+        pFlushProcessWriteBuffers();
+    }
+
+    if (si.dwNumberOfProcessors == 1)
+    {
+        skip( "single-processor system, cannot test store buffering behavior\n" );
+        return;
+    }
+
+    reorderings = store_buffer_litmus_test( compiler_barrier, compiler_barrier );
+    ok( reorderings, "expected write-read reordering with compiler barrier only (got %ld reorderings)\n", reorderings );
+
+    reorderings = store_buffer_litmus_test( compiler_barrier, pFlushProcessWriteBuffers );
+    ok( !reorderings, "expected sequential consistency with FlushProcessWriteBuffers (got %ld reorderings)\n", reorderings );
+}
+
 START_TEST(virtual)
 {
     int argc;
@@ -4465,6 +4627,7 @@ START_TEST(virtual)
     pNtReadVirtualMemory = (void *)GetProcAddress( hntdll, "NtReadVirtualMemory" );
     pNtWriteVirtualMemory = (void *)GetProcAddress( hntdll, "NtWriteVirtualMemory" );
     pPrefetchVirtualMemory = (void *)GetProcAddress( hkernelbase, "PrefetchVirtualMemory" );
+    pFlushProcessWriteBuffers = (void *)GetProcAddress( hkernel32, "FlushProcessWriteBuffers" );
 
     GetSystemInfo(&si);
     trace("system page size %#lx\n", si.dwPageSize);
@@ -4490,6 +4653,7 @@ START_TEST(virtual)
     test_write_watch();
     test_PrefetchVirtualMemory();
     test_ReadProcessMemory();
+    test_FlushProcessWriteBuffers();
 #if defined(__i386__) || defined(__x86_64__)
     test_stack_commit();
 #endif

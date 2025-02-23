@@ -1464,6 +1464,20 @@ static void window_set_wm_state( struct x11drv_win_data *data, UINT new_state )
         return; /* another map/unmap WM_STATE update is pending, wait for it to complete */
     if (old_state == new_state) return; /* states are the same, nothing to update */
 
+    /* When transitioning a window from IconicState to NormalState and the window is managed, go
+     * through WithdrawnState. This is needed because Mutter doesn't unmap windows when making
+     * windows iconic/minimized as Mutter needs to support live preview for minimized windows. So on
+     * Mutter, a window can be both iconic and mapped. If the window is mapped, then XMapWindow()
+     * will have no effect according to the  XMapWindow() documentation. Thus we have to transition
+     * to WithdrawnState first, then to NormalState */
+    if (data->managed && MAKELONG(old_state, new_state) == MAKELONG(IconicState, NormalState))
+    {
+        WARN( "window %p/%lx is iconic, remapping to workaround Mutter issues.\n", data->hwnd, data->whole_window );
+        window_set_wm_state( data, WithdrawnState );
+        window_set_wm_state( data, NormalState );
+        return;
+    }
+
     switch (MAKELONG(old_state, new_state))
     {
     case MAKELONG(WithdrawnState, IconicState):
@@ -1797,7 +1811,7 @@ static void sync_window_position( struct x11drv_win_data *data, UINT swp_flags, 
     RECT new_rect, window_rect;
     BOOL above = FALSE;
 
-    if (data->managed && data->desired_state.wm_state == IconicState) return;
+    if (data->managed && ((style & WS_MINIMIZE) || data->desired_state.wm_state == IconicState)) return;
 
     if (!(swp_flags & SWP_NOZORDER) || (swp_flags & SWP_SHOWWINDOW))
     {
@@ -3326,15 +3340,6 @@ LRESULT X11DRV_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
         if ((data = get_win_data( hwnd )))
         {
             sync_window_region( data, (HRGN)1 );
-            release_win_data( data );
-        }
-        return 0;
-    case WM_WINE_DESKTOP_RESIZED:
-        if ((data = get_win_data( hwnd )))
-        {
-            /* update the full screen state */
-            update_net_wm_states( data );
-            window_set_config( data, &data->rects.visible, FALSE );
             release_win_data( data );
         }
         return 0;

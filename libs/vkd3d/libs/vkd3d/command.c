@@ -1499,7 +1499,7 @@ static VkDescriptorPool d3d12_command_allocator_allocate_descriptor_pool(
     const struct vkd3d_vk_device_procs *vk_procs = &device->vk_procs;
     struct VkDescriptorPoolCreateInfo pool_desc;
     VkDevice vk_device = device->vk_device;
-    VkDescriptorPoolSize vk_pool_sizes[2];
+    VkDescriptorPoolSize vk_pool_sizes[4];
     unsigned int pool_size, pool_limit;
     VkDescriptorPool vk_pool;
     VkResult vr;
@@ -1530,20 +1530,42 @@ static VkDescriptorPool d3d12_command_allocator_allocate_descriptor_pool(
         }
         descriptor_count = pool_size;
 
-        vk_pool_sizes[0].type = vk_descriptor_type_from_vkd3d_descriptor_type(descriptor_type, true);
-        vk_pool_sizes[0].descriptorCount = descriptor_count;
-
-        vk_pool_sizes[1].type = vk_descriptor_type_from_vkd3d_descriptor_type(descriptor_type, false);
-        vk_pool_sizes[1].descriptorCount = descriptor_count;
-
         pool_desc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_desc.pNext = NULL;
         pool_desc.flags = 0;
         pool_desc.maxSets = 512;
-        pool_desc.poolSizeCount = 1;
-        if (vk_pool_sizes[1].type != vk_pool_sizes[0].type)
-            ++pool_desc.poolSizeCount;
         pool_desc.pPoolSizes = vk_pool_sizes;
+
+        if (allocator->device->use_vk_heaps)
+        {
+            /* SRV root descriptors. */
+            vk_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
+            vk_pool_sizes[0].descriptorCount = descriptor_count;
+
+            /* UAV root descriptors and UAV counters. */
+            vk_pool_sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+            vk_pool_sizes[1].descriptorCount = descriptor_count;
+
+            /* CBV root descriptors. */
+            vk_pool_sizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            vk_pool_sizes[2].descriptorCount = descriptor_count;
+
+            /* Static samplers. */
+            vk_pool_sizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+            vk_pool_sizes[3].descriptorCount = descriptor_count;
+
+            pool_desc.poolSizeCount = 4;
+        }
+        else
+        {
+            vk_pool_sizes[0].type = vk_descriptor_type_from_vkd3d_descriptor_type(descriptor_type, true);
+            vk_pool_sizes[0].descriptorCount = descriptor_count;
+
+            vk_pool_sizes[1].type = vk_descriptor_type_from_vkd3d_descriptor_type(descriptor_type, false);
+            vk_pool_sizes[1].descriptorCount = descriptor_count;
+
+            pool_desc.poolSizeCount = 1 + (vk_pool_sizes[0].type != vk_pool_sizes[1].type);
+        }
 
         if ((vr = VK_CALL(vkCreateDescriptorPool(vk_device, &pool_desc, NULL, &vk_pool))) < 0)
         {
@@ -1577,6 +1599,10 @@ static VkDescriptorSet d3d12_command_allocator_allocate_descriptor_set(struct d3
     VkDevice vk_device = device->vk_device;
     VkDescriptorSet vk_descriptor_set;
     VkResult vr;
+
+    /* With Vulkan heaps we use just one descriptor pool. */
+    if (device->use_vk_heaps)
+        descriptor_type = 0;
 
     if (!allocator->vk_descriptor_pools[descriptor_type])
         allocator->vk_descriptor_pools[descriptor_type] = d3d12_command_allocator_allocate_descriptor_pool(allocator,
@@ -2222,7 +2248,7 @@ static bool vk_barrier_parameters_from_d3d12_resource_state(unsigned int state, 
                 if (!stencil_state || (stencil_state & D3D12_RESOURCE_STATE_DEPTH_WRITE))
                     *image_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
                 else
-                    *image_layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL;
+                    *image_layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL_KHR;
             }
             return true;
 
@@ -2256,7 +2282,7 @@ static bool vk_barrier_parameters_from_d3d12_resource_state(unsigned int state, 
             {
                 if (stencil_state & D3D12_RESOURCE_STATE_DEPTH_WRITE)
                 {
-                    *image_layout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL;
+                    *image_layout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL_KHR;
                     *access_mask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
                 }
                 else

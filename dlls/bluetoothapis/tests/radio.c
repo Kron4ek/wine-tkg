@@ -219,6 +219,62 @@ void test_BluetoothIsDiscoverable( void )
     ok( ret == result, "%d != %d\n", ret, result );
 }
 
+void test_radio_BluetoothEnableIncomingConnections( HANDLE radio, void *data )
+{
+    BOOL connectable;
+    BOOL *result = data;
+
+    *result |= BluetoothEnableIncomingConnections( radio, TRUE );
+    ok( *result, "%d != 1\n", *result );
+    if (*result)
+    {
+        connectable = BluetoothIsConnectable( radio );
+        ok( connectable, "%d != 1\n", connectable );
+    }
+    else
+        skip("BluetoothEnableIncomingConnections failed, skipping.\n");
+}
+
+void test_BluetoothEnableIncomingConnections( void )
+{
+    BOOL result = FALSE;
+
+    test_for_all_radios( test_radio_BluetoothEnableIncomingConnections, &result );
+    if (result)
+    {
+        BOOL connectable;
+        connectable = BluetoothIsConnectable( NULL );
+        ok( connectable, "%d != 1\n", connectable );
+    }
+}
+
+void test_radio_BluetoothEnableDiscovery( HANDLE radio, void *data )
+{
+    BOOL ret;
+
+    if (BluetoothIsDiscoverable( radio ))
+    {
+        ret = BluetoothEnableDiscovery( radio, FALSE );
+        ok( ret, "%d != 1\n", ret );
+    }
+
+    /* Enabling discovery requires incoming connections to be enabled as well, so this should result in an error. */
+    BluetoothEnableIncomingConnections( radio, FALSE );
+    ret = BluetoothEnableDiscovery( radio, TRUE );
+    ok( !ret, "%d != 0\n", ret );
+
+    BluetoothEnableIncomingConnections( radio, TRUE );
+    ret = BluetoothEnableDiscovery( radio, TRUE );
+    ok( ret, "%d != 1\n", ret );
+    ret = BluetoothIsDiscoverable( radio );
+    ok ( ret, "%d != 1\n", ret );
+}
+
+void test_BluetoothEnableDiscovery( void )
+{
+    test_for_all_radios( test_radio_BluetoothEnableDiscovery, NULL );
+}
+
 START_TEST( radio )
 {
     test_BluetoothFindFirstRadio();
@@ -228,4 +284,6 @@ START_TEST( radio )
     test_for_all_radios( test_BluetoothGetRadioInfo, NULL );
     test_BluetoothIsDiscoverable();
     test_BluetoothIsConnectable();
+    test_BluetoothEnableIncomingConnections();
+    test_BluetoothEnableDiscovery();
 }
