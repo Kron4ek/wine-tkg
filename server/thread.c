@@ -40,6 +40,12 @@
 #ifdef HAVE_SYS_RESOURCE_H
 #include <sys/resource.h>
 #endif
+#ifdef __APPLE__
+#include <mach/mach_init.h>
+#include <mach/mach_time.h>
+#include <mach/mach_port.h>
+#include <mach/thread_act.h>
+#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -260,6 +266,117 @@ static void apply_thread_priority( struct thread *thread, int base_priority )
     /* map an NT application band [1,15] base priority to [-nice_limit, nice_limit] */
     niceness = (min + (base_priority - 1) * range / 14);
     setpriority( PRIO_PROCESS, thread->unix_tid, niceness );
+}
+
+#elif defined(__APPLE__)
+static unsigned int mach_ticks_per_second;
+
+void init_threading(void)
+{
+    struct mach_timebase_info tb_info;
+    if (mach_timebase_info( &tb_info ) == KERN_SUCCESS)
+    {
+        mach_ticks_per_second = (tb_info.denom * 1000000000U) / tb_info.numer;
+    }
+    else
+    {
+        const unsigned int best_guess = 24000000U;
+        mach_ticks_per_second = best_guess;
+    }
+}
+
+static int get_mach_importance( int base_priority )
+{
+    int min = -31, max = 32, range = max - min;
+    return min + (base_priority - 1) * range / 14;
+}
+
+static void apply_thread_priority( struct thread *thread, int base_priority )
+{
+    kern_return_t kr;
+    mach_msg_type_name_t type;
+    int throughput_qos, latency_qos;
+    struct thread_extended_policy thread_extended_policy;
+    struct thread_precedence_policy thread_precedence_policy;
+    mach_port_t thread_port, process_port = thread->process->trace_data;
+
+    if (!process_port) return;
+    kr = mach_port_extract_right( process_port, thread->unix_tid,
+                                  MACH_MSG_TYPE_COPY_SEND, &thread_port, &type );
+    if (kr != KERN_SUCCESS) return;
+    /* base priority 15 is for time-critical threads, so not compute-bound */
+    thread_extended_policy.timeshare = base_priority > 14 ? 0 : 1;
+    thread_precedence_policy.importance = get_mach_importance( base_priority );
+    /* adapted from the QoS table at xnu/osfmk/kern/thread_policy.c */
+    switch (thread->priority)
+    {
+    case THREAD_PRIORITY_IDLE: /* THREAD_QOS_MAINTENANCE */
+    case THREAD_PRIORITY_LOWEST: /* THREAD_QOS_BACKGROUND */
+        throughput_qos = THROUGHPUT_QOS_TIER_5;
+        latency_qos = LATENCY_QOS_TIER_3;
+        break;
+    case THREAD_PRIORITY_BELOW_NORMAL: /* THREAD_QOS_UTILITY */
+        throughput_qos = THROUGHPUT_QOS_TIER_2;
+        latency_qos = LATENCY_QOS_TIER_3;
+        break;
+    case THREAD_PRIORITY_NORMAL: /* THREAD_QOS_LEGACY */
+    case THREAD_PRIORITY_ABOVE_NORMAL: /* THREAD_QOS_USER_INITIATED */
+        throughput_qos = THROUGHPUT_QOS_TIER_1;
+        latency_qos = LATENCY_QOS_TIER_1;
+        break;
+    case THREAD_PRIORITY_HIGHEST: /* THREAD_QOS_USER_INTERACTIVE */
+        throughput_qos = THROUGHPUT_QOS_TIER_0;
+        latency_qos = LATENCY_QOS_TIER_0;
+        break;
+    case THREAD_PRIORITY_TIME_CRITICAL:
+    default: /* THREAD_QOS_UNSPECIFIED */
+        throughput_qos = THROUGHPUT_QOS_TIER_UNSPECIFIED;
+        latency_qos = LATENCY_QOS_TIER_UNSPECIFIED;
+        break;
+    }
+    /* QOS_UNSPECIFIED is assigned the highest tier available, so it does not provide a limit */
+    if (base_priority > THREAD_BASE_PRIORITY_LOWRT)
+    {
+        throughput_qos = THROUGHPUT_QOS_TIER_UNSPECIFIED;
+        latency_qos = LATENCY_QOS_TIER_UNSPECIFIED;
+    }
+
+    thread_policy_set( thread_port, THREAD_LATENCY_QOS_POLICY, (thread_policy_t)&latency_qos,
+                       THREAD_LATENCY_QOS_POLICY_COUNT );
+    thread_policy_set( thread_port, THREAD_THROUGHPUT_QOS_POLICY, (thread_policy_t)&throughput_qos,
+                       THREAD_THROUGHPUT_QOS_POLICY_COUNT );
+    thread_policy_set( thread_port, THREAD_EXTENDED_POLICY, (thread_policy_t)&thread_extended_policy,
+                       THREAD_EXTENDED_POLICY_COUNT );
+    thread_policy_set( thread_port, THREAD_PRECEDENCE_POLICY, (thread_policy_t)&thread_precedence_policy,
+                       THREAD_PRECEDENCE_POLICY_COUNT );
+    if (base_priority > THREAD_BASE_PRIORITY_LOWRT)
+    {
+        /* For realtime threads we are requesting from the scheduler to be moved
+         * into the Mach realtime band (96-127) above the kernel.
+         * The scheduler will bump us back into the application band though if we
+         * lie too much about our computation constraints...
+         * The maximum available amount of resources granted in that band is using
+         * half of the available bus cycles, and computation (nominally 1/10 of
+         * the time constraint) is a hint to the scheduler where to place our
+         * realtime threads relative to each other.
+         * If someone is violating the time contraint policy, they will be moved
+         * back where they were (non-timeshare application band with very high
+         * importance), which is on XNU equivalent to setting SCHED_RR with the
+         * pthread API. */
+        struct thread_time_constraint_policy thread_time_constraint_policy;
+        int realtime_priority = base_priority - THREAD_BASE_PRIORITY_LOWRT;
+        unsigned int max_constraint = mach_ticks_per_second / 2;
+        unsigned int max_computation = max_constraint / 10;
+        /* unfortunately we can't give a hint for the periodicity of calculations */
+        thread_time_constraint_policy.period = 0;
+        thread_time_constraint_policy.constraint = max_constraint;
+        thread_time_constraint_policy.computation = realtime_priority * max_computation / 16;
+        thread_time_constraint_policy.preemptible = thread->priority == THREAD_PRIORITY_TIME_CRITICAL ? 0 : 1;
+        thread_policy_set( thread_port, THREAD_TIME_CONSTRAINT_POLICY,
+                           (thread_policy_t)&thread_time_constraint_policy,
+                           THREAD_TIME_CONSTRAINT_POLICY_COUNT );
+    }
+    mach_port_deallocate( mach_task_self(), thread_port );
 }
 
 #else
@@ -727,14 +844,12 @@ unsigned int set_thread_priority( struct thread *thread, int priority_class, int
         priority != THREAD_PRIORITY_TIME_CRITICAL)
         return STATUS_INVALID_PARAMETER;
 
-    if (thread->state == TERMINATED)
-        return STATUS_THREAD_IS_TERMINATING;
-
     thread->priority = priority;
     set_scheduler_priority( thread );
 
     /* if thread is gone or hasn't started yet, this will be called again from init_thread with a unix_tid */
-    if (thread->unix_tid != -1) apply_thread_priority( thread, get_base_priority( priority_class, priority ));
+    if (thread->state == RUNNING && thread->unix_tid != -1)
+        apply_thread_priority( thread, get_base_priority( priority_class, priority ));
 
     return STATUS_SUCCESS;
 }

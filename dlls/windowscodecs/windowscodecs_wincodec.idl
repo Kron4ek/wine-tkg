@@ -140,13 +140,6 @@ coclass WICDdsEncoder { interface IWICBitmapEncoder; }
 coclass WICDefaultFormatConverter { interface IWICFormatConverter; }
 
 [
-    helpstring("WIC TGA Decoder"),
-    threading(both),
-    uuid(b11fc79a-67cc-43e6-a9ce-e3d54945d304)
-]
-coclass WineTgaDecoder { interface IWICBitmapDecoder; }
-
-[
     helpstring("WIC Unknown Metadata Reader"),
     threading(both),
     uuid(699745c2-5066-4b82-a8e3-d40478dbec8c)
@@ -208,6 +201,13 @@ coclass WICExifMetadataWriter { interface IWICMetadataWriter; }
     uuid(dde33513-774e-4bcd-ae79-02f4adfe62fc)
 ]
 coclass WICApp1MetadataReader { interface IWICMetadataReader; }
+
+[
+    helpstring("WIC App1 Metadata Writer"),
+    threading(both),
+    uuid(ee366069-1832-420f-b381-0479ad066f19)
+]
+coclass WICApp1MetadataWriter { interface IWICMetadataWriter; }
 
 [
     helpstring("WIC Png cHRM Metadata Reader"),

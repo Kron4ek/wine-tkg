@@ -528,7 +528,7 @@ msgstr "See details"
 
 #: dlls/comctl32/comctl32.rc:31 dlls/cryptui/cryptui.rc:235
 #: programs/regedit/regedit.rc:291 programs/taskmgr/taskmgr.rc:434
-#: programs/winedbg/winedbg.rc:61 programs/winedbg/winedbg.rc:76
+#: programs/winedbg/winedbg.rc:62 programs/winedbg/winedbg.rc:77
 #: programs/wordpad/wordpad.rc:180
 msgid "Close"
 msgstr "Close"
@@ -8175,7 +8175,7 @@ msgstr "Entire Network"
 msgid "Sound Selection"
 msgstr "Sound Selection"
 
-#: dlls/msacm32/msacm32.rc:39 programs/winedbg/winedbg.rc:77
+#: dlls/msacm32/msacm32.rc:39 programs/winedbg/winedbg.rc:78
 msgid "&Save As..."
 msgstr "&Save As..."
 
@@ -18319,6 +18319,38 @@ msgstr "Running"
 msgid "Task"
 msgstr "Task"
 
+#: programs/timeout/timeout.rc:28
+msgid "Usage: timeout /T <timeout> [</NOBREAK>]\n"
+msgstr "Usage: timeout /T <timeout> [</NOBREAK>]\n"
+
+#: programs/timeout/timeout.rc:29
+msgid "TIMEOUT: Bad command line\n"
+msgstr "TIMEOUT: Bad command line\n"
+
+#: programs/timeout/timeout.rc:30
+msgid "waiting since %d sec. "
+msgstr "waiting since %d sec. "
+
+#: programs/timeout/timeout.rc:31
+msgid "press CTRL+C..."
+msgstr "press CTRL+C..."
+
+#: programs/timeout/timeout.rc:32
+msgid "press a key to continue..."
+msgstr "press a key to continue..."
+
+#: programs/timeout/timeout.rc:33
+msgid "ERROR: not possible to redirect input\n"
+msgstr "ERROR: not possible to redirect input\n"
+
+#: programs/timeout/timeout.rc:34
+msgid ""
+"ERROR: Timeout value out of range or invalid number. Valid range is -1 to "
+"99999.\n"
+msgstr ""
+"ERROR: Timeout value out of range or invalid number. Valid range is -1 to "
+"99999.\n"
+
 #: programs/uninstaller/uninstaller.rc:29
 msgid "Wine Application Uninstaller"
 msgstr "Wine Application Uninstaller"
@@ -19036,11 +19068,11 @@ msgstr ""
 "wineconsole: Starting program %s failed.\n"
 "The command is invalid.\n"
 
-#: programs/winedbg/winedbg.rc:50 programs/winedbg/winedbg.rc:38
+#: programs/winedbg/winedbg.rc:51 programs/winedbg/winedbg.rc:38
 msgid "Program Error"
 msgstr "Program Error"
 
-#: programs/winedbg/winedbg.rc:55
+#: programs/winedbg/winedbg.rc:56
 msgid ""
 "The program %s has encountered a serious problem and needs to close. We are "
 "sorry for the inconvenience."
@@ -19048,7 +19080,7 @@ msgstr ""
 "The program %s has encountered a serious problem and needs to close. We are "
 "sorry for the inconvenience."
 
-#: programs/winedbg/winedbg.rc:59
+#: programs/winedbg/winedbg.rc:60
 msgid ""
 "This can be caused by a problem in the program or a deficiency in Wine. You "
 "may want to check the <a href=\"https://appdb.winehq.org\">Application "
@@ -19058,15 +19090,15 @@ msgstr ""
 "may want to check the <a href=\"https://appdb.winehq.org\">Application "
 "Database</a> for tips about running this application."
 
-#: programs/winedbg/winedbg.rc:62
+#: programs/winedbg/winedbg.rc:63
 msgid "Show &Details"
 msgstr "Show &Details"
 
-#: programs/winedbg/winedbg.rc:67
+#: programs/winedbg/winedbg.rc:68
 msgid "Program Error Details"
 msgstr "Program Error Details"
 
-#: programs/winedbg/winedbg.rc:74
+#: programs/winedbg/winedbg.rc:75
 msgid ""
 "If this problem is not present under Windows and has not been reported yet, "
 "you can save the detailed information to a file using the \"Save As\" "

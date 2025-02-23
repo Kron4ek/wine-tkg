@@ -482,6 +482,9 @@ struct hlsl_ir_var
         union hlsl_constant_value_component number;
     } *default_values;
 
+    /* Pointer to the temp copy of the variable, in case it is uniform. */
+    struct hlsl_ir_var *temp_copy;
+
     /* A dynamic array containing the state block on the variable's declaration, if any.
      * An array variable may contain multiple state blocks.
      * A technique pass will always contain one.
@@ -1502,6 +1505,10 @@ struct hlsl_ir_node *hlsl_add_conditional(struct hlsl_ctx *ctx, struct hlsl_bloc
 void hlsl_add_function(struct hlsl_ctx *ctx, char *name, struct hlsl_ir_function_decl *decl);
 void hlsl_add_var(struct hlsl_ctx *ctx, struct hlsl_ir_var *decl);
 
+struct hlsl_ir_node *hlsl_block_add_int_constant(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        int32_t n, const struct vkd3d_shader_location *loc);
+struct hlsl_ir_node *hlsl_block_add_uint_constant(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        unsigned int n, const struct vkd3d_shader_location *loc);
 void hlsl_block_cleanup(struct hlsl_block *block);
 bool hlsl_clone_block(struct hlsl_ctx *ctx, struct hlsl_block *dst_block, const struct hlsl_block *src_block);
 
@@ -1583,7 +1590,6 @@ struct hlsl_ir_function_decl *hlsl_new_func_decl(struct hlsl_ctx *ctx,
         const struct hlsl_semantic *semantic, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_if(struct hlsl_ctx *ctx, struct hlsl_ir_node *condition,
         struct hlsl_block *then_block, struct hlsl_block *else_block, const struct vkd3d_shader_location *loc);
-struct hlsl_ir_node *hlsl_new_int_constant(struct hlsl_ctx *ctx, int32_t n, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_new_jump(struct hlsl_ctx *ctx,
         enum hlsl_ir_jump_type type, struct hlsl_ir_node *condition, const struct vkd3d_shader_location *loc);
 struct hlsl_type *hlsl_new_stream_output_type(struct hlsl_ctx *ctx,

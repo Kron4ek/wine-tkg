@@ -6513,7 +6513,7 @@ static void test_tiff_color_formats(void)
             continue;
         }
 
-        image = load_image(buf, sizeof(buf), TRUE, FALSE);
+        image = load_image(buf, sizeof(buf), td[i].format != 0, FALSE);
         if (!td[i].format)
             ok(!image,
                "%u: (%d,%d,%d) TIFF image loading should have failed\n", i, td[i].photometric, td[i].samples, td[i].bps);

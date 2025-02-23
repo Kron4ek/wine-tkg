@@ -3284,10 +3284,10 @@ static WCHAR *build_pnp_device_id( const WCHAR *class, const WCHAR *product, con
 
 static struct record_pnpentity *get_pnp_entities( UINT *count )
 {
-    struct record_pnpentity *ret = malloc( 16 * sizeof(*ret) ), *tmp;
     WCHAR class[MAX_PATH], product[MAX_PATH], instance[MAX_PATH];
     DWORD nb_allocated = 16, i = 0, idx_enum = 0, idx_class = 0, idx_product = 0;
     HKEY key_enum, key_class, key_product, key_instance;
+    struct record_pnpentity *ret, *tmp;
     LONG res;
 
     if (RegOpenKeyExW( HKEY_LOCAL_MACHINE, L"System\\CurrentControlSet\\Enum", 0, KEY_ENUMERATE_SUB_KEYS, &key_enum ))
@@ -3317,7 +3317,7 @@ static struct record_pnpentity *get_pnp_entities( UINT *count )
                             ret[i].name = get_reg_value( key_instance, L"DeviceDesc" );
                             ret[i].service = get_reg_value( key_instance, L"Service" );
                             RegCloseKey( key_instance );
-                            if (++i > nb_allocated)
+                            if (++i >= nb_allocated)
                             {
                                 nb_allocated *= 2;
                                 if ((tmp = realloc( ret, nb_allocated * sizeof(*ret) ))) ret = tmp;

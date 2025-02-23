@@ -2583,15 +2583,15 @@ static HRESULT Global_Filter(BuiltinDisp *This, VARIANT *arg, unsigned args_cnt,
 
 static HRESULT Global_Join(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, VARIANT *res)
 {
-    BSTR delimiter = NULL, output = NULL, str = NULL;
-    BOOL free_delimiter = FALSE;
-    SAFEARRAY *sa;
-    HRESULT hres;
-    LONG lbound, ubound;
-    VARIANT *data;
-    UINT total_len = 0, delimiter_len = 0, str_len;
+    BSTR free_delimiter = NULL, output = NULL, str = NULL, *str_array = NULL;
+    UINT total_len = 0, delimiter_len = 1, str_len;
+    const WCHAR *delimiter = L" ";
+    LONG lbound, ubound, count;
     WCHAR *output_ptr;
-    INT i;
+    unsigned int i;
+    SAFEARRAY *sa;
+    VARIANT *data;
+    HRESULT hres;
 
     assert(1 <= args_cnt && args_cnt <= 2);
 
@@ -2614,17 +2614,15 @@ static HRESULT Global_Join(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, 
         if (V_VT(args + 1) == VT_NULL)
             return MAKE_VBSERROR(VBSE_ILLEGAL_NULL_USE);
         if (V_VT(args + 1) != VT_BSTR) {
-            hres = to_string(args + 1, &delimiter);
+            hres = to_string(args + 1, &free_delimiter);
             if (FAILED(hres))
                 return hres;
+            delimiter = free_delimiter;
+            delimiter_len = SysStringLen(free_delimiter);
         } else {
             delimiter = V_BSTR(args + 1);
+            delimiter_len = SysStringLen(V_BSTR(args + 1));
         }
-    } else {
-        delimiter = SysAllocString(L" ");
-        if (!delimiter)
-            return E_OUTOFMEMORY;
-        free_delimiter = TRUE;
     }
 
     if (SafeArrayGetDim(sa) != 1) {
@@ -2639,14 +2637,18 @@ static HRESULT Global_Join(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, 
     hres = SafeArrayGetUBound(sa, 1, &ubound);
     if (FAILED(hres))
         goto cleanup;
+    count = ubound - lbound + 1;
 
     hres = SafeArrayAccessData(sa, (void**)&data);
     if (FAILED(hres))
         goto cleanup;
 
-    delimiter_len = SysStringLen(delimiter);
-
-    for (i = lbound; i <= ubound; i++) {
+    str_array = calloc(count, sizeof(BSTR));
+    if (!str_array) {
+        hres = E_OUTOFMEMORY;
+        goto cleanup_data;
+    }
+    for (i = 0; i < count; i++) {
         if (V_VT(&data[i]) != VT_BSTR) {
             hres = to_string(&data[i], &str);
             if (FAILED(hres))
@@ -2655,12 +2657,10 @@ static HRESULT Global_Join(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, 
             str = V_BSTR(&data[i]);
         }
 
+        str_array[i] = str;
         total_len += SysStringLen(str);
-        if (i > lbound)
+        if (i)
             total_len += delimiter_len;
-
-        if (V_VT(&data[i]) != VT_BSTR)
-            SysFreeString(str);
     }
 
     output = SysAllocStringLen(NULL, total_len);
@@ -2671,42 +2671,29 @@ static HRESULT Global_Join(BuiltinDisp *This, VARIANT *args, unsigned args_cnt, 
 
     output_ptr = output;
 
-    for (i = lbound; i <= ubound; i++) {
-        if (V_VT(&data[i]) != VT_BSTR) {
-            hres = to_string(&data[i], &str);
-            if (FAILED(hres))
-                goto cleanup_output;
-        } else {
-            str = V_BSTR(&data[i]);
-        }
-
-        if (i > lbound) {
+    for (i = 0; i < count; i++) {
+        if (i) {
             memcpy(output_ptr, delimiter, delimiter_len * sizeof(WCHAR));
             output_ptr += delimiter_len;
         }
-
+        str = str_array[i];
         str_len = SysStringLen(str);
         memcpy(output_ptr, str, str_len * sizeof(WCHAR));
         output_ptr += str_len;
-
-        if (V_VT(&data[i]) != VT_BSTR)
-            SysFreeString(str);
     }
 
     *output_ptr = L'\0';
-    SafeArrayUnaccessData(sa);
-    if (free_delimiter)
-        SysFreeString(delimiter);
+    hres = return_bstr(res, output);
 
-    return return_bstr(res, output);
-
-cleanup_output:
-    SysFreeString(output);
 cleanup_data:
+    for (i = 0; i < count; i++) {
+        if (V_VT(&data[i]) != VT_BSTR)
+            SysFreeString(str_array[i]);
+    }
     SafeArrayUnaccessData(sa);
 cleanup:
-    if (free_delimiter)
-        SysFreeString(delimiter);
+    SysFreeString(free_delimiter);
+    free(str_array);
     return hres;
 }
 

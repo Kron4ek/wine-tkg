@@ -31,6 +31,7 @@
 #include <xkbcommon/xkbregistry.h>
 #include "pointer-constraints-unstable-v1-client-protocol.h"
 #include "relative-pointer-unstable-v1-client-protocol.h"
+#include "text-input-unstable-v3-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
@@ -111,6 +112,16 @@ struct wayland_pointer
     pthread_mutex_t mutex;
 };
 
+struct wayland_text_input
+{
+    struct zwp_text_input_v3 *zwp_text_input_v3;
+    WCHAR *preedit_string;
+    DWORD preedit_cursor_pos;
+    WCHAR *commit_string;
+    struct wl_surface *wl_surface;
+    pthread_mutex_t mutex;
+};
+
 struct wayland_seat
 {
     struct wl_seat *wl_seat;
@@ -132,9 +143,11 @@ struct wayland
     struct wl_subcompositor *wl_subcompositor;
     struct zwp_pointer_constraints_v1 *zwp_pointer_constraints_v1;
     struct zwp_relative_pointer_manager_v1 *zwp_relative_pointer_manager_v1;
+    struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3;
     struct wayland_seat seat;
     struct wayland_keyboard keyboard;
     struct wayland_pointer pointer;
+    struct wayland_text_input text_input;
     struct wl_list output_list;
     /* Protects the output_list and the wayland_output.current states. */
     pthread_mutex_t output_mutex;
@@ -341,6 +354,13 @@ void wayland_pointer_deinit(void);
 void wayland_pointer_clear_constraint(void);
 
 /**********************************************************************
+ *          Wayland text input
+ */
+
+void wayland_text_input_init(void);
+void wayland_text_input_deinit(void);
+
+/**********************************************************************
  *          OpenGL
  */
 
@@ -374,6 +394,7 @@ RGNDATA *get_region_data(HRGN region);
 BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset);
 LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 void WAYLAND_DestroyWindow(HWND hwnd);
+BOOL WAYLAND_SetIMECompositionRect(HWND hwnd, RECT rect);
 void WAYLAND_SetCursor(HWND hwnd, HCURSOR hcursor);
 void WAYLAND_SetWindowText(HWND hwnd, LPCWSTR text);
 LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam, const POINT *pos);

@@ -52,7 +52,7 @@ F:	dlls/xaudio*/
 Bluetooth support
 M:      Vibhav Pant <vibhavp@gmail.com>
 F:      dlls/winebth.sys/
-F:      dlls/bluetoothapis/sdp.c
+F:      dlls/bluetoothapis/
 
 Common Controls Library
 P:	Nikolay Sivov <nsivov@codeweavers.com>
@@ -295,6 +295,10 @@ RPC Runtime
 P:	Huw Davies <huw@codeweavers.com>
 P:	Elizabeth Figura <zfigura@codeweavers.com>
 F:	dlls/rpcrt4/
+
+Scripting runtime components
+P:	Nikolay Sivov <nsivov@codeweavers.com>
+F:	dlls/scrrun/
 
 Theming
 M:	Zhiyi Zhang <zzhang@codeweavers.com>

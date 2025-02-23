@@ -57,6 +57,7 @@ enum vkd3d_shader_api_version
     VKD3D_SHADER_API_VERSION_1_12,
     VKD3D_SHADER_API_VERSION_1_13,
     VKD3D_SHADER_API_VERSION_1_14,
+    VKD3D_SHADER_API_VERSION_1_15,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_API_VERSION),
 };
@@ -540,6 +541,8 @@ enum vkd3d_shader_fog_fragment_mode
      *     k = 1 / (end - start)
      */
     VKD3D_SHADER_FOG_FRAGMENT_LINEAR = 0x3,
+
+    VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_FOG_FRAGMENT_MODE),
 };
 
 /**
@@ -577,6 +580,8 @@ enum vkd3d_shader_fog_source
      * shader.
      */
     VKD3D_SHADER_FOG_SOURCE_W = 0x3,
+
+    VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_FOG_SOURCE),
 };
 
 /**
@@ -1116,6 +1121,8 @@ enum vkd3d_shader_d3dbc_constant_register
     VKD3D_SHADER_D3DBC_INT_CONSTANT_REGISTER    = 0x1,
     /** The boolean constant register set, b# in Direct3D assembly. */
     VKD3D_SHADER_D3DBC_BOOL_CONSTANT_REGISTER   = 0x2,
+
+    VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_D3DBC_CONSTANT_REGISTER),
 };
 
 /**
@@ -2746,6 +2753,7 @@ VKD3D_SHADER_API const enum vkd3d_shader_target_type *vkd3d_shader_get_supported
  * - vkd3d_shader_preprocess_info
  * - vkd3d_shader_scan_combined_resource_sampler_info
  * - vkd3d_shader_scan_descriptor_info
+ * - vkd3d_shader_scan_hull_shader_tessellation_info
  * - vkd3d_shader_scan_signature_info
  * - vkd3d_shader_spirv_domain_shader_target_info
  * - vkd3d_shader_spirv_target_info
@@ -2933,9 +2941,10 @@ VKD3D_SHADER_API int vkd3d_shader_convert_root_signature(struct vkd3d_shader_ver
  * \param compile_info A chained structure containing scan parameters.
  * \n
  * The scanner supports the following chained structures:
- * - vkd3d_shader_scan_descriptor_info
- * - vkd3d_shader_scan_signature_info
  * - vkd3d_shader_scan_combined_resource_sampler_info
+ * - vkd3d_shader_scan_descriptor_info
+ * - vkd3d_shader_scan_hull_shader_tessellation_info
+ * - vkd3d_shader_scan_signature_info
  * \n
  * Although the \a compile_info parameter is read-only, chained structures
  * passed to this function need not be, and may serve as output parameters,
@@ -2982,7 +2991,8 @@ VKD3D_SHADER_API void vkd3d_shader_free_scan_descriptor_info(
  * signature. To retrieve signatures from other shader types, or other signature
  * types, use vkd3d_shader_scan() and struct vkd3d_shader_scan_signature_info.
  * This function returns the same input signature that is returned in
- * struct vkd3d_shader_scan_signature_info.
+ * struct vkd3d_shader_scan_signature_info for dxbc-tpf shaders, but may return
+ * different information for dxbc-dxil shaders.
  *
  * \param dxbc Compiled byte code, in DXBC format.
  *

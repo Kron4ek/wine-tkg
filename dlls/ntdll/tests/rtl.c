@@ -95,6 +95,8 @@ static HMODULE hntdll = 0;
 static PRTL_SPLAY_LINKS (WINAPI *pRtlDelete)(PRTL_SPLAY_LINKS);
 static void      (WINAPI  *pRtlDeleteNoSplay)(PRTL_SPLAY_LINKS, PRTL_SPLAY_LINKS *);
 static BOOLEAN   (WINAPI  *pRtlDeleteElementGenericTable)(PRTL_GENERIC_TABLE,PVOID);
+static void *    (WINAPI  *pRtlEnumerateGenericTable)(PRTL_GENERIC_TABLE, BOOLEAN);
+static void *    (WINAPI  *pRtlEnumerateGenericTableWithoutSplaying)(PRTL_GENERIC_TABLE, PVOID *);
 static VOID      (WINAPI  *pRtlMoveMemory)(LPVOID,LPCVOID,SIZE_T);
 static VOID      (WINAPI  *pRtlFillMemory)(LPVOID,SIZE_T,BYTE);
 static VOID      (WINAPI  *pRtlFillMemoryUlong)(LPVOID,SIZE_T,ULONG);
@@ -102,6 +104,7 @@ static VOID      (WINAPI  *pRtlZeroMemory)(LPVOID,SIZE_T);
 static USHORT    (FASTCALL *pRtlUshortByteSwap)(USHORT source);
 static ULONG     (FASTCALL *pRtlUlongByteSwap)(ULONG source);
 static ULONGLONG (FASTCALL *pRtlUlonglongByteSwap)(ULONGLONG source);
+static void *    (WINAPI *pRtlGetElementGenericTable)(PRTL_GENERIC_TABLE, ULONG);
 static DWORD     (WINAPI *pRtlGetThreadErrorMode)(void);
 static NTSTATUS  (WINAPI *pRtlSetThreadErrorMode)(DWORD, LPDWORD);
 static PVOID     (WINAPI *pRtlInsertElementGenericTable)(PRTL_GENERIC_TABLE, PVOID, CLONG, PBOOLEAN);
@@ -167,6 +170,8 @@ static void InitFunctionPtrs(void)
         pRtlDelete = (void *)GetProcAddress(hntdll, "RtlDelete");
         pRtlDeleteElementGenericTable = (void *)GetProcAddress(hntdll, "RtlDeleteElementGenericTable");
         pRtlDeleteNoSplay = (void *)GetProcAddress(hntdll, "RtlDeleteNoSplay");
+        pRtlEnumerateGenericTable = (void *)GetProcAddress(hntdll, "RtlEnumerateGenericTable");
+        pRtlEnumerateGenericTableWithoutSplaying = (void *)GetProcAddress(hntdll, "RtlEnumerateGenericTableWithoutSplaying");
 	pRtlMoveMemory = (void *)GetProcAddress(hntdll, "RtlMoveMemory");
 	pRtlFillMemory = (void *)GetProcAddress(hntdll, "RtlFillMemory");
 	pRtlFillMemoryUlong = (void *)GetProcAddress(hntdll, "RtlFillMemoryUlong");
@@ -174,6 +179,7 @@ static void InitFunctionPtrs(void)
         pRtlUshortByteSwap = (void *)GetProcAddress(hntdll, "RtlUshortByteSwap");
         pRtlUlongByteSwap = (void *)GetProcAddress(hntdll, "RtlUlongByteSwap");
         pRtlUlonglongByteSwap = (void *)GetProcAddress(hntdll, "RtlUlonglongByteSwap");
+        pRtlGetElementGenericTable = (void *)GetProcAddress(hntdll, "RtlGetElementGenericTable");
         pRtlGetThreadErrorMode = (void *)GetProcAddress(hntdll, "RtlGetThreadErrorMode");
         pRtlSetThreadErrorMode = (void *)GetProcAddress(hntdll, "RtlSetThreadErrorMode");
         pRtlInsertElementGenericTable = (void *)GetProcAddress(hntdll, "RtlInsertElementGenericTable");
@@ -5229,6 +5235,236 @@ static void test_RtlLookupElementGenericTable(void)
     }
 }
 
+static void test_RtlEnumerateGenericTableWithoutSplaying(void)
+{
+    static const int elements[] = {1, 9, 5, 4, 7, 2, 3, 8, 6};
+    static const int expected_elements[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    RTL_SPLAY_LINKS *old_table_root;
+    BOOLEAN new_element, success;
+    RTL_GENERIC_TABLE table;
+    int i, value, *ret;
+    void *restart_key;
+
+    if (!pRtlEnumerateGenericTableWithoutSplaying)
+    {
+        win_skip("RtlEnumerateGenericTableWithoutSplaying is unavailable.\n");
+        return;
+    }
+
+    pRtlInitializeGenericTable(&table, generic_compare_proc, generic_allocate_proc, generic_free_proc, NULL);
+
+    for (i = 0; i < ARRAY_SIZE(elements); i++)
+    {
+        value = elements[i];
+        ret = pRtlInsertElementGenericTable(&table, &value, sizeof(value), &new_element);
+        ok(ret && *ret == value, "Got unexpected pointer.\n");
+        ok(new_element, "Expected new element.\n");
+    }
+
+    /* Test that restart key is a pointer to RTL_SPLAY_LINKS pointing to returned element */
+    restart_key = NULL;
+    ret = pRtlEnumerateGenericTableWithoutSplaying(&table, &restart_key);
+    ok(ret && *ret == expected_elements[0], "Expected %d at %d, got %d.\n",
+       expected_elements[0], 0, ret ? *ret : -1);
+    ok(restart_key == get_splay_links_from_data(ret), "Got unexpected restart key %p.\n", restart_key);
+
+    /* Test enumeration */
+    old_table_root = table.TableRoot;
+    restart_key = NULL;
+    for (i = 0, ret = pRtlEnumerateGenericTableWithoutSplaying(&table, &restart_key); ret != NULL;
+         ret = pRtlEnumerateGenericTableWithoutSplaying(&table, &restart_key), i++)
+    {
+        ok(ret && *ret == expected_elements[i], "Expected %d at %d, got %d.\n",
+           expected_elements[i], i, ret ? *ret : -1);
+        ok(table.TableRoot == old_table_root, "Got unexpected TableRoot.\n");
+    }
+    ok(i == ARRAY_SIZE(elements), "Got unexpected index %d.\n", i);
+
+    /* Test restarting enumeration */
+    restart_key = NULL;
+    for (i = 0, ret = pRtlEnumerateGenericTableWithoutSplaying(&table, &restart_key); ret != NULL;
+         ret = pRtlEnumerateGenericTableWithoutSplaying(&table, &restart_key), i++)
+    {
+        ok(ret && *ret == expected_elements[i], "Expected %d at %d, got %d.\n",
+           expected_elements[i], i, ret ? *ret : -1);
+        ok(table.TableRoot == old_table_root, "Got unexpected TableRoot.\n");
+    }
+    ok(i == ARRAY_SIZE(elements), "Got unexpected index %d.\n", i);
+
+    for (i = 0; i < ARRAY_SIZE(elements); i++)
+    {
+        value = elements[i];
+        success = pRtlDeleteElementGenericTable(&table, &value);
+        ok(success, "RtlDeleteElementGenericTable %d failed.\n", elements[i]);
+    }
+}
+
+static void test_RtlEnumerateGenericTable(void)
+{
+    static const int elements[] = {1, 9, 5, 4, 7, 2, 3, 8, 6};
+    static const int expected_elements[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    int i, j, value, *ret, *first_ret = NULL, *last_ret = NULL;
+    BOOLEAN success, new_element;
+    RTL_GENERIC_TABLE table;
+    LIST_ENTRY *entry;
+
+    if (!pRtlEnumerateGenericTable)
+    {
+        win_skip("RtlEnumerateGenericTable is unavailable.\n");
+        return;
+    }
+
+    pRtlInitializeGenericTable(&table, generic_compare_proc, generic_allocate_proc, generic_free_proc, NULL);
+
+    ret = pRtlEnumerateGenericTable(&table, TRUE);
+    ok(!ret, "Got unexpected pointer.\n");
+
+    ret = pRtlEnumerateGenericTable(&table, FALSE);
+    ok(!ret, "Got unexpected pointer.\n");
+
+    for (i = 0; i < ARRAY_SIZE(elements); i++)
+    {
+        value = elements[i];
+        ret = pRtlInsertElementGenericTable(&table, &value, sizeof(value), &new_element);
+        ok(ret && *ret == value, "Got unexpected pointer.\n");
+        ok(new_element, "Expected new element.\n");
+
+        if (i == 0)
+            first_ret = ret;
+        if (i == ARRAY_SIZE(elements) - 1)
+            last_ret = ret;
+    }
+
+    /* Test enumeration */
+    for (i = 0, ret = pRtlEnumerateGenericTable(&table, TRUE); ret != NULL;
+         ret = pRtlEnumerateGenericTable(&table, FALSE), i++)
+    {
+        ok(ret && *ret == expected_elements[i], "Expected %d at %d, got %d.\n",
+           expected_elements[i], i, ret ? *ret : -1);
+        ok(table.TableRoot == get_splay_links_from_data(ret), "Got unexpected TableRoot.\n");
+
+        /* Test that RtlEnumerateGenericTable() doesn't touch WhichOrderedElement, OrderedPointer and
+         * InsertOrderList. Additional tests show that RtlEnumerateGenericTable() uses TableRoot
+         * to keep track of enumeration status. This also means that if other functions that change
+         * TableRoot get used during enumerations, RtlEnumerateGenericTable() won't be able to find
+         * the correct next element, which is also the case on Windows */
+        ok(table.WhichOrderedElement == 0, "Got unexpected WhichOrderedElement.\n");
+        ok(table.OrderedPointer == &table.InsertOrderList, "Got unexpected OrderedPointer.\n");
+        ok(table.InsertOrderList.Flink == get_list_entry_from_data(first_ret), "Got unexpected Flink.\n");
+        ok(table.InsertOrderList.Blink == get_list_entry_from_data(last_ret), "Got unexpected Blink.\n");
+        for (j = 0, entry = table.InsertOrderList.Flink; entry->Flink != table.InsertOrderList.Flink;
+             j++, entry = entry->Flink)
+        {
+            ret = (int *)get_data_from_list_entry(entry);
+            ok(*ret == elements[j], "Got unexpected pointer, value %d.\n", *ret);
+        }
+        ok(table.TableContext == NULL, "Got unexpected TableContext.\n");
+    }
+    ok(i == ARRAY_SIZE(elements), "Got unexpected index %d.\n", i);
+
+    /* Test restarting enumeration */
+    for (i = 0, ret = pRtlEnumerateGenericTable(&table, TRUE); ret != NULL;
+         ret = pRtlEnumerateGenericTable(&table, FALSE), i++)
+    {
+        ok(ret && *ret == expected_elements[i], "Expected %d at %d, got %d.\n", expected_elements[i],
+           i, ret ? *ret : -1);
+        ok(table.TableRoot == get_splay_links_from_data(ret), "Got unexpected TableRoot.\n");
+    }
+    ok(i == ARRAY_SIZE(elements), "Got unexpected index %d.\n", i);
+
+    for (i = 0; i < ARRAY_SIZE(elements); i++)
+    {
+        value = elements[i];
+        success = pRtlDeleteElementGenericTable(&table, &value);
+        ok(success, "RtlDeleteElementGenericTable failed.\n");
+    }
+}
+
+static void test_RtlGetElementGenericTable(void)
+{
+    static const int elements[] = {9, 1, 5, 4, 15, 11, 2, 3, 8, 6, 0, 10, 13, 14, 7, 12};
+    RTL_SPLAY_LINKS *old_table_root;
+    BOOLEAN success, new_element;
+    RTL_GENERIC_TABLE table;
+    int i, value, *ret;
+
+    if (!pRtlGetElementGenericTable)
+    {
+        win_skip("RtlGetElementGenericTable is unavailable.\n");
+        return;
+    }
+
+    pRtlInitializeGenericTable(&table, generic_compare_proc, generic_allocate_proc, generic_free_proc, NULL);
+
+    ret = pRtlGetElementGenericTable(&table, 0);
+    ok(!ret, "Got unexpected pointer.\n");
+
+    for (i = 0; i < ARRAY_SIZE(elements); i++)
+    {
+        value = elements[i];
+        ret = pRtlInsertElementGenericTable(&table, &value, sizeof(value), &new_element);
+        ok(ret && *ret == value, "Got unexpected pointer.\n");
+        ok(new_element, "Expected new element.\n");
+    }
+
+    /* Test that RtlGetElementGenericTable() changes WhichOrderedElement and OrderedPointer, but not TableRoot */
+    old_table_root = table.TableRoot;
+    for (i = 0; i < ARRAY_SIZE(elements); i++)
+    {
+        ret = pRtlGetElementGenericTable(&table, i);
+        ok(ret && *ret == elements[i], "Got unexpected pointer.\n");
+        ok(table.WhichOrderedElement == i + 1, "Got unexpected WhichOrderedElement %lu.\n",
+           table.WhichOrderedElement);
+        ok(table.OrderedPointer == get_list_entry_from_data(ret), "Got unexpected OrderedPointer.\n");
+        ok(table.TableRoot == old_table_root, "Got unexpected TableRoot.\n");
+    }
+
+    /* RtlInsertElementGenericTable() shouldn't touch WhichOrderedElement */
+    value = 20;
+    ret = pRtlInsertElementGenericTable(&table, &value, sizeof(value), &new_element);
+    ok(ret && *ret == 20, "Got unexpected pointer.\n");
+    ok(new_element, "Expected new element.\n");
+    ok(table.WhichOrderedElement == ARRAY_SIZE(elements), "Got unexpected WhichOrderedElement %lu.\n",
+       table.WhichOrderedElement);
+
+    /* RtlGetElementGenericTable() updates WhichOrderedElement. WhichOrderedElement points to the
+     * result element but its index starts from 1 instead of 0 */
+    ret = pRtlGetElementGenericTable(&table, 1);
+    ok(ret && *ret == elements[1], "Got unexpected pointer.\n");
+    ok(table.WhichOrderedElement == 2, "Got unexpected WhichOrderedElement %lu.\n",
+       table.WhichOrderedElement);
+    ok(table.OrderedPointer == get_list_entry_from_data(ret), "Got unexpected OrderedPointer.\n");
+
+    /* RtlDeleteElementGenericTable() should reset WhichOrderedElement and OrderedPointer */
+    value = 20;
+    success = pRtlDeleteElementGenericTable(&table, &value);
+    ok(success, "RtlDeleteElementGenericTable failed.\n");
+    ok(table.WhichOrderedElement == 0, "Got unexpected WhichOrderedElement %lu.\n", table.WhichOrderedElement);
+    ok(table.OrderedPointer == &table.InsertOrderList, "Got unexpected OrderedPointer.\n");
+
+    /* Out of order RtlGetElementGenericTable() calls */
+    for (i = 0; i < ARRAY_SIZE(elements); i++)
+    {
+        ret = pRtlGetElementGenericTable(&table, elements[i]);
+        ok(ret && *ret == elements[elements[i]], "Expected %d got %d at %d.\n",
+           elements[elements[i]], *ret,  elements[i]);
+        ok(table.WhichOrderedElement == elements[i] + 1, "Got unexpected WhichOrderedElement %lu.\n",
+           table.WhichOrderedElement);
+        ok(table.OrderedPointer == get_list_entry_from_data(ret), "Got unexpected OrderedPointer.\n");
+    }
+
+    /* Out of range RtlGetElementGenericTable() call */
+    ret = pRtlGetElementGenericTable(&table, ARRAY_SIZE(elements));
+    ok(!ret, "Got unexpected pointer.\n");
+
+    for (i = 0; i < ARRAY_SIZE(elements); i++)
+    {
+        value = elements[i];
+        success = pRtlDeleteElementGenericTable(&table, &value);
+        ok(success, "RtlDeleteElementGenericTable failed.\n");
+    }
+}
+
 START_TEST(rtl)
 {
     InitFunctionPtrs();
@@ -5295,4 +5531,7 @@ START_TEST(rtl)
     test_RtlInsertElementGenericTable();
     test_RtlDeleteElementGenericTable();
     test_RtlLookupElementGenericTable();
+    test_RtlEnumerateGenericTableWithoutSplaying();
+    test_RtlEnumerateGenericTable();
+    test_RtlGetElementGenericTable();
 }

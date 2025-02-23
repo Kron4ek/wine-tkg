@@ -3237,7 +3237,7 @@ static void fx_4_parse_shader_blob(struct fx_parser *parser, unsigned int object
 
     static const struct vkd3d_shader_compile_option options[] =
     {
-        {VKD3D_SHADER_COMPILE_OPTION_API_VERSION, VKD3D_SHADER_API_VERSION_1_14},
+        {VKD3D_SHADER_COMPILE_OPTION_API_VERSION, VKD3D_SHADER_API_VERSION_1_15},
     };
 
     fx_parser_read_unstructured(parser, &data_size, shader->offset, sizeof(data_size));

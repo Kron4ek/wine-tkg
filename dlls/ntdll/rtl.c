@@ -249,6 +249,12 @@ static void *get_data_from_splay_links(RTL_SPLAY_LINKS *links)
     return (unsigned char *)links + FIELD_OFFSET(struct rtl_generic_table_entry, data);
 }
 
+static void *get_data_from_list_entry(LIST_ENTRY *list_entry)
+{
+    return (unsigned char *)list_entry + FIELD_OFFSET(struct rtl_generic_table_entry, data)
+        - FIELD_OFFSET(struct rtl_generic_table_entry, list_entry);
+}
+
 static LIST_ENTRY *get_list_entry_from_splay_links(RTL_SPLAY_LINKS *links)
 {
     return (LIST_ENTRY *)((unsigned char *)links + FIELD_OFFSET(struct rtl_generic_table_entry, list_entry));
@@ -674,11 +680,66 @@ BOOLEAN WINAPI RtlDeleteElementGenericTable(RTL_GENERIC_TABLE *table, void *valu
  */
 void * WINAPI RtlEnumerateGenericTableWithoutSplaying(RTL_GENERIC_TABLE *table, PVOID *previous)
 {
-    static int warn_once;
+    RTL_SPLAY_LINKS *child;
 
-    if (!warn_once++)
-        FIXME("(%p, %p) stub!\n", table, previous);
-    return NULL;
+    TRACE("(%p, %p)\n", table, previous);
+
+    if (RtlIsGenericTableEmpty(table))
+        return NULL;
+
+    if (!*previous)
+    {
+        /* Find the smallest element */
+        child = table->TableRoot;
+        while (RtlLeftChild(child))
+            child = RtlLeftChild(child);
+    }
+    else
+    {
+        /* Find the successor of the previous element */
+        child = RtlRealSuccessor(*previous);
+        if (!child)
+            return NULL;
+    }
+
+    *previous = child;
+    return get_data_from_splay_links(child);
+}
+
+/******************************************************************************
+ *  RtlEnumerateGenericTable           [NTDLL.@]
+ *
+ * RtlEnumerateGenericTable() uses TableRoot to keep track of enumeration status according to tests.
+ * This also means that other functions that change TableRoot should not be used during enumerations.
+ * Otherwise, RtlEnumerateGenericTable() won't be able to find the correct next element when restart
+ * is FALSE. This is also the case on Windows.
+ */
+void * WINAPI RtlEnumerateGenericTable(RTL_GENERIC_TABLE *table, BOOLEAN restart)
+{
+    RTL_SPLAY_LINKS *child;
+
+    TRACE("(%p, %d)\n", table, restart);
+
+    if (RtlIsGenericTableEmpty(table))
+        return NULL;
+
+    if (restart)
+    {
+        /* Find the smallest element */
+        child = table->TableRoot;
+        while (RtlLeftChild(child))
+            child = RtlLeftChild(child);
+    }
+    else
+    {
+        /* Find the successor of the root */
+        child = RtlRealSuccessor(table->TableRoot);
+        if (!child)
+            return NULL;
+    }
+
+    table->TableRoot = RtlSplay(child);
+    return get_data_from_splay_links(child);
 }
 
 /******************************************************************************
@@ -695,8 +756,130 @@ ULONG WINAPI RtlNumberGenericTableElements(RTL_GENERIC_TABLE *table)
  */
 void * WINAPI RtlGetElementGenericTable(RTL_GENERIC_TABLE *table, ULONG index)
 {
-    FIXME("(%p, %lu) stub!\n", table, index);
-    return NULL;
+    ULONG count, ordered_element_index;
+    LIST_ENTRY *list_entry;
+    BOOL forward;
+
+    TRACE("(%p, %lu)\n", table, index);
+
+    if (index >= table->NumberGenericTableElements)
+        return NULL;
+
+    /* No OrderedPointer, use list header InsertOrderList */
+    if (table->WhichOrderedElement == 0)
+    {
+        /*
+         * |  lower half  | upper half |
+         * ^       ^      ^            ^
+         * head, 0 |      |            tail, table->NumberGenericTableElements - 1
+         *         |      (table->NumberGenericTableElements - 1) / 2
+         *         index closer to head
+         */
+        if (index <= (table->NumberGenericTableElements - 1) / 2)
+        {
+            list_entry = table->InsertOrderList.Flink;
+            count = index;
+            forward = TRUE;
+        }
+        /*
+         * |  lower half  | upper half |
+         * ^              ^       ^    ^
+         * head, 0        |       |    tail, table->NumberGenericTableElements - 1
+         *                |       index closer to tail
+         *                (table->NumberGenericTableElements - 1) / 2
+         */
+        else
+        {
+            list_entry = table->InsertOrderList.Blink;
+            count = table->NumberGenericTableElements - index - 1;
+            forward = FALSE;
+        }
+    }
+    /* Has OrderedPointer, decide to use list header or OrderedPointer */
+    else
+    {
+        ordered_element_index = table->WhichOrderedElement - 1;
+
+        /*
+         * | -------------- | ---------- |
+         * ^         ^      ^            ^
+         * head, 0   |      |            table->NumberGenericTableElements - 1
+         *           |      ordered_element_index
+         *           index, 0 <= index <= ordered_element_index
+         */
+        if (index <= ordered_element_index)
+        {
+            /*
+             * | ------------------- |
+             * ^          ^          ^
+             * | <--d1--> | <--d2--> |
+             * head, 0    |          ordered_element_index
+             *            index
+             *
+             */
+            /* d1 <= d2, index is closer to head, forward from head */
+            if (index <= ordered_element_index - index)
+            {
+                list_entry = table->InsertOrderList.Flink;
+                count = index;
+                forward = TRUE;
+            }
+            /* d1 > d2, index is closer to ordered_element_index, backward from ordered_element_index */
+            else
+            {
+                list_entry = table->OrderedPointer;
+                count = ordered_element_index - index;
+                forward = FALSE;
+            }
+        }
+        /*
+         * | ------ | ---------- |
+         * ^        ^  ^         ^
+         * head, 0  |  |         tail, table->NumberGenericTableElements - 1
+         *          |  index, ordered_element_index < index <= table->NumberGenericTableElements - 1
+         *          ordered_element_index
+         */
+        else
+        {
+            /*
+             * | --------------------------------|
+             * ^                      ^          ^
+             * | <--------d1--------> | <--d2--> |
+             * ordered_element_index  |          tail, table->NumberGenericTableElements - 1
+             *                        index
+             *
+             */
+            /* d1 <= d2, index is closer to ordered_element_index, forward from ordered_element_index */
+            if (index - ordered_element_index <= table->NumberGenericTableElements - index - 1)
+            {
+                list_entry = table->OrderedPointer;
+                count = index - ordered_element_index;
+                forward = TRUE;
+            }
+            /* d1 > d2, index is closer to tail, backward from tail */
+            else
+            {
+                list_entry = table->InsertOrderList.Blink;
+                count = table->NumberGenericTableElements - index - 1;
+                forward = FALSE;
+            }
+        }
+    }
+
+    if (forward)
+    {
+        while (count--)
+            list_entry = list_entry->Flink;
+    }
+    else
+    {
+        while (count--)
+            list_entry = list_entry->Blink;
+    }
+
+    table->OrderedPointer = list_entry;
+    table->WhichOrderedElement = index + 1;
+    return get_data_from_list_entry(list_entry);
 }
 
 /******************************************************************************

@@ -142,6 +142,13 @@ foo
 bar
 foo2
 bar2
+------------ Testing call and echo modes ------------
+ECHO_IS_ON
+ECHO_IS_OFF
+ECHO_IS_ON
+ECHO_IS_OFF
+ECHO_IS_ON
+ECHO_IS_OFF
 ------------ Testing parameterization ------------
 'a', 'b', 'c'
 '"a b c"', '', ''
@@ -204,6 +211,9 @@ food2
 food21
 foo7@space@@space@@or_broken@not supported@space@
 foo@or_broken@not supported
+--- right-to-left redirection
+good
+foo
 --- redirect at beginning of line
 foo
 foo1
@@ -770,6 +780,18 @@ e@or_broken@qwerty
 ''@or_broken@'qwerty'
 r@or_broken@qwerty
 ty
+'y'
+''
+''
+'qwerty'
+''
+'qw'
+'WINE_VAR:~2a'
+'WINE_VAR:~2a,2'
+'WINE_VAR:~a,2'
+'WINE_VAR:~2,2a'
+'WINE_VAR:~-'
+------------ Testing variable partial replacement ------------
 azertyazERTY
 ertyERTY
 =_QWERTY
@@ -1754,6 +1776,43 @@ bar\baz removed
 @pwd@
 @drive@@path@foobar
 @pwd@
+------------ Testing dir /o ------------
+---
+a1.ab
+a2.ac
+a1.aa
+a1.ac
+a2.aa
+---
+a1.ab
+a2.ac
+a1.aa
+a1.ac
+a2.aa
+---
+a2.ac
+a1.ab
+a2.aa
+a1.ac
+a1.aa
+---
+a1.ab
+a2.ac
+a1.aa
+a1.ac
+a2.aa
+---
+a2.ac
+a1.ab
+a2.aa
+a1.ac
+a1.aa
+---
+a2.ac
+a1.ab
+a1.ac
+a2.aa
+a1.aa
 ------------ Testing attrib ------------
 A@spaces@@drive@@path@foobar\foo@or_broken@A       I@spaces@@drive@@path@foobar\foo
 A@spaces@@drive@@path@foobar\foo@or_broken@A       I@spaces@@drive@@path@foobar\foo

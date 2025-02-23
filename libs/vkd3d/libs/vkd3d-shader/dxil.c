@@ -3911,23 +3911,51 @@ static void sm6_parser_init_signature(struct sm6_parser *sm6, const struct shade
     }
 }
 
-static void sm6_parser_init_output_signature(struct sm6_parser *sm6, const struct shader_signature *output_signature)
+static int sm6_parser_init_output_signature(struct sm6_parser *sm6, const struct shader_signature *output_signature)
 {
+    if (!(sm6->output_params = vsir_program_get_dst_params(sm6->p.program, output_signature->element_count)))
+    {
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                "Failed to allocate output parameters.");
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    }
+
     sm6_parser_init_signature(sm6, output_signature, false, VKD3DSPR_OUTPUT, sm6->output_params);
+
+    return VKD3D_OK;
 }
 
-static void sm6_parser_init_input_signature(struct sm6_parser *sm6, const struct shader_signature *input_signature)
+static int sm6_parser_init_input_signature(struct sm6_parser *sm6, const struct shader_signature *input_signature)
 {
+    if (!(sm6->input_params = vsir_program_get_dst_params(sm6->p.program, input_signature->element_count)))
+    {
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                "Failed to allocate input parameters.");
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    }
+
     sm6_parser_init_signature(sm6, input_signature, true, VKD3DSPR_INPUT, sm6->input_params);
+
+    return VKD3D_OK;
 }
 
-static void sm6_parser_init_patch_constant_signature(struct sm6_parser *sm6,
+static int sm6_parser_init_patch_constant_signature(struct sm6_parser *sm6,
         const struct shader_signature *patch_constant_signature)
 {
     bool is_input = sm6->p.program->shader_version.type == VKD3D_SHADER_TYPE_DOMAIN;
 
+    if (!(sm6->patch_constant_params = vsir_program_get_dst_params(sm6->p.program,
+            patch_constant_signature->element_count)))
+    {
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
+                "Failed to allocate patch constant parameters.");
+        return VKD3D_ERROR_OUT_OF_MEMORY;
+    }
+
     sm6_parser_init_signature(sm6, patch_constant_signature, is_input, VKD3DSPR_PATCHCONST,
             sm6->patch_constant_params);
+
+    return VKD3D_OK;
 }
 
 static const struct sm6_value *sm6_parser_next_function_definition(struct sm6_parser *sm6)
@@ -9631,23 +9659,24 @@ static enum vkd3d_result sm6_parser_signatures_init(struct sm6_parser *sm6, cons
 
     if (m->u.node->operand_count && (ret = sm6_parser_read_signature(sm6, m->u.node->operands[0],
             &program->input_signature, tessellator_domain, true)) < 0)
-    {
         return ret;
-    }
+
     if (m->u.node->operand_count > 1 && (ret = sm6_parser_read_signature(sm6, m->u.node->operands[1],
             &program->output_signature, tessellator_domain, false)) < 0)
-    {
         return ret;
-    }
+
     if (m->u.node->operand_count > 1 && (ret = sm6_parser_read_signature(sm6, m->u.node->operands[2],
             &program->patch_constant_signature, tessellator_domain, false)) < 0)
-    {
         return ret;
-    }
 
-    sm6_parser_init_input_signature(sm6, &program->input_signature);
-    sm6_parser_init_output_signature(sm6, &program->output_signature);
-    sm6_parser_init_patch_constant_signature(sm6, &program->patch_constant_signature);
+    if ((ret = sm6_parser_init_input_signature(sm6, &program->input_signature)) < 0)
+        return ret;
+
+    if ((ret = sm6_parser_init_output_signature(sm6, &program->output_signature) < 0))
+        return ret;
+
+    if ((ret = sm6_parser_init_patch_constant_signature(sm6, &program->patch_constant_signature)) < 0)
+        return ret;
 
     return VKD3D_OK;
 }
@@ -10432,9 +10461,6 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, struct vsir_pro
     input_signature = &program->input_signature;
     output_signature = &program->output_signature;
     patch_constant_signature = &program->patch_constant_signature;
-    *input_signature = dxbc_desc->input_signature;
-    *output_signature = dxbc_desc->output_signature;
-    *patch_constant_signature = dxbc_desc->patch_constant_signature;
     program->features = dxbc_desc->features;
     memset(dxbc_desc, 0, sizeof(*dxbc_desc));
 
@@ -10495,18 +10521,6 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, struct vsir_pro
                     "DXIL value symbol table is invalid.");
         else
             vkd3d_unreachable();
-        goto fail;
-    }
-
-    if (!(sm6->output_params = vsir_program_get_dst_params(program, output_signature->element_count))
-            || !(sm6->input_params = vsir_program_get_dst_params(program, input_signature->element_count))
-            || !(sm6->patch_constant_params = vsir_program_get_dst_params(program,
-            patch_constant_signature->element_count)))
-    {
-        ERR("Failed to allocate input/output parameters.\n");
-        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY,
-                "Out of memory allocating input/output parameters.");
-        ret = VKD3D_ERROR_OUT_OF_MEMORY;
         goto fail;
     }
 

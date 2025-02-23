@@ -542,6 +542,8 @@ static int shdr_handler(const struct vkd3d_shader_dxbc_section_desc *section,
     {
         case TAG_ISGN:
         case TAG_ISG1:
+            if (desc->is_dxil)
+                break;
             if (desc->input_signature.elements)
             {
                 FIXME("Multiple input signatures.\n");
@@ -554,6 +556,8 @@ static int shdr_handler(const struct vkd3d_shader_dxbc_section_desc *section,
         case TAG_OSGN:
         case TAG_OSG5:
         case TAG_OSG1:
+            if (desc->is_dxil)
+                break;
             if (desc->output_signature.elements)
             {
                 FIXME("Multiple output signatures.\n");
@@ -565,6 +569,8 @@ static int shdr_handler(const struct vkd3d_shader_dxbc_section_desc *section,
 
         case TAG_PCSG:
         case TAG_PSG1:
+            if (desc->is_dxil)
+                break;
             if (desc->patch_constant_signature.elements)
             {
                 FIXME("Multiple patch constant signatures.\n");

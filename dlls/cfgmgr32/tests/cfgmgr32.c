@@ -18,7 +18,16 @@
 
 #include "wine/test.h"
 #include "winreg.h"
+#include "windef.h"
+#include "winbase.h"
+#include "winuser.h"
+#include "objbase.h"
+#include "devguid.h"
+#include "initguid.h"
+#include "devpkey.h"
+#include "setupapi.h"
 #include "cfgmgr32.h"
+#include "ntddvdeo.h"
 
 static void test_CM_MapCrToWin32Err(void)
 {
@@ -106,7 +115,175 @@ static void test_CM_MapCrToWin32Err(void)
     }
 }
 
+DEFINE_DEVPROPKEY(DEVPROPKEY_GPU_LUID, 0x60b193cb, 0x5276, 0x4d0f, 0x96, 0xfc, 0xf1, 0x73, 0xab, 0xad, 0x3e, 0xc6, 2);
+
+static void test_CM_Get_Device_ID_List(void)
+{
+    struct
+    {
+        WCHAR id[128];
+        DEVINST inst;
+    }
+    instances[128];
+    SP_DEVINFO_DATA device = { sizeof(device) };
+    unsigned int i, count, expected_count;
+    WCHAR wguid_str[64], id[128], *wbuf, *wp;
+    char guid_str[64], id_a[128], *buf, *p;
+    DEVINST devinst;
+    CONFIGRET ret;
+    HDEVINFO set;
+    ULONG len;
+
+    StringFromGUID2(&GUID_DEVCLASS_DISPLAY, wguid_str, ARRAY_SIZE(wguid_str));
+    wp = wguid_str;
+    p = guid_str;
+    while ((*p++ = *wp++))
+        ;
+
+    ret = CM_Get_Device_ID_List_SizeW(NULL, wguid_str, CM_GETIDLIST_FILTER_CLASS);
+    ok(ret == CR_INVALID_POINTER, "got %#lx.\n", ret);
+    len = 0xdeadbeef;
+    ret = CM_Get_Device_ID_List_SizeW(&len, NULL, CM_GETIDLIST_FILTER_CLASS);
+    ok(ret == CR_INVALID_POINTER, "got %#lx.\n", ret);
+    ok(!len, "got %#lx.\n", len);
+    len = 0xdeadbeef;
+    ret = CM_Get_Device_ID_List_SizeW(&len, L"q", CM_GETIDLIST_FILTER_CLASS);
+    ok(ret == CR_INVALID_DATA, "got %#lx.\n", ret);
+    ok(!len, "got %#lx.\n", len);
+
+    ret = CM_Get_Device_ID_List_SizeA(NULL, guid_str, CM_GETIDLIST_FILTER_CLASS);
+    ok(ret == CR_INVALID_POINTER, "got %#lx.\n", ret);
+    len = 0xdeadbeef;
+    ret = CM_Get_Device_ID_List_SizeA(&len, NULL, CM_GETIDLIST_FILTER_CLASS);
+    ok(ret == CR_INVALID_POINTER, "got %#lx.\n", ret);
+    ok(!len, "got %#lx.\n", len);
+    len = 0xdeadbeef;
+    ret = CM_Get_Device_ID_List_SizeA(&len, "q", CM_GETIDLIST_FILTER_CLASS);
+    ok(ret == CR_INVALID_DATA, "got %#lx.\n", ret);
+    ok(!len, "got %#lx.\n", len);
+
+    len = 0xdeadbeef;
+    ret = CM_Get_Device_ID_List_SizeW(&len, NULL, 0);
+    ok(!ret, "got %#lx.\n", ret);
+    ok(len > 2, "got %#lx.\n", len);
+
+    wbuf = malloc(len * sizeof(*wbuf));
+    buf = malloc(len);
+
+    ret = CM_Get_Device_ID_ListW(NULL, wbuf, len, 0);
+    ok(!ret, "got %#lx.\n", ret);
+
+    len = 0xdeadbeef;
+    ret = CM_Get_Device_ID_List_SizeW(&len, wguid_str, CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT);
+    ok(!ret, "got %#lx.\n", ret);
+    ok(len > 2, "got %lu.\n", len);
+    memset(wbuf, 0xcc, len * sizeof(*wbuf));
+    ret = CM_Get_Device_ID_ListW(wguid_str, wbuf, 0, CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT);
+    ok(ret == CR_INVALID_POINTER, "got %#lx.\n", ret);
+    ok(wbuf[0] == 0xcccc, "got %#x.\n", wbuf[0]);
+    memset(wbuf, 0xcc, len * sizeof(*wbuf));
+    ret = CM_Get_Device_ID_ListW(wguid_str, wbuf, 1, CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT);
+    ok(ret == CR_BUFFER_SMALL, "got %#lx.\n", ret);
+    ok(!wbuf[0], "got %#x.\n", wbuf[0]);
+
+    len = 0xdeadbeef;
+    ret = CM_Get_Device_ID_List_SizeA(&len, guid_str, CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT);
+    ok(!ret, "got %#lx.\n", ret);
+    ok(len > 2, "got %lu.\n", len);
+    memset(buf, 0x7c, len);
+    ret = CM_Get_Device_ID_ListA(guid_str, buf, 0, CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT);
+    ok(ret == CR_INVALID_POINTER, "got %#lx.\n", ret);
+    ok(buf[0] == 0x7c, "got %#x.\n", buf[0]);
+    memset(buf, 0x7c, len);
+    ret = CM_Get_Device_ID_ListA(guid_str, buf, 1, CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT);
+    ok(ret == CR_BUFFER_SMALL, "got %#lx.\n", ret);
+    ok(buf[0] == 0x7c, "got %#x.\n", buf[0]);
+
+    set = SetupDiGetClassDevsW(&GUID_DEVCLASS_DISPLAY, NULL, NULL, DIGCF_PRESENT);
+    ok(set != &GUID_DEVCLASS_DISPLAY, "got error %#lx.\n", GetLastError());
+    for (i = 0; SetupDiEnumDeviceInfo(set, i, &device); ++i)
+    {
+        ok(i < ARRAY_SIZE(instances), "got %u.\n", i);
+        ret = SetupDiGetDeviceInstanceIdW(set, &device, instances[i].id, sizeof(instances[i].id), NULL);
+        ok(ret, "got error %#lx.\n", GetLastError());
+        instances[i].inst = device.DevInst;
+    }
+    SetupDiDestroyDeviceInfoList(set);
+    expected_count = i;
+    ok(expected_count, "got 0.\n");
+
+    wcscpy(id, L"q");
+    devinst = 0xdeadbeef;
+    ret = CM_Locate_DevNodeW(&devinst, id, 0);
+    todo_wine_if(ret == CR_NO_SUCH_DEVNODE) ok(ret == CR_INVALID_DEVICE_ID, "got %#lx.\n", ret);
+    ok(!devinst, "got %#lx.\n", devinst);
+
+    wcscpy(id, instances[0].id);
+    id[0] = 'Q';
+    ret = CM_Locate_DevNodeW(&devinst, id, 0);
+    ok(ret == CR_NO_SUCH_DEVNODE, "got %#lx.\n", ret);
+
+    for (i = 0; i < expected_count; ++i)
+    {
+        DEVPROPTYPE type;
+        ULONG size;
+
+        *id = 0;
+        ret = CM_Get_Device_IDW(instances[i].inst, id, ARRAY_SIZE(id), 0);
+        ok(!ret, "got %#lx.\n", ret);
+        ok(!wcscmp(id, instances[i].id), "got %s, expected %s.\n", debugstr_w(id), debugstr_w(instances[i].id));
+        size = len;
+        ret = CM_Get_DevNode_PropertyW(instances[i].inst, &DEVPROPKEY_GPU_LUID, &type, wbuf, &size, 0);
+        ok(!ret || ret == CR_NO_SUCH_VALUE, "got %#lx.\n", ret);
+        if (!ret)
+            ok(type == DEVPROP_TYPE_UINT64, "got %#lx.\n", type);
+
+        devinst = 0xdeadbeef;
+        ret = CM_Locate_DevNodeW(&devinst, instances[i].id, 0);
+        ok(!ret, "got %#lx, id %s.\n", ret, debugstr_w(instances[i].id));
+        ok(devinst == instances[i].inst, "got %#lx, expected %#lx.\n", devinst, instances[i].inst);
+        p = id_a;
+        wp = instances[i].id;
+        while((*p++ = *wp++))
+            ;
+        devinst = 0xdeadbeef;
+        ret = CM_Locate_DevNodeA(&devinst, id_a, 0);
+        ok(!ret, "got %#lx, id %s.\n", ret, debugstr_a(id_a));
+        ok(devinst == instances[i].inst, "got %#lx, expected %#lx.\n", devinst, instances[i].inst);
+    }
+
+    memset(wbuf, 0xcc, len * sizeof(*wbuf));
+    ret = CM_Get_Device_ID_ListW(wguid_str, wbuf, len, CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT);
+    ok(!ret, "got %#lx.\n", ret);
+    count = 0;
+    wp = wbuf;
+    while (*wp)
+    {
+        ++count;
+        ok(!wcsnicmp(wp, L"PCI\\", 4) || !wcsnicmp(wp, L"VMBUS\\", 6), "got %s.\n", debugstr_w(wp));
+        wp += wcslen(wp) + 1;
+    }
+    ok(count == expected_count, "got %u, expected %u.\n", count, expected_count);
+
+    memset(buf, 0xcc, len * sizeof(*buf));
+    ret = CM_Get_Device_ID_ListA(guid_str, buf, len, CM_GETIDLIST_FILTER_CLASS | CM_GETIDLIST_FILTER_PRESENT);
+    ok(!ret, "got %#lx.\n", ret);
+    count = 0;
+    p = buf;
+    while (*p)
+    {
+        ++count;
+        ok(!strnicmp(p, "PCI\\", 4) || !strnicmp(p, "VMBUS\\", 6), "got %s.\n", debugstr_a(p));
+        p += strlen(p) + 1;
+    }
+    ok(count == expected_count, "got %u, expected %u.\n", count, expected_count);
+
+    free(wbuf);
+    free(buf);
+}
+
 START_TEST(cfgmgr32)
 {
     test_CM_MapCrToWin32Err();
+    test_CM_Get_Device_ID_List();
 }

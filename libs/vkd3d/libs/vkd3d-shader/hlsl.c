@@ -845,13 +845,7 @@ static bool init_deref_from_component_index(struct hlsl_ctx *ctx, struct hlsl_bl
     {
         unsigned int next_index = traverse_path_from_component_index(ctx, &path_type, &path_index);
 
-        if (!(c = hlsl_new_uint_constant(ctx, next_index, loc)))
-        {
-            hlsl_block_cleanup(block);
-            return false;
-        }
-        hlsl_block_add_instr(block, c);
-
+        c = hlsl_block_add_uint_constant(ctx, block, next_index, loc);
         hlsl_src_from_node(&deref->path[deref_path_len++], c);
     }
 
@@ -1324,6 +1318,18 @@ bool hlsl_scope_add_type(struct hlsl_scope *scope, struct hlsl_type *type)
     return true;
 }
 
+static struct hlsl_ir_node *append_new_instr(struct hlsl_ctx *ctx, struct hlsl_block *block, struct hlsl_ir_node *instr)
+{
+    if (!instr)
+    {
+        block->value = ctx->error_instr;
+        return ctx->error_instr;
+    }
+
+    hlsl_block_add_instr(block, instr);
+    return instr;
+}
+
 struct hlsl_ir_node *hlsl_new_cast(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, struct hlsl_type *type,
         const struct vkd3d_shader_location *loc)
 {
@@ -1584,12 +1590,19 @@ struct hlsl_ir_node *hlsl_new_float_constant(struct hlsl_ctx *ctx, float f,
     return hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_FLOAT), &value, loc);
 }
 
-struct hlsl_ir_node *hlsl_new_int_constant(struct hlsl_ctx *ctx, int32_t n, const struct vkd3d_shader_location *loc)
+static struct hlsl_ir_node *hlsl_new_int_constant(struct hlsl_ctx *ctx, int32_t n,
+        const struct vkd3d_shader_location *loc)
 {
     struct hlsl_constant_value value;
 
     value.u[0].i = n;
     return hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_INT), &value, loc);
+}
+
+struct hlsl_ir_node *hlsl_block_add_int_constant(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        int32_t n, const struct vkd3d_shader_location *loc)
+{
+    return append_new_instr(ctx, block, hlsl_new_int_constant(ctx, n, loc));
 }
 
 struct hlsl_ir_node *hlsl_new_uint_constant(struct hlsl_ctx *ctx, unsigned int n,
@@ -1599,6 +1612,12 @@ struct hlsl_ir_node *hlsl_new_uint_constant(struct hlsl_ctx *ctx, unsigned int n
 
     value.u[0].u = n;
     return hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_UINT), &value, loc);
+}
+
+struct hlsl_ir_node *hlsl_block_add_uint_constant(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        unsigned int n, const struct vkd3d_shader_location *loc)
+{
+    return append_new_instr(ctx, block, hlsl_new_uint_constant(ctx, n, loc));
 }
 
 struct hlsl_ir_node *hlsl_new_string_constant(struct hlsl_ctx *ctx, const char *str,
@@ -1662,8 +1681,6 @@ struct hlsl_ir_node *hlsl_new_ternary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_ex
 {
     struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = {arg1, arg2, arg3};
 
-    VKD3D_ASSERT(hlsl_types_are_equal(arg1->data_type, arg2->data_type));
-    VKD3D_ASSERT(hlsl_types_are_equal(arg1->data_type, arg3->data_type));
     return hlsl_new_expr(ctx, op, operands, arg1->data_type, &arg1->loc);
 }
 
@@ -1866,6 +1883,9 @@ struct hlsl_ir_node *hlsl_new_swizzle(struct hlsl_ctx *ctx, uint32_t s, unsigned
 {
     struct hlsl_ir_swizzle *swizzle;
     struct hlsl_type *type;
+
+    if (val->data_type->class == HLSL_CLASS_ERROR)
+        return val;
 
     VKD3D_ASSERT(val->data_type->class <= HLSL_CLASS_VECTOR);
 

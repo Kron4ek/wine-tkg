@@ -782,6 +782,7 @@ TestJoin2 Array(), "", ""
 TestJoin2 Array("a"), "-", "a"
 TestJoin2 Array("a", "b"), "-", "a-b"
 TestJoin2 Array("a", "b", "c"), "", "abc"
+TestJoin2 Array("a", "b", "c"), "123", "a123b123c"
 TestJoin2 Array(1, "Hello"), "-", "1-Hello"
 TestJoin2 Array("a", "b", "c"), Empty, "abc"
 
