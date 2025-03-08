@@ -1978,9 +1978,7 @@ const enum vkd3d_shader_source_type *vkd3d_shader_get_supported_source_types(uns
         VKD3D_SHADER_SOURCE_DXBC_TPF,
         VKD3D_SHADER_SOURCE_HLSL,
         VKD3D_SHADER_SOURCE_D3D_BYTECODE,
-#ifdef VKD3D_SHADER_UNSUPPORTED_DXIL
         VKD3D_SHADER_SOURCE_DXBC_DXIL,
-#endif
         VKD3D_SHADER_SOURCE_FX,
     };
 
@@ -2029,7 +2027,6 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
         VKD3D_SHADER_TARGET_D3D_ASM,
     };
 
-#ifdef VKD3D_SHADER_UNSUPPORTED_DXIL
     static const enum vkd3d_shader_target_type dxbc_dxil_types[] =
     {
         VKD3D_SHADER_TARGET_SPIRV_BINARY,
@@ -2038,7 +2035,6 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
 # endif
         VKD3D_SHADER_TARGET_D3D_ASM,
     };
-#endif
 
     static const enum vkd3d_shader_target_type fx_types[] =
     {
@@ -2061,11 +2057,9 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
             *count = ARRAY_SIZE(d3dbc_types);
             return d3dbc_types;
 
-#ifdef VKD3D_SHADER_UNSUPPORTED_DXIL
         case VKD3D_SHADER_SOURCE_DXBC_DXIL:
             *count = ARRAY_SIZE(dxbc_dxil_types);
             return dxbc_dxil_types;
-#endif
 
         case VKD3D_SHADER_SOURCE_FX:
             *count = ARRAY_SIZE(fx_types);

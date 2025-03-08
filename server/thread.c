@@ -845,7 +845,6 @@ unsigned int set_thread_priority( struct thread *thread, int priority_class, int
         return STATUS_INVALID_PARAMETER;
 
     thread->priority = priority;
-    set_scheduler_priority( thread );
 
     /* if thread is gone or hasn't started yet, this will be called again from init_thread with a unix_tid */
     if (thread->state == RUNNING && thread->unix_tid != -1)

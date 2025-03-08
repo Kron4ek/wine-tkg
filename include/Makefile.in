@@ -327,6 +327,7 @@ SOURCES = \
 	fci.h \
 	fdi.h \
 	featurestagingapi.h \
+	fibersapi.h \
 	fileapi.h \
 	filter.idl \
 	fltdefs.h \
@@ -335,6 +336,7 @@ SOURCES = \
 	gameux.idl \
 	gamingtcui.h \
 	gdiplus.h \
+	gdiplusbase.h \
 	gdipluscolor.h \
 	gdipluscolormatrix.h \
 	gdipluseffects.h \
@@ -458,6 +460,8 @@ SOURCES = \
 	minidumpapiset.h \
 	minmax.h \
 	minschannel.h \
+	minwinbase.h \
+	minwindef.h \
 	mlang.idl \
 	mmc.idl \
 	mmddk.h \
@@ -756,6 +760,7 @@ SOURCES = \
 	structuredquerycondition.idl \
 	svrapi.h \
 	synchapi.h \
+	sysinfoapi.h \
 	systemmediatransportcontrolsinterop.idl \
 	t2embapi.h \
 	tapi.h \
@@ -1022,6 +1027,7 @@ SOURCES = \
 	wownt16.h \
 	wownt32.h \
 	wpcapi.idl \
+	ws2bth.h \
 	ws2def.h \
 	ws2ipdef.h \
 	ws2spi.h \

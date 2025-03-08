@@ -3826,6 +3826,692 @@ static void test_save_surface_to_dds(IDirect3DDevice9 *device)
     }
 }
 
+static BOOL is_dxt_d3dformat(D3DFORMAT fmt)
+{
+    return (fmt & 0x00ffffff) == MAKEFOURCC('D','X','T',0);
+}
+
+static void test_save_surface_iffs(IDirect3DDevice9 *device)
+{
+    static const struct
+    {
+        D3DXIMAGE_FILEFORMAT format;
+        const char *name;
+    }
+    test_iffs[] =
+    {
+        { D3DXIFF_BMP, "D3DXIFF_BMP" },
+        { D3DXIFF_JPG, "D3DXIFF_JPG" },
+        { D3DXIFF_TGA, "D3DXIFF_TGA" },
+        { D3DXIFF_PNG, "D3DXIFF_PNG" },
+        { D3DXIFF_PPM, "D3DXIFF_PPM" },
+        { D3DXIFF_DIB, "D3DXIFF_DIB" },
+        { D3DXIFF_HDR, "D3DXIFF_HDR" },
+        { D3DXIFF_PFM, "D3DXIFF_PFM" },
+    };
+    static const struct
+    {
+        D3DFORMAT format;
+        const PALETTEENTRY *palette;
+        uint8_t init_pixel_value;
+        struct
+        {
+            HRESULT hr;
+            D3DFORMAT format;
+            BOOL todo_hr;
+            BOOL todo_format;
+        }
+        iff_expected[8];
+    }
+    iff_tests[] =
+    {
+        { D3DFMT_P8, test_palette, 0x00,
+          { { D3D_OK, D3DFMT_P8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_P8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A8P8, test_palette, 0x00,
+          { { D3D_OK, D3DFMT_P8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_P8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_P8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A8P8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A8P8, NULL, 0xff,
+          { { D3D_OK, D3DFMT_A8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_R8G8B8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_R8G8B8, },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_R8G8B8, },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        /*
+         * For BMP/DIB, these encode as D3DFMT_X8R8G8B8. If there's at least
+         * one pixel with a non-zero alpha channel, it reports as D3DFMT_A8R8G8B8.
+         */
+        { D3DFMT_A8R8G8B8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8, },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A8R8G8B8, NULL, 0xff,
+          { { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8, },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          }
+        },
+        { D3DFMT_X8R8G8B8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8R8G8B8, },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        /*
+         * Unlike D3DFMT_A8R8G8B8, even if the alpha channel is all 0,
+         * D3DFMT_A8B8G8R8 doesn't get replaced with D3DFMT_X8B8G8R8
+         * for BMP/DIB.
+         */
+        { D3DFMT_A8B8G8R8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A8B8G8R8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8B8G8R8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_X8B8G8R8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8B8G8R8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8B8G8R8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_R5G6B5, NULL, 0x00,
+          { { D3D_OK, D3DFMT_R5G6B5, },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_R5G6B5, },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_X1R5G5B5, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X1R5G5B5, },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X1R5G5B5, },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A1R5G5B5, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A1R5G5B5, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A1R5G5B5, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_R3G3B2, NULL, 0x00,
+          { { D3D_OK, D3DFMT_P8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_P8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A8R3G3B2, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A8R3G3B2, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R3G3B2, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A4R4G4B4, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A4R4G4B4, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A4R4G4B4, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_X4R4G4B4, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X4R4G4B4, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X4R4G4B4, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A2R10G10B10, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A2R10G10B10, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A2R10G10B10, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A2B10G10R10, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A2B10G10R10, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A2B10G10R10, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A16B16G16R16, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_G16R16, NULL, 0x00,
+          { { D3D_OK, D3DFMT_G16R16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_G16R16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A8R3G3B2, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R3G3B2, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A8L8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A8L8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8L8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A4L4, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A4R4G4B4, .todo_format = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A4R4G4B4, .todo_format = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        /*
+         * For BMP/DIB, this ends up as a paletted bitmap file where the
+         * palette consists of RGB values of 0x00->0xff. Essentially, the luma
+         * value acts as an index into this palette. Weird that there are L16
+         * and A8L8 representations, but this is done in a unique way.
+         */
+        { D3DFMT_L8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_P8, .todo_format = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_P8, .todo_format = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_L16, NULL, 0x00,
+          { { D3D_OK, D3DFMT_L16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_L16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_DXT1, NULL, 0x00,
+          { { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_DXT2, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_DXT2, NULL, 0xff,
+          { { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_DXT3, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_DXT3, NULL, 0xff,
+          { { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_DXT4, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_DXT4, NULL, 0xff,
+          { { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_DXT5, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_DXT5, NULL, 0xff,
+          { { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_R16F, NULL, 0x00,
+          { { D3D_OK, D3DFMT_G16R16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_G16R16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_G16R16F, NULL, 0x00,
+          { { D3D_OK, D3DFMT_G16R16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_G16R16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A16B16G16R16F, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_R32F, NULL, 0x00,
+          { { D3D_OK, D3DFMT_G16R16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_G16R16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_G32R32F, NULL, 0x00,
+          { { D3D_OK, D3DFMT_G16R16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_G16R16, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A32B32G32R32F, NULL, 0x00,
+          { { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A8R8G8B8 },
+            { D3D_OK, D3DFMT_A16B16G16R16 },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8 },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_Q8W8V8U8, NULL, 0x00,
+          { { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_V8U8, NULL, 0x00,
+          { { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_V16U16, NULL, 0x00,
+          { { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_X8L8V8U8, NULL, 0x00,
+          { { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_A2W10V10U10, NULL, 0x00,
+          { { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_Q16W16V16U16, NULL, 0x00,
+          { { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_R8G8_B8G8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_G8R8_G8B8, NULL, 0x00,
+          { { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_UYVY, NULL, 0x00,
+          { { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_YUY2, NULL, 0x00,
+          { { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_X8R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+            { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+    };
+    IDirect3DSurface9 *surface;
+    ID3DXBuffer *buffer;
+    unsigned int i, j;
+    HRESULT hr;
+
+    for (i = 0; i < ARRAY_SIZE(iff_tests); ++i)
+    {
+        D3DLOCKED_RECT lockrect;
+
+        hr = IDirect3DDevice9_CreateOffscreenPlainSurface(device, 4, 4, iff_tests[i].format,
+                D3DPOOL_SCRATCH, &surface, NULL);
+        if (FAILED(hr))
+        {
+            skip("Couldn't create surface for format %#x.\n", iff_tests[i].format);
+            continue;
+        }
+
+        hr = IDirect3DSurface9_LockRect(surface, &lockrect, NULL, 0);
+        if (SUCCEEDED(hr))
+        {
+            const uint32_t tmp_height = is_dxt_d3dformat(iff_tests[i].format) ? 1 : 4;
+
+            for (j = 0; j < tmp_height; ++j)
+                memset(((uint8_t *)lockrect.pBits) + (j * lockrect.Pitch), iff_tests[i].init_pixel_value,
+                        lockrect.Pitch);
+            IDirect3DSurface9_UnlockRect(surface);
+        }
+
+        winetest_push_context("Test %u (%s)", i, debug_d3dformat(iff_tests[i].format));
+        for (j = 0; j < ARRAY_SIZE(test_iffs); ++j)
+        {
+            winetest_push_context("File format %u (%s)", j, test_iffs[j].name);
+
+            buffer = NULL;
+            hr = D3DXSaveSurfaceToFileInMemory(&buffer, test_iffs[j].format, surface, iff_tests[i].palette, NULL);
+            todo_wine_if(iff_tests[i].iff_expected[j].todo_hr) ok(hr == iff_tests[i].iff_expected[j].hr,
+                    "Unexpected hr %#lx.\n", hr);
+            if (SUCCEEDED(hr))
+            {
+                D3DXIMAGE_INFO info = { 0 };
+
+                hr = D3DXGetImageInfoFromFileInMemory(ID3DXBuffer_GetBufferPointer(buffer),
+                        ID3DXBuffer_GetBufferSize(buffer), &info);
+                ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+                todo_wine_if(iff_tests[i].iff_expected[j].todo_format)
+                    ok(info.Format == iff_tests[i].iff_expected[j].format,
+                            "Unexpected image format %u (%s), expected %u (%s).\n", info.Format,
+                            debug_d3dformat(info.Format), iff_tests[i].iff_expected[j].format,
+                            debug_d3dformat(iff_tests[i].iff_expected[j].format));
+                ID3DXBuffer_Release(buffer);
+            }
+            winetest_pop_context();
+        }
+
+        IDirect3DSurface9_Release(surface);
+        winetest_pop_context();
+    }
+}
+
 static void test_D3DXSaveSurfaceToFileInMemory(IDirect3DDevice9 *device)
 {
     static const struct dds_pixel_format d3dfmt_a8r8g8b8_pf = { 32, DDS_PF_RGB | DDS_PF_ALPHA, 0, 32,
@@ -3852,10 +4538,16 @@ static void test_D3DXSaveSurfaceToFileInMemory(IDirect3DDevice9 *device)
          struct dds_header header;
          BYTE *data;
     } *dds;
+    struct
+    {
+         struct tga_header header;
+         BYTE *data;
+    } *tga;
+    ID3DXBuffer *buffer, *buffer2;
     IDirect3DSurface9 *surface;
     IDirect3DTexture9 *texture;
     unsigned int i, x, y;
-    ID3DXBuffer *buffer;
+    D3DXIMAGE_INFO info;
     HRESULT hr;
     RECT rect;
 
@@ -3934,6 +4626,52 @@ static void test_D3DXSaveSurfaceToFileInMemory(IDirect3DDevice9 *device)
             &d3dfmt_a8r8g8b8_pf, DDSCAPS_TEXTURE | DDSCAPS_ALPHA, 0, FALSE);
     ID3DXBuffer_Release(buffer);
 
+    /* Test saved targa file headers. */
+    hr = D3DXSaveSurfaceToFileInMemory(&buffer, D3DXIFF_TGA, surface, NULL, NULL);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+    tga = ID3DXBuffer_GetBufferPointer(buffer);
+    ok(ID3DXBuffer_GetBufferSize(buffer) == (sizeof(tga->header) + tga->header.id_length + (4 * 4 * 4)), "Unexpected buffer size %lu.\n",
+            ID3DXBuffer_GetBufferSize(buffer));
+    ok(tga->header.image_type == IMAGETYPE_TRUECOLOR, "Got unexpected image type %u.\n", tga->header.image_type);
+    ok(tga->header.height == 4, "Got unexpected height %u.\n", tga->header.height);
+    ok(tga->header.width == 4, "Got unexpected width %u.\n", tga->header.width);
+    ok(tga->header.depth == 32, "Got unexpected depth %u.\n", tga->header.depth);
+    ok(tga->header.image_descriptor == (IMAGE_TOPTOBOTTOM | 0x8), "Got unexpected image descriptor %#x.\n", tga->header.image_descriptor);
+    ID3DXBuffer_Release(buffer);
+
+    /* Size 0 rectangle. */
+    SetRectEmpty(&rect);
+    hr = D3DXSaveSurfaceToFileInMemory(&buffer, D3DXIFF_TGA, surface, NULL, &rect);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+    tga = ID3DXBuffer_GetBufferPointer(buffer);
+    ok(ID3DXBuffer_GetBufferSize(buffer) == (sizeof(tga->header) + tga->header.id_length), "Unexpected buffer size %lu.\n",
+            ID3DXBuffer_GetBufferSize(buffer));
+    ok(tga->header.image_type == IMAGETYPE_TRUECOLOR, "Got unexpected image type %u.\n", tga->header.image_type);
+    ok(!tga->header.height, "Got unexpected height %u.\n", tga->header.height);
+    ok(!tga->header.width, "Got unexpected width %u.\n", tga->header.width);
+    ok(tga->header.depth == 32, "Got unexpected depth %u.\n", tga->header.depth);
+    ok(tga->header.image_descriptor == (IMAGE_TOPTOBOTTOM | 0x8), "Got unexpected image descriptor %#x.\n", tga->header.image_descriptor);
+    ID3DXBuffer_Release(buffer);
+
+    /* Saving as D3DXIFF_DIB actually saves as a BMP. */
+    hr = D3DXSaveSurfaceToFileInMemory(&buffer, D3DXIFF_DIB, surface, NULL, NULL);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = D3DXSaveSurfaceToFileInMemory(&buffer2, D3DXIFF_BMP, surface, NULL, NULL);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = D3DXGetImageInfoFromFileInMemory(ID3DXBuffer_GetBufferPointer(buffer), ID3DXBuffer_GetBufferSize(buffer), &info);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(info.ImageFileFormat == D3DXIFF_BMP, "Unexpected ImageFileFormat %d.\n", info.ImageFileFormat);
+    ok(ID3DXBuffer_GetBufferSize(buffer) == ID3DXBuffer_GetBufferSize(buffer2), "Unexpected buffer size.\n");
+    ok(!memcmp(ID3DXBuffer_GetBufferPointer(buffer), ID3DXBuffer_GetBufferPointer(buffer2), ID3DXBuffer_GetBufferSize(buffer)),
+            "Files do not match.\n");
+
+    ID3DXBuffer_Release(buffer);
+    ID3DXBuffer_Release(buffer2);
+
     IDirect3DSurface9_Release(surface);
 
     for (i = 0; i < ARRAY_SIZE(test_access_types); ++i)
@@ -3958,6 +4696,7 @@ static void test_D3DXSaveSurfaceToFileInMemory(IDirect3DDevice9 *device)
     }
 
     test_save_surface_to_dds(device);
+    test_save_surface_iffs(device);
 }
 
 static void test_D3DXSaveSurfaceToFile(IDirect3DDevice9 *device)
@@ -4035,9 +4774,10 @@ static void test_D3DXSaveSurfaceToFile(IDirect3DDevice9 *device)
     {
         hr = D3DXSaveSurfaceToFileA("saved_surface.ppm", D3DXIFF_PPM, surface, NULL, NULL);
         ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
-        hr = D3DXSaveSurfaceToFileA("saved_surface.tga", D3DXIFF_TGA, surface, NULL, NULL);
-        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
     }
+
+    hr = D3DXSaveSurfaceToFileA("saved_surface.tga", D3DXIFF_TGA, surface, NULL, NULL);
+    ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
 
     hr = D3DXSaveSurfaceToFileA("saved_surface.dds", D3DXIFF_DDS, surface, NULL, NULL);
     ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);

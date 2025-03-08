@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sun Feb 23 11:14:32 AM UTC 2025 :
+# Last wine-tkg-staging-fsync-git configuration - Sat Mar  8 10:31:12 AM UTC 2025 :
 
 Local cfg files used
 
-Wine (plain) version: 10.2.r0.g41abefccebf
-Using wine-staging patchset (version 10.2.r0.g857466ad)
+Wine (plain) version: 10.3.r0.g3364df08cb6
+Using wine-staging patchset (version 10.3.r0.g946648d1)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -23,6 +23,7 @@ LAA-unix-staging.patch -- ( Applied large address aware override support (legacy
 proton-win10-default.patch -- ( Enforce win10 as default wine version )
 proton_battleye.patch -- ( Add support for Proton's Battleye runtime )
 proton-eac_bridge.patch -- ( Add support for Proton's EAC bridge )
+wow64_loader_hack.patch -- ( Hack around loader name for EAC on 10.2+ )
 
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix a608ef1.mypatch

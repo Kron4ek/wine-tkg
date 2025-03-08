@@ -1020,12 +1020,11 @@ static HRESULT WINAPI ImagingFactory_CreateQueryWriter(IWICImagingFactory2 *ifac
 }
 
 static HRESULT WINAPI ImagingFactory_CreateQueryWriterFromReader(IWICImagingFactory2 *iface,
-    IWICMetadataQueryReader *pIQueryReader, const GUID *pguidVendor,
-    IWICMetadataQueryWriter **ppIQueryWriter)
+        IWICMetadataQueryReader *query_reader, const GUID *vendor, IWICMetadataQueryWriter **query_writer)
 {
-    FIXME("(%p,%p,%s,%p): stub\n", iface, pIQueryReader, debugstr_guid(pguidVendor),
-        ppIQueryWriter);
-    return E_NOTIMPL;
+    TRACE("(%p,%p,%s,%p)\n", iface, query_reader, debugstr_guid(vendor), query_writer);
+
+    return create_metadata_query_writer_from_reader(query_reader, vendor, query_writer);
 }
 
 static HRESULT WINAPI ImagingFactory_CreateImageEncoder(IWICImagingFactory2 *iface, ID2D1Device *device, IWICImageEncoder **encoder)
@@ -1633,9 +1632,6 @@ static HRESULT WINAPI ComponentFactory_CreateMetadataWriter(IWICComponentFactory
     return create_metadata_writer(format, vendor, options, writer);
 }
 
-static HRESULT create_metadata_writer_from_reader(IWICMetadataReader *reader, const GUID *vendor,
-        IWICMetadataWriter **out_writer);
-
 static HRESULT metadata_writer_copy_items_from_reader(IWICMetadataWriter *writer, const GUID *vendor, IWICMetadataReader *reader)
 {
     IWICMetadataReader *sub_reader;
@@ -1684,7 +1680,7 @@ static HRESULT metadata_writer_copy_items_from_reader(IWICMetadataWriter *writer
     return hr;
 }
 
-static HRESULT create_metadata_writer_from_reader(IWICMetadataReader *reader, const GUID *vendor,
+HRESULT create_metadata_writer_from_reader(IWICMetadataReader *reader, const GUID *vendor,
         IWICMetadataWriter **out_writer)
 {
     IWICStreamProvider *stream_provider = NULL;
@@ -1716,7 +1712,22 @@ static HRESULT create_metadata_writer_from_reader(IWICMetadataReader *reader, co
 
         if (cached_stream)
         {
-            hr = create_stream_wrapper(cached_stream, 0, &stream);
+            LARGE_INTEGER move;
+            ULARGE_INTEGER pos;
+
+            /* Move wrapper stream to match original stream position. */
+            move.QuadPart = 0;
+            hr = IStream_Seek(cached_stream, move, STREAM_SEEK_CUR, &pos);
+
+            if (SUCCEEDED(hr))
+                hr = create_stream_wrapper(cached_stream, 0, &stream);
+
+            if (SUCCEEDED(hr))
+            {
+                move.QuadPart = pos.QuadPart;
+                hr = IStream_Seek(stream, move, STREAM_SEEK_SET, NULL);
+            }
+
             IStream_Release(cached_stream);
         }
     }

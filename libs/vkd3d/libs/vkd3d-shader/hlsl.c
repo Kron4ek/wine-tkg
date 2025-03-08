@@ -298,6 +298,39 @@ bool hlsl_type_is_patch_array(const struct hlsl_type *type)
             || type->e.array.array_type == HLSL_ARRAY_PATCH_OUTPUT);
 }
 
+bool hlsl_base_type_is_integer(enum hlsl_base_type type)
+{
+    switch (type)
+    {
+        case HLSL_TYPE_BOOL:
+        case HLSL_TYPE_INT:
+        case HLSL_TYPE_MIN16UINT:
+        case HLSL_TYPE_UINT:
+            return true;
+
+        case HLSL_TYPE_DOUBLE:
+        case HLSL_TYPE_FLOAT:
+        case HLSL_TYPE_HALF:
+            return false;
+    }
+
+    vkd3d_unreachable();
+}
+
+bool hlsl_type_is_integer(const struct hlsl_type *type)
+{
+    VKD3D_ASSERT(hlsl_is_numeric_type(type));
+    return hlsl_base_type_is_integer(type->e.numeric.type);
+}
+
+bool hlsl_type_is_floating_point(const struct hlsl_type *type)
+{
+    if (!hlsl_is_numeric_type(type))
+        return false;
+
+    return !hlsl_type_is_integer(type);
+}
+
 /* Only intended to be used for derefs (after copies have been lowered to components or vectors) or
  * resources, since for both their data types span across a single regset. */
 static enum hlsl_regset type_get_regset(const struct hlsl_type *type)
@@ -483,6 +516,8 @@ static struct hlsl_type *hlsl_new_type(struct hlsl_ctx *ctx, const char *name, e
         enum hlsl_base_type base_type, unsigned dimx, unsigned dimy)
 {
     struct hlsl_type *type;
+
+    TRACE("New type %s.\n", name);
 
     if (!(type = hlsl_alloc(ctx, sizeof(*type))))
         return NULL;
@@ -1330,17 +1365,6 @@ static struct hlsl_ir_node *append_new_instr(struct hlsl_ctx *ctx, struct hlsl_b
     return instr;
 }
 
-struct hlsl_ir_node *hlsl_new_cast(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, struct hlsl_type *type,
-        const struct vkd3d_shader_location *loc)
-{
-    struct hlsl_ir_node *cast;
-
-    cast = hlsl_new_unary_expr(ctx, HLSL_OP1_CAST, node, loc);
-    if (cast)
-        cast->data_type = type;
-    return cast;
-}
-
 struct hlsl_ir_node *hlsl_new_copy(struct hlsl_ctx *ctx, struct hlsl_ir_node *node)
 {
     /* Use a cast to the same type as a makeshift identity expression. */
@@ -1516,22 +1540,36 @@ struct hlsl_ir_node *hlsl_new_store_index(struct hlsl_ctx *ctx, const struct hls
     return &store->node;
 }
 
-bool hlsl_new_store_component(struct hlsl_ctx *ctx, struct hlsl_block *block,
+void hlsl_block_add_store_index(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        const struct hlsl_deref *lhs, struct hlsl_ir_node *idx, struct hlsl_ir_node *rhs,
+        unsigned int writemask, const struct vkd3d_shader_location *loc)
+{
+    append_new_instr(ctx, block, hlsl_new_store_index(ctx, lhs, idx, rhs, writemask, loc));
+}
+
+void hlsl_block_add_simple_store(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct hlsl_ir_var *lhs, struct hlsl_ir_node *rhs)
+{
+    struct hlsl_deref lhs_deref;
+
+    hlsl_init_simple_deref_from_var(&lhs_deref, lhs);
+    hlsl_block_add_store_index(ctx, block, &lhs_deref, NULL, rhs, 0, &rhs->loc);
+}
+
+void hlsl_block_add_store_component(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_deref *lhs, unsigned int comp, struct hlsl_ir_node *rhs)
 {
     struct hlsl_block comp_path_block;
     struct hlsl_ir_store *store;
 
-    hlsl_block_init(block);
-
     if (!(store = hlsl_alloc(ctx, sizeof(*store))))
-        return false;
+        return;
     init_node(&store->node, HLSL_IR_STORE, NULL, &rhs->loc);
 
     if (!init_deref_from_component_index(ctx, &comp_path_block, &store->lhs, lhs, comp, &rhs->loc))
     {
         vkd3d_free(store);
-        return false;
+        return;
     }
     hlsl_block_add_block(block, &comp_path_block);
     hlsl_src_from_node(&store->rhs, rhs);
@@ -1540,8 +1578,6 @@ bool hlsl_new_store_component(struct hlsl_ctx *ctx, struct hlsl_block *block,
         store->writemask = (1 << rhs->data_type->e.numeric.dimx) - 1;
 
     hlsl_block_add_instr(block, &store->node);
-
-    return true;
 }
 
 struct hlsl_ir_node *hlsl_new_call(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *decl,
@@ -1581,13 +1617,19 @@ struct hlsl_ir_node *hlsl_new_bool_constant(struct hlsl_ctx *ctx, bool b, const 
     return hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_BOOL), &value, loc);
 }
 
-struct hlsl_ir_node *hlsl_new_float_constant(struct hlsl_ctx *ctx, float f,
+static struct hlsl_ir_node *hlsl_new_float_constant(struct hlsl_ctx *ctx, float f,
         const struct vkd3d_shader_location *loc)
 {
     struct hlsl_constant_value value;
 
     value.u[0].f = f;
     return hlsl_new_constant(ctx, hlsl_get_scalar_type(ctx, HLSL_TYPE_FLOAT), &value, loc);
+}
+
+struct hlsl_ir_node *hlsl_block_add_float_constant(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        float f, const struct vkd3d_shader_location *loc)
+{
+    return append_new_instr(ctx, block, hlsl_new_float_constant(ctx, f, loc));
 }
 
 static struct hlsl_ir_node *hlsl_new_int_constant(struct hlsl_ctx *ctx, int32_t n,
@@ -1644,7 +1686,7 @@ struct hlsl_ir_node *hlsl_new_null_constant(struct hlsl_ctx *ctx, const struct v
     return hlsl_new_constant(ctx, ctx->builtin_types.null, &value, loc);
 }
 
-struct hlsl_ir_node *hlsl_new_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
+static struct hlsl_ir_node *hlsl_new_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
         struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS],
         struct hlsl_type *data_type, const struct vkd3d_shader_location *loc)
 {
@@ -1660,12 +1702,25 @@ struct hlsl_ir_node *hlsl_new_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op
     return &expr->node;
 }
 
-struct hlsl_ir_node *hlsl_new_unary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
+struct hlsl_ir_node *hlsl_block_add_expr(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        enum hlsl_ir_expr_op op, struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS],
+        struct hlsl_type *data_type, const struct vkd3d_shader_location *loc)
+{
+    return append_new_instr(ctx, block, hlsl_new_expr(ctx, op, operands, data_type, loc));
+}
+
+static struct hlsl_ir_node *hlsl_new_unary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
         struct hlsl_ir_node *arg, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = {arg};
 
     return hlsl_new_expr(ctx, op, operands, arg->data_type, loc);
+}
+
+struct hlsl_ir_node *hlsl_block_add_unary_expr(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        enum hlsl_ir_expr_op op, struct hlsl_ir_node *arg, const struct vkd3d_shader_location *loc)
+{
+    return append_new_instr(ctx, block, hlsl_new_unary_expr(ctx, op, arg, loc));
 }
 
 struct hlsl_ir_node *hlsl_new_binary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
@@ -1676,12 +1731,35 @@ struct hlsl_ir_node *hlsl_new_binary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_exp
     return hlsl_new_expr(ctx, op, operands, arg1->data_type, &arg1->loc);
 }
 
+struct hlsl_ir_node *hlsl_block_add_binary_expr(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        enum hlsl_ir_expr_op op, struct hlsl_ir_node *arg1, struct hlsl_ir_node *arg2)
+{
+    return append_new_instr(ctx, block, hlsl_new_binary_expr(ctx, op, arg1, arg2));
+}
+
 struct hlsl_ir_node *hlsl_new_ternary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
         struct hlsl_ir_node *arg1, struct hlsl_ir_node *arg2, struct hlsl_ir_node *arg3)
 {
     struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS] = {arg1, arg2, arg3};
 
     return hlsl_new_expr(ctx, op, operands, arg1->data_type, &arg1->loc);
+}
+
+struct hlsl_ir_node *hlsl_new_cast(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, struct hlsl_type *type,
+        const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_node *cast;
+
+    cast = hlsl_new_unary_expr(ctx, HLSL_OP1_CAST, node, loc);
+    if (cast)
+        cast->data_type = type;
+    return cast;
+}
+
+struct hlsl_ir_node *hlsl_block_add_cast(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct hlsl_ir_node *arg, struct hlsl_type *type, const struct vkd3d_shader_location *loc)
+{
+    return append_new_instr(ctx, block, hlsl_new_cast(ctx, arg, type, loc));
 }
 
 static struct hlsl_ir_node *hlsl_new_error_expr(struct hlsl_ctx *ctx)
@@ -1775,6 +1853,14 @@ struct hlsl_ir_load *hlsl_new_load_index(struct hlsl_ctx *ctx, const struct hlsl
     return load;
 }
 
+struct hlsl_ir_node *hlsl_block_add_load_index(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        const struct hlsl_deref *deref, struct hlsl_ir_node *idx, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_load *load = hlsl_new_load_index(ctx, deref, idx, loc);
+
+    return append_new_instr(ctx, block, load ? &load->node : NULL);
+}
+
 struct hlsl_ir_load *hlsl_new_load_parent(struct hlsl_ctx *ctx, const struct hlsl_deref *deref,
         const struct vkd3d_shader_location *loc)
 {
@@ -1797,17 +1883,27 @@ struct hlsl_ir_load *hlsl_new_var_load(struct hlsl_ctx *ctx, struct hlsl_ir_var 
     return hlsl_new_load_index(ctx, &var_deref, NULL, loc);
 }
 
-struct hlsl_ir_node *hlsl_new_load_component(struct hlsl_ctx *ctx, struct hlsl_block *block,
+struct hlsl_ir_node *hlsl_block_add_simple_load(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct hlsl_ir_var *var, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_deref var_deref;
+
+    hlsl_init_simple_deref_from_var(&var_deref, var);
+    return hlsl_block_add_load_index(ctx, block, &var_deref, NULL, loc);
+}
+
+struct hlsl_ir_node *hlsl_block_add_load_component(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_deref *deref, unsigned int comp, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_type *type, *comp_type;
     struct hlsl_block comp_path_block;
     struct hlsl_ir_load *load;
 
-    hlsl_block_init(block);
-
     if (!(load = hlsl_alloc(ctx, sizeof(*load))))
-        return NULL;
+    {
+        block->value = ctx->error_instr;
+        return ctx->error_instr;
+    }
 
     type = hlsl_deref_get_type(ctx, deref);
     comp_type = hlsl_type_get_component_type(ctx, type, comp);
@@ -1816,7 +1912,8 @@ struct hlsl_ir_node *hlsl_new_load_component(struct hlsl_ctx *ctx, struct hlsl_b
     if (!init_deref_from_component_index(ctx, &comp_path_block, &load->src, deref, comp, loc))
     {
         vkd3d_free(load);
-        return NULL;
+        block->value = ctx->error_instr;
+        return ctx->error_instr;
     }
     hlsl_block_add_block(block, &comp_path_block);
 
@@ -2670,8 +2767,8 @@ struct hlsl_ir_function_decl *hlsl_new_func_decl(struct hlsl_ctx *ctx,
         struct hlsl_type *return_type, const struct hlsl_func_parameters *parameters,
         const struct hlsl_semantic *semantic, const struct vkd3d_shader_location *loc)
 {
-    struct hlsl_ir_node *constant, *store;
     struct hlsl_ir_function_decl *decl;
+    struct hlsl_ir_node *constant;
 
     if (!(decl = hlsl_alloc(ctx, sizeof(*decl))))
         return NULL;
@@ -2699,9 +2796,7 @@ struct hlsl_ir_function_decl *hlsl_new_func_decl(struct hlsl_ctx *ctx,
         return decl;
     hlsl_block_add_instr(&decl->body, constant);
 
-    if (!(store = hlsl_new_simple_store(ctx, decl->early_return_var, constant)))
-        return decl;
-    hlsl_block_add_instr(&decl->body, store);
+    hlsl_block_add_simple_store(ctx, &decl->body, decl->early_return_var, constant);
 
     return decl;
 }
@@ -2816,6 +2911,7 @@ static void hlsl_dump_type(struct vkd3d_string_buffer *buffer, const struct hlsl
         [HLSL_TYPE_HALF] = "half",
         [HLSL_TYPE_DOUBLE] = "double",
         [HLSL_TYPE_INT] = "int",
+        [HLSL_TYPE_MIN16UINT] = "min16uint",
         [HLSL_TYPE_UINT] = "uint",
         [HLSL_TYPE_BOOL] = "bool",
     };
@@ -3283,6 +3379,7 @@ static void dump_ir_constant(struct vkd3d_string_buffer *buffer, const struct hl
                 vkd3d_string_buffer_printf(buffer, "%d ", value->i);
                 break;
 
+            case HLSL_TYPE_MIN16UINT:
             case HLSL_TYPE_UINT:
                 vkd3d_string_buffer_printf(buffer, "%u ", value->u);
                 break;
@@ -4309,17 +4406,17 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
 
     static const char * const names[] =
     {
-        [HLSL_TYPE_FLOAT]  = "float",
-        [HLSL_TYPE_HALF]   = "half",
-        [HLSL_TYPE_DOUBLE] = "double",
-        [HLSL_TYPE_INT]    = "int",
-        [HLSL_TYPE_UINT]   = "uint",
-        [HLSL_TYPE_BOOL]   = "bool",
+        [HLSL_TYPE_FLOAT]       = "float",
+        [HLSL_TYPE_HALF]        = "half",
+        [HLSL_TYPE_DOUBLE]      = "double",
+        [HLSL_TYPE_INT]         = "int",
+        [HLSL_TYPE_UINT]        = "uint",
+        [HLSL_TYPE_BOOL]        = "bool",
+        [HLSL_TYPE_MIN16UINT]   = "min16uint",
     };
 
     static const char *const variants_float[] = {"min10float", "min16float"};
     static const char *const variants_int[] = {"min12int", "min16int"};
-    static const char *const variants_uint[] = {"min16uint"};
 
     static const char *const sampler_names[] =
     {
@@ -4408,11 +4505,6 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
             case HLSL_TYPE_INT:
                 variants = variants_int;
                 n_variants = ARRAY_SIZE(variants_int);
-                break;
-
-            case HLSL_TYPE_UINT:
-                variants = variants_uint;
-                n_variants = ARRAY_SIZE(variants_uint);
                 break;
 
             default:

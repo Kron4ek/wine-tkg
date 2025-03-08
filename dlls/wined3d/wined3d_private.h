@@ -43,6 +43,7 @@
 #include "wingdi.h"
 #include "winuser.h"
 #include "winternl.h"
+#include "dxva.h"
 #include "ddk/d3dkmthk.h"
 #include "wine/debug.h"
 
@@ -2623,6 +2624,7 @@ struct wined3d_adapter
     const struct wined3d_fragment_pipe_ops *fragment_pipe;
     const struct wined3d_state_entry_template *misc_state_template;
     const struct wined3d_shader_backend_ops *shader_backend;
+    const struct wined3d_decoder_ops *decoder_ops;
     const struct wined3d_adapter_ops *adapter_ops;
 };
 
@@ -4459,6 +4461,19 @@ struct wined3d_palette
     RGBQUAD colors[256];
     uint32_t flags;
 };
+
+#define WINED3D_DECODER_MAX_PROFILE_COUNT 1
+
+struct wined3d_decoder_ops
+{
+    void (*get_profiles)(struct wined3d_adapter *adapter, unsigned int *count, GUID *profiles);
+    HRESULT (*create)(struct wined3d_device *device,
+            const struct wined3d_decoder_desc *desc, struct wined3d_decoder **decoder);
+    void (*destroy)(struct wined3d_decoder *decoder);
+};
+
+extern const struct wined3d_decoder_ops wined3d_decoder_vk_ops;
+extern const struct wined3d_decoder_ops wined3d_null_decoder_ops;
 
 /* DirectDraw utility functions */
 extern enum wined3d_format_id pixelformat_for_depth(DWORD depth);

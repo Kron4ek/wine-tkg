@@ -520,7 +520,11 @@ static void init_paths(void)
 
     if ((build_dir = remove_tail( ntdll_dir, "/dlls/ntdll" )))
     {
+#ifdef _WIN64
+        wineloader = build_path( build_dir, "loader/wine64" );
+#else
         wineloader = build_path( build_dir, "loader/wine" );
+#endif
         alt_build_dir = realpath_dirname( build_path( build_dir, "loader-wow64" ));
     }
     else
@@ -528,7 +532,11 @@ static void init_paths(void)
         if (!(dll_dir = remove_tail( ntdll_dir, get_so_dir(current_machine) ))) dll_dir = ntdll_dir;
         bin_dir = build_relative_path( dll_dir, LIBDIR "/wine", BINDIR );
         data_dir = build_relative_path( dll_dir, LIBDIR "/wine", DATADIR "/wine" );
+#ifdef _WIN64
+        wineloader = build_path( ntdll_dir, "wine64" );
+#else
         wineloader = build_path( ntdll_dir, "wine" );
+#endif
     }
 
     set_dll_path();
@@ -558,10 +566,17 @@ char *get_alternate_wineloader( WORD machine )
         machine = get_alt_machine( current_machine );
     }
 
+#ifdef _WIN64
     if (!build_dir)
         asprintf( &ret, "%s%s/wine", dll_dir, get_so_dir( machine ));
     else if (alt_build_dir)
         asprintf( &ret, "%s/loader/wine", alt_build_dir );
+#else
+    if (!build_dir)
+        asprintf( &ret, "%s%s/wine64", dll_dir, get_so_dir( machine ));
+    else if (alt_build_dir)
+        asprintf( &ret, "%s/loader/wine64", alt_build_dir );
+#endif
 
     return ret;
 }

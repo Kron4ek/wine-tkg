@@ -431,6 +431,12 @@ HRESULT WINAPI D3DXAssembleShaderFromResourceW(HMODULE module, const WCHAR *reso
                               shader, error_messages);
 }
 
+HRESULT WINAPI vkd3d_D3DCompile2VKD3D(const void *data, SIZE_T data_size, const char *filename,
+        const D3D_SHADER_MACRO *defines, ID3DInclude *include, const char *entrypoint,
+        const char *target, UINT flags, UINT effect_flags, UINT secondary_flags,
+        const void *secondary_data, SIZE_T secondary_data_size, ID3DBlob **shader,
+        ID3DBlob **error_messages, unsigned int compiler_version);
+
 HRESULT WINAPI D3DXCompileShader(const char *data, UINT length, const D3DXMACRO *defines,
         ID3DXInclude *include, const char *function, const char *profile, DWORD flags,
         ID3DXBuffer **shader, ID3DXBuffer **error_msgs, ID3DXConstantTable **constant_table)
@@ -445,8 +451,16 @@ HRESULT WINAPI D3DXCompileShader(const char *data, UINT length, const D3DXMACRO 
     if (D3DX_SDK_VERSION <= 36)
         flags |= D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
 
+#if D3DX_SDK_VERSION < 42
+    if (shader)
+        *shader = NULL;
+
+    hr = vkd3d_D3DCompile2VKD3D(data, length, NULL, (D3D_SHADER_MACRO *)defines, (ID3DInclude *)include,
+            function, profile, flags, 0, 0, NULL, 0, (ID3DBlob **)shader, (ID3DBlob **)error_msgs, D3DX_SDK_VERSION);
+#else
     hr = D3DCompile(data, length, NULL, (D3D_SHADER_MACRO *)defines, (ID3DInclude *)include,
                     function, profile, flags, 0, (ID3DBlob **)shader, (ID3DBlob **)error_msgs);
+#endif
 
     if (SUCCEEDED(hr) && constant_table)
     {
@@ -455,41 +469,6 @@ HRESULT WINAPI D3DXCompileShader(const char *data, UINT length, const D3DXMACRO 
         {
             ID3DXBuffer_Release(*shader);
             *shader = NULL;
-        }
-    }
-
-    /* Filter out D3DCompile warning messages that are not present with D3DCompileShader */
-    if (SUCCEEDED(hr) && error_msgs && *error_msgs)
-    {
-        char *messages = ID3DXBuffer_GetBufferPointer(*error_msgs);
-        DWORD size     = ID3DXBuffer_GetBufferSize(*error_msgs);
-
-        /* Ensure messages are null terminated for safe processing */
-        if (size) messages[size - 1] = 0;
-
-        while (size > 1)
-        {
-            char *prev, *next;
-
-            /* Warning has the form "warning X3206: ... implicit truncation of vector type"
-               but we only search for "X3206:" in case d3dcompiler_43 has localization */
-            prev = next = strstr(messages, "X3206:");
-            if (!prev) break;
-
-            /* get pointer to beginning and end of current line */
-            while (prev > messages && *(prev - 1) != '\n') prev--;
-            while (next < messages + size - 1 && *next != '\n') next++;
-            if (next < messages + size - 1 && *next == '\n') next++;
-
-            memmove(prev, next, messages + size - next);
-            size -= (next - prev);
-        }
-
-        /* Only return a buffer if the resulting string is not empty as some apps depend on that */
-        if (size <= 1)
-        {
-            ID3DXBuffer_Release(*error_msgs);
-            *error_msgs = NULL;
         }
     }
 
@@ -561,16 +540,8 @@ HRESULT WINAPI D3DXCompileShaderFromFileW(const WCHAR *filename, const D3DXMACRO
         return D3DXERR_INVALIDDATA;
     }
 
-    if (D3DX_SDK_VERSION <= 36)
-        flags |= D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY;
-
-    hr = D3DCompile(buffer, len, filename_a, (const D3D_SHADER_MACRO *)defines,
-                    (ID3DInclude *)include, entrypoint, profile, flags, 0,
-                    (ID3DBlob **)shader, (ID3DBlob **)error_messages);
-
-    if (SUCCEEDED(hr) && constant_table)
-        hr = D3DXGetShaderConstantTable(ID3DXBuffer_GetBufferPointer(*shader),
-                                        constant_table);
+    hr = D3DXCompileShader(buffer, len, defines, include, entrypoint,
+            profile, flags, shader, error_messages, constant_table);
 
     ID3DXInclude_Close(include, buffer);
     LeaveCriticalSection(&from_file_mutex);

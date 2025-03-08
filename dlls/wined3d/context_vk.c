@@ -1089,6 +1089,35 @@ void wined3d_context_vk_destroy_vk_event(struct wined3d_context_vk *context_vk,
     o->command_buffer_id = command_buffer_id;
 }
 
+void wined3d_context_vk_destroy_vk_video_session(struct wined3d_context_vk *context_vk,
+        VkVideoSessionKHR vk_video_session, uint64_t command_buffer_id)
+{
+    struct wined3d_device_vk *device_vk = wined3d_device_vk(context_vk->c.device);
+    const struct wined3d_vk_info *vk_info = context_vk->vk_info;
+    struct wined3d_retired_object_vk *o;
+
+    /* The spec does not mention that the session may not be referenced by any
+     * active command buffers, but is probably an accidental omission.
+     * The proposal says "no longer used by any pending command buffers". */
+
+    if (context_vk->completed_command_buffer_id >= command_buffer_id)
+    {
+        VK_CALL(vkDestroyVideoSessionKHR(device_vk->vk_device, vk_video_session, NULL));
+        TRACE("Destroyed video session 0x%s.\n", wine_dbgstr_longlong(vk_video_session));
+        return;
+    }
+
+    if (!(o = wined3d_context_vk_get_retired_object_vk(context_vk)))
+    {
+        ERR("Leaking video session 0x%s.\n", wine_dbgstr_longlong(vk_video_session));
+        return;
+    }
+
+    o->type = WINED3D_RETIRED_VIDEO_SESSION_VK;
+    o->u.vk_video_session = vk_video_session;
+    o->command_buffer_id = command_buffer_id;
+}
+
 void wined3d_context_vk_destroy_image(struct wined3d_context_vk *context_vk, struct wined3d_image_vk *image)
 {
     wined3d_context_vk_destroy_vk_image(context_vk, image->vk_image, image->command_buffer_id);
@@ -1275,6 +1304,11 @@ static void wined3d_context_vk_cleanup_resources(struct wined3d_context_vk *cont
             case WINED3D_RETIRED_PIPELINE_VK:
                 VK_CALL(vkDestroyPipeline(device_vk->vk_device, o->u.vk_pipeline, NULL));
                 TRACE("Destroyed pipeline 0x%s.\n", wine_dbgstr_longlong(o->u.vk_pipeline));
+                break;
+
+            case WINED3D_RETIRED_VIDEO_SESSION_VK:
+                VK_CALL(vkDestroyVideoSessionKHR(device_vk->vk_device, o->u.vk_video_session, NULL));
+                TRACE("Destroyed video session 0x%s.\n", wine_dbgstr_longlong(o->u.vk_video_session));
                 break;
 
             default:
@@ -1965,7 +1999,7 @@ void wined3d_context_vk_submit_command_buffer(struct wined3d_context_vk *context
     submit_info.signalSemaphoreCount = signal_semaphore_count;
     submit_info.pSignalSemaphores = signal_semaphores;
 
-    if ((vr = VK_CALL(vkQueueSubmit(device_vk->vk_queue, 1, &submit_info, buffer->vk_fence))) < 0)
+    if ((vr = VK_CALL(vkQueueSubmit(device_vk->graphics_queue.vk_queue, 1, &submit_info, buffer->vk_fence))) < 0)
         ERR("Failed to submit command buffer %p, vr %s.\n",
                 buffer->vk_command_buffer, wined3d_debug_vkresult(vr));
 
@@ -4167,7 +4201,7 @@ HRESULT wined3d_context_vk_init(struct wined3d_context_vk *context_vk, struct wi
     command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     command_pool_info.pNext = NULL;
     command_pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    command_pool_info.queueFamilyIndex = device_vk->vk_queue_family_index;
+    command_pool_info.queueFamilyIndex = device_vk->graphics_queue.vk_queue_family_index;
     if ((vr = VK_CALL(vkCreateCommandPool(device_vk->vk_device,
             &command_pool_info, NULL, &context_vk->vk_command_pool))) < 0)
     {
