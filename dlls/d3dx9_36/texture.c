@@ -274,23 +274,26 @@ static HRESULT check_texture_requirements(struct IDirect3DDevice9 *device, UINT 
         {
             unsigned int curchannels = !!curfmt->bits[0] + !!curfmt->bits[1]
                     + !!curfmt->bits[2] + !!curfmt->bits[3];
+            D3DFORMAT cur_d3dfmt;
             int score;
 
             i++;
 
+            if ((cur_d3dfmt = d3dformat_from_d3dx_pixel_format_id(curfmt->format)) == D3DFMT_UNKNOWN)
+                continue;
             if (curchannels < channels)
                 continue;
             if (curfmt->bytes_per_pixel == 3 && !allow_24bits)
                 continue;
 
             hr = IDirect3D9_CheckDeviceFormat(d3d, params.AdapterOrdinal, params.DeviceType,
-                    mode.Format, usage, resource_type, curfmt->format);
+                    mode.Format, usage, resource_type, cur_d3dfmt);
             if (FAILED(hr))
                 continue;
 
             /* This format can be used, let's evaluate it.
                Weights chosen quite arbitrarily... */
-            score = 512 * (curfmt->type == fmt->type);
+            score = 512 * (format_types_match(curfmt, fmt));
             score -= 32 * (curchannels - channels);
 
             for (j = 0; j < 4; j++)
@@ -302,7 +305,7 @@ static HRESULT check_texture_requirements(struct IDirect3DDevice9 *device, UINT 
             if (score > bestscore)
             {
                 bestscore = score;
-                usedformat = curfmt->format;
+                usedformat = cur_d3dfmt;
                 bestfmt = curfmt;
             }
         }
@@ -660,7 +663,7 @@ HRESULT WINAPI D3DXCreateTextureFromFileInMemoryEx(struct IDirect3DDevice9 *devi
 
     TRACE("Texture created correctly. Now loading the texture data into it.\n");
     dst_fmt_desc = get_format_info(format);
-    src_fmt_desc = get_format_info(imginfo.Format);
+    src_fmt_desc = get_d3dx_pixel_format_info(image.format);
     loaded_miplevels = min(imginfo.MipLevels, IDirect3DTexture9_GetLevelCount(tex));
     for (i = 0; i < loaded_miplevels; i++)
     {
@@ -1191,7 +1194,7 @@ HRESULT WINAPI D3DXCreateVolumeTextureFromFileInMemoryEx(IDirect3DDevice9 *devic
 
     TRACE("Texture created correctly. Now loading the texture data into it.\n");
     dst_fmt_desc = get_format_info(format);
-    src_fmt_desc = get_format_info(image_info.Format);
+    src_fmt_desc = get_d3dx_pixel_format_info(image.format);
     loaded_miplevels = min(image_info.MipLevels, IDirect3DVolumeTexture9_GetLevelCount(tex));
     for (i = 0; i < loaded_miplevels; i++)
     {
@@ -1261,62 +1264,6 @@ err:
     return hr;
 }
 
-static inline void fill_texture(const struct pixel_format_desc *format, BYTE *pos, const D3DXVECTOR4 *value)
-{
-    DWORD c;
-
-    for (c = 0; c < format->bytes_per_pixel; c++)
-        pos[c] = 0;
-
-    for (c = 0; c < 4; c++)
-    {
-        float comp_value;
-        DWORD i, v = 0, mask32 = format->bits[c] == 32 ? ~0U : ((1 << format->bits[c]) - 1);
-
-        switch (c)
-        {
-            case 0: /* Alpha */
-                comp_value = value->w;
-                break;
-            case 1: /* Red */
-                comp_value = value->x;
-                break;
-            case 2: /* Green */
-                comp_value = value->y;
-                break;
-            case 3: /* Blue */
-                comp_value = value->z;
-                break;
-        }
-
-        if (format->type == FORMAT_ARGBF16)
-            v = float_32_to_16(comp_value);
-        else if (format->type == FORMAT_ARGBF)
-            v = *(DWORD *)&comp_value;
-        else if (format->type == FORMAT_ARGB)
-            v = max(comp_value * ((1 << format->bits[c]) - 1) + 0.5f, 0);
-        else
-            FIXME("Unhandled format type %#x\n", format->type);
-
-        for (i = 0; i < format->bits[c] + format->shift[c]; i += 8)
-        {
-            BYTE byte, mask;
-
-            if (format->shift[c] > i)
-            {
-                mask = mask32 << (format->shift[c] - i);
-                byte = (v << (format->shift[c] - i)) & mask;
-            }
-            else
-            {
-                mask = mask32 >> (i - format->shift[c]);
-                byte = (v >> (i - format->shift[c])) & mask;
-            }
-            pos[i / 8] |= byte;
-        }
-    }
-}
-
 HRESULT WINAPI D3DXFillTexture(struct IDirect3DTexture9 *texture, LPD3DXFILL2D function, void *funcdata)
 {
     IDirect3DSurface9 *surface, *temp_surface;
@@ -1343,7 +1290,7 @@ HRESULT WINAPI D3DXFillTexture(struct IDirect3DTexture9 *texture, LPD3DXFILL2D f
             return hr;
 
         format = get_format_info(desc.Format);
-        if (format->type != FORMAT_ARGB && format->type != FORMAT_ARGBF16 && format->type != FORMAT_ARGBF)
+        if (is_unknown_format(format) || is_index_format(format) || is_compressed_format(format))
         {
             FIXME("Unsupported texture format %#x.\n", desc.Format);
             return D3DERR_INVALIDCALL;
@@ -1370,11 +1317,15 @@ HRESULT WINAPI D3DXFillTexture(struct IDirect3DTexture9 *texture, LPD3DXFILL2D f
 
             for (x = 0; x < desc.Width; x++)
             {
+                BYTE *dst = data + y * lock_rect.Pitch + x * format->bytes_per_pixel;
+                struct d3dx_color color;
+
                 coord.x = (x + 0.5f) / desc.Width;
 
                 function(&value, &coord, &size, funcdata);
 
-                fill_texture(format, data + y * lock_rect.Pitch + x * format->bytes_per_pixel, &value);
+                set_d3dx_color(&color, (const struct vec4 *)&value, RANGE_FULL, RANGE_FULL);
+                format_from_d3dx_color(format, &color, dst);
             }
         }
         if (FAILED(hr = unlock_surface(surface, NULL, temp_surface, TRUE)))
@@ -1478,7 +1429,7 @@ HRESULT WINAPI D3DXCreateCubeTextureFromFileInMemoryEx(IDirect3DDevice9 *device,
 
     TRACE("Texture created correctly. Now loading the texture data into it.\n");
     dst_fmt_desc = get_format_info(format);
-    src_fmt_desc = get_format_info(img_info.Format);
+    src_fmt_desc = get_d3dx_pixel_format_info(image.format);
     loaded_miplevels = min(img_info.MipLevels, IDirect3DCubeTexture9_GetLevelCount(tex));
     for (i = 0; i < loaded_miplevels; ++i)
     {
@@ -1736,7 +1687,7 @@ HRESULT WINAPI D3DXFillCubeTexture(struct IDirect3DCubeTexture9 *texture, LPD3DX
             return D3DERR_INVALIDCALL;
 
         format = get_format_info(desc.Format);
-        if (format->type != FORMAT_ARGB && format->type != FORMAT_ARGBF16 && format->type != FORMAT_ARGBF)
+        if (is_unknown_format(format) || is_index_format(format) || is_compressed_format(format))
         {
             FIXME("Unsupported texture format %#x\n", desc.Format);
             return D3DERR_INVALIDCALL;
@@ -1757,13 +1708,17 @@ HRESULT WINAPI D3DXFillCubeTexture(struct IDirect3DCubeTexture9 *texture, LPD3DX
             {
                 for (x = 0; x < desc.Width; x++)
                 {
+                    BYTE *dst = data + y * lock_rect.Pitch + x * format->bytes_per_pixel;
+                    struct d3dx_color color;
+
                     coord.x = get_cube_coord(coordmap[f][0], x, y, desc.Width) / desc.Width * 2.0f - 1.0f;
                     coord.y = get_cube_coord(coordmap[f][1], x, y, desc.Width) / desc.Width * 2.0f - 1.0f;
                     coord.z = get_cube_coord(coordmap[f][2], x, y, desc.Width) / desc.Width * 2.0f - 1.0f;
 
                     function(&value, &coord, &size, funcdata);
 
-                    fill_texture(format, data + y * lock_rect.Pitch + x * format->bytes_per_pixel, &value);
+                    set_d3dx_color(&color, (const struct vec4 *)&value, RANGE_FULL, RANGE_FULL);
+                    format_from_d3dx_color(format, &color, dst);
                 }
             }
             IDirect3DCubeTexture9_UnlockRect(texture, f, m);
@@ -1797,7 +1752,7 @@ HRESULT WINAPI D3DXFillVolumeTexture(struct IDirect3DVolumeTexture9 *texture, LP
             return D3DERR_INVALIDCALL;
 
         format = get_format_info(desc.Format);
-        if (format->type != FORMAT_ARGB && format->type != FORMAT_ARGBF16 && format->type != FORMAT_ARGBF)
+        if (is_unknown_format(format) || is_index_format(format) || is_compressed_format(format))
         {
             FIXME("Unsupported texture format %#x\n", desc.Format);
             return D3DERR_INVALIDCALL;
@@ -1824,12 +1779,15 @@ HRESULT WINAPI D3DXFillVolumeTexture(struct IDirect3DVolumeTexture9 *texture, LP
 
                 for (x = 0; x < desc.Width; x++)
                 {
+                    BYTE *dst = data + z * lock_box.SlicePitch + y * lock_box.RowPitch + x * format->bytes_per_pixel;
+                    struct d3dx_color color;
+
                     coord.x = (x + 0.5f) / desc.Width;
 
                     function(&value, &coord, &size, funcdata);
 
-                    fill_texture(format, data + z * lock_box.SlicePitch + y * lock_box.RowPitch
-                            + x * format->bytes_per_pixel, &value);
+                    set_d3dx_color(&color, (const struct vec4 *)&value, RANGE_FULL, RANGE_FULL);
+                    format_from_d3dx_color(format, &color, dst);
                 }
             }
         }

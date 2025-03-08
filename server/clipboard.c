@@ -88,7 +88,7 @@ static const struct object_ops clipboard_ops =
     NULL,                         /* unlink_name */
     no_open_file,                 /* open_file */
     no_kernel_obj_list,           /* get_kernel_obj_list */
-    no_get_fast_sync,             /* get_fast_sync */
+    no_get_inproc_sync,           /* get_inproc_sync */
     no_close_handle,              /* close_handle */
     clipboard_destroy             /* destroy */
 };
@@ -469,12 +469,15 @@ DECL_HANDLER(get_clipboard_data)
 
     if (req->cached && req->seqno == format->seqno) goto done;  /* client-side cache still valid */
 
-    if (format->size > get_reply_max_size())
+    if (format->data)
     {
-        set_error( STATUS_BUFFER_OVERFLOW );
-        return;
+        if (format->size > get_reply_max_size())
+        {
+            set_error( STATUS_BUFFER_OVERFLOW );
+            return;
+        }
+        set_reply_data( format->data, format->size );
     }
-    set_reply_data( format->data, format->size );
 
 done:
     if (!req->render) clipboard->rendering--;

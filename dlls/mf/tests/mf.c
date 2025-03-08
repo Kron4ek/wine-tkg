@@ -4722,6 +4722,7 @@ static void test_evr(void)
 
     hr = IMFActivate_ActivateObject(activate, &IID_IMFMediaSink, (void **)&sink);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (!sink) return;
 
     check_interface(sink, &IID_IMFMediaSinkPreroll, TRUE);
     check_interface(sink, &IID_IMFVideoRenderer, TRUE);
@@ -5379,7 +5380,6 @@ static void test_scheme_resolvers(void)
     for (i = 0; i < ARRAY_SIZE(urls); i++)
     {
         hr = IMFSourceResolver_CreateObjectFromURL(resolver, urls[i], MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-        todo_wine_if(i >= 2)
         ok(hr == S_OK, "got hr %#lx\n", hr);
         if (hr != S_OK)
             continue;
@@ -5403,7 +5403,6 @@ static void test_scheme_resolvers(void)
         hr = IMFAttributes_GetItem(attributes, &MF_BYTESTREAM_CONTENT_TYPE, NULL);
         ok(hr == S_OK, "got hr %#lx\n", hr);
         hr = IMFAttributes_GetItem(attributes, &MF_BYTESTREAM_LAST_MODIFIED_TIME, NULL);
-        todo_wine
         ok(hr == S_OK, "got hr %#lx\n", hr);
         IMFAttributes_Release(attributes);
 
@@ -5411,8 +5410,7 @@ static void test_scheme_resolvers(void)
         ok(hr == S_OK, "got hr %#lx\n", hr);
         hr = IMFByteStream_GetCapabilities(byte_stream, &caps);
         ok(hr == S_OK, "got hr %#lx\n", hr);
-        todo_wine
-        ok(caps == (expect_caps | MFBYTESTREAM_IS_PARTIALLY_DOWNLOADED)
+        ok(caps == expect_caps || caps == (expect_caps | MFBYTESTREAM_IS_PARTIALLY_DOWNLOADED)
                 || caps == (expect_caps | MFBYTESTREAM_DOES_NOT_USE_NETWORK),
                 "got caps %#lx\n", caps);
         hr = IMFByteStream_GetLength(byte_stream, &length);
@@ -5431,35 +5429,25 @@ static void test_scheme_resolvers(void)
     ok(hr == MF_E_UNSUPPORTED_BYTESTREAM_TYPE, "got hr %#lx\n", hr);
 
     hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"http://test.winehq.bla/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-    todo_wine
     ok(hr == NS_E_SERVER_NOT_FOUND, "got hr %#lx\n", hr);
     hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"https://test.winehq.bla/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-    todo_wine
     ok(hr == WININET_E_NAME_NOT_RESOLVED, "got hr %#lx\n", hr);
     hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"httpd://test.winehq.bla/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-    todo_wine
     ok(hr == WININET_E_NAME_NOT_RESOLVED, "got hr %#lx\n", hr);
     hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"httpsd://test.winehq.bla/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-    todo_wine
     ok(hr == WININET_E_NAME_NOT_RESOLVED, "got hr %#lx\n", hr);
     hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"mms://test.winehq.bla/tests/test.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-    todo_wine
     ok(hr == WININET_E_NAME_NOT_RESOLVED, "got hr %#lx\n", hr);
 
     hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"http://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-    todo_wine
     ok(hr == NS_E_FILE_NOT_FOUND, "got hr %#lx\n", hr);
     hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"https://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-    todo_wine
     ok(hr == NS_E_FILE_NOT_FOUND, "got hr %#lx\n", hr);
     hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"httpd://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-    todo_wine
     ok(hr == NS_E_FILE_NOT_FOUND, "got hr %#lx\n", hr);
     hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"httpsd://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-    todo_wine
     ok(hr == NS_E_FILE_NOT_FOUND, "got hr %#lx\n", hr);
     hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"mms://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &type, &object);
-    todo_wine
     ok(hr == MF_E_UNSUPPORTED_BYTESTREAM_TYPE, "got hr %#lx\n", hr);
 
     IMFSourceResolver_Release(resolver);
@@ -6434,6 +6422,182 @@ static void test_media_session_Start(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 }
 
+static void test_media_session_source_shutdown(void)
+{
+    media_type_desc video_rgb32_desc =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32),
+    };
+    struct test_grabber_callback *grabber_callback;
+    IMFActivate *sink_activate;
+    IMFAsyncCallback *callback;
+    IMFMediaType *output_type;
+    IMFMediaSession *session;
+    IMFMediaSource *source;
+    IMFTopology *topology;
+    PROPVARIANT propvar;
+    UINT64 duration;
+    HRESULT hr;
+    enum
+    {
+        TEST_START,
+        TEST_RESTART,
+        TEST_PAUSE,
+        TEST_STOP,
+        TEST_CLOSE,
+    } shutdown_point;
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
+    /* These tests don't cover asynchronous shutdown, which is difficult to consistently test. */
+
+    for (shutdown_point = TEST_START; shutdown_point <= TEST_CLOSE; ++shutdown_point)
+    {
+        winetest_push_context("Test %d", shutdown_point);
+
+        if (!(source = create_media_source(L"test.mp4", L"video/mp4")))
+        {
+            todo_wine /* Gitlab CI Debian runner */
+            win_skip("MP4 media source is not supported, skipping tests.\n");
+            MFShutdown();
+            winetest_pop_context();
+            return;
+        }
+
+        grabber_callback = impl_from_IMFSampleGrabberSinkCallback(create_test_grabber_callback());
+        hr = MFCreateMediaType(&output_type);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        init_media_type(output_type, video_rgb32_desc, -1);
+        hr = MFCreateSampleGrabberSinkActivate(output_type, &grabber_callback->IMFSampleGrabberSinkCallback_iface, &sink_activate);
+        ok(hr == S_OK, "Failed to create grabber sink, hr %#lx.\n", hr);
+        IMFMediaType_Release(output_type);
+
+        hr = MFCreateMediaSession(NULL, &session);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        topology = create_test_topology(source, sink_activate, &duration);
+        hr = IMFMediaSession_SetTopology(session, 0, topology);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        IMFTopology_Release(topology);
+
+        callback = create_test_callback(TRUE);
+
+        propvar.vt = VT_EMPTY;
+        hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+        if (shutdown_point == TEST_START)
+            IMFMediaSource_Shutdown(source);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = wait_media_event(session, callback, MESessionStarted, 5000, &propvar);
+        ok(hr == (shutdown_point == TEST_START ? MF_E_INVALIDREQUEST : S_OK), "Unexpected hr %#lx.\n", hr);
+
+        switch (shutdown_point)
+        {
+            case TEST_RESTART:
+                /* Seek to 1s */
+                propvar.vt = VT_I8;
+                propvar.hVal.QuadPart = 10000000;
+                hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+                IMFMediaSource_Shutdown(source);
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+                hr = wait_media_event(session, callback, MESessionStarted, 5000, &propvar);
+                /* Windows always returns S_OK here. These four tests in Wine can return
+                 * S_OK from the event if the timing is right, but it's not common. */
+                todo_wine
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+                break;
+            case TEST_PAUSE:
+                hr = IMFMediaSession_Pause(session);
+                IMFMediaSource_Shutdown(source);
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+                hr = wait_media_event(session, callback, MESessionPaused, 1000, &propvar);
+                /* Windows has not been observed to emit PAUSEWHILESTOPPED here, but this could
+                 * be a matter of async command timing, and this error is not exactly wrong. */
+                ok(hr == S_OK || hr == MF_E_SESSION_PAUSEWHILESTOPPED || hr == MF_E_SHUTDOWN,
+                        "Unexpected hr %#lx.\n", hr);
+                break;
+            case TEST_STOP:
+                hr = IMFMediaSession_Stop(session);
+                IMFMediaSource_Shutdown(source);
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+                hr = wait_media_event(session, callback, MESessionStopped, 1000, &propvar);
+                ok(hr == S_OK || hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+                break;
+            case TEST_CLOSE:
+                hr = IMFMediaSession_Close(session);
+                IMFMediaSource_Shutdown(source);
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+                hr = wait_media_event(session, callback, MESessionClosed, 1000, &propvar);
+                ok(hr == S_OK || hr == MF_E_SHUTDOWN, "Unexpected hr %#lx.\n", hr);
+            default:
+                break;
+        }
+
+        if (shutdown_point == TEST_CLOSE)
+            goto done;
+
+        IMFMediaSource_Release(source);
+
+        IMFActivate_ShutdownObject(sink_activate);
+        IMFActivate_Release(sink_activate);
+        IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
+
+        /* Re-use the session. For shutdown after Start(), the session can be re-used in native
+         * Windows but waits may still return MF_E_SHUTDOWN. The other tests can cause timeouts
+         * on close. Clearing topologies has no effect on these errors. */
+
+        grabber_callback = impl_from_IMFSampleGrabberSinkCallback(create_test_grabber_callback());
+        hr = MFCreateMediaType(&output_type);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        init_media_type(output_type, video_rgb32_desc, -1);
+        hr = MFCreateSampleGrabberSinkActivate(output_type, &grabber_callback->IMFSampleGrabberSinkCallback_iface, &sink_activate);
+        ok(hr == S_OK, "Failed to create grabber sink, hr %#lx.\n", hr);
+        IMFMediaType_Release(output_type);
+
+        source = create_media_source(L"test.mp4", L"video/mp4");
+        ok(!!source, "Failed to create source.\n");
+
+        topology = create_test_topology(source, sink_activate, &duration);
+        hr = IMFMediaSession_SetTopology(session, 0, topology);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        IMFTopology_Release(topology);
+
+        propvar.vt = VT_EMPTY;
+        hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = wait_media_event_until_blocking(session, callback, MESessionStarted, 5000, &propvar);
+        ok(hr == MF_E_INVALIDREQUEST || hr == MF_E_SHUTDOWN || hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        hr = IMFMediaSession_Stop(session);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = wait_media_event_until_blocking(session, callback, MESessionStopped, 1000, &propvar);
+        ok(hr == MF_E_INVALIDREQUEST || hr == MF_E_SHUTDOWN || hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = IMFMediaSession_Close(session);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = wait_media_event_until_blocking(session, callback, MESessionClosed, 1000, &propvar);
+        if (shutdown_point >= TEST_PAUSE)
+            ok(hr == MF_E_SHUTDOWN || hr == S_OK || hr == WAIT_TIMEOUT, "Unexpected hr %#lx.\n", hr);
+        else
+            ok(hr == MF_E_SHUTDOWN || hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+done:
+        hr = IMFMediaSession_Shutdown(session);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        IMFMediaSource_Release(source);
+        IMFAsyncCallback_Release(callback);
+        IMFMediaSession_Release(session);
+        IMFActivate_ShutdownObject(sink_activate);
+        IMFActivate_Release(sink_activate);
+        IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
+
+        winetest_pop_context();
+    }
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+}
+
 static void test_MFEnumDeviceSources(void)
 {
     static const WCHAR devinterface_audio_capture_wstr[] = L"{2eef81be-33fa-4800-9670-1cd474972c3f}";
@@ -6623,6 +6787,334 @@ static void test_media_session_Close(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 }
 
+static void test_network_bytestream(void)
+{
+    static const WCHAR *URL = L"http://test.winehq.org/tests/test.mp3";
+    static const WCHAR *EFFECTIVE_URL = L"http://test.winehq.org:80/tests/test.mp3";
+    static const WCHAR *CONTENT_TYPE = L"audio/mpeg";
+    static const BYTE LAST_MODIFIED_TIME[] = { 0x00, 0x3b, 0x4b, 0xbf, 0x05, 0x80, 0xd8, 0x01 };
+
+    IMFSourceResolver *resolver;
+    IUnknown *object = NULL, *bs = NULL;
+    MF_OBJECT_TYPE obj_type;
+    HRESULT hr;
+    void *ptr;
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Startup failure, hr %#lx.\n", hr);
+
+    hr = MFCreateSourceResolver(&resolver);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    if (object) IUnknown_Release(object);
+
+    obj_type = (MF_OBJECT_TYPE)0xdeadbeef;
+    object = NULL;
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"http://nonexistent.url/file.mp4", MF_RESOLUTION_BYTESTREAM, NULL, &obj_type, &object);
+    ok(hr == NS_E_SERVER_NOT_FOUND, "Got hr %#lx.\n", hr);
+    ok(obj_type == MF_OBJECT_INVALID, "Unexpected obj_type %#x.\n", obj_type);
+    if (object) IUnknown_Release(object);
+
+    obj_type = (MF_OBJECT_TYPE)0xdeadbeef;
+    object = NULL;
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, L"http://test.winehq.org/tests/invalid.mp3", MF_RESOLUTION_BYTESTREAM, NULL, &obj_type, &object);
+    ok(hr == NS_E_FILE_NOT_FOUND, "Got hr %#lx.\n", hr);
+    ok(obj_type == MF_OBJECT_INVALID, "Unexpected obj_type %#x.\n", obj_type);
+    if (object) IUnknown_Release(object);
+
+    obj_type = (MF_OBJECT_TYPE)0xdeadbeef;
+    object = NULL;
+    hr = IMFSourceResolver_CreateObjectFromURL(resolver, URL, MF_RESOLUTION_BYTESTREAM, NULL, &obj_type, &object);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(obj_type == MF_OBJECT_BYTESTREAM, "Unexpected obj_type %#x.\n", obj_type);
+
+    ptr = NULL;
+    hr = IUnknown_QueryInterface(object, &IID_IMFAttributes, &ptr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(ptr != NULL, "Got NULL ptr.\n");
+    if (SUCCEEDED(hr) && ptr)
+    {
+        IMFAttributes *attr = ptr;
+        UINT32 count = 0;
+        PROPVARIANT var;
+        GUID key = {0};
+
+        hr = IMFAttributes_GetCount(attr, &count);
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+        ok(count == 3, "count = %u\n", count);
+
+        PropVariantInit(&var);
+
+        hr = IMFAttributes_GetItemByIndex(attr, 0, &key, &var);
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+        ok(IsEqualGUID(&key, &MF_BYTESTREAM_EFFECTIVE_URL), "Got key %s\n", debugstr_guid(&key));
+        ok(var.vt == VT_LPWSTR, "Got type %d\n", var.vt);
+        ok(!lstrcmpW(var.pwszVal, EFFECTIVE_URL), "Got value %s\n", var.pszVal);
+        memset(&key, 0, sizeof(key));
+        PropVariantClear(&var);
+
+        hr = IMFAttributes_GetItemByIndex(attr, 1, &key, &var);
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+        ok(IsEqualGUID(&key, &MF_BYTESTREAM_CONTENT_TYPE), "Got key %s\n", debugstr_guid(&key));
+        ok(var.vt == VT_LPWSTR, "Got type %d\n", var.vt);
+        ok(!lstrcmpW(var.pwszVal, CONTENT_TYPE), "Got value %s\n", var.pszVal);
+        memset(&key, 0, sizeof(key));
+        PropVariantClear(&var);
+
+        hr = IMFAttributes_GetItemByIndex(attr, 2, &key, &var);
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+        ok(IsEqualGUID(&key, &MF_BYTESTREAM_LAST_MODIFIED_TIME), "Got key %s\n", debugstr_guid(&key));
+        ok(var.vt == (VT_VECTOR | VT_I1 | VT_NULL), "Got type %d\n", var.vt);
+        ok(var.blob.cbSize == sizeof(LAST_MODIFIED_TIME), "Got size %lu\n", var.blob.cbSize);
+        ok(var.blob.pBlobData != NULL, "Got NULL value\n");
+        if (var.blob.cbSize == sizeof(LAST_MODIFIED_TIME) && var.blob.pBlobData)
+            ok(!memcmp(var.blob.pBlobData, LAST_MODIFIED_TIME, sizeof(LAST_MODIFIED_TIME)), "Got wrong value\n");
+        memset(&key, 0, sizeof(key));
+        PropVariantClear(&var);
+
+        hr = IMFAttributes_GetItemByIndex(attr, 3, &key, &var);
+        ok(hr == E_INVALIDARG, "Got hr %#lx\n", hr);
+        ok(IsEqualGUID(&key, &GUID_NULL), "Got key %s\n", debugstr_guid(&key));
+        ok(var.vt == VT_EMPTY, "Got type %d\n", var.vt);
+        memset(&key, 0, sizeof(key));
+        PropVariantClear(&var);
+
+        IUnknown_Release((IUnknown *)ptr);
+    }
+
+    ptr = NULL;
+    hr = IUnknown_QueryInterface(object, &IID_IMFByteStreamCacheControl, &ptr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(ptr != NULL, "Got NULL ptr.\n");
+    if (SUCCEEDED(hr) && ptr)
+    {
+        IMFByteStreamCacheControl *ctrl = ptr;
+        HRESULT hr;
+
+        hr = IMFByteStreamCacheControl_StopBackgroundTransfer(ctrl);
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+
+        IMFByteStreamCacheControl_Release(ctrl);
+    }
+
+    ptr = NULL;
+    hr = IUnknown_QueryInterface(object, &IID_IMFByteStreamBuffering, &ptr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(ptr != NULL, "Got NULL ptr.\n");
+    if (SUCCEEDED(hr) && ptr)
+    {
+        MFBYTESTREAM_BUFFERING_PARAMS params = {0};
+        IMFByteStreamBuffering *buffering = ptr;
+        MF_LEAKY_BUCKET_PAIR bucket = {0};
+        HRESULT hr;
+
+        hr = IMFByteStreamBuffering_StopBuffering(buffering);
+        ok(hr == S_FALSE, "Got hr %#lx\n", hr);
+
+        hr = IMFByteStreamBuffering_EnableBuffering(buffering, FALSE);
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+
+        hr = IMFByteStreamBuffering_EnableBuffering(buffering, TRUE);
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+
+        hr = IMFByteStreamBuffering_StopBuffering(buffering);
+        ok(hr == S_OK || hr == S_FALSE, "Got hr %#lx\n", hr);
+
+        hr = IMFByteStreamBuffering_SetBufferingParams(buffering, NULL);
+        ok(hr == E_INVALIDARG, "Got hr %#lx\n", hr);
+
+        params.cbTotalFileSize = -1;
+        params.cbPlayableDataSize = -1;
+        params.prgBuckets = NULL;
+        params.cBuckets = 0;
+        params.qwNetBufferingTime = 0;
+        params.qwExtraBufferingTimeDuringSeek = 0;
+        params.qwPlayDuration = 0;
+        params.dRate = 1.0f;
+        hr = IMFByteStreamBuffering_SetBufferingParams(buffering, &params);
+        todo_wine
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+
+        params.cBuckets = 1;
+        hr = IMFByteStreamBuffering_SetBufferingParams(buffering, &params);
+        ok(hr == E_INVALIDARG, "Got hr %#lx\n", hr);
+
+        params.prgBuckets = &bucket;
+        bucket.dwBitrate = 0;
+        bucket.msBufferWindow = 0;
+        hr = IMFByteStreamBuffering_SetBufferingParams(buffering, &params);
+        todo_wine
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+
+        params.cbTotalFileSize = 0xdeadbeef;
+        params.cbPlayableDataSize = 0xdeadbeef;
+        bucket.dwBitrate = 0xdeadbeef;
+        bucket.msBufferWindow = 0xdeadbeef;
+        params.qwNetBufferingTime = 0xdeadbeef;
+        params.qwExtraBufferingTimeDuringSeek = 0xdeadbeef;
+        params.qwPlayDuration = 0xdeadbeef;
+        params.dRate = 12345.0f;
+        hr = IMFByteStreamBuffering_SetBufferingParams(buffering, &params);
+        todo_wine
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+
+        hr = IMFByteStreamBuffering_EnableBuffering(buffering, TRUE);
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+
+        IMFByteStreamBuffering_Release(buffering);
+    }
+
+    ptr = NULL;
+    hr = IUnknown_QueryInterface(object, &IID_IMFByteStreamTimeSeek, &ptr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(ptr != NULL, "Got NULL ptr.\n");
+    if (SUCCEEDED(hr) && ptr)
+    {
+        QWORD start_time = 0xdeadbeef, stop_time = 0xdeadbef0, duration = 0xdeadbef1;
+        IMFByteStreamTimeSeek *seek = ptr;
+        BOOL b = 0xdeadbeef;
+        HRESULT hr;
+
+        hr = IMFByteStreamTimeSeek_GetTimeSeekResult(seek, NULL, NULL, NULL);
+        ok(hr == E_INVALIDARG, "Got hr %#lx\n", hr);
+
+        hr = IMFByteStreamTimeSeek_GetTimeSeekResult(seek, &start_time, &stop_time, &duration);
+        ok(hr == MF_E_INVALIDREQUEST, "Got hr %#lx\n", hr);
+        ok(start_time == 0, "start_time = %I64u\n", start_time);
+        ok(stop_time == 0, "stop_time = %I64u\n", stop_time);
+        ok(duration == 0, "duration = %I64u\n", duration);
+
+        hr = IMFByteStreamTimeSeek_IsTimeSeekSupported(seek, NULL);
+        ok(hr == S_FALSE, "Got hr %#lx\n", hr);
+
+        hr = IMFByteStreamTimeSeek_IsTimeSeekSupported(seek, &b);
+        ok(hr == S_FALSE, "Got hr %#lx\n", hr);
+        ok(!b, "supported = %x\n", b);
+
+        hr = IMFByteStreamTimeSeek_TimeSeek(seek, 0);
+        ok(hr == MF_E_INVALIDREQUEST, "Got hr %#lx\n", hr);
+
+        hr = IMFByteStreamTimeSeek_GetTimeSeekResult(seek, &start_time, &stop_time, &duration);
+        ok(hr == MF_E_INVALIDREQUEST, "Got hr %#lx\n", hr);
+        ok(start_time == 0, "start_time = %I64u\n", start_time);
+        ok(stop_time == 0, "stop_time = %I64u\n", stop_time);
+        ok(duration == 0, "duration = %I64u\n", duration);
+
+        IMFByteStreamTimeSeek_Release(seek);
+    }
+
+    {
+        BYTE *tmp = malloc(8192);
+        ULONG read = 0, written = 0;
+        QWORD len = 0;
+
+        hr = IMFByteStream_SetLength((IMFByteStream*)object, 1000);
+        ok(hr == E_NOTIMPL, "Got hr %#lx.\n", hr);
+
+        hr = IMFByteStream_SetCurrentPosition((IMFByteStream*)object, 1000);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        hr = IMFByteStream_Read((IMFByteStream*)object, tmp, 8192, &read);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(read == 3365, "read = %lu\n", read);
+
+        hr = IMFByteStream_SetCurrentPosition((IMFByteStream*)object, 1000);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        hr = IMFByteStream_Write((IMFByteStream*)object, tmp, 1000, &written);
+        ok(hr == E_NOTIMPL, "Got hr %#lx.\n", hr);
+        ok(written == 0, "written = %lu\n", written);
+
+        hr = IMFByteStream_BeginWrite((IMFByteStream*)object, tmp, 1000, (void *)(DWORD_PTR)0xdeadbeef, NULL);
+        ok(hr == E_NOTIMPL, "Got hr %#lx.\n", hr);
+
+        free(tmp);
+
+        hr = IMFByteStream_GetLength((IMFByteStream*)object, &len);
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+        ok(len != 0, "len = %I64u\n", len);
+
+        hr = IMFByteStream_Flush((IMFByteStream*)object);
+        ok(hr == S_OK, "Got hr %#lx\n", hr);
+    }
+
+    ptr = NULL;
+    hr = MFGetService(object, &MFNETSOURCE_STATISTICS_SERVICE, &IID_IPropertyStore, &ptr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(ptr != NULL, "Got NULL ptr.\n");
+    if (SUCCEEDED(hr) && ptr)
+    {
+        IPropertyStore *pstore = ptr;
+        DWORD count = 0;
+
+        ptr = NULL;
+        hr = IUnknown_QueryInterface(object, &IID_IPropertyStore, &ptr);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(ptr == (void *)pstore, "Got different IPropertyStore: %p != %p.\n", ptr, pstore);
+        IPropertyStore_Release((IPropertyStore *)ptr);
+
+        hr = IPropertyStore_GetCount(pstore, &count);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(count == 0, "Got count %lu.\n", count);
+
+        IPropertyStore_Release(pstore);
+    }
+
+    ptr = NULL;
+    hr = IUnknown_QueryInterface(object, &IID_IMFMediaEventGenerator, &ptr);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(ptr != NULL, "Got NULL ptr.\n");
+    if (SUCCEEDED(hr) && ptr)
+    {
+        IMFMediaEvent *evt = (void *)(DWORD_PTR)0xdeadbeef;
+        BOOL seen_caps_changed = FALSE, buffering = FALSE;
+        IMFMediaEventGenerator *gen = ptr;
+        MediaEventType type;
+        HRESULT hr;
+
+        while (SUCCEEDED(hr = IMFMediaEventGenerator_GetEvent(gen, MF_EVENT_FLAG_NO_WAIT, &evt)))
+        {
+            type = (MediaEventType)0xdeadbeef;
+            hr = IMFMediaEvent_GetType(evt, &type);
+            ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+            if (type == MEByteStreamCharacteristicsChanged)
+            {
+                ok(!seen_caps_changed, "got multiple MEByteStreamCharacteristicsChanged events\n");
+                seen_caps_changed = TRUE;
+            }
+            else if (type == MEBufferingStarted)
+            {
+                ok(!buffering, "got MEBufferingStopped without MEBufferingStarted\n");
+                buffering = TRUE;
+            }
+            else if (type == MEBufferingStopped)
+                buffering = FALSE;
+            else
+                ok(0, "Unexpected event type %#lx\n", type);
+
+            IMFMediaEvent_Release(evt);
+        }
+        ok(hr == MF_E_NO_EVENTS_AVAILABLE, "Got hr %#lx.\n", hr);
+
+        IMFMediaEventGenerator_Release(gen);
+    }
+
+    obj_type = (MF_OBJECT_TYPE)0xdeadbeef;
+    bs = NULL;
+    hr = IMFSourceResolver_CreateObjectFromByteStream(resolver, (void *)object, NULL, MF_RESOLUTION_MEDIASOURCE, NULL, &obj_type, &bs);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(obj_type == MF_OBJECT_MEDIASOURCE, "Unexpected obj_type %#x.\n", obj_type);
+
+    if (bs) IUnknown_Release(bs);
+    if (object) IUnknown_Release(object);
+
+    IMFSourceResolver_Release(resolver);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Shutdown failure, hr %#lx.\n", hr);
+}
+
 START_TEST(mf)
 {
     init_functions();
@@ -6658,4 +7150,6 @@ START_TEST(mf)
     test_media_session_Start();
     test_MFEnumDeviceSources();
     test_media_session_Close();
+    test_network_bytestream();
+    test_media_session_source_shutdown();
 }

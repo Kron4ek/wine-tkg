@@ -50,7 +50,7 @@ static void csmt_set(BOOL status)
     else
     {
         // FALSE, we remove the csmt key letting wine use its default
-        set_reg_key(config_key, "Direct3D", L"csmt", NULL);
+        set_reg_key(config_key, L"Direct3D", L"csmt", NULL);
     }
 }
 

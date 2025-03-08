@@ -303,7 +303,7 @@ test_pic(const unsigned char *imgdata, unsigned int imgsize)
 	ok (hres == S_OK, "createstreamonhglobal failed? doubt it... hres 0x%08lx\n", hres);
 
 	memset(&seekto,0,sizeof(seekto));
-	hres = IStream_Seek(stream,seekto,SEEK_CUR,&newpos1);
+	hres = IStream_Seek(stream, seekto, STREAM_SEEK_CUR, &newpos1);
 	ok (hres == S_OK, "istream seek failed? doubt it... hres 0x%08lx\n", hres);
 	test_pic_with_stream(stream, imgsize);
 	
@@ -334,7 +334,7 @@ test_pic(const unsigned char *imgdata, unsigned int imgsize)
 		ok (hres == S_OK, "createstreamonhglobal failed? doubt it... hres 0x%08lx\n", hres);
 
 		memset(&seekto,0,sizeof(seekto));
-		hres = IStream_Seek(stream,seekto,SEEK_CUR,&newpos1);
+		hres = IStream_Seek(stream, seekto, STREAM_SEEK_CUR, &newpos1);
 		ok (hres == S_OK, "istream seek failed? doubt it... hres 0x%08lx\n", hres);
 		test_pic_with_stream(stream, imgsize);
 	
@@ -371,7 +371,7 @@ static void test_empty_image(void) {
 	ok (hres == S_OK, "CreatestreamOnHGlobal failed? doubt it... hres 0x%08lx\n", hres);
 
 	memset(&seekto,0,sizeof(seekto));
-	hres = IStream_Seek(stream,seekto,SEEK_CUR,&newpos1);
+	hres = IStream_Seek(stream, seekto, STREAM_SEEK_CUR, &newpos1);
 	ok (hres == S_OK, "istream seek failed? doubt it... hres 0x%08lx\n", hres);
 
 	pvObj = NULL;
@@ -418,7 +418,7 @@ static void test_empty_image_2(void) {
 
 	memset(&seekto,0,sizeof(seekto));
 	seekto.LowPart = 42;
-	hres = IStream_Seek(stream,seekto,SEEK_CUR,&newpos1);
+	hres = IStream_Seek(stream, seekto, STREAM_SEEK_CUR, &newpos1);
 	ok (hres == S_OK, "istream seek failed? doubt it... hres 0x%08lx\n", hres);
 
 	pvObj = NULL;
@@ -1251,7 +1251,7 @@ static void test_load_save_bmp(void)
     ok(size == -1, "expected -1, got %ld\n", size);
 
     offset.QuadPart = 0;
-    hr = IStream_Seek(dst_stream, offset, SEEK_SET, NULL);
+    hr = IStream_Seek(dst_stream, offset, STREAM_SEEK_SET, NULL);
     ok(hr == S_OK, "IStream_Seek %#lx\n", hr);
 
     hr = IPicture_QueryInterface(pic, &IID_IPersistStream, (void **)&src_stream);
@@ -1334,7 +1334,7 @@ static void test_load_save_icon(void)
     ok(size == -1, "expected -1, got %ld\n", size);
 
     offset.QuadPart = 0;
-    hr = IStream_Seek(dst_stream, offset, SEEK_SET, NULL);
+    hr = IStream_Seek(dst_stream, offset, STREAM_SEEK_SET, NULL);
     ok(hr == S_OK, "IStream_Seek %#lx\n", hr);
 
     hr = IPicture_QueryInterface(pic, &IID_IPersistStream, (void **)&src_stream);
@@ -1447,7 +1447,7 @@ static void test_load_save_empty_picture(void)
 
     /* first with statable and seekable stream */
     offset.QuadPart = 0;
-    hr = IStream_Seek(dst_stream, offset, SEEK_SET, NULL);
+    hr = IStream_Seek(dst_stream, offset, STREAM_SEEK_SET, NULL);
     ok(hr == S_OK, "IStream_Seek %#lx\n", hr);
 
     pic = NULL;
@@ -1555,7 +1555,6 @@ static void test_load_save_dib(void)
         size = -1;
         hr = IPicture_SaveAsFile(pic, dst_stream, TRUE, &size);
         ok(hr == S_OK, "IPicture_SaveasFile error %#lx\n", hr);
-        todo_wine
         ok(size == expected_size, "expected %ld, got %ld\n", expected_size, size);
         if (size == expected_size) {
             mem = GlobalLock(hmem);
@@ -1568,13 +1567,11 @@ static void test_load_save_dib(void)
 
         size = -1;
         hr = IPicture_SaveAsFile(pic, dst_stream, FALSE, &size);
-        todo_wine
         ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
-        todo_wine
         ok(size == -1, "expected -1, got %ld\n", size);
 
         offset.QuadPart = 0;
-        hr = IStream_Seek(dst_stream, offset, SEEK_SET, NULL);
+        hr = IStream_Seek(dst_stream, offset, STREAM_SEEK_SET, NULL);
         ok(hr == S_OK, "IStream_Seek %#lx\n", hr);
 
         hr = IPicture_QueryInterface(pic, &IID_IPersistStream, (void **)&src_stream);
@@ -1637,57 +1634,54 @@ static void test_load_save_emf(void)
     desc.emf.hemf = CloseEnhMetaFile(hdc);
     ok(desc.emf.hemf != 0, "CloseEnhMetaFile failed\n");
     hr = OleCreatePictureIndirect(&desc, &IID_IPicture, FALSE, (void**)&pic);
-    ok(hr == S_OK, "OleCreatePictureIndirect error %#x\n", hr);
+    ok(hr == S_OK, "OleCreatePictureIndirect error %#lx\n", hr);
 
     type = -1;
     hr = IPicture_get_Type(pic, &type);
-    ok(hr == S_OK,"get_Type error %#8x\n", hr);
+    ok(hr == S_OK, "get_Type error %#lx\n", hr);
     ok(type == PICTYPE_ENHMETAFILE,"expected PICTYPE_ENHMETAFILE, got %d\n", type);
 
     hr = IPicture_get_Handle(pic, &handle);
-    ok(hr == S_OK,"get_Handle error %#8x\n", hr);
+    ok(hr == S_OK,"get_Handle error %#lx\n", hr);
     ok(IntToPtr(handle) == desc.emf.hemf, "get_Handle returned wrong handle %#x\n", handle);
 
     hmem = GlobalAlloc(GMEM_MOVEABLE, 0);
     hr = CreateStreamOnHGlobal(hmem, FALSE, &dst_stream);
-    ok(hr == S_OK, "createstreamonhglobal error %#x\n", hr);
+    ok(hr == S_OK, "createstreamonhglobal error %#lx\n", hr);
 
     size = -1;
     hr = IPicture_SaveAsFile(pic, dst_stream, TRUE, &size);
-    ok(hr == S_OK, "IPicture_SaveasFile error %#x\n", hr);
-    ok(size == 128, "expected 128, got %d\n", size);
+    ok(hr == S_OK, "IPicture_SaveasFile error %#lx\n", hr);
+    ok(size == 128, "expected 128, got %ld\n", size);
     emh = GlobalLock(hmem);
-if (size)
-{
-    ok(emh->iType == EMR_HEADER, "wrong iType %04x\n", emh->iType);
-    ok(emh->dSignature == ENHMETA_SIGNATURE, "wrong dSignature %08x\n", emh->dSignature);
-}
+    ok(emh->iType == EMR_HEADER, "wrong iType %04lx\n", emh->iType);
+    ok(emh->dSignature == ENHMETA_SIGNATURE, "wrong dSignature %08lx\n", emh->dSignature);
     GlobalUnlock(hmem);
 
     size = -1;
     hr = IPicture_SaveAsFile(pic, dst_stream, FALSE, &size);
-    ok(hr == E_FAIL, "expected E_FAIL, got %#x\n", hr);
-    ok(size == -1, "expected -1, got %d\n", size);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+    ok(size == -1, "expected -1, got %ld\n", size);
 
     offset.QuadPart = 0;
     hr = IStream_Seek(dst_stream, offset, SEEK_SET, NULL);
-    ok(hr == S_OK, "IStream_Seek %#x\n", hr);
+    ok(hr == S_OK, "IStream_Seek %#lx\n", hr);
 
     hr = IPicture_QueryInterface(pic, &IID_IPersistStream, (void **)&src_stream);
-    ok(hr == S_OK, "QueryInterface error %#x\n", hr);
+    ok(hr == S_OK, "QueryInterface error %#lx\n", hr);
 
     hr = IPersistStream_Save(src_stream, dst_stream, TRUE);
-    ok(hr == S_OK, "Save error %#x\n", hr);
+    ok(hr == S_OK, "Save error %#lx\n", hr);
 
     IPersistStream_Release(src_stream);
     IStream_Release(dst_stream);
 
     mem = GlobalLock(hmem);
-    ok(!memcmp(mem, "lt\0\0", 4), "got wrong stream header %04x\n", mem[0]);
-    ok(mem[1] == 128, "expected 128, got %u\n", mem[1]);
+    ok(!memcmp(mem, "lt\0\0", 4), "got wrong stream header %04lx\n", mem[0]);
+    ok(mem[1] == 128, "expected 128, got %lu\n", mem[1]);
     emh = (ENHMETAHEADER *)(mem + 2);
-    ok(emh->iType == EMR_HEADER, "wrong iType %04x\n", emh->iType);
-    ok(emh->dSignature == ENHMETA_SIGNATURE, "wrong dSignature %08x\n", emh->dSignature);
+    ok(emh->iType == EMR_HEADER, "wrong iType %04lx\n", emh->iType);
+    ok(emh->dSignature == ENHMETA_SIGNATURE, "wrong dSignature %08lx\n", emh->dSignature);
 
     GlobalUnlock(hmem);
     GlobalFree(hmem);

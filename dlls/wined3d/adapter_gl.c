@@ -57,7 +57,6 @@ static const struct wined3d_extension_map gl_extension_map[] =
 
     /* ARB */
     {"GL_ARB_base_instance",                ARB_BASE_INSTANCE             },
-    {"GL_ARB_bindless_texture",             ARB_BINDLESS_TEXTURE          },
     {"GL_ARB_blend_func_extended",          ARB_BLEND_FUNC_EXTENDED       },
     {"GL_ARB_buffer_storage",               ARB_BUFFER_STORAGE            },
     {"GL_ARB_clear_buffer_object",          ARB_CLEAR_BUFFER_OBJECT       },
@@ -1311,10 +1310,34 @@ static const struct wined3d_renderer_table
 cards_nvidia_binary[] =
 {
     /* Direct 3D 11 */
+    {"RTX 4090",                    CARD_NVIDIA_GEFORCE_RTX4090},
+    {"RTX 4080 SUPER",              CARD_NVIDIA_GEFORCE_RTX4080SUPER},
+    {"RTX 4080",                    CARD_NVIDIA_GEFORCE_RTX4080},
+    {"RTX 4070 Ti SUPER",           CARD_NVIDIA_GEFORCE_RTX4070TISUPER},
+    {"RTX 4070 Ti",                 CARD_NVIDIA_GEFORCE_RTX4070TI},
+    {"RTX 4070 SUPER",              CARD_NVIDIA_GEFORCE_RTX4070SUPER},
+    {"RTX 4070",                    CARD_NVIDIA_GEFORCE_RTX4070},
+    {"RTX 4060 Ti 16GB",            CARD_NVIDIA_GEFORCE_RTX4060TI16G},
+    {"RTX 4060 Ti 8GB",             CARD_NVIDIA_GEFORCE_RTX4060TI8G},
+    {"RTX 4060",                    CARD_NVIDIA_GEFORCE_RTX4060},
     {"Tesla T4",                    CARD_NVIDIA_TESLA_T4},
     {"Ampere A10",                  CARD_NVIDIA_AMPERE_A10},
-    {"RTX 3080",                    CARD_NVIDIA_GEFORCE_RTX3080},   /* GeForce 3000 - highend */
-    {"RTX 3070",                    CARD_NVIDIA_GEFORCE_RTX3070},   /* GeForce 3000 - highend */
+    {"RTX 3090 Ti",                 CARD_NVIDIA_GEFORCE_RTX3090TI},
+    {"RTX 3090",                    CARD_NVIDIA_GEFORCE_RTX3090},
+    {"RTX 3080 Ti",                 CARD_NVIDIA_GEFORCE_RTX3080TI},
+    {"RTX 3080 12GB",               CARD_NVIDIA_GEFORCE_RTX3080_12GB},
+    {"RTX 3080 10GB LHR",           CARD_NVIDIA_GEFORCE_RTX3080_10GB_LHR},
+    {"RTX 3080 10GB",               CARD_NVIDIA_GEFORCE_RTX3080_10GB},
+    {"RTX 3070 Ti",                 CARD_NVIDIA_GEFORCE_RTX3070TI},
+    {"RTX 3070 mobile",             CARD_NVIDIA_GEFORCE_RTX3070_MOBILE},
+    {"RTX 3070 LHR",                CARD_NVIDIA_GEFORCE_RTX3070_LHR},
+    {"RTX 3070",                    CARD_NVIDIA_GEFORCE_RTX3070},
+    {"RTX 3060 Ti GA104 LHR",       CARD_NVIDIA_GEFORCE_RTX3060TI_GA104_LHR},
+    {"RTX 3060 Ti GA104",           CARD_NVIDIA_GEFORCE_RTX3060TI_GA104},
+    {"RTX 3060 Ti GA103",           CARD_NVIDIA_GEFORCE_RTX3060TI_GA103},
+    {"RTX 3060 LHR",                CARD_NVIDIA_GEFORCE_RTX3060_LHR},
+    {"RTX 3060",                    CARD_NVIDIA_GEFORCE_RTX3060},
+    {"RTX 3050",                    CARD_NVIDIA_GEFORCE_RTX3050},
     {"RTX 2080 Ti",                 CARD_NVIDIA_GEFORCE_RTX2080TI}, /* GeForce 2000 - highend */
     {"RTX 2080",                    CARD_NVIDIA_GEFORCE_RTX2080},   /* GeForce 2000 - highend */
     {"RTX 2070",                    CARD_NVIDIA_GEFORCE_RTX2070},   /* GeForce 2000 - highend */
@@ -2061,12 +2084,6 @@ static void load_gl_funcs(struct wined3d_gl_info *gl_info)
     /* GL_ARB_base_instance */
     USE_GL_FUNC(glDrawArraysInstancedBaseInstance)
     USE_GL_FUNC(glDrawElementsInstancedBaseVertexBaseInstance)
-    /* GL_ARB_bindless_texture */
-    USE_GL_FUNC(glGetTextureHandleARB)
-    USE_GL_FUNC(glGetTextureSamplerHandleARB)
-    USE_GL_FUNC(glIsTextureHandleResidentARB)
-    USE_GL_FUNC(glMakeTextureHandleResidentARB)
-    USE_GL_FUNC(glUniformHandleui64ARB)
     /* GL_ARB_blend_func_extended */
     USE_GL_FUNC(glBindFragDataLocationIndexed)
     USE_GL_FUNC(glGetFragDataIndex)
@@ -3553,14 +3570,6 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
         /* GL_ARB_half_float_vertex is a subset of GL_NV_half_float. */
         gl_info->supported[ARB_HALF_FLOAT_VERTEX] = TRUE;
     }
-    if (wined3d_creation_flags & WINED3D_SRGB_READ_WRITE_CONTROL)
-    {
-        /* ARB_bindless_texture does not let us use EXT_texture_sRGB_decode.
-         * We could use ARB_texture_view, but the main reason to use bindless
-         * textures is to avoid GL_MAX_TEXTURE_IMAGE_UNITS, so there's not much
-         * point. */
-        gl_info->supported[ARB_BINDLESS_TEXTURE] = FALSE;
-    }
     if (gl_info->supported[ARB_FRAMEBUFFER_SRGB] && !gl_info->supported[EXT_TEXTURE_SRGB_DECODE])
     {
         /* Current wined3d sRGB infrastructure requires EXT_texture_sRGB_decode
@@ -3697,6 +3706,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter_gl *adapter_gl,
     adapter->shader_backend = &glsl_shader_backend;
     adapter->vertex_pipe = &glsl_vertex_pipe;
     adapter->fragment_pipe = &glsl_fragment_pipe;
+    adapter->decoder_ops = &wined3d_null_decoder_ops;
 
     if (gl_info->supported[ARB_FRAMEBUFFER_OBJECT])
     {
@@ -4927,6 +4937,7 @@ static void wined3d_adapter_gl_init_d3d_info(struct wined3d_adapter_gl *adapter_
     d3d_info->shader_output_interpolation = !!(shader_caps.wined3d_caps & WINED3D_SHADER_CAP_OUTPUT_INTERPOLATION);
     d3d_info->viewport_array_index_any_shader = !!gl_info->supported[ARB_SHADER_VIEWPORT_LAYER_ARRAY];
     d3d_info->stencil_export = !!gl_info->supported[ARB_SHADER_STENCIL_EXPORT];
+    d3d_info->simple_instancing = !!gl_info->supported[ARB_INSTANCED_ARRAYS];
     d3d_info->unconditional_npot = !!gl_info->supported[ARB_TEXTURE_NON_POWER_OF_TWO];
     d3d_info->draw_base_vertex_offset = !!gl_info->supported[ARB_DRAW_ELEMENTS_BASE_VERTEX];
     d3d_info->vertex_bgra = !!gl_info->supported[ARB_VERTEX_ARRAY_BGRA];
@@ -4942,6 +4953,7 @@ static void wined3d_adapter_gl_init_d3d_info(struct wined3d_adapter_gl *adapter_
     d3d_info->feature_level = feature_level_from_caps(gl_info, &shader_caps, &d3d_info->ffp_fragment_caps);
     d3d_info->filling_convention_offset = gl_info->filling_convention_offset;
     d3d_info->persistent_map = !!gl_info->supported[ARB_BUFFER_STORAGE];
+    d3d_info->ffp_hlsl = wined3d_settings.ffp_hlsl;
 
     if (gl_info->supported[ARB_TEXTURE_MULTISAMPLE])
         d3d_info->multisample_draw_location = WINED3D_LOCATION_TEXTURE_RGB;

@@ -124,7 +124,7 @@ static const struct object_ops dir_ops =
     NULL,                     /* unlink_name */
     no_open_file,             /* open_file */
     no_kernel_obj_list,       /* get_kernel_obj_list */
-    default_fd_get_fast_sync, /* get_fast_sync */
+    default_fd_get_inproc_sync, /* get_inproc_sync */
     dir_close_handle,         /* close_handle */
     dir_destroy               /* destroy */
 };
@@ -1017,7 +1017,7 @@ static void dir_add_to_existing_notify( struct dir *dir )
 
     /* check if it's in the list of inodes we want to watch */
     if (fstat( unix_fd, &st_new )) return;
-    if ((inode = find_inode( st_new.st_dev, st_new.st_ino ))) return;
+    if (find_inode( st_new.st_dev, st_new.st_ino )) return;
 
     /* lookup the parent */
     if (!(link = get_path_from_fd( unix_fd, 3 ))) return;

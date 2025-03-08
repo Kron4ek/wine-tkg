@@ -35,8 +35,6 @@
 #include "winnls.h"
 #include "fileapi.h"
 
-#undef DeleteFile  /* needed for FILE_DISPOSITION_INFO */
-
 static HANDLE (WINAPI *pFindFirstFileExA)(LPCSTR,FINDEX_INFO_LEVELS,LPVOID,FINDEX_SEARCH_OPS,LPVOID,DWORD);
 static BOOL (WINAPI *pReplaceFileW)(LPCWSTR, LPCWSTR, LPCWSTR, DWORD, LPVOID, LPVOID);
 static UINT (WINAPI *pGetSystemWindowsDirectoryA)(LPSTR, UINT);
@@ -6115,7 +6113,7 @@ static void test_eof(void)
     ok(ret, "failed to get size, error %lu\n", GetLastError());
     ok(!file_size.QuadPart, "got size %I64d\n", file_size.QuadPart);
 
-    SetFilePointer(file, 2, NULL, SEEK_SET);
+    SetFilePointer(file, 2, NULL, FILE_BEGIN);
 
     ret = GetFileSizeEx(file, &file_size);
     ok(ret, "failed to get size, error %lu\n", GetLastError());
@@ -6127,7 +6125,7 @@ static void test_eof(void)
     ok(!size, "got size %lu\n", size);
     ok(GetLastError() == 0xdeadbeef, "got error %lu\n", GetLastError());
 
-    SetFilePointer(file, 2, NULL, SEEK_SET);
+    SetFilePointer(file, 2, NULL, FILE_BEGIN);
 
     SetLastError(0xdeadbeef);
     size = 0xdeadbeef;
@@ -6140,7 +6138,7 @@ static void test_eof(void)
        "got status %#lx\n", (NTSTATUS)overlapped.Internal);
     ok(!overlapped.InternalHigh, "got size %Iu\n", overlapped.InternalHigh);
 
-    SetFilePointer(file, 2, NULL, SEEK_SET);
+    SetFilePointer(file, 2, NULL, FILE_BEGIN);
 
     ret = SetEndOfFile(file);
     ok(ret, "failed to set EOF, error %lu\n", GetLastError());
@@ -6157,7 +6155,7 @@ static void test_eof(void)
     ok(ret, "failed to get size, error %lu\n", GetLastError());
     ok(file_size.QuadPart == 6, "got size %I64d\n", file_size.QuadPart);
 
-    SetFilePointer(file, 4, NULL, SEEK_SET);
+    SetFilePointer(file, 4, NULL, FILE_BEGIN);
     ret = SetEndOfFile(file);
     ok(ret, "failed to set EOF, error %lu\n", GetLastError());
 
@@ -6165,13 +6163,13 @@ static void test_eof(void)
     ok(ret, "failed to get size, error %lu\n", GetLastError());
     ok(file_size.QuadPart == 4, "got size %I64d\n", file_size.QuadPart);
 
-    SetFilePointer(file, 0, NULL, SEEK_SET);
+    SetFilePointer(file, 0, NULL, FILE_BEGIN);
     ret = ReadFile(file, buffer, sizeof(buffer), &size, NULL);
     ok(ret, "failed to read, error %lu\n", GetLastError());
     ok(size == 4, "got size %lu\n", size);
     ok(!memcmp(buffer, "\0\0da", 4), "wrong data\n");
 
-    SetFilePointer(file, 6, NULL, SEEK_SET);
+    SetFilePointer(file, 6, NULL, FILE_BEGIN);
     ret = SetEndOfFile(file);
     ok(ret, "failed to set EOF, error %lu\n", GetLastError());
 
@@ -6179,7 +6177,7 @@ static void test_eof(void)
     ok(ret, "failed to get size, error %lu\n", GetLastError());
     ok(file_size.QuadPart == 6, "got size %I64d\n", file_size.QuadPart);
 
-    SetFilePointer(file, 0, NULL, SEEK_SET);
+    SetFilePointer(file, 0, NULL, FILE_BEGIN);
     ret = ReadFile(file, buffer, sizeof(buffer), &size, NULL);
     ok(ret, "failed to read, error %lu\n", GetLastError());
     ok(size == 6, "got size %lu\n", size);
@@ -6188,7 +6186,7 @@ static void test_eof(void)
     ret = SetEndOfFile(file);
     ok(ret, "failed to set EOF, error %lu\n", GetLastError());
 
-    SetFilePointer(file, 2, NULL, SEEK_SET);
+    SetFilePointer(file, 2, NULL, FILE_BEGIN);
     ret = WriteFile(file, "data", 4, &size, NULL);
     ok(ret, "failed to write, error %lu\n", GetLastError());
     ok(size == 4, "got size %lu\n", size);
@@ -6197,7 +6195,7 @@ static void test_eof(void)
     ok(ret, "failed to get size, error %lu\n", GetLastError());
     ok(file_size.QuadPart == 6, "got size %I64d\n", file_size.QuadPart);
 
-    SetFilePointer(file, 0, NULL, SEEK_SET);
+    SetFilePointer(file, 0, NULL, FILE_BEGIN);
     ret = ReadFile(file, buffer, sizeof(buffer), &size, NULL);
     ok(ret, "failed to read, error %lu\n", GetLastError());
     ok(size == 6, "got size %lu\n", size);
@@ -6212,14 +6210,14 @@ static void test_eof(void)
         ok(ret, "failed to get size, error %lu\n", GetLastError());
         ok(file_size.QuadPart == 6, "got size %I64d\n", file_size.QuadPart);
 
-        SetFilePointer(file, 6, NULL, SEEK_SET);
+        SetFilePointer(file, 6, NULL, FILE_BEGIN);
         ret = SetEndOfFile(file);
         ok(ret, "failed to set EOF, error %lu\n", GetLastError());
         ret = GetFileSizeEx(file, &file_size);
         ok(ret, "failed to get size, error %lu\n", GetLastError());
         ok(file_size.QuadPart == 6, "got size %I64d\n", file_size.QuadPart);
 
-        SetFilePointer(file, 8, NULL, SEEK_SET);
+        SetFilePointer(file, 8, NULL, FILE_BEGIN);
         ret = SetEndOfFile(file);
         ok(ret, "failed to set EOF, error %lu\n", GetLastError());
         ret = GetFileSizeEx(file, &file_size);
@@ -6227,7 +6225,7 @@ static void test_eof(void)
         ok(file_size.QuadPart == 8, "got size %I64d\n", file_size.QuadPart);
 
         SetLastError(0xdeadbeef);
-        SetFilePointer(file, 6, NULL, SEEK_SET);
+        SetFilePointer(file, 6, NULL, FILE_BEGIN);
         ret = SetEndOfFile(file);
         ok(!ret, "expected failure\n");
         ok(GetLastError() == ERROR_USER_MAPPED_FILE, "got error %lu\n", GetLastError());
@@ -6235,14 +6233,14 @@ static void test_eof(void)
         ok(ret, "failed to get size, error %lu\n", GetLastError());
         ok(file_size.QuadPart == 8, "got size %I64d\n", file_size.QuadPart);
 
-        SetFilePointer(file, 8192, NULL, SEEK_SET);
+        SetFilePointer(file, 8192, NULL, FILE_BEGIN);
         ret = SetEndOfFile(file);
         ok(ret, "failed to set EOF, error %lu\n", GetLastError());
         ret = GetFileSizeEx(file, &file_size);
         ok(ret, "failed to get size, error %lu\n", GetLastError());
         ok(file_size.QuadPart == 8192, "got size %I64d\n", file_size.QuadPart);
 
-        SetFilePointer(file, 8191, NULL, SEEK_SET);
+        SetFilePointer(file, 8191, NULL, FILE_BEGIN);
         ret = SetEndOfFile(file);
         ok(!ret, "expected failure\n");
         ok(GetLastError() == ERROR_USER_MAPPED_FILE, "got error %lu\n", GetLastError());
@@ -6255,14 +6253,14 @@ static void test_eof(void)
 
         CloseHandle(mapping);
 
-        SetFilePointer(file, 16384, NULL, SEEK_SET);
+        SetFilePointer(file, 16384, NULL, FILE_BEGIN);
         ret = SetEndOfFile(file);
         ok(ret, "failed to set EOF, error %lu\n", GetLastError());
         ret = GetFileSizeEx(file, &file_size);
         ok(ret, "failed to get size, error %lu\n", GetLastError());
         ok(file_size.QuadPart == 16384, "got size %I64d\n", file_size.QuadPart);
 
-        SetFilePointer(file, 16383, NULL, SEEK_SET);
+        SetFilePointer(file, 16383, NULL, FILE_BEGIN);
         ret = SetEndOfFile(file);
         ok(!ret, "expected failure\n");
         ok(GetLastError() == ERROR_USER_MAPPED_FILE, "got error %lu\n", GetLastError());
@@ -6273,7 +6271,7 @@ static void test_eof(void)
         ret = UnmapViewOfFile(view);
         ok(ret, "failed to unmap view, error %lu\n", GetLastError());
 
-        SetFilePointer(file, 6, NULL, SEEK_SET);
+        SetFilePointer(file, 6, NULL, FILE_BEGIN);
         ret = SetEndOfFile(file);
         ok(ret, "failed to set EOF, error %lu\n", GetLastError());
         ret = GetFileSizeEx(file, &file_size);

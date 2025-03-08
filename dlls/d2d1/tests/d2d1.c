@@ -32,6 +32,7 @@
 #include "wincodec.h"
 
 DEFINE_GUID(CLSID_TestEffect, 0xb9ee12e9,0x32d9,0xe659,0xac,0x61,0x2d,0x7c,0xea,0x69,0x28,0x78);
+DEFINE_GUID(CLSID_TestEffect2, 0xb9ee12e9,0x32d9,0xe659,0xac,0x61,0x2d,0x7c,0xea,0x69,0x28,0x79);
 DEFINE_GUID(CLSID_AuxEffect, 0xb9ee12e9,0x32d9,0xe659,0xac,0x61,0x2d,0x7c,0xea,0x69,0x28,0x79);
 DEFINE_GUID(GUID_TestVertexShader, 0x5bcdcfae,0x1e92,0x4dc1,0x94,0xfa,0x3b,0x01,0xca,0x54,0x59,0x20);
 DEFINE_GUID(GUID_TestPixelShader,  0x53015748,0xfc13,0x4168,0xbd,0x13,0x0f,0xcf,0x15,0x29,0x7f,0x01);
@@ -134,6 +135,9 @@ L"<?xml version='1.0'?>                                                       \
             <Property name='DisplayName' type='string' value='Mat5x4 prop'/>  \
             <Property name='Default' type='matrix5x4'                         \
                 value='(20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1)'/>\
+        </Property>                                                           \
+        <Property name='BlobProp' type='blob' >                               \
+            <Property name='DisplayName' type='string' value='Blob prop'/>    \
         </Property>                                                           \
     </Effect>                                                                 \
 ";
@@ -391,6 +395,11 @@ struct effect_impl
     ID2D1EffectContext *effect_context;
     ID2D1TransformGraph *transform_graph;
     ID2D1DrawInfo *draw_info;
+    struct
+    {
+        BYTE *data;
+        ULONG size;
+    } blob;
 
     const GUID *vertex_buffer;
     const GUID *vertex_shader;
@@ -5943,6 +5952,7 @@ static void test_dc_target(BOOL d3d11)
     D2D1_ANTIALIAS_MODE aa_mode;
     ID2D1SolidColorBrush *brush;
     ID2D1RenderTarget *rt3;
+    D2D1_TAG tag1, tag2;
     FLOAT dpi_x, dpi_y;
     D2D1_COLOR_F color;
     HENHMETAFILE hemf;
@@ -6143,12 +6153,111 @@ static void test_dc_target(BOOL d3d11)
     clr = GetPixel(hdc2, 0, 0);
     ok(clr == RGB(0, 0, 255), "Got unexpected colour 0x%08lx.\n", clr);
 
-    DeleteDC(hdc);
     DeleteDC(hdc2);
+
+    /* Retaining original content. */
+    SetRect(&rect, 0, 0, 16, 16);
+
+    hr = ID2D1DCRenderTarget_BindDC(rt, hdc, &rect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    FillRect(hdc, &rect, GetStockObject(GRAY_BRUSH));
+    clr = GetPixel(hdc, 0, 0);
+    ok(clr == RGB(128, 128, 128), "Got unexpected colour 0x%08lx.\n", clr);
+
+    ID2D1DCRenderTarget_BeginDraw(rt);
+    hr = ID2D1DCRenderTarget_EndDraw(rt, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    clr = GetPixel(hdc, 0, 0);
+    ok(clr == RGB(128, 128, 128), "Got unexpected colour 0x%08lx.\n", clr);
+
+    /* Partially fill. */
+    set_color(&color, 0.0f, 1.0f, 0.0f, 1.0f);
+    hr = ID2D1DCRenderTarget_CreateSolidColorBrush(rt, &color, NULL, &brush);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1DCRenderTarget_BeginDraw(rt);
+    r.left = r.top = 0.0f;
+    r.bottom = 16.0f;
+    r.right = 8.0f;
+    ID2D1DCRenderTarget_FillRectangle(rt, &r, (ID2D1Brush *)brush);
+    hr = ID2D1DCRenderTarget_EndDraw(rt, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1SolidColorBrush_Release(brush);
+
+    clr = GetPixel(hdc, 0, 0);
+    ok(clr == RGB(0, 255, 0), "Got unexpected colour 0x%08lx.\n", clr);
+    clr = GetPixel(hdc, 12, 0);
+    ok(clr == RGB(128, 128, 128), "Got unexpected colour 0x%08lx.\n", clr);
+
+    /* Bind to a subrectangle. */
+    SetRect(&rect, 0, 0, 16, 16);
+    FillRect(hdc, &rect, GetStockObject(GRAY_BRUSH));
+
+    SetRect(&rect, 8, 0, 16, 16);
+    hr = ID2D1DCRenderTarget_BindDC(rt, hdc, &rect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1DCRenderTarget_BeginDraw(rt);
+    hr = ID2D1DCRenderTarget_EndDraw(rt, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    clr = GetPixel(hdc, 0, 0);
+    ok(clr == RGB(128, 128, 128), "Got unexpected colour 0x%08lx.\n", clr);
+    clr = GetPixel(hdc, 12, 0);
+    ok(clr == RGB(128, 128, 128), "Got unexpected colour 0x%08lx.\n", clr);
+
+    /* GDI-clear while drawing. */
+    SetRect(&rect, 0, 0, 16, 16);
+    FillRect(hdc, &rect, GetStockObject(GRAY_BRUSH));
+
+    ID2D1DCRenderTarget_BeginDraw(rt);
+    FillRect(hdc, &rect, GetStockObject(LTGRAY_BRUSH));
+    hr = ID2D1DCRenderTarget_EndDraw(rt, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    clr = GetPixel(hdc, 0, 0);
+    ok(clr == RGB(192, 192, 192), "Got unexpected colour 0x%08lx.\n", clr);
+    clr = GetPixel(hdc, 12, 0);
+    ok(clr == RGB(128, 128, 128), "Got unexpected colour 0x%08lx.\n", clr);
+
+    ID2D1DCRenderTarget_Release(rt);
+
+    /* Drawing attempt with no dc. */
+    hr = ID2D1Factory_CreateDCRenderTarget(ctx.factory, &desc, &rt);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1DCRenderTarget_SetTags(rt, 1, 2);
+    ID2D1DCRenderTarget_BeginDraw(rt);
+    ID2D1DCRenderTarget_SetTags(rt, 3, 4);
+    hr = ID2D1DCRenderTarget_EndDraw(rt, &tag1, &tag2);
+    ok(hr == D2DERR_WRONG_STATE, "Got unexpected hr %#lx.\n", hr);
+    ok(!tag1, "Unexpected tag %s.\n", wine_dbgstr_longlong(tag1));
+    ok(!tag2, "Unexpected tag %s.\n", wine_dbgstr_longlong(tag2));
+
+    /* Bind after BeginDraw(). */
+    ID2D1DCRenderTarget_SetTags(rt, 1, 2);
+    ID2D1DCRenderTarget_BeginDraw(rt);
+    hr = ID2D1DCRenderTarget_BindDC(rt, hdc, &rect);
+    todo_wine
+    ok(hr == D2DERR_WRONG_STATE, "Got unexpected hr %#lx.\n", hr);
+    ID2D1DCRenderTarget_SetTags(rt, 3, 4);
+    hr = ID2D1DCRenderTarget_EndDraw(rt, &tag1, &tag2);
+    todo_wine
+    ok(hr == D2DERR_WRONG_STATE, "Got unexpected hr %#lx.\n", hr);
+    ok(!tag1, "Unexpected tag %s.\n", wine_dbgstr_longlong(tag1));
+    ok(!tag2, "Unexpected tag %s.\n", wine_dbgstr_longlong(tag2));
+
+    ID2D1DCRenderTarget_Release(rt);
+    DeleteDC(hdc);
 
     /* Metafile context. */
     hdc = CreateMetaFileA(NULL);
     ok(!!hdc, "Failed to create a device context.\n");
+
+    hr = ID2D1Factory_CreateDCRenderTarget(ctx.factory, &desc, &rt);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
     hr = ID2D1DCRenderTarget_BindDC(rt, hdc, &rect);
     ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
@@ -7052,6 +7161,7 @@ static void test_gradient(BOOL d3d11)
 static void test_draw_geometry(BOOL d3d11)
 {
     ID2D1TransformedGeometry *transformed_geometry[4];
+    ID2D1GeometryGroup *geometry_group;
     ID2D1RectangleGeometry *rect_geometry[2];
     D2D1_POINT_2F point = {0.0f, 0.0f};
     D2D1_ROUNDED_RECT rounded_rect;
@@ -7961,6 +8071,117 @@ static void test_draw_geometry(BOOL d3d11)
     hr = ID2D1PathGeometry_Open(geometry, &sink);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
+    set_point(&point, -0.402914f, 0.915514f);
+    ID2D1GeometrySink_BeginFigure(sink, point, D2D1_FIGURE_BEGIN_HOLLOW);
+    quadratic_to(sink, -0.310379f,  0.882571f, -0.116057f,  0.824000f);
+    quadratic_to(sink,  0.008350f,  0.693614f, -0.052343f,  0.448886f);
+    quadratic_to(sink, -0.154236f,  0.246072f, -0.279229f,  0.025343f);
+    quadratic_to(sink, -0.370064f, -0.588586f, -0.383029f, -0.924114f);
+    quadratic_to(sink, -0.295479f, -0.958764f, -0.017086f, -0.988400f);
+    quadratic_to(sink,  0.208836f, -0.954157f,  0.272200f, -0.924114f);
+    quadratic_to(sink,  0.295614f, -0.569071f,  0.230143f,  0.022886f);
+    quadratic_to(sink,  0.101664f,  0.220643f,  0.012057f,  0.451571f);
+    quadratic_to(sink, -0.028764f,  0.709014f,  0.104029f,  0.833943f);
+    quadratic_to(sink,  0.319414f,  0.913057f,  0.403229f,  0.942628f);
+    quadratic_to(sink,  0.317721f,  1.023450f, -0.017086f,  1.021771f);
+    quadratic_to(sink, -0.310843f,  1.007472f, -0.402914f,  0.915514f);
+    ID2D1GeometrySink_EndFigure(sink, D2D1_FIGURE_END_CLOSED);
+
+    hr = ID2D1GeometrySink_Close(sink);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1GeometrySink_Release(sink);
+
+    set_matrix_identity(&matrix);
+    translate_matrix(&matrix, 40.0f, 160.0f);
+    scale_matrix(&matrix, 20.0f, 80.0f);
+    hr = ID2D1Factory_CreateTransformedGeometry(factory,
+            (ID2D1Geometry *)geometry, &matrix, &transformed_geometry[0]);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    set_matrix_identity(&matrix);
+    translate_matrix(&matrix, 160.0f, 640.0f);
+    scale_matrix(&matrix, 40.0f, 160.0f);
+    rotate_matrix(&matrix, M_PI / -5.0f);
+    hr = ID2D1Factory_CreateTransformedGeometry(factory,
+            (ID2D1Geometry *)geometry, &matrix, &transformed_geometry[1]);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1PathGeometry_Release(geometry);
+
+    set_matrix_identity(&matrix);
+    scale_matrix(&matrix, 0.5f, 1.0f);
+    translate_matrix(&matrix, -80.0f, 0.0f);
+    hr = ID2D1Factory_CreateTransformedGeometry(factory,
+            (ID2D1Geometry *)transformed_geometry[1], &matrix, &transformed_geometry[2]);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    set_matrix_identity(&matrix);
+    rotate_matrix(&matrix, M_PI / 2.0f);
+    translate_matrix(&matrix, 80.0f, -320.0f);
+    scale_matrix(&matrix, 2.0f, 0.25f);
+    hr = ID2D1Factory_CreateTransformedGeometry(factory,
+            (ID2D1Geometry *)transformed_geometry[2], &matrix, &transformed_geometry[3]);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1Factory_CreateGeometryGroup(factory, D2D1_FILL_MODE_WINDING,
+            (ID2D1Geometry**) &transformed_geometry, 4, &geometry_group);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1TransformedGeometry_Release(transformed_geometry[3]);
+    ID2D1TransformedGeometry_Release(transformed_geometry[2]);
+    ID2D1TransformedGeometry_Release(transformed_geometry[1]);
+    ID2D1TransformedGeometry_Release(transformed_geometry[0]);
+
+    ID2D1RenderTarget_BeginDraw(rt);
+    ID2D1RenderTarget_Clear(rt, &color);
+    ID2D1RenderTarget_DrawGeometry(rt, (ID2D1Geometry *)geometry_group, (ID2D1Brush *)brush, 10.0f, NULL);
+    hr = ID2D1RenderTarget_EndDraw(rt, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1GeometryGroup_Release(geometry_group);
+
+    match = compare_figure(&ctx,   0,   0, 160, 160, 0xff652e89, 256,
+            "iTANiwEagQEkeSp0LnIWAhZyFAYUchQGFHIUBhRyFAYUchQGFHIUBhRyFAYUchQGFHIUBhRyFAYU"
+            "cxQFFHMUBRRzFAUUcxQFFHMUBRRzFAUUcxQFFHMUBRRzFAUUcxQFFHQUBBR0FAQUdBQDFHUUAxR1"
+            "FAMUdRQDFHUUAxR1FQIUdhQCFHYUAhR2FAIUdhQCFHYUAhR2FAIUdhQBFHgoeCh4KHkmeiZ7JHwk"
+            "fSJ+In8ggAEfggEeggEdhAEchQEbhQEahwEZhwEYiQEXiQEWigEWigEWigEWiwEViwEViwEViwEV"
+            "igEXiQEXiQEXiQEYhwEZhgEbgwEefyR5KXQvbxgEGG4VBxhtMnAudCp6IoMBGOMu");
+    ok(match, "Figure does not match.\n");
+    match = compare_figure(&ctx, 160,   0, 320, 160, 0xff652e89, 512,
+            "xpcBB7QCEqkCG6ACJJgCLI8CNYcCHgMc/gEeDBr4AR4UGPIBHR0W7AEdIxbmAR0pFt8BHTAV2gEd"
+            "MBrWARwuIdMBGiwi1gEYKiPZARYoJNwBFiQk4AEWHyWxAQQvFhsltgEKKBYWJrwBECBOwQEXF0rI"
+            "ARwOSM4Ba9UBYeABRf0BOIoCMZECLJYCKJoCJ5wCJp0CJJ8CIqICH6QCHagCGa4CFLoCB/yUAQAA");
+    ok(match, "Figure does not match.\n");
+    match = compare_figure(&ctx,   0, 160, 160, 320, 0xff652e89, 512,
+            "yWQBnQEEmQEHlgELkwENkAEQjgETiwEVigEXhwEZhgEahQEcgwEdggEfgAEgfyF+I30jfCR8JXom"
+            "eid4KHgodxQCFHYUAhR1FAMUdBUEFHMUBRRyFQUUchQHFHEUBxRwFAgUcBQJFG4UChRuFAoUbRUL"
+            "FGwUDBRsFAwUbBQNFGwUDBRsFAwUbRQMFGwUDBRsFAwUbRQLFWwUDBRtFAsUbRQLFG0VCxRtFAsU"
+            "bRQLFG4UCxRtFAsUbhQKFG4UCxRuFAoUbhQKFG4VCRRvFAoUbhQKFG8UCRRvFAoUbxQJFG8UCRRw"
+            "FAgVbxQJFHAUCBRwFAgUcBUIFHAUCBRwFAgUcRQHFHEUBxRyFAYUchQGFHMUBRRzFAUUdBQEFHQU"
+            "BBR1FAQUdBQEFHUUAxR1FAMUdhQCFHYUAhR2FQEUdxQBFHcpeCh4KHkneSd6JnoneiZ7JXwkfSN+"
+            "In8hgAEggQEfgwEdhAEdhAEchQEbhgEahwEZiAEYGAFwGBYCcRcUBHEXEgZyFhEHchcOCXMWDAtz"
+            "FgsMdBYIDnQWBhB1FgQQdhYCEnYqdyl3KXcpeCd5J3kneSd5JnomeyR8JHwkfCN9I30ifiF/IX4h"
+            "fyF/IH8ggAEgfyCAASCAAR+AAR+BAR6CAR6BAR6CAR2CAR2DARyEARuEARuFARqGARmGARiKARSR"
+            "AQqhYwAA");
+    ok(match, "Figure does not match.\n");
+    match = compare_figure(&ctx, 160, 160, 320, 320, 0xff652e89, 1024,
+            "ytABA7gCCbICD60CFKkCF6cCGqMCHqACIZ0CJJoCJpgCKZUCFgIUkgIWBBWPAhYHFI4CFQoUjAIV"
+            "DBSKAhUNFYgCFQ8UhwIVERSFAhUTFIMCFRQVgQIUFxSAAhQZFP4BFBoV/AEUHBT7ARQeFPkBFB8V"
+            "9wEUIRT2ARQjFPQBFSMV8gEVJRTxARUnFPABFCgV7gEUKhTtARQsFOwBFCwV7AEULBTsARUsFOwB"
+            "FSsV7AEULBTtARQsFO0BFCsU7QEVKxTtARUqFe0BFSoU7gEUKxTuARQqFe4BFCoU7wEUKhTuARUp"
+            "FO8BFSkU7wEVKBXvARUoFPABFCkU8AEUKBTxARQoFPEBFCcV8QEUJxTxARUnFPEBFSYU8gEVJhTy"
+            "ARUlFfIBFSUU8wEUJRXzARQlFPQBFCUU9AEUJBT1ARQkFPUBFCMU9gEUIhT2ARUhFPcBFSAU+AEV"
+            "HxT5ARUeFPoBFR4U+gEVHRT7ARUcFPwBFRsU/QEVGhT+ARUZFP8BFBkUgAIUGBSBAhQXFIICFBcU"
+            "ggIUFhSDAhQVFIQCFBQUhQIUExSGAhQSFIcCFBIUhwIUERSIAhUPFIkCFg0UigIXCxSNAhYJFI8C"
+            "FggUkAIXBRSSAhcDFJQCFwEUlgIrlwIpmgImnAIkngIjnwIhoQIfowIepAIcpgIbpgIaqAIZqAIZ"
+            "qAIYKwP7ARgnBf0BGCMI/QEZHgz+ARgbD/8BGBcSgAIYEhaAAhoNGIICGggcgwIaBB+DAjyEAjyF"
+            "AjqGAjmIAjiIAiECFIkCFAIIBBSKAhQNFIsCFAwUjAIUCxSNAhQKFI4CFAkUjwIUBxWQAhQGFZEC"
+            "FAUVkQIUBRWRAhQFFZECFQMVkwIUAxWTAhQDFZMCFAIVlAIVARWVAiqVAimWAimWAiiYAiaZAiaZ"
+            "AiWaAiScAiKdAiGeAh+hAhyjAhmuAg3GxgEA");
+    ok(match, "Figure does not match.\n");
+
+    hr = ID2D1Factory_CreatePathGeometry(factory, &geometry);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1PathGeometry_Open(geometry, &sink);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
     set_point(&point, 20.0f, 80.0f);
     ID2D1GeometrySink_BeginFigure(sink, point, D2D1_FIGURE_BEGIN_HOLLOW);
     quadratic_to(sink, 20.0f, 160.0f,  60.0f, 160.0f);
@@ -8002,6 +8223,7 @@ static void test_draw_geometry(BOOL d3d11)
 static void test_fill_geometry(BOOL d3d11)
 {
     ID2D1TransformedGeometry *transformed_geometry[4];
+    ID2D1GeometryGroup *geometry_group;
     ID2D1RectangleGeometry *rect_geometry[2];
     D2D1_POINT_2F point = {0.0f, 0.0f};
     D2D1_ROUNDED_RECT rounded_rect;
@@ -8700,6 +8922,112 @@ static void test_fill_geometry(BOOL d3d11)
             "lwEKlwEJmAEImQEHmgEGmwEFnAEEnQEEnQEDnQEDngECngEDngECngECnwECngECnwECngECngED"
             "ngECEgGLAQMQAosBAw4EjAEDCwaMAQQJBo0BBQYIjQEHAgqNARKOARKPARCQARCQARCQAQ+RAQ6S"
             "AQ6SAQ2TAQ2SAQ2TAQ2TAQyTAQyUAQyUAQuUAQuVAQuUAQuVAQqWAQmWAQqWAQmXAQiXAQiYAQeY"
+            "AQeZAQWbAQSDZwAA");
+    ok(match, "Figure does not match.\n");
+    match = compare_figure(&ctx, 160, 160, 320, 320, 0xff652e89, 32,
+            "g90BBLkCCLYCC7ICDrACEa0CFKoCF6cCGqQCHKMCHqECIJ8CIpwCJJsCJpkCKJcCKZYCK5QCLZIC"
+            "L5ACMI8CMo0CNIsCNYoCN4gCOYcCOYYCO4QCPYICPoECQIACQYACQIECQIACQIECQIECQIECP4IC"
+            "P4ICP4ECP4ICP4ICPoMCPoMCPoMCPYQCPYMCPYQCPYQCPYQCPIUCPIUCPIUCO4YCO4YCOoYCO4YC"
+            "OocCOocCOocCOYgCOYgCOIkCOIkCN4oCNosCNYwCNI0CM44CMo4CM44CMo8CMZACMJECL5ICLpMC"
+            "LZQCLJUCK5YCK5YCKpcCKZgCKJkCJ5oCJpsCJpsCJZwCJJ4CIqACIKICH6MCHaUCG6cCGakCF6wC"
+            "Fa0CE68CEbECD7MCDrQCDLYCCrgCCbkCB7sCBrsCBbwCBbwCBL0CBL0CBL0CBL0CA70CBL0CBL0C"
+            "BLwCBSUBlgIFIQSXAgYbCJcCBxcKmQIIEQ6ZAgoMEJoCDQUTnAIknAIjnQIingIhnwIgoAIfoQIe"
+            "ogIdowIcpAIbpQIapQIZpgIZpgIZpwIYpwIXqAIXqAIXqQIVqgIVqgIUqwITrQISrQIRrgIQsAIO"
+            "sQIMswILtQIIhs4B");
+    ok(match, "Figure does not match.\n");
+
+    hr = ID2D1Factory_CreatePathGeometry(factory, &geometry);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1PathGeometry_Open(geometry, &sink);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    set_point(&point, -0.402914f, 0.915514f);
+    ID2D1GeometrySink_BeginFigure(sink, point, D2D1_FIGURE_BEGIN_FILLED);
+    quadratic_to(sink, -0.310379f,  0.882571f, -0.116057f,  0.824000f);
+    quadratic_to(sink,  0.008350f,  0.693614f, -0.052343f,  0.448886f);
+    quadratic_to(sink, -0.154236f,  0.246072f, -0.279229f,  0.025343f);
+    quadratic_to(sink, -0.370064f, -0.588586f, -0.383029f, -0.924114f);
+    quadratic_to(sink, -0.295479f, -0.958764f, -0.017086f, -0.988400f);
+    quadratic_to(sink,  0.208836f, -0.954157f,  0.272200f, -0.924114f);
+    quadratic_to(sink,  0.295614f, -0.569071f,  0.230143f,  0.022886f);
+    quadratic_to(sink,  0.101664f,  0.220643f,  0.012057f,  0.451571f);
+    quadratic_to(sink, -0.028764f,  0.709014f,  0.104029f,  0.833943f);
+    quadratic_to(sink,  0.319414f,  0.913057f,  0.403229f,  0.942628f);
+    quadratic_to(sink,  0.317721f,  1.023450f, -0.017086f,  1.021771f);
+    quadratic_to(sink, -0.310843f,  1.007472f, -0.402914f,  0.915514f);
+    ID2D1GeometrySink_EndFigure(sink, D2D1_FIGURE_END_CLOSED);
+
+    hr = ID2D1GeometrySink_Close(sink);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1GeometrySink_Release(sink);
+
+    set_matrix_identity(&matrix);
+    translate_matrix(&matrix, 40.0f, 160.0f);
+    scale_matrix(&matrix, 20.0f, 80.0f);
+    hr = ID2D1Factory_CreateTransformedGeometry(factory,
+            (ID2D1Geometry *)geometry, &matrix, &transformed_geometry[0]);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    set_matrix_identity(&matrix);
+    translate_matrix(&matrix, 160.0f, 640.0f);
+    scale_matrix(&matrix, 40.0f, 160.0f);
+    rotate_matrix(&matrix, M_PI / -5.0f);
+    hr = ID2D1Factory_CreateTransformedGeometry(factory,
+            (ID2D1Geometry *)geometry, &matrix, &transformed_geometry[1]);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1PathGeometry_Release(geometry);
+
+    set_matrix_identity(&matrix);
+    scale_matrix(&matrix, 0.5f, 1.0f);
+    translate_matrix(&matrix, -80.0f, 0.0f);
+    hr = ID2D1Factory_CreateTransformedGeometry(factory,
+            (ID2D1Geometry *)transformed_geometry[1], &matrix, &transformed_geometry[2]);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    set_matrix_identity(&matrix);
+    rotate_matrix(&matrix, M_PI / 2.0f);
+    translate_matrix(&matrix, 80.0f, -320.0f);
+    scale_matrix(&matrix, 2.0f, 0.25f);
+    hr = ID2D1Factory_CreateTransformedGeometry(factory,
+            (ID2D1Geometry *)transformed_geometry[2], &matrix, &transformed_geometry[3]);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1Factory_CreateGeometryGroup(factory, D2D1_FILL_MODE_WINDING,
+            (ID2D1Geometry**) &transformed_geometry, 4, &geometry_group);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1TransformedGeometry_Release(transformed_geometry[3]);
+    ID2D1TransformedGeometry_Release(transformed_geometry[2]);
+    ID2D1TransformedGeometry_Release(transformed_geometry[1]);
+    ID2D1TransformedGeometry_Release(transformed_geometry[0]);
+
+    ID2D1RenderTarget_BeginDraw(rt);
+    ID2D1RenderTarget_Clear(rt, &color);
+    ID2D1RenderTarget_FillGeometry(rt, (ID2D1Geometry *)geometry_group, (ID2D1Brush *)brush, NULL);
+    hr = ID2D1RenderTarget_EndDraw(rt, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1GeometryGroup_Release(geometry_group);
+
+    match = compare_figure(&ctx,   0,   0, 160, 160, 0xff652e89, 32,
+            "zzIBlwEOjQEXiAEahgEahgEahgEahgEahgEahgEahgEahgEahgEahgEahwEZhwEZhwEZhwEZhwEZ"
+            "hwEZhwEZhwEZhwEZhwEZiAEYiAEYiAEXiQEXiQEXiQEXiQEXiQEXigEWigEWigEWigEWigEWigEW"
+            "igEVjAEUjAEUjAEUjQESjgESjwEQkAEQkQEOkgENlAEMlAELlgEKlwEImAEImQEHmQEGmwEFmwEE"
+            "nQEDnQECngECngECngECnwEBnwEBnwEBnwEBngEDnQEDnQEDnQEEmwEFmgEHmQEHlwELkQERjAEX"
+            "hgEdhAEfgwEchwEWjwEMqTEA");
+    ok(match, "Figure does not match.\n");
+    match = compare_figure(&ctx, 160,   0, 320, 160, 0xff652e89, 32,
+            "h58BBrUCD6wCGKQCIJsCKZMCMIwCNoUCPf8BQ/kBSPQBTu0BTu4BTfEBSfUBRfkBQf0BPYECOYUC"
+            "NIoCMI4CK+UBAS0W/AEHIweQAgsZBpcCEAwIngIepAIZqQIWrAITsAIRswIOtQIMuAIJuwIHwAIB"
+            "ypwB");
+    ok(match, "Figure does not match.\n");
+    match = compare_figure(&ctx,   0, 160, 160, 320, 0xff652e89, 32,
+            "wW4DnAEEmwEFmgEHmAEIlwEKlQELlAEMkwEOkQEPkAEQkAERjgESjgESjQEUjAEUiwEWigEWiQEX"
+            "iQEYhwEZhwEZhgEbhQEbhAEchAEdggEeggEeggEfgAEggAEggAEhgAEggAEggQEggAEggAEggQEf"
+            "gQEggQEfgQEfggEfgQEfgQEfggEfgQEfggEeggEfggEeggEeggEegwEeggEegwEdgwEegwEdgwEd"
+            "hAEchAEdhAEchAEchAEdhAEchAEchQEbhQEbhgEahgEahwEZhwEZiAEYiAEYiQEYiAEYiQEXiQEX"
+            "igEWigEWiwEViwEVjAEUjAEUjAEUjQETjQETjgESjgETjgESjwERkAEQkgEOkwENlAEMlQELlgEK"
+            "lwEJmAEJmAEImQEHmgEGmwEFnAEEnQEEnQEDnQEDngECngEDngECngECnwECngECnwECngECngED"
+            "ngECEgGLAQMQAosBAw4EjAEDCwWNAQQJBo0BBQYIjQEHAgqNARKOARKPARCQARCQARCQAQ+RAQ6S"
+            "AQ6SAQ2TAQ2SAQ2TAQ2TAQyTAQyUAQyTAQyUAQuVAQuUAQuVAQqWAQmWAQqWAQmXAQiXAQiYAQeY"
             "AQeZAQWbAQSDZwAA");
     ok(match, "Figure does not match.\n");
     match = compare_figure(&ctx, 160, 160, 320, 320, 0xff652e89, 32,
@@ -10982,6 +11310,8 @@ static void test_builtin_effect(BOOL d3d11)
         {&CLSID_D2D1Crop,                    1, 1, 1, 1},
         {&CLSID_D2D1Shadow,                  1, 1, 1, 1},
         {&CLSID_D2D1Grayscale,               3, 1, 1, 1},
+        {&CLSID_D2D1ColorMatrix,             1, 1, 1, 1},
+        {&CLSID_D2D1Flood,                   1, 0, 0, 0},
     };
 
     if (!init_test_context(&ctx, d3d11))
@@ -11130,7 +11460,7 @@ static void test_builtin_effect(BOOL d3d11)
             winetest_push_context("Input %u", j);
             image_a = (ID2D1Image *)0xdeadbeef;
             ID2D1Effect_GetInput(effect, j, &image_a);
-            if (j == 0)
+            if (j == 0 && input_count > 0)
             {
                 ok(image_a == (ID2D1Image *)bitmap, "Got unexpected image_a %p.\n", image_a);
                 ID2D1Image_Release(image_a);
@@ -11213,6 +11543,7 @@ static ULONG STDMETHODCALLTYPE effect_impl_Release(ID2D1EffectImpl *iface)
             ID2D1EffectContext_Release(effect_impl->effect_context);
         if (effect_impl->draw_info)
             ID2D1DrawInfo_Release(effect_impl->draw_info);
+        free(effect_impl->blob.data);
         free(effect_impl);
     }
 
@@ -11293,6 +11624,42 @@ static HRESULT STDMETHODCALLTYPE effect_impl_get_integer(const IUnknown *iface,
     *((UINT *)data) = effect_impl->integer;
     if (actual_size)
         *actual_size = sizeof(effect_impl->integer);
+
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE effect_impl_set_blob(IUnknown *iface, const BYTE *data,
+        UINT32 data_size)
+{
+    struct effect_impl *effect_impl = impl_from_ID2D1EffectImpl((ID2D1EffectImpl *)iface);
+
+    free(effect_impl->blob.data);
+    effect_impl->blob.data = NULL;
+    effect_impl->blob.size = 0;
+
+    if (!(effect_impl->blob.data = malloc(data_size)))
+        return E_OUTOFMEMORY;
+    memcpy(effect_impl->blob.data, data, data_size);
+    effect_impl->blob.size = data_size;
+
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE effect_impl_get_blob(const IUnknown *iface,
+        BYTE *data, UINT32 data_size, UINT32 *actual_size)
+{
+    struct effect_impl *effect_impl = impl_from_ID2D1EffectImpl((ID2D1EffectImpl *)iface);
+
+    if (actual_size)
+        *actual_size = effect_impl->blob.size;
+
+    if (!data)
+        return S_OK;
+
+    if (data_size != effect_impl->blob.size)
+        return E_INVALIDARG;
+
+    memcpy(data, effect_impl->blob.data, data_size);
 
     return S_OK;
 }
@@ -15103,6 +15470,470 @@ static void test_effect_vertex_buffer(BOOL d3d11)
     release_test_context(&ctx);
 }
 
+static void test_compute_geometry_area(BOOL d3d11)
+{
+    ID2D1RectangleGeometry *rectangle_geometry;
+    ID2D1EllipseGeometry *ellipse_geometry;
+    struct d2d1_test_context ctx;
+    D2D1_MATRIX_3X2_F matrix;
+    D2D1_ELLIPSE ellipse;
+    D2D1_RECT_F rect;
+    HRESULT hr;
+    float area;
+
+    if (!init_test_context(&ctx, d3d11))
+        return;
+
+    /* Ellipse */
+    set_ellipse(&ellipse, 0.0f, 0.0f, 10.0f, 5.0f);
+    hr = ID2D1Factory_CreateEllipseGeometry(ctx.factory, &ellipse, &ellipse_geometry);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1EllipseGeometry_ComputeArea(ellipse_geometry, NULL, 0.01f, &area);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    if (hr == S_OK)
+        ok(compare_float(area, 156.9767f, 3), "Unexpected value %.8e.\n", area); /* Only win7 needs increased ulps. */
+
+    hr = ID2D1EllipseGeometry_ComputeArea(ellipse_geometry, NULL, 200.0f, &area);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    if (hr == S_OK)
+        ok(compare_float(area, 100.0f, 2), "Unexpected value %.8e.\n", area); /* Only win7 needs increased ulps. */
+
+    set_matrix_identity(&matrix);
+    scale_matrix(&matrix, 1.0f, 2.0f);
+    hr = ID2D1EllipseGeometry_ComputeArea(ellipse_geometry, &matrix, 0.01f, &area);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    if (hr == S_OK)
+        ok(compare_float(area, 314.12088f, 2), "Unexpected value %.8e.\n", area); /* Only win7 needs increased ulps. */
+
+    hr = ID2D1EllipseGeometry_ComputeArea(ellipse_geometry, &matrix, 200.0f, &area);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    if (hr == S_OK)
+        ok(compare_float(area, 200.0f, 1), "Unexpected value %.8e.\n", area); /* Only win7 needs increased ulps. */
+
+    ID2D1EllipseGeometry_Release(ellipse_geometry);
+
+    /* Rectangle */
+    set_rect(&rect, -1.0f, -1.0f, 1.0f, 1.0f);
+    hr = ID2D1Factory_CreateRectangleGeometry(ctx.factory, &rect, &rectangle_geometry);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1RectangleGeometry_ComputeArea(rectangle_geometry, NULL, 0.01f, &area);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    if (hr == S_OK)
+        ok(compare_float(area, 4.0f, 0), "Unexpected value %.8e.\n", area);
+
+    hr = ID2D1RectangleGeometry_ComputeArea(rectangle_geometry, NULL, 200.0f, &area);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    if (hr == S_OK)
+        ok(compare_float(area, 4.0f, 0), "Unexpected value %.8e.\n", area);
+
+    set_matrix_identity(&matrix);
+    scale_matrix(&matrix, 1.0f, 2.0f);
+    hr = ID2D1RectangleGeometry_ComputeArea(rectangle_geometry, &matrix, 0.01f, &area);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    if (hr == S_OK)
+        ok(compare_float(area, 8.0f, 0), "Unexpected value %.8e.\n", area);
+
+    rotate_matrix(&matrix, 0.5f);
+    hr = ID2D1RectangleGeometry_ComputeArea(rectangle_geometry, &matrix, 200.0f, &area);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    if (hr == S_OK)
+        ok(compare_float(area, 8.0f, 0), "Unexpected value %.8e.\n", area);
+
+    skew_matrix(&matrix, 0.1f, 1.5f);
+    hr = ID2D1RectangleGeometry_ComputeArea(rectangle_geometry, &matrix, 200.0f, &area);
+    todo_wine
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    if (hr == S_OK)
+        ok(compare_float(area, 6.8f, 0), "Unexpected value %.8e.\n", area);
+
+    ID2D1RectangleGeometry_Release(rectangle_geometry);
+
+    release_test_context(&ctx);
+}
+
+static void test_wic_target_format(BOOL d3d11)
+{
+    static const struct
+    {
+        D2D1_PIXEL_FORMAT pixel_format;
+        const GUID *wic_format;
+        HRESULT hr;
+    }
+    wic_target_formats[] =
+    {
+        { { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_PREMULTIPLIED },
+                &GUID_WICPixelFormat32bppPBGRA },
+        { { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_IGNORE },
+                &GUID_WICPixelFormat32bppBGR },
+        { { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN },
+                &GUID_WICPixelFormat32bppPBGRA },
+        { { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN },
+                &GUID_WICPixelFormat32bppBGR },
+
+        { { DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED },
+                &GUID_WICPixelFormat32bppPBGRA },
+        { { DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE },
+                &GUID_WICPixelFormat32bppBGR },
+        { { DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_UNKNOWN },
+                &GUID_WICPixelFormat32bppPBGRA },
+        { { DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_UNKNOWN },
+                &GUID_WICPixelFormat32bppBGR },
+
+        { { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_PREMULTIPLIED },
+                &GUID_WICPixelFormat32bppPRGBA },
+        { { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_IGNORE },
+                &GUID_WICPixelFormat32bppRGB },
+        { { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN },
+                &GUID_WICPixelFormat32bppPRGBA },
+        { { DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN },
+                &GUID_WICPixelFormat32bppRGB },
+
+        { { DXGI_FORMAT_R8G8B8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED },
+                &GUID_WICPixelFormat32bppPRGBA },
+        { { DXGI_FORMAT_R8G8B8A8_UNORM, D2D1_ALPHA_MODE_IGNORE },
+                &GUID_WICPixelFormat32bppRGB },
+        { { DXGI_FORMAT_R8G8B8A8_UNORM, D2D1_ALPHA_MODE_UNKNOWN },
+                &GUID_WICPixelFormat32bppPRGBA },
+        { { DXGI_FORMAT_R8G8B8A8_UNORM, D2D1_ALPHA_MODE_UNKNOWN },
+                &GUID_WICPixelFormat32bppRGB },
+
+        { { DXGI_FORMAT_R8G8B8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED },
+                &GUID_WICPixelFormat32bppPBGRA, E_INVALIDARG },
+        { { DXGI_FORMAT_R8G8B8A8_UNORM, D2D1_ALPHA_MODE_IGNORE },
+                &GUID_WICPixelFormat32bppBGR, E_INVALIDARG },
+        { { DXGI_FORMAT_R8G8B8A8_UNORM, D2D1_ALPHA_MODE_UNKNOWN },
+                &GUID_WICPixelFormat32bppPBGRA, E_INVALIDARG },
+        { { DXGI_FORMAT_R8G8B8A8_UNORM, D2D1_ALPHA_MODE_UNKNOWN },
+                &GUID_WICPixelFormat32bppBGR, E_INVALIDARG },
+
+        { { DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED },
+                &GUID_WICPixelFormat32bppBGR, E_INVALIDARG },
+        { { DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE },
+                &GUID_WICPixelFormat32bppPBGRA, E_INVALIDARG },
+    };
+    D2D1_RENDER_TARGET_PROPERTIES rt_desc;
+    IWICImagingFactory *wic_factory;
+    struct d2d1_test_context ctx;
+    IWICBitmap *wic_bitmap;
+    ID2D1RenderTarget *rt;
+    unsigned int i;
+    HRESULT hr;
+
+    if (!init_test_context(&ctx, d3d11))
+        return;
+
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IWICImagingFactory, (void **)&wic_factory);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    for (i = 0; i < ARRAY_SIZE(wic_target_formats); ++i)
+    {
+        winetest_push_context("Test %u", i);
+
+        hr = IWICImagingFactory_CreateBitmap(wic_factory, 16, 16,
+                wic_target_formats[i].wic_format, WICBitmapCacheOnDemand, &wic_bitmap);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+        rt_desc.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
+        rt_desc.pixelFormat = wic_target_formats[i].pixel_format;
+        rt_desc.dpiX = 96.0f;
+        rt_desc.dpiY = 96.0f;
+        rt_desc.usage = D2D1_RENDER_TARGET_USAGE_NONE;
+        rt_desc.minLevel = D2D1_FEATURE_LEVEL_DEFAULT;
+        hr = ID2D1Factory_CreateWicBitmapRenderTarget(ctx.factory, wic_bitmap, &rt_desc, &rt);
+        todo_wine_if(FAILED(wic_target_formats[i].hr))
+        ok(hr == wic_target_formats[i].hr, "Got unexpected hr %#lx.\n", hr);
+
+        IWICBitmap_Release(wic_bitmap);
+
+        if (SUCCEEDED(hr))
+             ID2D1RenderTarget_Release(rt);
+
+        winetest_pop_context();
+    }
+    IWICImagingFactory_Release(wic_factory);
+
+    CoUninitialize();
+    release_test_context(&ctx);
+}
+
+static void test_effect_blob_property(BOOL d3d11)
+{
+    static const D2D1_PROPERTY_BINDING bindings[] =
+    {
+        { L"BlobProp", effect_impl_set_blob, effect_impl_get_blob },
+    };
+    struct d2d1_test_context ctx;
+    ID2D1Factory1 *factory;
+    ID2D1Effect *effect;
+    UINT32 index, size;
+    BYTE buffer[64];
+    HRESULT hr;
+
+    if (!init_test_context(&ctx, d3d11))
+        return;
+
+    factory = ctx.factory1;
+    if (!factory)
+    {
+        win_skip("ID2D1Factory1 is not supported.\n");
+        release_test_context(&ctx);
+        return;
+    }
+
+    hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_TestEffect,
+            effect_xml_a, bindings, ARRAY_SIZE(bindings), effect_impl_create);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1DeviceContext_CreateEffect(ctx.context, &CLSID_TestEffect, &effect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    index = ID2D1Effect_GetPropertyIndex(effect, L"BlobProp");
+    ok(index != D2D1_INVALID_PROPERTY_INDEX, "Invalid property index.\n");
+
+    size = ID2D1Effect_GetValueSize(effect, index);
+    ok(!size, "Unexpected property size %u.\n", size);
+
+    hr = ID2D1Effect_SetValue(effect, index, D2D1_PROPERTY_TYPE_BLOB,
+            (const BYTE *)"blob-value", 11);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    size = ID2D1Effect_GetValueSize(effect, index);
+    ok(size == 11, "Unexpected property size %u.\n", size);
+
+    ID2D1Effect_Release(effect);
+
+    /* Without property binding. */
+    hr = ID2D1Factory1_RegisterEffectFromString(factory, &CLSID_TestEffect2,
+            effect_xml_a, NULL, 0, effect_impl_create);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1DeviceContext_CreateEffect(ctx.context, &CLSID_TestEffect2, &effect);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    index = ID2D1Effect_GetPropertyIndex(effect, L"BlobProp");
+    ok(index != D2D1_INVALID_PROPERTY_INDEX, "Invalid property index.\n");
+
+    size = ID2D1Effect_GetValueSize(effect, index);
+    ok(!size, "Unexpected property size %u.\n", size);
+
+    hr = ID2D1Effect_SetValue(effect, index, D2D1_PROPERTY_TYPE_BLOB,
+            (const BYTE *)"blob-value", 11);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+
+    size = ID2D1Effect_GetValueSize(effect, index);
+    ok(!size, "Unexpected property size %u.\n", size);
+
+    memset(buffer, 0xa, sizeof(buffer));
+    hr = ID2D1Effect_GetValue(effect, index, D2D1_PROPERTY_TYPE_BLOB, buffer, 4);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!*buffer, "Unexpected buffer contents.\n");
+    ok(!*(buffer+1), "Unexpected buffer contents.\n");
+    ok(!*(buffer+2), "Unexpected buffer contents.\n");
+    ok(!*(buffer+3), "Unexpected buffer contents.\n");
+    ok(*(buffer+4) == 0xa, "Unexpected buffer contents.\n");
+
+    hr = ID2D1Effect_SetValue(effect, index, D2D1_PROPERTY_TYPE_BLOB,
+            (const BYTE *)"new-value", 0);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1Effect_SetValue(effect, index, D2D1_PROPERTY_TYPE_BLOB,
+            (const BYTE *)"new-value", 1);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx.\n", hr);
+
+    size = ID2D1Effect_GetValueSize(effect, index);
+    ok(!size, "Unexpected property size %u.\n", size);
+
+    ID2D1Effect_Release(effect);
+
+    release_test_context(&ctx);
+}
+
+static void test_get_dxgi_device(BOOL d3d11)
+{
+    D2D1_HWND_RENDER_TARGET_PROPERTIES hwnd_rt_desc;
+    D2D1_RENDER_TARGET_PROPERTIES rt_desc;
+    D2D1_RENDER_TARGET_PROPERTIES desc;
+    ID2D1BitmapRenderTarget *bitmap_rt;
+    IWICImagingFactory *wic_factory;
+    ID2D1HwndRenderTarget *hwnd_rt;
+    struct d2d1_test_context ctx;
+    ID2D1DeviceContext *context;
+    IDXGIDevice *dxgi_device;
+    D2D1_SIZE_U pixel_size;
+    IWICBitmap *wic_bitmap;
+    ID2D1Device2 *device2;
+    ID2D1RenderTarget *rt;
+    ID2D1Device *device;
+    HRESULT hr;
+
+    if (!init_test_context(&ctx, d3d11))
+        return;
+
+    if (!ctx.factory3)
+    {
+        win_skip("ID2D1Factory3 is not supported.\n");
+        release_test_context(&ctx);
+        return;
+    }
+
+    /* Test user-provided DXGI device */
+    hr = ID2D1Factory3_CreateDevice(ctx.factory3, ctx.device, &device2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1Device2_GetDxgiDevice(device2, &dxgi_device);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(dxgi_device == ctx.device, "Got unexpected IDXGIDevice.\n");
+
+    IDXGIDevice_Release(dxgi_device);
+    ID2D1Device2_Release(device2);
+
+    /* WIC target */
+    rt_desc.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
+    rt_desc.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    rt_desc.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+    rt_desc.dpiX = 96.0f;
+    rt_desc.dpiY = 96.0f;
+    rt_desc.usage = D2D1_RENDER_TARGET_USAGE_NONE;
+    rt_desc.minLevel = D2D1_FEATURE_LEVEL_DEFAULT;
+
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IWICImagingFactory, (void **)&wic_factory);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = IWICImagingFactory_CreateBitmap(wic_factory, 16, 16, &GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapCacheOnDemand, &wic_bitmap);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1Factory1_CreateWicBitmapRenderTarget(ctx.factory1, wic_bitmap, &rt_desc, &rt);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1RenderTarget_QueryInterface(rt, &IID_ID2D1DeviceContext, (void **)&context);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1DeviceContext_GetDevice(context, &device);
+    hr = ID2D1Device_QueryInterface(device, &IID_ID2D1Device2, (void **)&device2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    dxgi_device = (IDXGIDevice *)0xdeadbeef;
+    hr = ID2D1Device2_GetDxgiDevice(device2, &dxgi_device);
+    ok(hr == D2DERR_INVALID_CALL, "Got unexpected hr %#lx.\n", hr);
+    ok(!dxgi_device, "Expected NULL DXGI device.\n");
+
+    ID2D1Device2_Release(device2);
+    ID2D1Device_Release(device);
+    ID2D1DeviceContext_Release(context);
+    ID2D1RenderTarget_Release(rt);
+    IWICBitmap_Release(wic_bitmap);
+    IWICImagingFactory_Release(wic_factory);
+    CoUninitialize();
+
+    /* HWND target */
+    desc.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
+    desc.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+    desc.dpiX = 0.0f;
+    desc.dpiY = 0.0f;
+    desc.usage = D2D1_RENDER_TARGET_USAGE_NONE;
+    desc.minLevel = D2D1_FEATURE_LEVEL_DEFAULT;
+
+    hwnd_rt_desc.hwnd = create_window();
+    hwnd_rt_desc.pixelSize.width = 64;
+    hwnd_rt_desc.pixelSize.height = 64;
+    hwnd_rt_desc.presentOptions = D2D1_PRESENT_OPTIONS_NONE;
+
+    hr = ID2D1Factory_CreateHwndRenderTarget(ctx.factory, &desc, &hwnd_rt_desc, &hwnd_rt);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1HwndRenderTarget_QueryInterface(hwnd_rt, &IID_ID2D1DeviceContext, (void **)&context);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1DeviceContext_GetDevice(context, &device);
+    hr = ID2D1Device_QueryInterface(device, &IID_ID2D1Device2, (void **)&device2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    dxgi_device = (IDXGIDevice *)0xdeadbeef;
+    hr = ID2D1Device2_GetDxgiDevice(device2, &dxgi_device);
+    ok(hr == D2DERR_INVALID_CALL, "Got unexpected hr %#lx.\n", hr);
+    ok(!dxgi_device, "Expected NULL DXGI device.\n");
+
+    ID2D1Device2_Release(device2);
+    ID2D1Device_Release(device);
+    ID2D1DeviceContext_Release(context);
+    ID2D1HwndRenderTarget_Release(hwnd_rt);
+    DestroyWindow(hwnd_rt_desc.hwnd);
+
+    /* DXGI surface target */
+    ID2D1DeviceContext_GetDevice(ctx.context, &device);
+    hr = ID2D1Device_QueryInterface(device, &IID_ID2D1Device2, (void **)&device2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1Device2_GetDxgiDevice(device2, &dxgi_device);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(dxgi_device == ctx.device, "Got unexpected IDXGIDevice.\n");
+
+    IDXGIDevice_Release(dxgi_device);
+    ID2D1Device2_Release(device2);
+    ID2D1Device_Release(device);
+
+    /* DXGI compatible bitmap target */
+    set_size_u(&pixel_size, 32, 32);
+    hr = ID2D1RenderTarget_CreateCompatibleRenderTarget(ctx.rt, NULL, &pixel_size, NULL,
+            D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_NONE, &bitmap_rt);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1BitmapRenderTarget_QueryInterface(bitmap_rt, &IID_ID2D1DeviceContext, (void **)&context);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1DeviceContext_GetDevice(context, &device);
+    hr = ID2D1Device_QueryInterface(device, &IID_ID2D1Device2, (void **)&device2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    dxgi_device = (IDXGIDevice *)0xdeadbeef;
+    hr = ID2D1Device2_GetDxgiDevice(device2, &dxgi_device);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(dxgi_device == ctx.device, "Got unexpected IDXGIDevice.\n");
+
+    IDXGIDevice_Release(dxgi_device);
+    ID2D1Device2_Release(device2);
+    ID2D1Device_Release(device);
+    ID2D1DeviceContext_Release(context);
+    ID2D1BitmapRenderTarget_Release(bitmap_rt);
+
+    /* DC target */
+    rt_desc.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
+    rt_desc.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    rt_desc.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+    rt_desc.dpiX = 96.0f;
+    rt_desc.dpiY = 96.0f;
+    rt_desc.usage = D2D1_RENDER_TARGET_USAGE_NONE;
+    rt_desc.minLevel = D2D1_FEATURE_LEVEL_DEFAULT;
+
+    hr = ID2D1Factory1_CreateDCRenderTarget(ctx.factory1, &rt_desc, (ID2D1DCRenderTarget **)&rt);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1RenderTarget_QueryInterface(rt, &IID_ID2D1DeviceContext, (void **)&context);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1DeviceContext_GetDevice(context, &device);
+    hr = ID2D1Device_QueryInterface(device, &IID_ID2D1Device2, (void **)&device2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    dxgi_device = (IDXGIDevice *)0xdeadbeef;
+    hr = ID2D1Device2_GetDxgiDevice(device2, &dxgi_device);
+    ok(hr == D2DERR_INVALID_CALL, "Got unexpected hr %#lx.\n", hr);
+    ok(!dxgi_device, "Expected NULL DXGI device.\n");
+
+    ID2D1Device2_Release(device2);
+    ID2D1Device_Release(device);
+    ID2D1DeviceContext_Release(context);
+    ID2D1RenderTarget_Release(rt);
+
+    release_test_context(&ctx);
+}
+
 START_TEST(d2d1)
 {
     HMODULE d2d1_dll = GetModuleHandleA("d2d1.dll");
@@ -15195,8 +16026,11 @@ START_TEST(d2d1)
     queue_test(test_bitmap_create);
     queue_test(test_effect_custom_pixel_shader);
     queue_test(test_get_effect_properties);
-    queue_test(test_effect_custom_pixel_shader);
     queue_test(test_effect_vertex_buffer);
+    queue_test(test_compute_geometry_area);
+    queue_test(test_wic_target_format);
+    queue_test(test_effect_blob_property);
+    queue_test(test_get_dxgi_device);
 
     run_queued_tests();
 }

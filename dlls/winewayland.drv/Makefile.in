@@ -9,16 +9,20 @@ SOURCES = \
 	opengl.c \
 	pointer-constraints-unstable-v1.xml \
 	relative-pointer-unstable-v1.xml \
+	text-input-unstable-v3.xml \
 	version.rc \
 	viewporter.xml \
 	vulkan.c \
 	wayland.c \
+	wayland_data_device.c \
 	wayland_keyboard.c \
 	wayland_output.c \
 	wayland_pointer.c \
 	wayland_surface.c \
+	wayland_text_input.c \
 	waylanddrv_main.c \
 	window.c \
 	window_surface.c \
+	wlr-data-control-unstable-v1.xml \
 	xdg-output-unstable-v1.xml \
 	xdg-shell.xml

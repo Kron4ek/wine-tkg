@@ -614,6 +614,10 @@ static void test_cancelio(void)
 
     ok(ioapc_called, "IOAPC didn't run\n");
 
+    res = pNtCancelIoFile(hPipe, &cancel_sb);
+    ok(!res, "NtCancelIoFile returned %lx\n", res);
+    ok(iosb.Status == STATUS_CANCELLED, "Wrong iostatus %lx\n", iosb.Status);
+
     CloseHandle(hPipe);
 
     if (pNtCancelIoFileEx)
@@ -630,6 +634,11 @@ static void test_cancelio(void)
 
         ok(iosb.Status == STATUS_CANCELLED, "Wrong iostatus %lx\n", iosb.Status);
         ok(WaitForSingleObject(hEvent, 0) == 0, "hEvent not signaled\n");
+
+        iosb.Status = 0xdeadbeef;
+        res = pNtCancelIoFileEx(hPipe, NULL, &cancel_sb);
+        ok(res == STATUS_NOT_FOUND, "NtCancelIoFileEx returned %lx\n", res);
+        ok(iosb.Status == 0xdeadbeef, "Wrong iostatus %lx\n", iosb.Status);
 
         CloseHandle(hPipe);
     }
@@ -2722,7 +2731,6 @@ static void subtest_empty_name_pipe_operations(HANDLE handle)
             WaitForSingleObject(event, INFINITE);
             status = io.Status;
         }
-        todo_wine_if(ft->status != STATUS_NOT_SUPPORTED)
         ok(status == ft->status || (ft->status_broken && broken(status == ft->status_broken)),
            "NtFsControlFile(%s) on \\Device\\NamedPipe: expected %#lx, got %#lx\n",
            ft->name, ft->status, status);
@@ -2766,7 +2774,7 @@ static void test_empty_name(void)
 
     pRtlInitUnicodeString(&name, L"nonexistent_pipe");
     status = wait_pipe(hdirectory, &name, &zero_timeout);
-    todo_wine ok(status == STATUS_ILLEGAL_FUNCTION, "unexpected status for FSCTL_PIPE_WAIT on \\Device\\NamedPipe: %#lx\n", status);
+    ok(status == STATUS_ILLEGAL_FUNCTION, "unexpected status for FSCTL_PIPE_WAIT on \\Device\\NamedPipe: %#lx\n", status);
 
     subtest_empty_name_pipe_operations(hdirectory);
 
@@ -2911,11 +2919,11 @@ static void test_empty_name(void)
     timeout.QuadPart = -(LONG64)10000000;
     status = pNtCreateNamedPipeFile(&hpipe, GENERIC_READ|GENERIC_WRITE, &attr, &io, FILE_SHARE_READ|FILE_SHARE_WRITE,
                                     FILE_CREATE, FILE_PIPE_FULL_DUPLEX, 0, 0, 0, 1, 256, 256, &timeout);
-    todo_wine ok(!status, "unexpected failure from NtCreateNamedPipeFile: %#lx\n", status);
+    ok(!status, "unexpected failure from NtCreateNamedPipeFile: %#lx\n", status);
 
     handle = CreateFileA("\\\\.\\pipe\\test3\\pipe", GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL,
                          OPEN_EXISTING, 0, 0 );
-    todo_wine ok(handle != INVALID_HANDLE_VALUE, "Failed to open NamedPipe (%lu)\n", GetLastError());
+    ok(handle != INVALID_HANDLE_VALUE, "Failed to open NamedPipe (%lu)\n", GetLastError());
 
     CloseHandle(handle);
     CloseHandle(hpipe);

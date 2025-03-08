@@ -55,14 +55,14 @@ struct semaphore
     struct object  obj;    /* object header */
     unsigned int   count;  /* current count */
     unsigned int   max;    /* maximum possible count */
-    struct fast_sync *fast_sync; /* fast synchronization object */
+    struct inproc_sync *inproc_sync; /* fast synchronization object */
 };
 
 static void semaphore_dump( struct object *obj, int verbose );
 static int semaphore_signaled( struct object *obj, struct wait_queue_entry *entry );
 static void semaphore_satisfied( struct object *obj, struct wait_queue_entry *entry );
 static int semaphore_signal( struct object *obj, unsigned int access );
-static struct fast_sync *semaphore_get_fast_sync( struct object *obj );
+static struct inproc_sync *semaphore_get_inproc_sync( struct object *obj );
 static void semaphore_destroy( struct object *obj );
 
 static const struct object_ops semaphore_ops =
@@ -85,7 +85,7 @@ static const struct object_ops semaphore_ops =
     default_unlink_name,           /* unlink_name */
     no_open_file,                  /* open_file */
     no_kernel_obj_list,            /* get_kernel_obj_list */
-    semaphore_get_fast_sync,       /* get_fast_sync */
+    semaphore_get_inproc_sync,     /* get_inproc_sync */
     no_close_handle,               /* close_handle */
     semaphore_destroy              /* destroy */
 };
@@ -109,7 +109,7 @@ static struct semaphore *create_semaphore( struct object *root, const struct uni
             /* initialize it if it didn't already exist */
             sem->count = initial;
             sem->max   = max;
-            sem->fast_sync = NULL;
+            sem->inproc_sync = NULL;
         }
     }
     return sem;
@@ -172,21 +172,25 @@ static int semaphore_signal( struct object *obj, unsigned int access )
     return release_semaphore( sem, 1, NULL );
 }
 
-static struct fast_sync *semaphore_get_fast_sync( struct object *obj )
+static struct inproc_sync *semaphore_get_inproc_sync( struct object *obj )
 {
     struct semaphore *semaphore = (struct semaphore *)obj;
 
-    if (!semaphore->fast_sync)
-        semaphore->fast_sync = fast_create_semaphore( semaphore->count, semaphore->max );
-    if (semaphore->fast_sync) grab_object( semaphore->fast_sync );
-    return semaphore->fast_sync;
+    /* This state will always be the state that the semaphore was created with.
+     * We could create the inproc_sync at creation time to make this clearer,
+     * but some broken programs create hundreds of thousands of handles which
+     * they never use, and we want to avoid wasting memory or fds in that case. */
+    if (!semaphore->inproc_sync)
+        semaphore->inproc_sync = create_inproc_semaphore( semaphore->count, semaphore->max );
+    if (semaphore->inproc_sync) grab_object( semaphore->inproc_sync );
+    return semaphore->inproc_sync;
 }
 
 static void semaphore_destroy( struct object *obj )
 {
     struct semaphore *semaphore = (struct semaphore *)obj;
 
-    if (semaphore->fast_sync) release_object( semaphore->fast_sync );
+    if (semaphore->inproc_sync) release_object( semaphore->inproc_sync );
 }
 
 /* create a semaphore */

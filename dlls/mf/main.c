@@ -549,6 +549,7 @@ static const IClassFactoryVtbl class_factory_vtbl =
 };
 
 static struct class_factory file_scheme_handler_factory = { { &class_factory_vtbl }, file_scheme_handler_construct };
+static struct class_factory http_scheme_handler_factory = { { &class_factory_vtbl }, http_scheme_handler_construct };
 static struct class_factory urlmon_scheme_handler_factory = { { &class_factory_vtbl }, urlmon_scheme_handler_construct };
 
 static const struct class_object
@@ -559,6 +560,7 @@ static const struct class_object
 class_objects[] =
 {
     { &CLSID_FileSchemePlugin, &file_scheme_handler_factory.IClassFactory_iface },
+    { &CLSID_HttpSchemePlugin, &http_scheme_handler_factory.IClassFactory_iface },
     { &CLSID_UrlmonSchemePlugin, &urlmon_scheme_handler_factory.IClassFactory_iface },
 };
 

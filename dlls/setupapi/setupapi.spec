@@ -81,12 +81,12 @@
 @ stdcall CM_Get_Device_ID_ExW(ptr ptr long long ptr)
 @ stdcall CM_Get_Device_ID_ListA(str ptr long long)
 @ stdcall CM_Get_Device_ID_ListW(wstr ptr long long)
-@ stub CM_Get_Device_ID_List_ExA
-@ stub CM_Get_Device_ID_List_ExW
+@ stdcall CM_Get_Device_ID_List_ExA(str ptr long long ptr)
+@ stdcall CM_Get_Device_ID_List_ExW(wstr ptr long long ptr)
 @ stdcall CM_Get_Device_ID_List_SizeA(ptr str long)
 @ stdcall CM_Get_Device_ID_List_SizeW(ptr wstr long)
-@ stub CM_Get_Device_ID_List_Size_ExA
-@ stub CM_Get_Device_ID_List_Size_ExW
+@ stdcall CM_Get_Device_ID_List_Size_ExA(ptr str long ptr)
+@ stdcall CM_Get_Device_ID_List_Size_ExW(ptr wstr long ptr)
 @ stdcall CM_Get_Device_ID_Size(ptr ptr long)
 @ stub CM_Get_Device_ID_Size_Ex
 @ stdcall CM_Get_Device_Interface_AliasA(str ptr ptr ptr long)
@@ -253,9 +253,9 @@
 @ stub SearchForInfFile
 @ stub SetArrayToMultiSzValue
 @ stdcall SetupAddInstallSectionToDiskSpaceListA(long long long str ptr long)
-@ stdcall SetupAddInstallSectionToDiskSpaceListW(long long long wstr ptr long)
-@ stdcall SetupAddSectionToDiskSpaceListA(long long long str long ptr long)
-@ stdcall SetupAddSectionToDiskSpaceListW(long long long wstr long ptr long)
+@ stub SetupAddInstallSectionToDiskSpaceListW
+@ stub SetupAddSectionToDiskSpaceListA
+@ stub SetupAddSectionToDiskSpaceListW
 @ stdcall SetupAddToDiskSpaceListA(long str int64 long ptr long)
 @ stdcall SetupAddToDiskSpaceListW(long wstr int64 long ptr long)
 @ stdcall SetupAddToSourceListA(long str)
@@ -357,6 +357,7 @@
 @ stub SetupDiGetDeviceInterfaceAlias
 @ stdcall SetupDiGetDeviceInterfaceDetailA(long ptr ptr long ptr ptr)
 @ stdcall SetupDiGetDeviceInterfaceDetailW(long ptr ptr long ptr ptr)
+@ stdcall SetupDiGetDevicePropertyKeys(ptr ptr ptr long ptr long)
 @ stdcall SetupDiGetDevicePropertyW(ptr ptr ptr ptr ptr long ptr long)
 @ stdcall SetupDiGetDeviceRegistryPropertyA(long ptr long ptr ptr long ptr)
 @ stdcall SetupDiGetDeviceRegistryPropertyW(long ptr long ptr ptr long ptr)

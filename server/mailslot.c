@@ -93,7 +93,7 @@ static const struct object_ops mailslot_ops =
     default_unlink_name,       /* unlink_name */
     mailslot_open_file,        /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
-    default_fd_get_fast_sync,  /* get_fast_sync */
+    default_fd_get_inproc_sync,/* get_inproc_sync */
     no_close_handle,           /* close_handle */
     mailslot_destroy           /* destroy */
 };
@@ -155,7 +155,7 @@ static const struct object_ops mail_writer_ops =
     NULL,                       /* unlink_name */
     no_open_file,               /* open_file */
     no_kernel_obj_list,         /* get_kernel_obj_list */
-    no_get_fast_sync,           /* get_fast_sync */
+    default_fd_get_inproc_sync, /* get_inproc_sync */
     no_close_handle,            /* close_handle */
     mail_writer_destroy         /* destroy */
 };
@@ -221,7 +221,7 @@ static const struct object_ops mailslot_device_ops =
     default_unlink_name,            /* unlink_name */
     mailslot_device_open_file,      /* open_file */
     no_kernel_obj_list,             /* get_kernel_obj_list */
-    no_get_fast_sync,               /* get_fast_sync */
+    no_get_inproc_sync,             /* get_inproc_sync */
     no_close_handle,                /* close_handle */
     mailslot_device_destroy         /* destroy */
 };
@@ -252,7 +252,7 @@ static const struct object_ops mailslot_device_file_ops =
     NULL,                                   /* unlink_name */
     no_open_file,                           /* open_file */
     no_kernel_obj_list,                     /* get_kernel_obj_list */
-    default_fd_get_fast_sync,               /* get_fast_sync */
+    default_fd_get_inproc_sync,             /* get_inproc_sync */
     no_close_handle,                        /* close_handle */
     mailslot_device_file_destroy            /* destroy */
 };
@@ -275,10 +275,8 @@ static const struct fd_ops mailslot_device_fd_ops =
 
 static struct mailslot_message *get_first_message( struct mailslot *mailslot )
 {
-    if (list_empty( &mailslot->messages ))
-        return NULL;
-
-    return LIST_ENTRY( list_head( &mailslot->messages ), struct mailslot_message, entry );
+    struct list *ptr = list_head( &mailslot->messages );
+    return ptr ? LIST_ENTRY( ptr, struct mailslot_message, entry ) : NULL;
 }
 
 static void mailslot_destroy( struct object *obj)
@@ -563,7 +561,7 @@ static struct mailslot *create_mailslot( struct object *root,
 {
     struct mailslot *mailslot;
 
-    if (!(mailslot = create_named_object( root, &mailslot_ops, name, attr, sd ))) return NULL;
+    if (!(mailslot = create_named_object( root, &mailslot_ops, name, attr & ~OBJ_OPENIF, sd ))) return NULL;
 
     mailslot->fd = NULL;
     mailslot->max_msgsize = max_msgsize;
@@ -658,6 +656,13 @@ DECL_HANDLER(create_mailslot)
             return;
         }
         if (!(root = get_directory_obj( current->process, objattr->rootdir ))) return;
+    }
+
+    if (!req->access)
+    {
+        set_error( STATUS_ACCESS_DENIED );
+        if (root) release_object( root );
+        return;
     }
 
     if ((mailslot = create_mailslot( root, &name, objattr->attributes, req->options, req->max_msgsize,

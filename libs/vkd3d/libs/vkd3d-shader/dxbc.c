@@ -115,6 +115,14 @@ static uint32_t read_u32(const char **ptr)
     return ret;
 }
 
+static uint64_t read_u64(const char **ptr)
+{
+    uint64_t ret;
+    memcpy(&ret, *ptr, sizeof(ret));
+    *ptr += sizeof(ret);
+    return ret;
+}
+
 static float read_float(const char **ptr)
 {
     union
@@ -373,7 +381,8 @@ static int shader_parse_signature(const struct vkd3d_shader_dxbc_section_desc *s
     uint32_t count, header_size;
     struct signature_element *e;
     const char *ptr = data;
-    unsigned int i, j;
+    bool fail = false;
+    unsigned int i;
 
     if (!require_space(0, 2, sizeof(uint32_t), section->data.size))
     {
@@ -419,8 +428,6 @@ static int shader_parse_signature(const struct vkd3d_shader_dxbc_section_desc *s
         const char *name;
         uint32_t mask;
 
-        e[i].sort_index = i;
-
         if (has_stream_index)
             e[i].stream_index = read_u32(&ptr);
         else
@@ -430,17 +437,19 @@ static int shader_parse_signature(const struct vkd3d_shader_dxbc_section_desc *s
         if (!(name = shader_get_string(data, section->data.size, name_offset))
                 || !(e[i].semantic_name = vkd3d_strdup(name)))
         {
-            WARN("Invalid name offset %#zx (data size %#zx).\n", name_offset, section->data.size);
-            for (j = 0; j < i; ++j)
-            {
-                vkd3d_free((void *)e[j].semantic_name);
-            }
-            vkd3d_free(e);
-            return VKD3D_ERROR_INVALID_ARGUMENT;
+            vkd3d_shader_error(message_context, NULL, VKD3D_SHADER_ERROR_DXBC_INVALID_STRING_REFERENCE,
+                    "Element %u has invalid semantic name reference %#zx (data size %#zx).\n",
+                    i, name_offset, section->data.size);
+            fail = true;
         }
         e[i].semantic_index = read_u32(&ptr);
         e[i].sysval_semantic = read_u32(&ptr);
-        e[i].component_type = read_u32(&ptr);
+        if ((e[i].component_type = read_u32(&ptr)) > VKD3D_SHADER_COMPONENT_FLOAT)
+        {
+            vkd3d_shader_error(message_context, NULL, VKD3D_SHADER_ERROR_DXBC_INVALID_COMPONENT_TYPE,
+                    "Element %u has invalid component type %#x.\n", i, e[i].component_type);
+            fail = true;
+        }
         e[i].register_index = read_u32(&ptr);
         e[i].target_location = e[i].register_index;
         e[i].register_count = 1;
@@ -471,7 +480,14 @@ static int shader_parse_signature(const struct vkd3d_shader_dxbc_section_desc *s
     }
 
     s->elements = e;
+    s->elements_capacity = count;
     s->element_count = count;
+
+    if (fail)
+    {
+        shader_signature_cleanup(s);
+        return VKD3D_ERROR_INVALID_ARGUMENT;
+    }
 
     return VKD3D_OK;
 }
@@ -504,6 +520,28 @@ int shader_parse_input_signature(const struct vkd3d_shader_code *dxbc,
     return ret;
 }
 
+static int shdr_parse_features(const struct vkd3d_shader_dxbc_section_desc *section,
+        struct vkd3d_shader_message_context *message_context, struct vsir_features *f)
+{
+    const char *data = section->data.code;
+    const char *ptr = data;
+    uint64_t flags;
+
+    if (!require_space(0, 1, sizeof(uint64_t), section->data.size))
+    {
+        WARN("Invalid data size %#zx.\n", section->data.size);
+        vkd3d_shader_error(message_context, NULL, VKD3D_SHADER_ERROR_DXBC_INVALID_CHUNK_SIZE,
+                "SFI0 section size %zu is too small to contain flags.\n", section->data.size);
+        return VKD3D_ERROR_INVALID_ARGUMENT;
+    }
+    flags = read_u64(&ptr);
+
+    if (flags & DXBC_SFI0_REQUIRES_ROVS)
+        f->rovs = true;
+
+    return VKD3D_OK;
+}
+
 static int shdr_handler(const struct vkd3d_shader_dxbc_section_desc *section,
         struct vkd3d_shader_message_context *message_context, void *context)
 {
@@ -514,6 +552,8 @@ static int shdr_handler(const struct vkd3d_shader_dxbc_section_desc *section,
     {
         case TAG_ISGN:
         case TAG_ISG1:
+            if (desc->is_dxil)
+                break;
             if (desc->input_signature.elements)
             {
                 FIXME("Multiple input signatures.\n");
@@ -526,6 +566,8 @@ static int shdr_handler(const struct vkd3d_shader_dxbc_section_desc *section,
         case TAG_OSGN:
         case TAG_OSG5:
         case TAG_OSG1:
+            if (desc->is_dxil)
+                break;
             if (desc->output_signature.elements)
             {
                 FIXME("Multiple output signatures.\n");
@@ -537,6 +579,8 @@ static int shdr_handler(const struct vkd3d_shader_dxbc_section_desc *section,
 
         case TAG_PCSG:
         case TAG_PSG1:
+            if (desc->is_dxil)
+                break;
             if (desc->patch_constant_signature.elements)
             {
                 FIXME("Multiple patch constant signatures.\n");
@@ -558,6 +602,11 @@ static int shdr_handler(const struct vkd3d_shader_dxbc_section_desc *section,
                 FIXME("Multiple shader code chunks.\n");
             desc->byte_code = section->data.code;
             desc->byte_code_size = section->data.size;
+            break;
+
+        case TAG_SFI0:
+            if ((ret = shdr_parse_features(section, message_context, &desc->features)) < 0)
+                return ret;
             break;
 
         case TAG_AON9:

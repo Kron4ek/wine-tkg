@@ -213,7 +213,7 @@ static NTSTATUS udp_endpoint_enumerate_all( void *key_data, UINT key_size, void 
     struct ipv6_addr_scope *addr_scopes = NULL;
     unsigned int addr_scopes_size = 0;
     NTSTATUS ret = STATUS_SUCCESS;
-    udp_endpoint *endpoints = NULL;
+    union udp_endpoint *endpoints = NULL;
 
     TRACE( "%p %d %p %d %p %d %p %d %p\n", key_data, key_size, rw_data, rw_size,
            dynamic_data, dynamic_size, static_data, static_size, count );
@@ -231,13 +231,17 @@ static NTSTATUS udp_endpoint_enumerate_all( void *key_data, UINT key_size, void 
             *count = reply->count;
         else if (ret == STATUS_BUFFER_TOO_SMALL)
         {
-            *count = reply->count;
-            if (want_data)
+            if (!want_data)
             {
-                free( endpoints );
-                return STATUS_BUFFER_OVERFLOW;
+                /* If we were given buffers, the outgoing count must never be
+                   greater than the incoming one. If we weren't, the count
+                   should be set to the actual count. */
+                *count = reply->count;
+                return STATUS_SUCCESS;
             }
-            else return STATUS_SUCCESS;
+
+            free( endpoints );
+            return STATUS_BUFFER_OVERFLOW;
         }
     }
     SERVER_END_REQ;
@@ -246,7 +250,7 @@ static NTSTATUS udp_endpoint_enumerate_all( void *key_data, UINT key_size, void 
 
     for (unsigned int i = 0; i < *count; i++)
     {
-        udp_endpoint *endpt = &endpoints[i];
+        union udp_endpoint *endpt = &endpoints[i];
 
         if (key_out)
         {

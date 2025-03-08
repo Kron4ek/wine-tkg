@@ -2167,6 +2167,8 @@ static LRESULT LISTBOX_HandleLButtonDown( LB_DESCR *descr, DWORD keys, INT x, IN
         LISTBOX_MoveCaret( descr, index, FALSE );
         LISTBOX_SetSelection( descr, index,
                               TRUE, (descr->style & LBS_NOTIFY) != 0 );
+        NtUserNotifyWinEvent( EVENT_OBJECT_FOCUS, descr->self, OBJID_CLIENT, index + 1 );
+        NtUserNotifyWinEvent( EVENT_OBJECT_SELECTION, descr->self, OBJID_CLIENT, index + 1 );
     }
 
     if (!descr->lphc)
@@ -2234,7 +2236,7 @@ static LRESULT LISTBOX_HandleLButtonDownCombo( LB_DESCR *descr, UINT msg, DWORD 
         /* Check the Non-Client Area */
         screenMousePos = mousePos;
         hWndOldCapture = GetCapture();
-        ReleaseCapture();
+        NtUserReleaseCapture();
         GetWindowRect(descr->self, &screenRect);
         ClientToScreen(descr->self, &screenMousePos);
 
@@ -2291,7 +2293,7 @@ static LRESULT LISTBOX_HandleLButtonUp( LB_DESCR *descr )
     if (descr->captured)
     {
         descr->captured = FALSE;
-        if (GetCapture() == descr->self) ReleaseCapture();
+        if (GetCapture() == descr->self) NtUserReleaseCapture();
         if ((descr->style & LBS_NOTIFY) && descr->nb_items)
             SEND_NOTIFICATION( descr, LBN_SELCHANGE );
     }

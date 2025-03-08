@@ -56,7 +56,7 @@ struct event
     struct list    kernel_object;   /* list of kernel object pointers */
     int            manual_reset;    /* is it a manual reset event? */
     int            signaled;        /* event has been signaled */
-    struct fast_sync *fast_sync;    /* fast synchronization object */
+    struct inproc_sync *inproc_sync;/* in-process synchronization object */
 };
 
 static void event_dump( struct object *obj, int verbose );
@@ -64,7 +64,7 @@ static int event_signaled( struct object *obj, struct wait_queue_entry *entry );
 static void event_satisfied( struct object *obj, struct wait_queue_entry *entry );
 static int event_signal( struct object *obj, unsigned int access);
 static struct list *event_get_kernel_obj_list( struct object *obj );
-static struct fast_sync *event_get_fast_sync( struct object *obj );
+static struct inproc_sync *event_get_inproc_sync( struct object *obj );
 static void event_destroy( struct object *obj );
 
 static const struct object_ops event_ops =
@@ -87,7 +87,7 @@ static const struct object_ops event_ops =
     default_unlink_name,       /* unlink_name */
     no_open_file,              /* open_file */
     event_get_kernel_obj_list, /* get_kernel_obj_list */
-    event_get_fast_sync,       /* get_fast_sync */
+    event_get_inproc_sync,     /* get_inproc_sync */
     no_close_handle,           /* close_handle */
     event_destroy              /* destroy */
 };
@@ -110,12 +110,12 @@ struct type_descr keyed_event_type =
 struct keyed_event
 {
     struct object  obj;             /* object header */
-    struct fast_sync *fast_sync;    /* fast synchronization object */
+    struct inproc_sync *inproc_sync;/* in-process synchronization object */
 };
 
 static void keyed_event_dump( struct object *obj, int verbose );
 static int keyed_event_signaled( struct object *obj, struct wait_queue_entry *entry );
-static struct fast_sync *keyed_event_get_fast_sync( struct object *obj );
+static struct inproc_sync *keyed_event_get_inproc_sync( struct object *obj );
 static void keyed_event_destroy( struct object *obj );
 
 static const struct object_ops keyed_event_ops =
@@ -138,7 +138,7 @@ static const struct object_ops keyed_event_ops =
     default_unlink_name,         /* unlink_name */
     no_open_file,                /* open_file */
     no_kernel_obj_list,          /* get_kernel_obj_list */
-    keyed_event_get_fast_sync,   /* get_fast_sync */
+    keyed_event_get_inproc_sync, /* get_inproc_sync */
     no_close_handle,             /* close_handle */
     keyed_event_destroy          /* destroy */
 };
@@ -158,7 +158,7 @@ struct event *create_event( struct object *root, const struct unicode_str *name,
             list_init( &event->kernel_object );
             event->manual_reset = manual_reset;
             event->signaled     = initial_state;
-            event->fast_sync    = NULL;
+            event->inproc_sync  = NULL;
         }
     }
     return event;
@@ -182,13 +182,13 @@ void set_event( struct event *event )
     event->signaled = 1;
     /* wake up all waiters if manual reset, a single one otherwise */
     wake_up( &event->obj, !event->manual_reset );
-    fast_set_event( event->fast_sync );
+    set_inproc_event( event->inproc_sync );
 }
 
 void reset_event( struct event *event )
 {
     event->signaled = 0;
-    fast_reset_event( event->fast_sync );
+    reset_inproc_event( event->inproc_sync );
 }
 
 static void event_dump( struct object *obj, int verbose )
@@ -234,24 +234,28 @@ static struct list *event_get_kernel_obj_list( struct object *obj )
     return &event->kernel_object;
 }
 
-static struct fast_sync *event_get_fast_sync( struct object *obj )
+static struct inproc_sync *event_get_inproc_sync( struct object *obj )
 {
     struct event *event = (struct event *)obj;
 
-    if (!event->fast_sync)
+    /* This state will always be the state that the event was created with.
+     * We could create the inproc_sync at creation time to make this clearer,
+     * but some broken programs create hundreds of thousands of handles which
+     * they never use, and we want to avoid wasting memory or fds in that case. */
+    if (!event->inproc_sync)
     {
-        enum fast_sync_type type = event->manual_reset ? FAST_SYNC_MANUAL_EVENT : FAST_SYNC_AUTO_EVENT;
-        event->fast_sync = fast_create_event( type, event->signaled );
+        enum inproc_sync_type type = event->manual_reset ? INPROC_SYNC_MANUAL_EVENT : INPROC_SYNC_AUTO_EVENT;
+        event->inproc_sync = create_inproc_event( type, event->signaled );
     }
-    if (event->fast_sync) grab_object( event->fast_sync );
-    return event->fast_sync;
+    if (event->inproc_sync) grab_object( event->inproc_sync );
+    return event->inproc_sync;
 }
 
 static void event_destroy( struct object *obj )
 {
     struct event *event = (struct event *)obj;
 
-    if (event->fast_sync) release_object( event->fast_sync );
+    if (event->inproc_sync) release_object( event->inproc_sync );
 }
 
 struct keyed_event *create_keyed_event( struct object *root, const struct unicode_str *name,
@@ -264,7 +268,7 @@ struct keyed_event *create_keyed_event( struct object *root, const struct unicod
         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
         {
             /* initialize it if it didn't already exist */
-            event->fast_sync = NULL;
+            event->inproc_sync = NULL;
         }
     }
     return event;
@@ -280,7 +284,7 @@ static void keyed_event_dump( struct object *obj, int verbose )
     fputs( "Keyed event\n", stderr );
 }
 
-static enum select_op matching_op( enum select_op op )
+static enum select_opcode matching_op( enum select_opcode op )
 {
     return op ^ (SELECT_KEYED_EVENT_WAIT ^ SELECT_KEYED_EVENT_RELEASE);
 }
@@ -289,7 +293,7 @@ static int keyed_event_signaled( struct object *obj, struct wait_queue_entry *en
 {
     struct wait_queue_entry *ptr;
     struct process *process;
-    enum select_op select_op;
+    enum select_opcode select_op;
 
     assert( obj->ops == &keyed_event_ops );
 
@@ -308,21 +312,21 @@ static int keyed_event_signaled( struct object *obj, struct wait_queue_entry *en
     return 0;
 }
 
-static struct fast_sync *keyed_event_get_fast_sync( struct object *obj )
+static struct inproc_sync *keyed_event_get_inproc_sync( struct object *obj )
 {
     struct keyed_event *event = (struct keyed_event *)obj;
 
-    if (!event->fast_sync)
-        event->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, 1 );
-    if (event->fast_sync) grab_object( event->fast_sync );
-    return event->fast_sync;
+    if (!event->inproc_sync)
+        event->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, 1 );
+    if (event->inproc_sync) grab_object( event->inproc_sync );
+    return event->inproc_sync;
 }
 
 static void keyed_event_destroy( struct object *obj )
 {
     struct keyed_event *event = (struct keyed_event *)obj;
 
-    if (event->fast_sync) release_object( event->fast_sync );
+    if (event->inproc_sync) release_object( event->inproc_sync );
 }
 
 /* create an event */

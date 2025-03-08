@@ -52,6 +52,7 @@ static VOID     (WINAPI *pRtlInitUnicodeString)( PUNICODE_STRING, LPCWSTR );
 static BOOL     (WINAPI *pRtlDosPathNameToNtPathName_U)( LPCWSTR, PUNICODE_STRING, PWSTR*, CURDIR* );
 static NTSTATUS (WINAPI *pRtlWow64EnableFsRedirectionEx)( ULONG, ULONG * );
 
+static NTSTATUS (WINAPI *pNtAllocateReserveObject)( HANDLE *, const OBJECT_ATTRIBUTES *, MEMORY_RESERVE_OBJECT_TYPE );
 static NTSTATUS (WINAPI *pNtCreateMailslotFile)( PHANDLE, ULONG, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK,
                                        ULONG, ULONG, ULONG, PLARGE_INTEGER );
 static NTSTATUS (WINAPI *pNtCreateFile)(PHANDLE,ACCESS_MASK,POBJECT_ATTRIBUTES,PIO_STATUS_BLOCK,PLARGE_INTEGER,ULONG,ULONG,ULONG,ULONG,PVOID,ULONG);
@@ -77,6 +78,7 @@ static NTSTATUS (WINAPI *pNtQueryIoCompletion)(HANDLE, IO_COMPLETION_INFORMATION
 static NTSTATUS (WINAPI *pNtRemoveIoCompletion)(HANDLE, PULONG_PTR, PULONG_PTR, PIO_STATUS_BLOCK, PLARGE_INTEGER);
 static NTSTATUS (WINAPI *pNtRemoveIoCompletionEx)(HANDLE,FILE_IO_COMPLETION_INFORMATION*,ULONG,ULONG*,LARGE_INTEGER*,BOOLEAN);
 static NTSTATUS (WINAPI *pNtSetIoCompletion)(HANDLE, ULONG_PTR, ULONG_PTR, NTSTATUS, SIZE_T);
+static NTSTATUS (WINAPI *pNtSetIoCompletionEx)(HANDLE, HANDLE, ULONG_PTR, ULONG_PTR, NTSTATUS, SIZE_T);
 static NTSTATUS (WINAPI *pNtSetInformationFile)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
 static NTSTATUS (WINAPI *pNtQueryAttributesFile)(const OBJECT_ATTRIBUTES*,FILE_BASIC_INFORMATION*);
 static NTSTATUS (WINAPI *pNtQueryInformationFile)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
@@ -982,13 +984,58 @@ static void test_set_io_completion(void)
     NTSTATUS res;
     ULONG count;
     SIZE_T size = 3;
-    HANDLE h;
+    HANDLE h, h2;
 
     if (sizeof(size) > 4) size |= (ULONGLONG)0x12345678 << 32;
+
+    res = pNtCreateIoCompletion( &h2, IO_COMPLETION_ALL_ACCESS, NULL, 0 );
+    ok( res == STATUS_SUCCESS, "NtCreateIoCompletion failed: %#lx\n", res );
+    ok( h2 && h2 != INVALID_HANDLE_VALUE, "got invalid handle %p\n", h2 );
+    res = pNtSetIoCompletion( h2, 123, 456, 789, size );
+    ok( res == STATUS_SUCCESS, "NtSetIoCompletion failed: %#lx\n", res );
+    res = pNtRemoveIoCompletionEx( h2, info, 2, &count, &timeout, TRUE );
+    ok( res == STATUS_SUCCESS, "NtRemoveIoCompletionEx failed: %#lx\n", res );
+    ok( count == 1, "wrong count %lu\n", count );
 
     res = pNtCreateIoCompletion( &h, IO_COMPLETION_ALL_ACCESS, NULL, 0 );
     ok( res == STATUS_SUCCESS, "NtCreateIoCompletion failed: %#lx\n", res );
     ok( h && h != INVALID_HANDLE_VALUE, "got invalid handle %p\n", h );
+
+    apc_count = 0;
+    QueueUserAPC( user_apc_proc, GetCurrentThread(), (ULONG_PTR)&apc_count );
+    res = pNtSetIoCompletion( h, 123, 456, 789, size );
+    ok( res == STATUS_SUCCESS, "NtSetIoCompletion failed: %#lx\n", res );
+    res = pNtRemoveIoCompletionEx( h, info, 2, &count, &timeout, TRUE );
+    /* APC goes first associated with completion port APC takes priority over pending completion.
+     * Even if the thread is associated with some other completion port. */
+    ok( res == STATUS_USER_APC, "NtRemoveIoCompletionEx unexpected status %#lx\n", res );
+    ok( apc_count == 1, "wrong apc count %u\n", apc_count );
+
+    CloseHandle( h2 );
+
+    apc_count = 0;
+    QueueUserAPC( user_apc_proc, GetCurrentThread(), (ULONG_PTR)&apc_count );
+    res = pNtRemoveIoCompletionEx( h, info, 2, &count, &timeout, TRUE );
+    /* Previous call resulted in STATUS_USER_APC did not associate the thread with the port. */
+    ok( res == STATUS_USER_APC, "NtRemoveIoCompletion unexpected status %#lx\n", res );
+    ok( apc_count == 1, "wrong apc count %u\n", apc_count );
+
+    res = pNtRemoveIoCompletionEx( h, info, 2, &count, &timeout, TRUE );
+    /* Now the thread is associated. */
+    ok( res == STATUS_SUCCESS, "NtRemoveIoCompletion failed: %#lx\n", res );
+    ok( count == 1, "wrong count %lu\n", count );
+
+    apc_count = 0;
+    QueueUserAPC( user_apc_proc, GetCurrentThread(), (ULONG_PTR)&apc_count );
+    res = pNtSetIoCompletion( h, 123, 456, 789, size );
+    ok( res == STATUS_SUCCESS, "NtSetIoCompletion failed: %#lx\n", res );
+    res = pNtRemoveIoCompletionEx( h, info, 2, &count, &timeout, TRUE );
+    /* After a thread is associated with completion port existing completion is returned if APC is pending. */
+    ok( res == STATUS_SUCCESS, "NtRemoveIoCompletionEx failed: %#lx\n", res );
+    ok( count == 1, "wrong count %lu\n", count );
+    ok( apc_count == 0, "wrong apc count %u\n", apc_count );
+    SleepEx( 0, TRUE);
+    ok( apc_count == 1, "wrong apc count %u\n", apc_count );
 
     res = pNtRemoveIoCompletion( h, &key, &value, &iosb, &timeout );
     ok( res == STATUS_TIMEOUT, "NtRemoveIoCompletion failed: %#lx\n", res );
@@ -1015,6 +1062,11 @@ static void test_set_io_completion(void)
         pNtClose( h );
         return;
     }
+
+    count = 0xdeadbeef;
+    res = pNtRemoveIoCompletionEx( h, info, 0, &count, &timeout, FALSE );
+    ok( res == STATUS_INVALID_PARAMETER, "NtRemoveIoCompletionEx failed: %#lx\n", res );
+    ok( count == 0xdeadbeef, "wrong count %lu\n", count );
 
     count = 0xdeadbeef;
     res = pNtRemoveIoCompletionEx( h, info, 2, &count, &timeout, FALSE );
@@ -1309,13 +1361,16 @@ static void test_file_io_completion(void)
 static void test_file_full_size_information(void)
 {
     IO_STATUS_BLOCK io;
+    FILE_FS_FULL_SIZE_INFORMATION_EX ffsie;
     FILE_FS_FULL_SIZE_INFORMATION ffsi;
     FILE_FS_SIZE_INFORMATION fsi;
+    ULONGLONG expected;
     HANDLE h;
     NTSTATUS res;
 
     if(!(h = create_temp_file(0))) return ;
 
+    memset(&ffsie,0,sizeof(ffsie));
     memset(&ffsi,0,sizeof(ffsi));
     memset(&fsi,0,sizeof(fsi));
 
@@ -1350,14 +1405,77 @@ static void test_file_full_size_information(void)
         "[ffsi] TotalAllocationUnits error fsi:0x%s, ffsi:0x%s\n",
         wine_dbgstr_longlong(fsi.TotalAllocationUnits.QuadPart),
         wine_dbgstr_longlong(ffsi.TotalAllocationUnits.QuadPart));
-    ok(ffsi.CallerAvailableAllocationUnits.QuadPart == fsi.AvailableAllocationUnits.QuadPart,
-        "[ffsi] CallerAvailableAllocationUnits error fsi:0x%s, ffsi: 0x%s\n",
-        wine_dbgstr_longlong(fsi.AvailableAllocationUnits.QuadPart),
-        wine_dbgstr_longlong(ffsi.CallerAvailableAllocationUnits.QuadPart));
 
     /* Assume file system is NTFS */
     ok(ffsi.BytesPerSector == 512, "[ffsi] BytesPerSector expected 512, got %ld\n",ffsi.BytesPerSector);
     ok(ffsi.SectorsPerAllocationUnit == 8, "[ffsi] SectorsPerAllocationUnit expected 8, got %ld\n",ffsi.SectorsPerAllocationUnit);
+
+    /* FileFsFullSizeInformationEx is supported on Windows 10 build 1809 and later */
+    res = pNtQueryVolumeInformationFile(h, &io, &ffsie, sizeof ffsie, FileFsFullSizeInformationEx);
+    if (res == STATUS_NOT_IMPLEMENTED || res == STATUS_INVALID_PARAMETER || res == STATUS_INVALID_INFO_CLASS)
+    {
+        win_skip( "FileFsFullSizeInformationEx not supported.\n" );
+        CloseHandle( h );
+        return;
+    }
+    ok(res == STATUS_SUCCESS, "cannot get attributes, res %lx\n", res);
+
+    expected = ffsie.ActualAvailableAllocationUnits + ffsie.ActualPoolUnavailableAllocationUnits
+            + ffsie.UsedAllocationUnits + ffsie.TotalReservedAllocationUnits;
+    ok(ffsie.ActualTotalAllocationUnits == expected,
+        "[ffsie] ActualTotalAllocationUnits expected 0x%s, got 0x%s\n", wine_dbgstr_longlong(expected),
+        wine_dbgstr_longlong(ffsie.ActualTotalAllocationUnits));
+    expected = ffsie.ActualTotalAllocationUnits - ffsie.UsedAllocationUnits - ffsie.TotalReservedAllocationUnits;
+    ok(ffsie.ActualAvailableAllocationUnits == expected,
+        "[ffsie] ActualAvailableAllocationUnits expected 0x%s, got 0x%s\n",
+        wine_dbgstr_longlong(expected), wine_dbgstr_longlong(ffsie.ActualAvailableAllocationUnits));
+    ok(ffsie.ActualPoolUnavailableAllocationUnits == 0,
+        "[ffsie] ActualPoolUnavailableAllocationUnits expected zero, got 0x%s\n",
+        wine_dbgstr_longlong(ffsie.ActualPoolUnavailableAllocationUnits));
+    expected = ffsie.CallerAvailableAllocationUnits + ffsie.CallerPoolUnavailableAllocationUnits
+            + ffsie.UsedAllocationUnits + ffsie.TotalReservedAllocationUnits;
+    ok(ffsie.CallerTotalAllocationUnits == expected,
+        "[ffsie] CallerTotalAllocationUnits expected 0x%s, got 0x%s\n", wine_dbgstr_longlong(expected),
+        wine_dbgstr_longlong(ffsie.CallerTotalAllocationUnits));
+    ok((LONGLONG)ffsie.CallerAvailableAllocationUnits > 0,
+        "[ffsie] CallerAvailableAllocationUnits expected positive, got 0x%s\n",
+        wine_dbgstr_longlong(ffsie.CallerAvailableAllocationUnits));
+    ok(ffsie.CallerPoolUnavailableAllocationUnits == 0,
+        "[ffsie] CallerPoolUnavailableAllocationUnits expected zero, got 0x%s\n",
+        wine_dbgstr_longlong(ffsie.CallerPoolUnavailableAllocationUnits));
+    ok((LONGLONG)ffsie.UsedAllocationUnits > 0, "[ffsie] UsedAllocationUnits expected positive, got 0x%s\n",
+            wine_dbgstr_longlong(ffsie.UsedAllocationUnits));
+    ok((LONGLONG)ffsie.TotalReservedAllocationUnits >= 0,
+        "[ffsie] TotalReservedAllocationUnits expected >= 0, got 0x%s\n",
+        wine_dbgstr_longlong(ffsie.TotalReservedAllocationUnits));
+    ok(ffsie.VolumeStorageReserveAllocationUnits <= ffsie.TotalReservedAllocationUnits,
+        "[ffsie] VolumeStorageReserveAllocationUnits expected <= 0x%s, got 0x%s\n",
+        wine_dbgstr_longlong(ffsie.TotalReservedAllocationUnits),
+        wine_dbgstr_longlong(ffsie.VolumeStorageReserveAllocationUnits));
+    ok(ffsie.AvailableCommittedAllocationUnits == 0
+            /* in win10 can be (0 - UsedAllocationUnits - TotalReservedAllocationUnits) */
+            || broken((LONGLONG)ffsie.AvailableCommittedAllocationUnits < 0),
+        "[ffsie] AvailableCommittedAllocationUnits expected zero, got 0x%s\n",
+        wine_dbgstr_longlong(ffsie.AvailableCommittedAllocationUnits));
+    ok(ffsie.PoolAvailableAllocationUnits == 0,
+        "[ffsie] PoolAvailableAllocationUnits expected zero, got 0x%s\n",
+        wine_dbgstr_longlong(ffsie.PoolAvailableAllocationUnits));
+    ok(ffsie.ActualTotalAllocationUnits == ffsi.TotalAllocationUnits.QuadPart,
+        "[ffsie] TotalAllocationUnits error ffsi:0x%s, ffsie:0x%s\n",
+        wine_dbgstr_longlong(ffsi.TotalAllocationUnits.QuadPart),
+        wine_dbgstr_longlong(ffsie.ActualTotalAllocationUnits));
+    ok(ffsie.CallerAvailableAllocationUnits == ffsi.CallerAvailableAllocationUnits.QuadPart,
+        "[ffsie] CallerAvailableAllocationUnits error ffsi:0x%s, ffsie:0x%s\n",
+        wine_dbgstr_longlong(ffsi.CallerAvailableAllocationUnits.QuadPart),
+        wine_dbgstr_longlong(ffsie.CallerAvailableAllocationUnits));
+    ok(ffsie.ActualAvailableAllocationUnits == ffsi.ActualAvailableAllocationUnits.QuadPart,
+        "[ffsie] ActualAvailableAllocationUnits error ffsi:0x%s, ffsie:0x%s\n",
+        wine_dbgstr_longlong(ffsi.ActualAvailableAllocationUnits.QuadPart),
+        wine_dbgstr_longlong(ffsie.ActualAvailableAllocationUnits));
+
+    /* Assume file system is NTFS */
+    ok(ffsie.BytesPerSector == 512, "[ffsie] BytesPerSector expected 512, got %ld\n",ffsie.BytesPerSector);
+    ok(ffsie.SectorsPerAllocationUnit == 8, "[ffsie] SectorsPerAllocationUnit expected 8, got %ld\n",ffsie.SectorsPerAllocationUnit);
 
     CloseHandle( h );
 }
@@ -4092,21 +4210,22 @@ static void _test_completion_flags(unsigned line, HANDLE handle, DWORD expected_
     ok_(__FILE__,line)(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %08lx\n", status);
     ok_(__FILE__,line)(io.Status == STATUS_SUCCESS, "Status = %lx\n", io.Status);
     ok_(__FILE__,line)(io.Information == sizeof(info), "Information = %Iu\n", io.Information);
-    /* FILE_SKIP_SET_USER_EVENT_ON_FAST_IO is not supported on win2k3 */
-    ok_(__FILE__,line)((info.Flags & ~FILE_SKIP_SET_USER_EVENT_ON_FAST_IO) == expected_flags,
-                       "got %08lx\n", info.Flags);
+    ok_(__FILE__,line)((info.Flags & expected_flags) == expected_flags, "got %08lx\n", info.Flags);
 }
 
 static void test_file_completion_information(void)
 {
     DECLSPEC_ALIGN(TEST_OVERLAPPED_READ_SIZE) static unsigned char aligned_buf[TEST_OVERLAPPED_READ_SIZE];
+    static const char pipe_name[] = "\\\\.\\pipe\\test_file_completion_information";
     static const char buf[] = "testdata";
     FILE_IO_COMPLETION_NOTIFICATION_INFORMATION info;
+    HANDLE port, h, completion, server, client;
+    FILE_COMPLETION_INFORMATION fci;
+    BYTE recv_buf[TEST_BUF_LEN];
+    DWORD num_bytes, flag;
     OVERLAPPED ov, *pov;
     IO_STATUS_BLOCK io;
     NTSTATUS status;
-    DWORD num_bytes;
-    HANDLE port, h;
     ULONG_PTR key;
     BOOL ret;
     int i;
@@ -4280,6 +4399,51 @@ static void test_file_completion_information(void)
     CloseHandle(ov.hEvent);
     CloseHandle(port);
     CloseHandle(h);
+
+    /* Test that setting FileCompletionInformation makes an overlapped file signaled unless FILE_SKIP_SET_EVENT_ON_HANDLE is set */
+    for (flag = 0; flag <= FILE_SKIP_SET_USER_EVENT_ON_FAST_IO; flag = flag ? flag << 1 : 1)
+    {
+        winetest_push_context("%#lx", flag);
+
+        status = pNtCreateIoCompletion(&completion, IO_COMPLETION_ALL_ACCESS, NULL, 0);
+        ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+
+        server = CreateNamedPipeA(pipe_name, PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+                                  PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT, 4, 1024, 1024,
+                                  1000, NULL);
+        ok(server != INVALID_HANDLE_VALUE, "CreateNamedPipe failed, error %lu.\n", GetLastError());
+        client = CreateFileA(pipe_name, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+                             FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED, NULL);
+        ok(client != INVALID_HANDLE_VALUE, "CreateFile failed, error %lu.\n", GetLastError());
+
+        memset(&ov, 0, sizeof(ov));
+        ReadFile(server, recv_buf, TEST_BUF_LEN, &num_bytes, &ov);
+        ok(!is_signaled(server), "Expected not signaled.\n");
+
+        info.Flags = flag;
+        status = pNtSetInformationFile(server, &io, &info, sizeof(info), FileIoCompletionNotificationInformation);
+        ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+        test_completion_flags(server, flag);
+
+        fci.CompletionPort = completion;
+        fci.CompletionKey = CKEY_FIRST;
+        io.Status = 0xdeadbeef;
+        status = pNtSetInformationFile(server, &io, &fci, sizeof(fci), FileCompletionInformation);
+        ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+        ok(io.Status == STATUS_SUCCESS, "Got unexpected iosb.Status %#lx.\n", io.Status);
+        if (flag == FILE_SKIP_SET_EVENT_ON_HANDLE)
+            ok(!is_signaled(server), "Expected not signaled.\n");
+        else
+            ok(is_signaled(server), "Expected signaled.\n");
+
+        status = pNtClose(client);
+        ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+        status = pNtClose(server);
+        ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+        status = pNtClose(completion);
+        ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+        winetest_pop_context();
+    }
 }
 
 static void test_file_id_information(void)
@@ -6440,6 +6604,62 @@ cleanup:
     RemoveDirectoryW(path);
 }
 
+static void test_set_io_completion_ex(void)
+{
+    HANDLE completion, completion_reserve, apc_reserve;
+    LARGE_INTEGER timeout = {{0}};
+    IO_STATUS_BLOCK iosb;
+    ULONG_PTR key, value;
+    NTSTATUS status;
+    SIZE_T size = 3;
+
+    if (!pNtSetIoCompletionEx || !pNtAllocateReserveObject)
+    {
+        win_skip("NtSetIoCompletionEx() or NtAllocateReserveObject() is unavailable.\n");
+        return;
+    }
+
+    if (sizeof(size) > 4) size |= (ULONGLONG)0x12345678 << 32;
+
+    status = pNtCreateIoCompletion(&completion, IO_COMPLETION_ALL_ACCESS, NULL, 0);
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+    status = pNtAllocateReserveObject(&completion_reserve, NULL, MemoryReserveObjectTypeIoCompletion);
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+    status = pNtAllocateReserveObject(&apc_reserve, NULL, MemoryReserveObjectTypeUserApc);
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+
+    /* Parameter checks */
+    status = pNtSetIoCompletionEx(NULL, completion_reserve, CKEY_FIRST, CVALUE_FIRST, STATUS_INVALID_DEVICE_REQUEST, size);
+    ok(status == STATUS_INVALID_HANDLE, "Got unexpected status %#lx.\n", status);
+
+    status = pNtSetIoCompletionEx(INVALID_HANDLE_VALUE, completion_reserve, CKEY_FIRST, CVALUE_FIRST, STATUS_INVALID_DEVICE_REQUEST, size);
+    ok(status == STATUS_OBJECT_TYPE_MISMATCH, "Got unexpected status %#lx.\n", status);
+
+    status = pNtSetIoCompletionEx(completion, NULL, CKEY_FIRST, CVALUE_FIRST, STATUS_INVALID_DEVICE_REQUEST, size);
+    ok(status == STATUS_INVALID_HANDLE, "Got unexpected status %#lx.\n", status);
+
+    status = pNtSetIoCompletionEx(completion, INVALID_HANDLE_VALUE, CKEY_FIRST, CVALUE_FIRST, STATUS_INVALID_DEVICE_REQUEST, size);
+    ok(status == STATUS_OBJECT_TYPE_MISMATCH, "Got unexpected status %#lx.\n", status);
+
+    status = pNtSetIoCompletionEx(completion, apc_reserve, CKEY_FIRST, CVALUE_FIRST, STATUS_INVALID_DEVICE_REQUEST, size);
+    ok(status == STATUS_OBJECT_TYPE_MISMATCH, "Got unexpected status %#lx.\n", status);
+
+    /* Normal call */
+    status = pNtSetIoCompletionEx(completion, completion_reserve, CKEY_FIRST, CVALUE_FIRST, STATUS_INVALID_DEVICE_REQUEST, size);
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+
+    status = pNtRemoveIoCompletion(completion, &key, &value, &iosb, &timeout);
+    ok(status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status);
+    ok(key == CKEY_FIRST, "Invalid completion key: %#Ix\n", key);
+    ok(iosb.Information == size, "Invalid iosb.Information: %Iu\n", iosb.Information);
+    ok(iosb.Status == STATUS_INVALID_DEVICE_REQUEST, "Invalid iosb.Status: %#lx\n", iosb.Status);
+    ok(value == CVALUE_FIRST, "Invalid completion value: %#Ix\n", value);
+
+    CloseHandle(apc_reserve);
+    CloseHandle(completion_reserve);
+    CloseHandle(completion);
+}
+
 START_TEST(file)
 {
     HMODULE hkernel32 = GetModuleHandleA("kernel32.dll");
@@ -6457,6 +6677,7 @@ START_TEST(file)
     pRtlInitUnicodeString   = (void *)GetProcAddress(hntdll, "RtlInitUnicodeString");
     pRtlDosPathNameToNtPathName_U = (void *)GetProcAddress(hntdll, "RtlDosPathNameToNtPathName_U");
     pRtlWow64EnableFsRedirectionEx = (void *)GetProcAddress(hntdll, "RtlWow64EnableFsRedirectionEx");
+    pNtAllocateReserveObject= (void *)GetProcAddress(hntdll, "NtAllocateReserveObject");
     pNtCreateMailslotFile   = (void *)GetProcAddress(hntdll, "NtCreateMailslotFile");
     pNtCreateFile           = (void *)GetProcAddress(hntdll, "NtCreateFile");
     pNtOpenFile             = (void *)GetProcAddress(hntdll, "NtOpenFile");
@@ -6473,6 +6694,7 @@ START_TEST(file)
     pNtRemoveIoCompletion   = (void *)GetProcAddress(hntdll, "NtRemoveIoCompletion");
     pNtRemoveIoCompletionEx = (void *)GetProcAddress(hntdll, "NtRemoveIoCompletionEx");
     pNtSetIoCompletion      = (void *)GetProcAddress(hntdll, "NtSetIoCompletion");
+    pNtSetIoCompletionEx    = (void *)GetProcAddress(hntdll, "NtSetIoCompletionEx");
     pNtSetInformationFile   = (void *)GetProcAddress(hntdll, "NtSetInformationFile");
     pNtQueryAttributesFile  = (void *)GetProcAddress(hntdll, "NtQueryAttributesFile");
     pNtQueryInformationFile = (void *)GetProcAddress(hntdll, "NtQueryInformationFile");
@@ -6491,6 +6713,7 @@ START_TEST(file)
     append_file_test();
     nt_mailslot_test();
     test_set_io_completion();
+    test_set_io_completion_ex();
     test_file_io_completion();
     test_file_basic_information();
     test_file_all_information();

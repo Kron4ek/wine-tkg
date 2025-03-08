@@ -29,6 +29,7 @@
 #include <iphlpapi.h>
 #include <ws2tcpip.h>
 #include <wsipx.h>
+#include <afunix.h>
 #include <wsnwlink.h>
 #include <mswsock.h>
 #include <mstcpip.h>
@@ -4012,8 +4013,11 @@ static void test_WSAConnectByName(void)
     ret = WSAConnectByNameA(s, "winehq.org", "https", NULL, NULL, NULL, NULL, NULL, NULL);
     err = WSAGetLastError();
     ok(!ret, "WSAConnectByNameA should have failed\n");
-    ok(err == WSAEINVAL || err == WSAEFAULT, "expected error %u (WSAEINVAL) or %u (WSAEFAULT), got %u\n",
-       WSAEINVAL, WSAEFAULT, err); /* WSAEFAULT win10 >= 1809 */
+    ok(err == WSAEINVAL ||
+       err == WSAEFAULT ||   /* win10 >= 1809 */
+       err == WSAEOPNOTSUPP, /* win7, win8, win10 <= 1507 */
+       "expected error %u (WSAEINVAL) or %u (WSAEFAULT) or %u (WSAEOPNOTSUPP), got %u\n",
+       WSAEINVAL, WSAEFAULT, WSAEOPNOTSUPP, err);
     closesocket(s);
 
     /* Passing non-null as the reserved parameter */
@@ -6883,9 +6887,9 @@ static void test_write_events(struct event_test_ctx *ctx)
 
     if (!broken(1))
     {
-        /* Windows will never send less than buffer_size bytes here, but Linux
-         * may do a short write. */
-        while ((ret = send(server, buffer, buffer_size, 0)) > 0);
+        /* Windows will never send less than buffer_size bytes here. */
+        while ((ret = send(server, buffer, buffer_size, 0)) > 0)
+            ok(ret == buffer_size, "got %d.\n", ret);
         ok(ret == -1, "got %d\n", ret);
         ok(WSAGetLastError() == WSAEWOULDBLOCK, "got error %u\n", WSAGetLastError());
 
@@ -14263,6 +14267,406 @@ static void test_broadcast(void)
     closesocket(s);
 }
 
+struct test_send_buffering_data
+{
+    int buffer_size;
+    int sent_size;
+    SOCKET server;
+    char *buffer;
+};
+
+static DWORD WINAPI test_send_buffering_thread(void *arg)
+{
+    struct test_send_buffering_data *d = arg;
+    int ret;
+
+    d->sent_size = 0;
+    while ((ret = send(d->server, d->buffer, d->buffer_size, 0)) > 0)
+    {
+        ok(ret == d->buffer_size, "got %d.\n", ret);
+        d->sent_size += ret;
+    }
+    ok(ret == -1, "got %d\n", ret);
+    ok(WSAGetLastError() == WSAEWOULDBLOCK, "got error %u.\n", WSAGetLastError());
+    ok(d->sent_size, "got 0.\n");
+    ret = CancelIoEx((HANDLE)d->server, NULL);
+    ok(!ret && GetLastError() == ERROR_NOT_FOUND, "got ret %d, error %lu.\n", ret, GetLastError());
+    ret = CancelIo((HANDLE)d->server);
+    ok(ret, "got error %lu.\n", GetLastError());
+    shutdown(d->server, SD_BOTH);
+    closesocket(d->server);
+    return 0;
+}
+
+static void test_send_buffering(void)
+{
+    static const char test_data[] = "abcdefg01234567";
+
+    struct test_send_buffering_data d;
+    int ret, recv_size, i;
+    SOCKET client;
+    HANDLE thread;
+
+    d.buffer_size = 1024 * 1024 * 50;
+    d.buffer = malloc(d.buffer_size);
+
+    for (i = 0; i < d.buffer_size; ++i)
+        d.buffer[i] = test_data[i % sizeof(test_data)];
+
+    tcp_socketpair(&client, &d.server);
+    set_blocking(client, FALSE);
+    set_blocking(d.server, FALSE);
+
+    d.sent_size = 0;
+    while ((ret = send(d.server, d.buffer, d.buffer_size, 0)) > 0)
+    {
+        ok(ret == d.buffer_size, "got %d.\n", ret);
+        d.sent_size += ret;
+    }
+    ok(ret == -1, "got %d\n", ret);
+    ok(WSAGetLastError() == WSAEWOULDBLOCK, "got error %u.\n", WSAGetLastError());
+    ok(d.sent_size, "got 0.\n");
+    closesocket(d.server);
+
+    recv_size = 0;
+    while ((ret = recv(client, d.buffer, d.buffer_size, 0)) > 0 || WSAGetLastError() == WSAEWOULDBLOCK)
+    {
+        if (ret < 0)
+            continue;
+        for (i = 0; i < ret; ++i)
+        {
+            if (d.buffer[i] != test_data[(recv_size + i) % sizeof(test_data)])
+                break;
+        }
+        ok(i == ret, "data mismatch.\n");
+        recv_size += ret;
+        ok(recv_size <= d.sent_size, "got ret %d, recv_size %d, sent_size %d.\n", ret, recv_size, d.sent_size);
+    }
+    ok(!ret && !WSAGetLastError(), "got ret %d, error %u.\n", ret, WSAGetLastError());
+    ok(recv_size == d.sent_size, "got %d, expected %d.\n", recv_size, d.sent_size);
+    closesocket(client);
+
+    /* Test with the other thread which terminates before the data is actually sent. */
+    for (i = 0; i < d.buffer_size; ++i)
+        d.buffer[i] = test_data[i % sizeof(test_data)];
+
+    tcp_socketpair(&client, &d.server);
+    set_blocking(client, FALSE);
+    set_blocking(d.server, FALSE);
+
+    thread = CreateThread(NULL, 0, test_send_buffering_thread, &d, 0, NULL);
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+
+    recv_size = 0;
+    while ((ret = recv(client, d.buffer, d.buffer_size, 0)) > 0 || WSAGetLastError() == WSAEWOULDBLOCK)
+    {
+        if (ret < 0)
+            continue;
+        for (i = 0; i < ret; ++i)
+        {
+            if (d.buffer[i] != test_data[(recv_size + i) % sizeof(test_data)])
+                break;
+        }
+        ok(i == ret, "data mismatch.\n");
+        recv_size += ret;
+        ok(recv_size <= d.sent_size, "got ret %d, recv_size %d, sent_size %d.\n", ret, recv_size, d.sent_size);
+    }
+    ok(!ret && !WSAGetLastError(), "got ret %d, error %u.\n", ret, WSAGetLastError());
+    ok(recv_size == d.sent_size, "got %d, expected %d.\n", recv_size, d.sent_size);
+    closesocket(client);
+}
+
+static void test_afunix(void)
+{
+    SOCKET listener, client, server = 0;
+    SOCKADDR_UN addr = { AF_UNIX, "test_afunix.sock" };
+    char serverBuf[] = "ws2_32/AF_UNIX socket test";
+    char clientBuf[sizeof(serverBuf)] = { 0 };
+
+    char paths[4][sizeof(addr.sun_path)] = { "./tmp.sock", "../tmp.sock" };
+    char dosPath[sizeof(addr.sun_path)];
+    WCHAR dosWidePath[sizeof(addr.sun_path)];
+    UNICODE_STRING ntPath = { 0 };
+    SOCKADDR_UN outAddr = { 0 };
+    int outAddrSize = sizeof(outAddr);
+    SOCKADDR_UN truncatedAddr = { 0 };
+    ULONG zero = 0;
+    ULONG one = 1;
+    int ret;
+
+    /* Test connection and send/recv */
+    listener = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listener == INVALID_SOCKET && GetLastError() == WSAEAFNOSUPPORT)
+    {
+        win_skip("AF_UNIX sockets are unsupported, skipping...\n");
+        return;
+    }
+
+    ok(listener != INVALID_SOCKET, "Could not create Unix socket: %lu\n",
+        GetLastError());
+
+    ret = bind(listener, (SOCKADDR *)&addr, 0);
+    ok(ret && GetLastError() == WSAEFAULT, "Incorrect error: %lu\n", GetLastError());
+    ret = bind(listener, (SOCKADDR *)&addr, 2);
+    ok(!ret, "Could not bind Unix socket: %lu\n", GetLastError());
+    ret = listen(listener, 1);
+    ok(!ret, "Could not listen on Unix socket: %lu\n", GetLastError());
+    closesocket(listener);
+
+    listener = socket(AF_UNIX, SOCK_STREAM, 0);
+    ok(listener != INVALID_SOCKET, "Could not create Unix socket: %lu\n",
+        GetLastError());
+    ret = bind(listener, (SOCKADDR *)&addr, 3);
+    ok(!ret, "Could not bind Unix socket: %lu\n", GetLastError());
+
+    memcpy(&truncatedAddr, &addr, 3);
+    ret = getsockname(listener, (SOCKADDR *)&outAddr, &outAddrSize);
+    ok(!ret, "Could not get info on Unix socket: %lu\n", GetLastError());
+    ok(!memcmp(truncatedAddr.sun_path, outAddr.sun_path, sizeof(addr.sun_path)),
+        "getsockname returned incorrect path '%s' for provided path '%s'\n",
+        outAddr.sun_path,
+        truncatedAddr.sun_path);
+    ok(outAddrSize == sizeof(outAddr.sun_family) + strlen(outAddr.sun_path) + 1,
+        "getsockname returned incorrect size '%d' for provided path '%s'\n",
+        outAddrSize,
+        truncatedAddr.sun_path);
+    closesocket(listener);
+    ret = DeleteFileA(truncatedAddr.sun_path);
+    ok(ret, "DeleteFileA on socket file failed: %lu\n", GetLastError());
+    ok(GetFileAttributesA(truncatedAddr.sun_path) == INVALID_FILE_ATTRIBUTES &&
+        GetLastError() == ERROR_FILE_NOT_FOUND,
+        "Failed to delete socket file at path '%s'\n",
+        truncatedAddr.sun_path);
+
+    listener = socket(AF_UNIX, SOCK_STREAM, 0);
+    ok(listener != INVALID_SOCKET, "Could not create Unix socket: %lu\n",
+        GetLastError());
+
+    ret = bind(listener, (SOCKADDR *)&addr, sizeof(SOCKADDR_UN));
+    ok(!ret, "Could not bind Unix socket: %lu\n", GetLastError());
+
+    ret = listen(listener, 1);
+    ok(!ret, "Could not listen on Unix socket: %lu\n", GetLastError());
+
+    client = socket(AF_UNIX, SOCK_STREAM, 0);
+    ok(client != INVALID_SOCKET, "Failed to create second Unix socket: %lu\n",
+        GetLastError());
+
+    ret = ioctlsocket(client, FIONBIO, &one);
+    ok(!ret, "Could not set AF_UNIX socket to nonblocking: %lu; skipping connection\n", GetLastError());
+    if (!ret)
+    {
+        ret = connect(client, (SOCKADDR *)&addr, sizeof(addr));
+        ok(!ret || (ret == SOCKET_ERROR && GetLastError() == WSAEWOULDBLOCK),
+            "Error when connecting to Unix socket: %lu\n",
+            GetLastError());
+        server = accept(listener, NULL, NULL);
+        ok(server != INVALID_SOCKET, "Could not accept Unix socket connection: %lu\n",
+            GetLastError());
+        ret = ioctlsocket(client, FIONBIO, &zero);
+        ok(!ret, "Could not set AF_UNIX socket to blocking: %lu\n", GetLastError());
+    }
+
+    ret = send(server, serverBuf, sizeof(serverBuf), 0);
+    ok(ret == sizeof(serverBuf), "Incorrect return value from send: %d\n", ret);
+    ret = recv(client, clientBuf, sizeof(serverBuf), 0);
+    ok(ret == sizeof(serverBuf), "Incorrect return value from recv: %d\n", ret);
+    ok(!memcmp(serverBuf, clientBuf, sizeof(serverBuf)), "Data mismatch over Unix socket\n");
+
+    memset(clientBuf, 0, sizeof(clientBuf));
+
+    ret = sendto(server, serverBuf, sizeof(serverBuf), 0, NULL, 0);
+    ok(ret == sizeof(serverBuf), "Incorrect return value from sendto: %d\n", ret);
+    ret = recvfrom(client, clientBuf, sizeof(serverBuf), 0, NULL, 0);
+    ok(ret == sizeof(serverBuf), "Incorrect return value from recvfrom: %d\n", ret);
+    ok(!memcmp(serverBuf, clientBuf, sizeof(serverBuf)), "Data mismatch over Unix socket\n");
+
+    memset(serverBuf, 0, sizeof(serverBuf));
+
+    ret = send(client, clientBuf, sizeof(clientBuf), 0);
+    ok(ret == sizeof(clientBuf), "Incorrect return value from send: %d\n", ret);
+    ret = recv(server, serverBuf, sizeof(clientBuf), 0);
+    ok(ret == sizeof(serverBuf), "Incorrect return value from recv: %d\n", ret);
+    ok(!memcmp(serverBuf, clientBuf, sizeof(clientBuf)), "Data mismatch over Unix socket\n");
+
+    memset(serverBuf, 0, sizeof(serverBuf));
+
+    ret = sendto(client, clientBuf, sizeof(clientBuf), 0, NULL, 0);
+    ok(ret == sizeof(clientBuf), "Incorrect return value from sendto: %d\n", ret);
+    ret = recvfrom(server, serverBuf, sizeof(clientBuf), 0, NULL, 0);
+    ok(ret == sizeof(serverBuf), "Incorrect return value from recvfrom: %d\n", ret);
+    ok(!memcmp(serverBuf, clientBuf, sizeof(clientBuf)), "Data mismatch over Unix socket\n");
+
+    closesocket(listener);
+    closesocket(client);
+    closesocket(server);
+
+    /* Test socket file deletion */
+    ret = DeleteFileA("test_afunix.sock");
+    ok(ret, "DeleteFileA on socket file failed: %lu\n", GetLastError());
+    ok(GetFileAttributesA("test_afunix.sock") == INVALID_FILE_ATTRIBUTES &&
+        GetLastError() == ERROR_FILE_NOT_FOUND,
+        "Failed to delete socket file at path '%s'\n",
+        addr.sun_path);
+
+    /* Test failure modes */
+    listener = socket(AF_UNIX, SOCK_STREAM, 0);
+    ok(listener != INVALID_SOCKET, "Could not create Unix socket: %lu\n",
+        GetLastError());
+    ret = bind(listener, (SOCKADDR *)&addr, sizeof(SOCKADDR_UN));
+    ok(!ret, "Could not bind Unix socket to path '%s': %lu\n", addr.sun_path, GetLastError());
+    closesocket(listener);
+    listener = socket(AF_UNIX, SOCK_STREAM, 0);
+    ok(listener != INVALID_SOCKET, "Could not create Unix socket: %lu\n",
+        GetLastError());
+    ret = bind(listener, (SOCKADDR *)&addr, sizeof(SOCKADDR_UN));
+    ok(ret && GetLastError() == WSAEADDRINUSE,
+        "Bound Unix socket to path '%s' despite existing socket file: %lu\n",
+        addr.sun_path,
+        GetLastError());
+    closesocket(listener);
+    ret = DeleteFileA(addr.sun_path);
+    ok(ret, "DeleteFileA on socket file failed: %lu\n", GetLastError());
+    ok(GetFileAttributesA("test_afunix.sock") == INVALID_FILE_ATTRIBUTES &&
+        GetLastError() == ERROR_FILE_NOT_FOUND,
+        "Failed to delete socket file at path '%s'\n",
+        addr.sun_path);
+
+    /* Test different path types (relative, NT, etc.) */
+    GetTempPathA(sizeof(paths[0]) - 1, paths[2]);
+    strcat(paths[2], "tmp.sock");
+    MultiByteToWideChar(CP_ACP, 0, paths[2], -1, dosWidePath, sizeof(dosPath));
+    RtlDosPathNameToNtPathName_U(dosWidePath, &ntPath, NULL, NULL);
+    RtlUnicodeToMultiByteN(paths[3], sizeof(addr.sun_path) - 1, NULL, ntPath.Buffer, ntPath.Length);
+
+    for (int i = 0; i < sizeof(paths) / sizeof(paths[0]); i++)
+    {
+        memcpy(addr.sun_path, paths[i], sizeof(paths[i]));
+
+        listener = socket(AF_UNIX, SOCK_STREAM, 0);
+        ok(listener != INVALID_SOCKET, "Could not create Unix socket: %lu\n",
+            GetLastError());
+
+        ret = bind(listener, (SOCKADDR *)&addr, sizeof(SOCKADDR_UN));
+        ok(!ret, "Could not bind Unix socket to path '%s': %lu\n", addr.sun_path, GetLastError());
+
+        ret = listen(listener, 1);
+        ok(!ret, "Could not listen on Unix socket: %lu\n", GetLastError());
+
+        client = socket(AF_UNIX, SOCK_STREAM, 0);
+        ok(client != INVALID_SOCKET, "Failed to create second Unix socket: %lu\n",
+            GetLastError());
+
+        ret = ioctlsocket(client, FIONBIO, &one);
+        ok(!ret, "Could not set AF_UNIX socket to nonblocking: %lu; skipping connection\n", GetLastError());
+        if (!ret)
+        {
+            ret = connect(client, (SOCKADDR *)&addr, sizeof(addr));
+            ok(!ret || (ret == SOCKET_ERROR && GetLastError() == WSAEWOULDBLOCK),
+                "Error when connecting to Unix socket: %lu\n",
+                GetLastError());
+            server = accept(listener, NULL, NULL);
+            ok(server != INVALID_SOCKET, "Could not accept Unix socket connection: %lu\n",
+                GetLastError());
+            ret = ioctlsocket(client, FIONBIO, &zero);
+            ok(!ret, "Could not set AF_UNIX socket to blocking: %lu\n", GetLastError());
+        }
+
+        memset(&outAddr, 0, sizeof(outAddr));
+        outAddrSize = sizeof(outAddr);
+        ret = getsockname(listener, (SOCKADDR *)&outAddr, &outAddrSize);
+        ok(!ret, "Could not get info on Unix socket: %lu\n", GetLastError());
+        ok(!memcmp(addr.sun_path, outAddr.sun_path, sizeof(addr.sun_path)),
+            "getsockname returned incorrect path '%s' for provided path '%s'\n",
+            outAddr.sun_path,
+            addr.sun_path);
+        ok(outAddrSize == sizeof(outAddr.sun_family) + strlen(outAddr.sun_path) + 1,
+            "getsockname returned incorrect size '%d' for provided path '%s'\n",
+            outAddrSize,
+            addr.sun_path);
+
+        memset(&outAddr, 0, sizeof(outAddr));
+        outAddrSize = sizeof(outAddr);
+        ret = getsockname(client, (SOCKADDR *)&outAddr, &outAddrSize);
+        ok(!ret, "Could not get info on Unix socket: %lu\n", GetLastError());
+        ok(!memcmp((char[108]){0}, outAddr.sun_path, sizeof(addr.sun_path)),
+            "getsockname returned incorrect path '%s' for provided path '%s'\n",
+            outAddr.sun_path,
+            addr.sun_path);
+        ok(outAddrSize == sizeof(outAddr),
+            "getsockname returned incorrect size '%d' for provided path '%s'\n",
+            outAddrSize,
+            addr.sun_path);
+
+        memset(&outAddr, 0, sizeof(outAddr));
+        outAddrSize = sizeof(outAddr);
+        ret = getsockname(server, (SOCKADDR *)&outAddr, &outAddrSize);
+        ok(!ret, "Could not get info on Unix socket: %lu\n", GetLastError());
+        ok(!memcmp(addr.sun_path, outAddr.sun_path, sizeof(addr.sun_path)),
+            "getsockname returned incorrect path '%s' for provided path '%s'\n",
+            outAddr.sun_path,
+            addr.sun_path);
+        ok(outAddrSize == sizeof(outAddr.sun_family) + strlen(outAddr.sun_path) + 1,
+            "getsockname returned incorrect size '%d' for provided path '%s'\n",
+            outAddrSize,
+            addr.sun_path);
+
+        memset(&outAddr, 0, sizeof(outAddr));
+        outAddrSize = sizeof(outAddr);
+        ret = getpeername(listener, (SOCKADDR *)&outAddr, &outAddrSize);
+        ok(ret == -1, "Got info on Unix socket: %lu\n", GetLastError());
+        ok(GetLastError() == WSAENOTCONN,
+            "Incorrect error returned from getpeername on Unix socket: %ld\n",
+            GetLastError());
+        ok(!memcmp((char[108]){0}, outAddr.sun_path, sizeof(addr.sun_path)),
+            "getpeername returned incorrect path '%s' for provided path '%s'\n",
+            outAddr.sun_path,
+            addr.sun_path);
+        ok(outAddrSize == sizeof(outAddr),
+            "getpeername returned incorrect size '%d' for provided path '%s'\n",
+            outAddrSize,
+            addr.sun_path);
+
+        memset(&outAddr, 0, sizeof(outAddr));
+        outAddrSize = sizeof(outAddr);
+        ret = getpeername(client, (SOCKADDR *)&outAddr, &outAddrSize);
+        ok(!ret, "Could not get info on Unix socket: %lu\n", GetLastError());
+        ok(!memcmp(addr.sun_path, outAddr.sun_path, sizeof(addr.sun_path)),
+            "getpeername returned incorrect path '%s' for provided path '%s'\n",
+            outAddr.sun_path,
+            addr.sun_path);
+        ok(outAddrSize == sizeof(outAddr),
+            "getpeername returned incorrect size '%d' for provided path '%s'\n",
+            outAddrSize,
+            addr.sun_path);
+
+        memset(&outAddr, 0, sizeof(outAddr));
+        outAddrSize = sizeof(outAddr);
+        ret = getpeername(server, (SOCKADDR *)&outAddr, &outAddrSize);
+        ok(!ret, "Could not get info on Unix socket: %lu\n", GetLastError());
+        ok(!memcmp((char[108]){0}, outAddr.sun_path, sizeof(addr.sun_path)),
+            "getpeername returned incorrect path '%s' for provided path '%s'\n",
+            outAddr.sun_path,
+            addr.sun_path);
+        ok(outAddrSize == sizeof(outAddr),
+            "getpeername returned incorrect size '%d' for provided path '%s'\n",
+            outAddrSize,
+            addr.sun_path);
+
+        closesocket(listener);
+        closesocket(client);
+        closesocket(server);
+
+        ret = DeleteFileA(addr.sun_path);
+        ok(ret, "DeleteFileA on socket file failed: %lu\n", GetLastError());
+        ok(GetFileAttributesA(addr.sun_path) == INVALID_FILE_ATTRIBUTES &&
+            GetLastError() == ERROR_FILE_NOT_FOUND,
+            "Failed to delete socket file at path '%s'\n",
+            addr.sun_path);
+    }
+}
+
 START_TEST( sock )
 {
     int i;
@@ -14346,6 +14750,8 @@ START_TEST( sock )
     test_connect_udp();
     test_tcp_sendto_recvfrom();
     test_broadcast();
+    test_send_buffering();
+    test_afunix();
 
     /* There is apparently an obscure interaction between this test and
      * test_WSAGetOverlappedResult().

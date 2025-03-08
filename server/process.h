@@ -85,8 +85,8 @@ struct process
     const struct rawinput_device *rawinput_kbd;   /* rawinput keyboard device, if any */
     struct list          rawinput_entry;  /* entry in the rawinput process list */
     struct list          kernel_object;   /* list of kernel object pointers */
-    pe_image_info_t      image_info;      /* main exe image info */
-    struct fast_sync    *fast_sync;       /* fast synchronization object */
+    struct pe_image_info image_info;      /* main exe image info */
+    struct inproc_sync  *inproc_sync;     /* in-process synchronization object */
 };
 
 /* process functions */
@@ -94,7 +94,8 @@ struct process
 extern unsigned int alloc_ptid( void *ptr );
 extern void free_ptid( unsigned int id );
 extern void *get_ptid_entry( unsigned int id );
-extern struct process *create_process( int fd, struct process *parent, unsigned int flags, const startup_info_t *info,
+extern struct process *create_process( int fd, struct process *parent, unsigned int flags,
+                                       const struct startup_info_data *info,
                                        const struct security_descriptor *sd, const obj_handle_t *handles,
                                        unsigned int handle_count, struct token *token );
 extern data_size_t get_process_startup_info_size( struct process *process );
@@ -116,6 +117,7 @@ extern void kill_process( struct process *process, int violent_death );
 extern void kill_console_processes( struct thread *renderer, int exit_code );
 extern void detach_debugged_processes( struct debug_obj *debug_obj, int exit_code );
 extern void enum_processes( int (*cb)(struct process*, void*), void *user);
+extern void set_process_priority( struct process *process, int priority );
 
 /* console functions */
 extern struct thread *console_get_renderer( struct console *console );

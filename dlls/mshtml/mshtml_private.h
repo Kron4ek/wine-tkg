@@ -299,9 +299,12 @@ typedef struct ScriptHost ScriptHost;
 
 #define PRIVATE_TID_LIST \
     XIID(IWineDOMTokenList) \
+    XIID(IWineHTMLCharacterData) \
+    XIID(IWineHTMLDOMNodePrivate) \
     XIID(IWineHTMLElementPrivate) \
     XIID(IWineHTMLWindowPrivate) \
     XIID(IWineHTMLWindowCompatPrivate) \
+    XIID(IWineCSSProperties) \
     XIID(IWinePageTransitionEvent) \
     XIID(IWineXMLHttpRequestPrivate) \
     XIID(IWineMSHTMLConsole) \
@@ -349,6 +352,7 @@ typedef struct dispex_dynamic_data_t dispex_dynamic_data_t;
 
 typedef struct DispatchEx DispatchEx;
 typedef struct nsCycleCollectionTraversalCallback nsCycleCollectionTraversalCallback;
+typedef struct dispex_static_data_t dispex_static_data_t;
 
 typedef struct {
     UINT_PTR x;
@@ -400,10 +404,13 @@ typedef struct {
     HRESULT (*disp_invoke)(DispatchEx*,DISPID,LCID,WORD,DISPPARAMS*,VARIANT*,EXCEPINFO*,IServiceProvider*);
 
     /* Used by objects that want to delay their compat mode initialization until actually needed */
-    HTMLInnerWindow *(*get_script_global)(DispatchEx*);
+    HTMLInnerWindow *(*get_script_global)(DispatchEx*,dispex_static_data_t**);
 
     /* Used by objects that want to populate some dynamic props on initialization */
     HRESULT (*populate_props)(DispatchEx*);
+
+    /* Used by objects that want to return a custom name instead of the one in the dispex static data */
+    const char *(*get_name)(DispatchEx*);
 } dispex_static_data_vtbl_t;
 
 #define ALL_PROTOTYPES                     \
@@ -505,7 +512,7 @@ typedef enum {
     PROT_LAST,
 } prototype_id_t;
 
-typedef struct {
+struct dispex_static_data_t {
     const char *name;
     const dispex_static_data_vtbl_t *vtbl;
     const tid_t disp_tid;
@@ -522,7 +529,7 @@ typedef struct {
     compat_mode_t min_compat_mode;
     compat_mode_t max_compat_mode;
     char prototype_name[64];
-} dispex_static_data_t;
+};
 
 #define X(name) extern dispex_static_data_t name ## _dispex;
 ALL_PROTOTYPES
@@ -621,6 +628,7 @@ void release_typelib(void);
 HRESULT get_class_typeinfo(const CLSID*,ITypeInfo**);
 const void *dispex_get_vtbl(DispatchEx*);
 void dispex_info_add_interface(dispex_data_t*,tid_t,const dispex_hook_t*);
+void dispex_info_add_dispids(dispex_data_t*,tid_t,const DISPID*);
 compat_mode_t dispex_compat_mode(DispatchEx*);
 HRESULT dispex_to_string(DispatchEx*,BSTR*);
 HRESULT dispex_call_builtin(DispatchEx *dispex, DISPID id, DISPPARAMS *dp,
@@ -629,8 +637,9 @@ HRESULT dispex_prop_get(DispatchEx *dispex, DISPID id, LCID lcid, VARIANT *r, EX
                         IServiceProvider *caller);
 HRESULT dispex_prop_put(DispatchEx *dispex, DISPID id, LCID lcid, VARIANT *v, EXCEPINFO *ei,
                         IServiceProvider *caller);
+HRESULT dispex_get_chain_builtin_id(DispatchEx *dispex, const WCHAR *name, DWORD flags, DISPID *pid);
 HRESULT dispex_get_id(DispatchEx *dispex, const WCHAR *name, DWORD flags, DISPID *pid);
-HRESULT dispex_next_id(DispatchEx *dispex, DISPID id, DISPID *ret);
+HRESULT dispex_next_id(DispatchEx *dispex, DISPID id, BOOL enum_all_own_props, DISPID *ret);
 HRESULT dispex_prop_name(DispatchEx *dispex, DISPID id, BSTR *ret);
 HRESULT dispex_define_property(DispatchEx *dispex, const WCHAR *name, DWORD flags, VARIANT *v, DISPID *id);
 HRESULT dispex_index_prop_desc(DispatchEx*,DISPID,struct property_info*);
@@ -655,7 +664,7 @@ typedef enum {
 
 typedef struct {
     global_prop_type_t type;
-    WCHAR *name;
+    BSTR name;
     ScriptHost *script_host;
     DISPID id;
 } global_prop_t;
@@ -1007,6 +1016,7 @@ struct HTMLDOMNode {
     IHTMLDOMNode  IHTMLDOMNode_iface;
     IHTMLDOMNode2 IHTMLDOMNode2_iface;
     IHTMLDOMNode3 IHTMLDOMNode3_iface;
+    IWineHTMLDOMNodePrivate IWineHTMLDOMNodePrivate_iface;
     const NodeImplVtbl *vtbl;
 
     nsIDOMNode *nsnode;
@@ -1050,15 +1060,6 @@ typedef struct {
     unsigned unique_id;
 } HTMLElement;
 
-#define HTMLELEMENT_TIDS    \
-    IHTMLDOMNode_tid,       \
-    IHTMLDOMNode2_tid,      \
-    IHTMLElement_tid,       \
-    IHTMLElement3_tid,      \
-    IHTMLElement4_tid,      \
-    IHTMLUniqueName_tid
-
-extern const tid_t HTMLElement_iface_tids[];
 extern cp_static_data_t HTMLElementEvents2_data;
 #define HTMLELEMENT_CPC {&DIID_HTMLElementEvents2, &HTMLElementEvents2_data}
 extern const cpc_entry_t HTMLElement_cpc[];
@@ -1493,6 +1494,8 @@ typedef struct {
     struct list *pending_xhr_events_tail;
     struct wine_rb_tree session_storage_map;
     void *blocking_xhr;
+    unsigned tasks_locked;
+    BOOL timer_blocked;
 } thread_data_t;
 
 thread_data_t *get_thread_data(BOOL);
@@ -1667,6 +1670,19 @@ static inline void traverse_variant(VARIANT *v, const char *name, nsCycleCollect
 {
     if(V_VT(v) == VT_DISPATCH || V_VT(v) == VT_UNKNOWN)
         note_cc_edge((nsISupports*)V_UNKNOWN(v), name, cb);
+}
+
+static inline void block_task_processing(void)
+{
+    thread_data_t *thread_data = get_thread_data(FALSE);
+    thread_data->tasks_locked++;
+}
+
+static inline void unblock_task_processing(void)
+{
+    thread_data_t *thread_data = get_thread_data(FALSE);
+    if(!--thread_data->tasks_locked)
+        unblock_tasks_and_timers(thread_data);
 }
 
 #ifdef __i386__

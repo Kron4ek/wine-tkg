@@ -36,13 +36,6 @@
 
 #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
 
-#if !defined(MAC_OS_X_VERSION_10_12) || MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_12
-/* Additional Mac virtual keycode, to complement those in Carbon's <HIToolbox/Events.h>. */
-enum {
-    kVK_RightCommand              = 0x36, /* Invented for Wine; was unused */
-};
-#endif
-
 
 @interface NSWindow (PrivatePreventsActivation)
 
@@ -2279,10 +2272,8 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         NSScreen* screen = self.screen;
         if (![self isVisible] || ![self isOnActiveSpace] || [self isMiniaturized] || [self isEmptyShaped])
             screen = nil;
-#if defined(MAC_OS_X_VERSION_10_9) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_9
-        if ([self respondsToSelector:@selector(occlusionState)] && !(self.occlusionState & NSWindowOcclusionStateVisible))
+        if (!(self.occlusionState & NSWindowOcclusionStateVisible))
             screen = nil;
-#endif
 
         NSNumber* displayIDNumber = screen.deviceDescription[@"NSScreenNumber"];
         CGDirectDisplayID displayID = [displayIDNumber unsignedIntValue];
@@ -3256,6 +3247,16 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
      */
     - (NSDragOperation) draggingEntered:(id <NSDraggingInfo>)sender
     {
+        macdrv_query* query = macdrv_create_query();
+        NSPasteboard* pb = [sender draggingPasteboard];
+
+        query->type = QUERY_DRAG_DROP_ENTER;
+        query->window = (macdrv_window)[self retain];
+        query->drag_drop.pasteboard = (CFTypeRef)[pb retain];
+
+        [self.queue query:query timeout:0.1];
+        macdrv_release_query(query);
+
         return [self draggingUpdated:sender];
     }
 
@@ -3265,7 +3266,7 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         // has to be processed in a similar manner as the other drag-and-drop
         // queries in order to maintain the proper order of operations.
         macdrv_query* query = macdrv_create_query();
-        query->type = QUERY_DRAG_EXITED;
+        query->type = QUERY_DRAG_DROP_LEAVE;
         query->window = (macdrv_window)[self retain];
 
         [self.queue query:query timeout:0.1];
@@ -3277,19 +3278,16 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         NSDragOperation ret;
         NSPoint pt = [[self contentView] convertPoint:[sender draggingLocation] fromView:nil];
         CGPoint cgpt = cgpoint_win_from_mac(NSPointToCGPoint(pt));
-        NSPasteboard* pb = [sender draggingPasteboard];
 
         macdrv_query* query = macdrv_create_query();
-        query->type = QUERY_DRAG_OPERATION;
+        query->type = QUERY_DRAG_DROP_DRAG;
         query->window = (macdrv_window)[self retain];
-        query->drag_operation.x = floor(cgpt.x);
-        query->drag_operation.y = floor(cgpt.y);
-        query->drag_operation.offered_ops = [sender draggingSourceOperationMask];
-        query->drag_operation.accepted_op = NSDragOperationNone;
-        query->drag_operation.pasteboard = (CFTypeRef)[pb retain];
+        query->drag_drop.x = floor(cgpt.x);
+        query->drag_drop.y = floor(cgpt.y);
+        query->drag_drop.ops = [sender draggingSourceOperationMask];
 
         [self.queue query:query timeout:3];
-        ret = query->status ? query->drag_operation.accepted_op : NSDragOperationNone;
+        ret = query->status ? query->drag_drop.ops : NSDragOperationNone;
         macdrv_release_query(query);
 
         return ret;
@@ -3300,15 +3298,13 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
         BOOL ret;
         NSPoint pt = [[self contentView] convertPoint:[sender draggingLocation] fromView:nil];
         CGPoint cgpt = cgpoint_win_from_mac(NSPointToCGPoint(pt));
-        NSPasteboard* pb = [sender draggingPasteboard];
 
         macdrv_query* query = macdrv_create_query();
-        query->type = QUERY_DRAG_DROP;
+        query->type = QUERY_DRAG_DROP_DROP;
         query->window = (macdrv_window)[self retain];
         query->drag_drop.x = floor(cgpt.x);
         query->drag_drop.y = floor(cgpt.y);
-        query->drag_drop.op = [sender draggingSourceOperationMask];
-        query->drag_drop.pasteboard = (CFTypeRef)[pb retain];
+        query->drag_drop.ops = [sender draggingSourceOperationMask];
 
         [self.queue query:query timeout:3 * 60 flags:WineQueryProcessEvents];
         ret = query->status;
@@ -3613,7 +3609,9 @@ void macdrv_set_window_alpha(macdrv_window w, CGFloat alpha)
 {
     WineWindow* window = (WineWindow*)w;
 
-    [window setAlphaValue:alpha];
+    OnMainThread(^{
+        [window setAlphaValue:alpha];
+    });
 }
 }
 
@@ -3776,16 +3774,16 @@ void macdrv_set_view_superview(macdrv_view v, macdrv_view s, macdrv_window w, ma
 {
 @autoreleasepool
 {
-    WineContentView* view = (WineContentView*)v;
-    WineContentView* superview = (WineContentView*)s;
-    WineWindow* window = (WineWindow*)w;
-    WineContentView* prev = (WineContentView*)p;
-    WineContentView* next = (WineContentView*)n;
-
-    if (!superview)
-        superview = [window contentView];
-
     OnMainThreadAsync(^{
+        WineContentView* view = (WineContentView*)v;
+        WineContentView* superview = (WineContentView*)s;
+        WineWindow* window = (WineWindow*)w;
+        WineContentView* prev = (WineContentView*)p;
+        WineContentView* next = (WineContentView*)n;
+
+        if (!superview)
+            superview = [window contentView];
+
         if (superview == [view superview])
         {
             NSArray* subviews = [superview subviews];
@@ -3801,10 +3799,6 @@ void macdrv_set_view_superview(macdrv_view v, macdrv_view s, macdrv_window w, ma
         WineWindow* oldWindow = (WineWindow*)[view window];
         WineWindow* newWindow = (WineWindow*)[superview window];
 
-#if !defined(MAC_OS_X_VERSION_10_10) || MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_10
-        if (floor(NSAppKitVersionNumber) <= 1265 /*NSAppKitVersionNumber10_9*/)
-            [view removeFromSuperview];
-#endif
         if (prev)
             [superview addSubview:view positioned:NSWindowBelow relativeTo:prev];
         else
@@ -3875,15 +3869,7 @@ macdrv_metal_device macdrv_create_metal_device(void)
 {
 @autoreleasepool
 {
-    macdrv_metal_device ret;
-
-#if MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_11
-    if (MTLCreateSystemDefaultDevice == NULL)
-        return NULL;
-#endif
-
-    ret = (macdrv_metal_device)MTLCreateSystemDefaultDevice();
-    return ret;
+    return (macdrv_metal_device)MTLCreateSystemDefaultDevice();
 }
 }
 

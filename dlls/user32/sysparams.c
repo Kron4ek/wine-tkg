@@ -1064,6 +1064,15 @@ LONG WINAPI DisplayConfigGetDeviceInfo(DISPLAYCONFIG_DEVICE_INFO_HEADER *packet)
 }
 
 /***********************************************************************
+ *              DisplayConfigSetDeviceInfo (USER32.@)
+ */
+LONG WINAPI DisplayConfigSetDeviceInfo( DISPLAYCONFIG_DEVICE_INFO_HEADER *packet )
+{
+    FIXME( "stub!\n" );
+    return RtlNtStatusToDosError( STATUS_NOT_IMPLEMENTED );
+}
+
+/***********************************************************************
  *              SetDisplayConfig (USER32.@)
  */
 LONG WINAPI SetDisplayConfig(UINT32 path_info_count, DISPLAYCONFIG_PATH_INFO *path_info, UINT32 mode_info_count,
@@ -1082,7 +1091,7 @@ LONG WINAPI SetDisplayConfig(UINT32 path_info_count, DISPLAYCONFIG_PATH_INFO *pa
 BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRect( RECT *rect, DWORD style, BOOL menu )
 {
     TRACE( "(%s) %08lx %d\n", wine_dbgstr_rect( rect ), style, menu );
-    return NtUserAdjustWindowRect( rect, style, menu, 0, system_dpi );
+    return NtUserAdjustWindowRect( rect, style, menu, 0, GetDpiForSystem() );
 }
 
 
@@ -1092,7 +1101,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRect( RECT *rect, DWORD style, BOOL me
 BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRectEx( RECT *rect, DWORD style, BOOL menu, DWORD ex_style )
 {
     TRACE( "(%s) %08lx %d %08lx\n", wine_dbgstr_rect( rect ), style, menu, ex_style );
-    return NtUserAdjustWindowRect( rect, style, menu, ex_style, system_dpi );
+    return NtUserAdjustWindowRect( rect, style, menu, ex_style, GetDpiForSystem() );
 }
 
 

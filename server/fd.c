@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <libgen.h>
 #include <poll.h>
 #ifdef HAVE_LINUX_MAJOR_H
@@ -73,9 +74,6 @@
 #include <sys/event.h>
 #undef LIST_INIT
 #undef LIST_ENTRY
-#endif
-#ifdef HAVE_STDINT_H
-#include <stdint.h>
 #endif
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -161,7 +159,7 @@ struct fd
     struct completion   *completion;  /* completion object attached to this fd */
     apc_param_t          comp_key;    /* completion key to set in completion events */
     unsigned int         comp_flags;  /* completion flags */
-    struct fast_sync    *fast_sync;   /* fast synchronization object */
+    struct inproc_sync  *inproc_sync; /* in-process synchronization object */
 };
 
 static void fd_dump( struct object *obj, int verbose );
@@ -187,7 +185,7 @@ static const struct object_ops fd_ops =
     NULL,                     /* unlink_name */
     no_open_file,             /* open_file */
     no_kernel_obj_list,       /* get_kernel_obj_list */
-    no_get_fast_sync,         /* get_fast_sync */
+    no_get_inproc_sync,       /* get_inproc_sync */
     no_close_handle,          /* close_handle */
     fd_destroy                /* destroy */
 };
@@ -229,7 +227,7 @@ static const struct object_ops device_ops =
     NULL,                     /* unlink_name */
     no_open_file,             /* open_file */
     no_kernel_obj_list,       /* get_kernel_obj_list */
-    no_get_fast_sync,         /* get_fast_sync */
+    no_get_inproc_sync,       /* get_inproc_sync */
     no_close_handle,          /* close_handle */
     device_destroy            /* destroy */
 };
@@ -270,7 +268,7 @@ static const struct object_ops inode_ops =
     NULL,                     /* unlink_name */
     no_open_file,             /* open_file */
     no_kernel_obj_list,       /* get_kernel_obj_list */
-    no_get_fast_sync,         /* get_fast_sync */
+    no_get_inproc_sync,       /* get_inproc_sync */
     no_close_handle,          /* close_handle */
     inode_destroy             /* destroy */
 };
@@ -313,7 +311,7 @@ static const struct object_ops file_lock_ops =
     NULL,                       /* unlink_name */
     no_open_file,               /* open_file */
     no_kernel_obj_list,         /* get_kernel_obj_list */
-    no_get_fast_sync,           /* get_fast_sync */
+    no_get_inproc_sync,       /* get_inproc_sync */
     no_close_handle,            /* close_handle */
     no_destroy                  /* destroy */
 };
@@ -350,7 +348,7 @@ timeout_t current_time;
 timeout_t monotonic_time;
 
 struct _KUSER_SHARED_DATA *user_shared_data = NULL;
-static const int user_shared_data_timeout = 16;
+static const timeout_t user_shared_data_timeout = 16 * 10000;
 
 static void atomic_store_ulong(volatile ULONG *ptr, ULONG value)
 {
@@ -508,7 +506,7 @@ static int active_users;                    /* current number of active users */
 static int allocated_users;                 /* count of allocated entries in the array */
 static struct fd **freelist;                /* list of free entries in the array */
 
-static int get_next_timeout(void);
+static int get_next_timeout( struct timespec *ts );
 
 static inline void fd_poll_event( struct fd *fd, int event )
 {
@@ -576,6 +574,7 @@ static inline void remove_epoll_user( struct fd *fd, int user )
 static inline void main_loop_epoll(void)
 {
     int i, ret, timeout;
+    struct timespec ts;
     struct epoll_event events[128];
 
     assert( POLLIN == EPOLLIN );
@@ -587,12 +586,17 @@ static inline void main_loop_epoll(void)
 
     while (active_users)
     {
-        timeout = get_next_timeout();
+        timeout = get_next_timeout( &ts );
 
         if (!active_users) break;  /* last user removed by a timeout */
         if (epoll_fd == -1) break;  /* an error occurred with epoll */
 
+#ifdef HAVE_EPOLL_PWAIT2
+        ret = epoll_pwait2( epoll_fd, events, ARRAY_SIZE( events ), timeout == -1 ? NULL : &ts, NULL );
+#else
         ret = epoll_wait( epoll_fd, events, ARRAY_SIZE( events ), timeout );
+#endif
+
         set_current_time();
 
         /* put the events into the pollfd array first, like poll does */
@@ -675,26 +679,19 @@ static inline void remove_epoll_user( struct fd *fd, int user )
 static inline void main_loop_epoll(void)
 {
     int i, ret, timeout;
+    struct timespec ts;
     struct kevent events[128];
 
     if (kqueue_fd == -1) return;
 
     while (active_users)
     {
-        timeout = get_next_timeout();
+        timeout = get_next_timeout( &ts );
 
         if (!active_users) break;  /* last user removed by a timeout */
         if (kqueue_fd == -1) break;  /* an error occurred with kqueue */
 
-        if (timeout != -1)
-        {
-            struct timespec ts;
-
-            ts.tv_sec = timeout / 1000;
-            ts.tv_nsec = (timeout % 1000) * 1000000;
-            ret = kevent( kqueue_fd, NULL, 0, events, ARRAY_SIZE( events ), &ts );
-        }
-        else ret = kevent( kqueue_fd, NULL, 0, events, ARRAY_SIZE( events ), NULL );
+        ret = kevent( kqueue_fd, NULL, 0, events, ARRAY_SIZE( events ), timeout == -1 ? NULL : &ts );
 
         set_current_time();
 
@@ -777,27 +774,20 @@ static inline void remove_epoll_user( struct fd *fd, int user )
 static inline void main_loop_epoll(void)
 {
     int i, nget, ret, timeout;
+    struct timespec ts;
     port_event_t events[128];
 
     if (port_fd == -1) return;
 
     while (active_users)
     {
-        timeout = get_next_timeout();
+        timeout = get_next_timeout( &ts );
         nget = 1;
 
         if (!active_users) break;  /* last user removed by a timeout */
         if (port_fd == -1) break;  /* an error occurred with event completion */
 
-        if (timeout != -1)
-        {
-            struct timespec ts;
-
-            ts.tv_sec = timeout / 1000;
-            ts.tv_nsec = (timeout % 1000) * 1000000;
-            ret = port_getn( port_fd, events, ARRAY_SIZE( events ), &nget, &ts );
-        }
-        else ret = port_getn( port_fd, events, ARRAY_SIZE( events ), &nget, NULL );
+        ret = port_getn( port_fd, events, ARRAY_SIZE( events ), &nget, timeout == -1 ? NULL : &ts );
 
 	if (ret == -1) break;  /* an error occurred with event completion */
 
@@ -888,10 +878,11 @@ static void remove_poll_user( struct fd *fd, int user )
     active_users--;
 }
 
-/* process pending timeouts and return the time until the next timeout, in milliseconds */
-static int get_next_timeout(void)
+/* process pending timeouts and return the time until the next timeout in milliseconds,
+ * and full nanosecond precision in the timespec parameter if given */
+static int get_next_timeout( struct timespec *ts )
 {
-    int ret = user_shared_data ? user_shared_data_timeout : -1;
+    timeout_t ret = user_shared_data ? user_shared_data_timeout : -1;
 
     if (!list_empty( &abs_timeout_list ) || !list_empty( &rel_timeout_list ))
     {
@@ -936,21 +927,32 @@ static int get_next_timeout(void)
         if ((ptr = list_head( &abs_timeout_list )) != NULL)
         {
             struct timeout_user *timeout = LIST_ENTRY( ptr, struct timeout_user, entry );
-            timeout_t diff = (timeout->when - current_time + 9999) / 10000;
-            if (diff > INT_MAX) diff = INT_MAX;
-            else if (diff < 0) diff = 0;
+            timeout_t diff = timeout->when - current_time;
+            if (diff < 0) diff = 0;
             if (ret == -1 || diff < ret) ret = diff;
         }
 
         if ((ptr = list_head( &rel_timeout_list )) != NULL)
         {
             struct timeout_user *timeout = LIST_ENTRY( ptr, struct timeout_user, entry );
-            timeout_t diff = (-timeout->when - monotonic_time + 9999) / 10000;
-            if (diff > INT_MAX) diff = INT_MAX;
-            else if (diff < 0) diff = 0;
+            timeout_t diff = -timeout->when - monotonic_time;
+            if (diff < 0) diff = 0;
             if (ret == -1 || diff < ret) ret = diff;
         }
     }
+
+    /* infinite */
+    if (ret == -1) return -1;
+
+    if (ts)
+    {
+        ts->tv_sec = ret / TICKS_PER_SEC;
+        ts->tv_nsec = (ret % TICKS_PER_SEC) * 100;
+    }
+
+    /* convert to milliseconds, ceil to avoid spinning with 0 timeout */
+    ret = (ret + 9999) / 10000;
+    if (ret > INT_MAX) ret = INT_MAX;
     return ret;
 }
 
@@ -967,7 +969,7 @@ void main_loop(void)
 
     while (active_users)
     {
-        timeout = get_next_timeout();
+        timeout = get_next_timeout( NULL );
 
         if (!active_users) break;  /* last user removed by a timeout */
 
@@ -1256,6 +1258,15 @@ static struct inode *get_inode( dev_t dev, ino_t ino, int unix_fd )
     return inode;
 }
 
+static int inode_has_pending_close( struct inode *inode, const char *path )
+{
+    struct closed_fd *fd;
+
+    LIST_FOR_EACH_ENTRY( fd, &inode->closed, struct closed_fd, entry )
+        if (!strcmp( fd->unix_name, path )) return 1;
+    return 0;
+}
+
 /* add fd to the inode list of file descriptors to close */
 static void inode_add_closed_fd( struct inode *inode, struct closed_fd *fd )
 {
@@ -1272,7 +1283,7 @@ static void inode_add_closed_fd( struct inode *inode, struct closed_fd *fd )
         free( fd->unix_name );
         free( fd );
     }
-    else if (fd->disp_flags & FILE_DISPOSITION_DELETE)
+    else if ((fd->disp_flags & FILE_DISPOSITION_DELETE) && !inode_has_pending_close( inode, fd->unix_name ))
     {
         /* close the fd but keep the structure around for unlink */
         if (fd->unix_fd != -1) close( fd->unix_fd );
@@ -1650,7 +1661,7 @@ static void fd_destroy( struct object *obj )
         if (fd->unix_fd != -1) close( fd->unix_fd );
         free( fd->unix_name );
     }
-    if (fd->fast_sync) release_object( fd->fast_sync );
+    if (fd->inproc_sync) release_object( fd->inproc_sync );
 }
 
 /* check if the desired access is possible without violating */
@@ -1769,7 +1780,7 @@ static struct fd *alloc_fd_object(void)
     fd->poll_index = -1;
     fd->completion = NULL;
     fd->comp_flags = 0;
-    fd->fast_sync  = NULL;
+    fd->inproc_sync = NULL;
     init_async_queue( &fd->read_q );
     init_async_queue( &fd->write_q );
     init_async_queue( &fd->wait_q );
@@ -1810,7 +1821,7 @@ struct fd *alloc_pseudo_fd( const struct fd_ops *fd_user_ops, struct object *use
     fd->poll_index = -1;
     fd->completion = NULL;
     fd->comp_flags = 0;
-    fd->fast_sync  = NULL;
+    fd->inproc_sync = NULL;
     fd->no_fd_status = STATUS_BAD_DEVICE_TYPE;
     init_async_queue( &fd->read_q );
     init_async_queue( &fd->write_q );
@@ -1919,8 +1930,7 @@ char *dup_fd_name( struct fd *root, const char *name )
 
 static WCHAR *dup_nt_name( struct fd *root, struct unicode_str name, data_size_t *len )
 {
-    WCHAR *ret;
-    data_size_t retlen;
+    WCHAR *ptr, *ret;
 
     if (!root)
     {
@@ -1929,7 +1939,6 @@ static WCHAR *dup_nt_name( struct fd *root, struct unicode_str name, data_size_t
         return memdup( name.str, name.len );
     }
     if (!root->nt_namelen) return NULL;
-    retlen = root->nt_namelen;
 
     /* skip . prefix */
     if (name.len && name.str[0] == '.' && (name.len == sizeof(WCHAR) || name.str[1] == '\\'))
@@ -1937,17 +1946,12 @@ static WCHAR *dup_nt_name( struct fd *root, struct unicode_str name, data_size_t
         name.str++;
         name.len -= sizeof(WCHAR);
     }
-    if ((ret = malloc( retlen + name.len + sizeof(WCHAR) )))
+    if ((ret = malloc( root->nt_namelen + name.len + sizeof(WCHAR) )))
     {
-        memcpy( ret, root->nt_name, root->nt_namelen );
-        if (name.len && name.str[0] != '\\' &&
-            root->nt_namelen && root->nt_name[root->nt_namelen / sizeof(WCHAR) - 1] != '\\')
-        {
-            ret[retlen / sizeof(WCHAR)] = '\\';
-            retlen += sizeof(WCHAR);
-        }
-        memcpy( ret + retlen / sizeof(WCHAR), name.str, name.len );
-        *len = retlen + name.len;
+        ptr = mem_append( ret, root->nt_name, root->nt_namelen );
+        if (name.len && name.str[0] != '\\' && ptr[-1] != '\\') *ptr++ = '\\';
+        ptr = mem_append( ptr, name.str, name.len );
+        *len = (ptr - ret) * sizeof(WCHAR);
     }
     return ret;
 }
@@ -2068,6 +2072,19 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
                 fd->unix_fd = open( name, O_RDONLY | (flags & ~(O_TRUNC | O_CREAT | O_EXCL)), *mode );
         }
 
+        /* POSIX requires that open(2) throws EOPNOTSUPP when `path` is a Unix
+         * socket. *BSD throws EOPNOTSUPP in this case and the additional case of
+         * O_SHLOCK or O_EXLOCK being passed when `path` resides on a filesystem
+         * without lock support.
+         *
+         * Contrary to POSIX, Linux returns ENXIO in this case, so we also check
+         * that error code here. */
+        if (errno == EOPNOTSUPP || errno == ENXIO)
+        {
+            if (!stat(name, &st) && S_ISSOCK(st.st_mode) && (options & FILE_DELETE_ON_CLOSE))
+                goto skip_open_fail;
+        }
+
         if (fd->unix_fd == -1)
         {
             /* check for trailing slash on file path */
@@ -2079,22 +2096,24 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
         }
     }
 
+skip_open_fail:
     fd->nt_name = dup_nt_name( root, nt_name, &fd->nt_namelen );
     fd->unix_name = NULL;
     if ((path = dup_fd_name( root, name )))
     {
-        fd->unix_name = normalize_path( path, flags );
+        fd->unix_name = realpath( path, NULL );
         free( path );
     }
 
     closed_fd->unix_fd = fd->unix_fd;
     closed_fd->disp_flags = 0;
     closed_fd->unix_name = fd->unix_name;
-    fstat( fd->unix_fd, &st );
+    if (fd->unix_fd != -1)
+        fstat( fd->unix_fd, &st );
     *mode = st.st_mode;
 
-    /* only bother with an inode for normal files and directories */
-    if (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode))
+    /* only bother with an inode for normal files, directories, and socket files */
+    if (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode) || S_ISSOCK(st.st_mode))
     {
         unsigned int err;
         struct inode *inode = get_inode( st.st_dev, st.st_ino, fd->unix_fd );
@@ -2107,6 +2126,16 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
              */
             goto error;
         }
+
+        if ((path = dup_fd_name( root, name )))
+        {
+            fd->unix_name = normalize_path( path, flags );
+            free( path );
+        }
+
+        closed_fd->unix_fd = fd->unix_fd;
+        closed_fd->unix_name = fd->unix_name;
+        closed_fd->disp_flags = 0;
         fd->inode = inode;
         fd->closed = closed_fd;
         fd->cacheable = !inode->device->removable;
@@ -2276,11 +2305,11 @@ void set_fd_signaled( struct fd *fd, int signaled )
     if (signaled)
     {
         wake_up( fd->user, 0 );
-        fast_set_event( fd->fast_sync );
+        set_inproc_event( fd->inproc_sync );
     }
     else
     {
-        fast_reset_event( fd->fast_sync );
+        reset_inproc_event( fd->inproc_sync );
     }
 }
 
@@ -2307,14 +2336,14 @@ int default_fd_signaled( struct object *obj, struct wait_queue_entry *entry )
     return ret;
 }
 
-struct fast_sync *default_fd_get_fast_sync( struct object *obj )
+struct inproc_sync *default_fd_get_inproc_sync( struct object *obj )
 {
     struct fd *fd = get_obj_fd( obj );
-    struct fast_sync *ret;
+    struct inproc_sync *ret;
 
-    if (!fd->fast_sync)
-        fd->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, fd->signaled );
-    ret = fd->fast_sync;
+    if (!fd->inproc_sync)
+        fd->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, fd->signaled );
+    ret = fd->inproc_sync;
     release_object( fd );
     if (ret) grab_object( ret );
     return ret;
@@ -2890,7 +2919,7 @@ DECL_HANDLER(flush)
 
     if (!fd) return;
 
-    if ((async = create_request_async( fd, fd->comp_flags, &req->async )))
+    if ((async = create_request_async( fd, fd->comp_flags, &req->async, 0 )))
     {
         fd->fd_ops->flush( fd, async );
         reply->event = async_handoff( async, NULL, 1 );
@@ -2919,7 +2948,7 @@ DECL_HANDLER(get_volume_info)
 
     if (!fd) return;
 
-    if ((async = create_request_async( fd, fd->comp_flags, &req->async )))
+    if ((async = create_request_async( fd, fd->comp_flags, &req->async, 0 )))
     {
         fd->fd_ops->get_volume_info( fd, async, req->info_class );
         reply->wait = async_handoff( async, NULL, 1 );
@@ -2995,7 +3024,7 @@ DECL_HANDLER(read)
 
     if (!fd) return;
 
-    if ((async = create_request_async( fd, fd->comp_flags, &req->async )))
+    if ((async = create_request_async( fd, fd->comp_flags, &req->async, 0 )))
     {
         fd->fd_ops->read( fd, async, req->pos );
         reply->wait = async_handoff( async, NULL, 0 );
@@ -3013,7 +3042,7 @@ DECL_HANDLER(write)
 
     if (!fd) return;
 
-    if ((async = create_request_async( fd, fd->comp_flags, &req->async )))
+    if ((async = create_request_async( fd, fd->comp_flags, &req->async, 0 )))
     {
         fd->fd_ops->write( fd, async, req->pos );
         reply->wait = async_handoff( async, &reply->size, 0 );
@@ -3032,7 +3061,7 @@ DECL_HANDLER(ioctl)
 
     if (!fd) return;
 
-    if ((async = create_request_async( fd, fd->comp_flags, &req->async )))
+    if ((async = create_request_async( fd, fd->comp_flags, &req->async, 0 )))
     {
         fd->fd_ops->ioctl( fd, req->code, async );
         reply->wait = async_handoff( async, NULL, 0 );
@@ -3084,6 +3113,7 @@ DECL_HANDLER(set_completion_info)
         {
             fd->completion = get_completion_obj( current->process, req->chandle, IO_COMPLETION_MODIFY_STATE );
             fd->comp_key = req->ckey;
+            set_fd_signaled( fd, 1 );
         }
         else set_error( STATUS_INVALID_PARAMETER );
         release_object( fd );

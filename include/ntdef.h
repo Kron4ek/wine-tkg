@@ -62,6 +62,9 @@ typedef unsigned int ULONG, *PULONG;
 #endif
 #endif
 
+typedef ULONG CLONG;
+typedef CLONG *PCLONG;
+
 typedef struct _RTL_BALANCED_NODE
 {
     union
@@ -83,6 +86,12 @@ typedef struct _RTL_BALANCED_NODE
 } RTL_BALANCED_NODE, *PRTL_BALANCED_NODE;
 
 #define RTL_BALANCED_NODE_RESERVED_PARENT_MASK 3
+
+typedef struct _RTL_RB_TREE
+{
+    RTL_BALANCED_NODE *root;
+    RTL_BALANCED_NODE *min;
+} RTL_RB_TREE, *PRTL_RB_TREE;
 
 #define RTL_CONSTANT_STRING(s) { sizeof(s) - sizeof(s[0]), sizeof(s), (void*)s }
 

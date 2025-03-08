@@ -74,6 +74,30 @@ static const char* szAWRClass = "Winsize";
 static HMENU hmenu;
 static DWORD our_pid;
 
+static void hold_key( int vk )
+{
+    BYTE kstate[256];
+    BOOL res;
+
+    res = GetKeyboardState( kstate );
+    ok(res, "GetKeyboardState failed.\n");
+    kstate[vk] |= 0x80;
+    res = SetKeyboardState( kstate );
+    ok(res, "SetKeyboardState failed.\n");
+}
+
+static void release_key( int vk )
+{
+    BYTE kstate[256];
+    BOOL res;
+
+    res = GetKeyboardState( kstate );
+    ok(res, "GetKeyboardState failed.\n");
+    kstate[vk] &= ~0x80;
+    res = SetKeyboardState( kstate );
+    ok(res, "SetKeyboardState failed.\n");
+}
+
 static void dump_minmax_info( const MINMAXINFO *minmax )
 {
     trace("Reserved=%ld,%ld MaxSize=%ld,%ld MaxPos=%ld,%ld MinTrack=%ld,%ld MaxTrack=%ld,%ld\n",
@@ -1788,7 +1812,11 @@ static DWORD WINAPI test_shell_window_thread(LPVOID param)
 static void test_shell_window(void)
 {
     HDESK hdesk;
+    HWND orig_shell_window;
     HANDLE hthread;
+
+    orig_shell_window = GetShellWindow();
+    ok(orig_shell_window != NULL, "default desktop doesn't have a shell window\n");
 
     hdesk = CreateDesktopA("winetest", NULL, NULL, 0, GENERIC_ALL, NULL);
 
@@ -1799,6 +1827,11 @@ static void test_shell_window(void)
     CloseHandle(hthread);
 
     CloseDesktop(hdesk);
+
+    if (!orig_shell_window)
+        skip("no shell window on default desktop\n");
+    else
+        ok(GetShellWindow() == orig_shell_window, "changing shell window on another desktop effected the default\n");
 }
 
 /************** MDI test ****************/
@@ -4034,11 +4067,8 @@ static void test_SetForegroundWindow(HWND hwnd)
     while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
     if (0) check_wnd_state(hwnd2, hwnd2, hwnd2, 0);
 
-    /* FIXME: these tests are failing because of a race condition
-     * between internal focus state applied immediately and X11 focus
-     * message coming late */
-    todo_wine ok(GetActiveWindow() == hwnd2, "Expected active window %p, got %p.\n", hwnd2, GetActiveWindow());
-    todo_wine ok(GetFocus() == hwnd2, "Expected focus window %p, got %p.\n", hwnd2, GetFocus());
+    ok(GetActiveWindow() == hwnd2, "Expected active window %p, got %p.\n", hwnd2, GetActiveWindow());
+    ok(GetFocus() == hwnd2, "Expected focus window %p, got %p.\n", hwnd2, GetFocus());
 
     SetForegroundWindow(hwnd);
     check_wnd_state(hwnd, hwnd, hwnd, 0);
@@ -4059,6 +4089,8 @@ static void test_SetForegroundWindow(HWND hwnd)
     CloseHandle(thread_params.window_created);
     CloseHandle(thread);
     DestroyWindow(hwnd2);
+
+    flush_events(TRUE);
 }
 
 static WNDPROC old_button_proc;
@@ -6089,6 +6121,14 @@ static void test_AWRwindow(LPCSTR class, LONG style, LONG exStyle, BOOL menu)
     ok(hwnd != NULL, "Failed to create window class=%s, style=0x%08lx, exStyle=0x%08lx\n", class, style, exStyle);
 
     ShowWindow(hwnd, SW_SHOW);
+    flush_events(TRUE);
+
+    /* retry setting the maximized state to workaround a FVWM bug */
+    if ((style & WS_MAXIMIZE) && !(GetWindowLongW(hwnd, GWL_STYLE) & WS_MAXIMIZE))
+    {
+        ShowWindow(hwnd, SW_MAXIMIZE);
+        flush_events(TRUE);
+    }
 
     test_nonclient_area(hwnd);
 
@@ -8965,6 +9005,130 @@ static void test_hwnd_message(void)
 
     DestroyWindow(hwnd);
 }
+
+static HWND message_window_topmost_hwnd_msg = NULL;
+static BOOL message_window_topmost_received_killfocus;
+
+static LRESULT WINAPI message_window_topmost_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    ok(hwnd != message_window_topmost_hwnd_msg, "Received message %u for message-only window %p\n", msg, hwnd);
+    if (msg == WM_KILLFOCUS) message_window_topmost_received_killfocus = TRUE;
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+
+static void test_message_window_topmost(void)
+{
+    /* All SWP_* flags except SWP_NOZORDER, which has a different effect. */
+    const UINT swp_flags = SWP_ASYNCWINDOWPOS | SWP_DEFERERASE | SWP_DRAWFRAME | SWP_FRAMECHANGED
+            | SWP_HIDEWINDOW | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOOWNERZORDER
+            | SWP_NOREDRAW | SWP_NOSENDCHANGING | SWP_NOSIZE | SWP_SHOWWINDOW;
+    /* Same as above, except the flags that cause
+     * ERROR_INVALID_PARAMETER to be returned by DeferWindowPos(). */
+    const UINT dwp_flags = SWP_DRAWFRAME | SWP_FRAMECHANGED
+            | SWP_HIDEWINDOW | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOOWNERZORDER
+            | SWP_NOREDRAW | SWP_NOSIZE | SWP_SHOWWINDOW;
+    HWND hwnd, hwnd_msg;
+    HDWP hdwp;
+    RECT rect;
+    BOOL ret;
+    MSG msg;
+
+    hwnd = CreateWindowW(L"static", L"main window", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            210, 211, 212, 213, NULL, NULL, GetModuleHandleW(NULL), NULL);
+    ok(!!hwnd, "Cannot create main window\n");
+    flush_events(TRUE);
+    SetWindowLongPtrW(hwnd, GWLP_WNDPROC, (LONG_PTR)message_window_topmost_proc);
+
+    hwnd_msg = CreateWindowW(L"static", L"message window", 0,
+            220, 221, 222, 223, HWND_MESSAGE, NULL, GetModuleHandleW(NULL), NULL);
+    ok(!!hwnd_msg, "Cannot create message window\n");
+    flush_events(TRUE);
+    SetWindowLongPtrW(hwnd_msg, GWLP_WNDPROC, (LONG_PTR)message_window_topmost_proc);
+
+    ret = GetWindowRect(hwnd_msg, &rect);
+    ok(ret, "Unexpected failure when calling GetWindowRect()\n");
+    ok(rect.left == 220 && rect.top == 221 && rect.right == 220 + 222 && rect.bottom == 221 + 223,
+            "Unexpected rectangle %s\n", wine_dbgstr_rect(&rect));
+
+    while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+    {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+
+    message_window_topmost_hwnd_msg = hwnd_msg;
+
+    SetLastError(0xdeadbeef);
+
+    ret = SetWindowPos(hwnd_msg, HWND_TOPMOST, 230, 231, 232, 233, 0);
+    ok(ret, "Unexpected failure when calling SetWindowPos()\n");
+
+    ret = SetWindowPos(hwnd_msg, HWND_TOPMOST, 234, 235, 236, 237, swp_flags);
+    ok(ret, "Unexpected failure when calling SetWindowPos()\n");
+
+    ret = SetWindowPos(hwnd_msg, HWND_NOTOPMOST, 240, 241, 242, 243, 0);
+    ok(ret, "Unexpected failure when calling SetWindowPos()\n");
+
+    ret = SetWindowPos(hwnd_msg, HWND_NOTOPMOST, 244, 245, 246, 247, swp_flags);
+    ok(ret, "Unexpected failure when calling SetWindowPos()\n");
+
+    hdwp = BeginDeferWindowPos(4);
+    ok(!!hdwp, "Unexpected failure when calling BeginDeferWindowPos()\n");
+
+    hdwp = DeferWindowPos(hdwp, hwnd_msg, HWND_TOPMOST, 250, 251, 252, 253, 0);
+    ok(!!hdwp, "Unexpected failure when calling DeferWindowPos()\n");
+
+    hdwp = DeferWindowPos(hdwp, hwnd_msg, HWND_TOPMOST, 254, 255, 256, 257, dwp_flags);
+    ok(!!hdwp, "Unexpected failure when calling DeferWindowPos()\n");
+
+    hdwp = DeferWindowPos(hdwp, hwnd_msg, HWND_NOTOPMOST, 260, 261, 262, 263, 0);
+    ok(!!hdwp, "Unexpected failure when calling DeferWindowPos()\n");
+
+    hdwp = DeferWindowPos(hdwp, hwnd_msg, HWND_NOTOPMOST, 264, 265, 266, 267, dwp_flags);
+    ok(!!hdwp, "Unexpected failure when calling DeferWindowPos()\n");
+
+    ret = EndDeferWindowPos(hdwp);
+    ok(ret, "Unexpected failure when calling EndDeferWindowPos()\n");
+
+    ok(GetLastError() == 0xdeadbeef, "Last error unexpectedly set to %#lx\n", GetLastError());
+
+    while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+    {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+
+    message_window_topmost_hwnd_msg = NULL;
+
+    ret = GetWindowRect(hwnd_msg, &rect);
+    ok(ret, "Unexpected failure when calling GetWindowRect()\n");
+    ok(rect.left == 220 && rect.top == 221 && rect.right == 220 + 222 && rect.bottom == 221 + 223,
+            "Unexpected rectangle %s\n", wine_dbgstr_rect(&rect));
+
+    ok(!message_window_topmost_received_killfocus, "Received WM_KILLFOCUS\n");
+    message_window_topmost_received_killfocus = FALSE;
+
+    ret = SetWindowPos(hwnd_msg, HWND_TOPMOST, 230, 231, 232, 233, SWP_NOZORDER);
+    ok(ret, "Unexpected failure when calling SetWindowPos()\n");
+
+    while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+    {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+
+    ok(message_window_topmost_received_killfocus, "Did not receive WM_KILLFOCUS\n");
+
+    ret = GetWindowRect(hwnd_msg, &rect);
+    ok(ret, "Unexpected failure when calling GetWindowRect()\n");
+    ok(rect.left == 230 && rect.top == 231 && rect.right == 230 + 232 && rect.bottom == 231 + 233,
+            "Unexpected rectangle %s\n", wine_dbgstr_rect(&rect));
+
+    ok(DestroyWindow(hwnd_msg), "Cannot destroy main window\n");
+    ok(DestroyWindow(hwnd), "Cannot destroy message window\n");
+}
+
 
 static void test_layered_window(void)
 {
@@ -12987,6 +13151,8 @@ static void test_cancel_mode(void)
 
 static void test_DragDetect(void)
 {
+    int cx_drag = GetSystemMetrics( SM_CXDRAG ), cy_drag = GetSystemMetrics( SM_CYDRAG );
+    HWND hwnd;
     POINT pt;
     BOOL ret;
 
@@ -12999,6 +13165,53 @@ static void test_DragDetect(void)
 
     ok(!GetCapture(), "got capture window %p\n", GetCapture());
     ok(!(GetKeyState( VK_LBUTTON ) & 0x8000), "got VK_LBUTTON\n");
+
+    /* Test mouse moving out of the drag rectangle in client coordinates */
+    hwnd = CreateWindowA( "static", "test", WS_POPUP | WS_VISIBLE, 100, 100, 50, 50, 0, 0, 0, 0 );
+    hold_key( VK_LBUTTON );
+
+    PostMessageA( hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(cx_drag, cy_drag) );
+
+    pt.x = 0;
+    pt.y = 0;
+    ret = DragDetect( hwnd, pt );
+    ok(ret, "Got unexpected %d.\n", ret);
+    flush_events( TRUE );
+
+    /* Test mouse not moving out of the drag rectangle in client coordinates */
+    PostMessageA( hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(cx_drag - 1, cy_drag - 1) );
+    PostMessageA( hwnd, WM_LBUTTONUP, 0, 0 );
+
+    pt.x = 0;
+    pt.y = 0;
+    ret = DragDetect( hwnd, pt );
+    ok(!ret || broken(ret) /* Win 7 */, "Got unexpected %d\n", ret);
+    flush_events( TRUE );
+
+    /* Test mouse moving out of the drag rectangle in screen coordinates */
+    PostMessageA( hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(cx_drag, cy_drag) );
+
+    pt.x = 0;
+    pt.y = 0;
+    ClientToScreen( hwnd, &pt );
+    ret = DragDetect( hwnd, pt );
+    ok(ret || broken(!ret) /* Win 7 */, "Got unexpected %d\n", ret);
+    flush_events( TRUE );
+
+    /* Test mouse not moving out of the drag rectangle in screen coordinates */
+    PostMessageA( hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(0, 0) );
+
+    pt.x = 0;
+    pt.y = 0;
+    ClientToScreen( hwnd, &pt );
+    ret = DragDetect( hwnd, pt );
+    /* NOTE that if DragDetect() do use screen coordinates for the second parameter for the initial
+     * mouse position, then FALSE should be returned in this case. But TRUE is returned here. So
+     * this means that DragDetect() don't use screen coordinates even though MSDN says that it does */
+    ok(ret, "Got unexpected %d\n", ret);
+
+    DestroyWindow( hwnd );
+    release_key( VK_LBUTTON );
 }
 
 static LRESULT WINAPI ncdestroy_test_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
@@ -13205,7 +13418,11 @@ static void test_ReleaseCapture(void)
     ok(wm_mousemove_count < 10, "Got too many WM_MOUSEMOVE.\n");
 
     /* Test that ReleaseCapture() should send a WM_MOUSEMOVE if a window is captured */
+    wm_mousemove_count = 0;
     SetCapture(hwnd);
+    flush_events(TRUE);
+    ok(!wm_mousemove_count, "Got no WM_MOUSEMOVE.\n");
+
     wm_mousemove_count = 0;
     ret = ReleaseCapture();
     ok(ret, "ReleaseCapture failed, error %#lx.\n", GetLastError());
@@ -13324,6 +13541,7 @@ START_TEST(win)
     test_thick_child_size(hwndMain);
     test_fullscreen();
     test_hwnd_message();
+    test_message_window_topmost();
     test_nonclient_area(hwndMain);
     test_params();
     test_GetWindowModuleFileName();

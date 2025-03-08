@@ -158,7 +158,9 @@ static nsresult NSAPI nsDOMEventListener_HandleEvent(nsIDOMEventListener *iface,
     if(window)
         IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
 
+    block_task_processing();
     nsres = This->handler(doc, event);
+    unblock_task_processing();
 
     if(window)
         IHTMLWindow2_Release(&window->base.IHTMLWindow2_iface);
@@ -439,7 +441,7 @@ static nsresult handle_htmlevent(HTMLDocumentNode *doc, nsIDOMEvent *nsevent)
     }else {
         hres = get_node(nsnode, TRUE, &node);
         nsIDOMNode_Release(nsnode);
-        if(FAILED(hres))
+        if(FAILED(hres) || !node->doc->script_global)
             return NS_OK;
         target = &node->event_target;
     }

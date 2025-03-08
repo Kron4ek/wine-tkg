@@ -94,7 +94,7 @@ static unsigned int process_map_access( struct object *obj, unsigned int access 
 static struct security_descriptor *process_get_sd( struct object *obj );
 static void process_poll_event( struct fd *fd, int event );
 static struct list *process_get_kernel_obj_list( struct object *obj );
-static struct fast_sync *process_get_fast_sync( struct object *obj );
+static struct inproc_sync *process_get_inproc_sync( struct object *obj );
 static void process_destroy( struct object *obj );
 static void terminate_process( struct process *process, struct thread *skip, int exit_code );
 
@@ -118,7 +118,7 @@ static const struct object_ops process_ops =
     NULL,                        /* unlink_name */
     no_open_file,                /* open_file */
     process_get_kernel_obj_list, /* get_kernel_obj_list */
-    process_get_fast_sync,       /* get_fast_sync */
+    process_get_inproc_sync,     /* get_inproc_sync */
     no_close_handle,             /* close_handle */
     process_destroy              /* destroy */
 };
@@ -143,7 +143,7 @@ struct startup_info
     struct process     *process;      /* created process */
     data_size_t         info_size;    /* size of startup info */
     data_size_t         data_size;    /* size of whole startup data */
-    startup_info_t     *data;         /* data for startup info */
+    struct startup_info_data *data;   /* data for startup info */
 };
 
 static void startup_info_dump( struct object *obj, int verbose );
@@ -170,7 +170,7 @@ static const struct object_ops startup_info_ops =
     NULL,                          /* unlink_name */
     no_open_file,                  /* open_file */
     no_kernel_obj_list,            /* get_kernel_obj_list */
-    no_get_fast_sync,              /* get_fast_sync */
+    no_get_inproc_sync,            /* get_inproc_sync */
     no_close_handle,               /* close_handle */
     startup_info_destroy           /* destroy */
 };
@@ -193,7 +193,7 @@ struct type_descr job_type =
 
 static void job_dump( struct object *obj, int verbose );
 static int job_signaled( struct object *obj, struct wait_queue_entry *entry );
-static struct fast_sync *job_get_fast_sync( struct object *obj );
+static struct inproc_sync *job_get_inproc_sync( struct object *obj );
 static int job_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
 static void job_destroy( struct object *obj );
 
@@ -211,7 +211,7 @@ struct job
     struct job *parent;
     struct list parent_job_entry;  /* list entry for parent job */
     struct list child_job_list;    /* list of child jobs */
-    struct fast_sync *fast_sync;   /* fast synchronization object */
+    struct inproc_sync *inproc_sync; /* in-process synchronization object */
 };
 
 static const struct object_ops job_ops =
@@ -234,7 +234,7 @@ static const struct object_ops job_ops =
     default_unlink_name,           /* unlink_name */
     no_open_file,                  /* open_file */
     no_kernel_obj_list,            /* get_kernel_obj_list */
-    job_get_fast_sync,             /* get_fast_sync */
+    job_get_inproc_sync,           /* get_inproc_sync */
     job_close_handle,              /* close_handle */
     job_destroy                    /* destroy */
 };
@@ -259,7 +259,7 @@ static struct job *create_job_object( struct object *root, const struct unicode_
             job->completion_port = NULL;
             job->completion_key = 0;
             job->parent = NULL;
-            job->fast_sync = NULL;
+            job->inproc_sync = NULL;
         }
     }
     return job;
@@ -416,17 +416,17 @@ static void terminate_job( struct job *job, int exit_code )
     job->terminating = 0;
     job->signaled = 1;
     wake_up( &job->obj, 0 );
-    fast_set_event( job->fast_sync );
+    set_inproc_event( job->inproc_sync );
 }
 
-static struct fast_sync *job_get_fast_sync( struct object *obj )
+static struct inproc_sync *job_get_inproc_sync( struct object *obj )
 {
     struct job *job = (struct job *)obj;
 
-    if (!job->fast_sync)
-        job->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, job->signaled );
-    if (job->fast_sync) grab_object( job->fast_sync );
-    return job->fast_sync;
+    if (!job->inproc_sync)
+        job->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, job->signaled );
+    if (job->inproc_sync) grab_object( job->inproc_sync );
+    return job->inproc_sync;
 }
 
 static int job_close_handle( struct object *obj, struct process *process, obj_handle_t handle )
@@ -458,7 +458,7 @@ static void job_destroy( struct object *obj )
         release_object( job->parent );
     }
 
-    if (job->fast_sync) release_object( job->fast_sync );
+    if (job->inproc_sync) release_object( job->inproc_sync );
 }
 
 static void job_dump( struct object *obj, int verbose )
@@ -658,7 +658,8 @@ static void start_sigkill_timer( struct process *process )
 
 /* create a new process */
 /* if the function fails the fd is closed */
-struct process *create_process( int fd, struct process *parent, unsigned int flags, const startup_info_t *info,
+struct process *create_process( int fd, struct process *parent, unsigned int flags,
+                                const struct startup_info_data *info,
                                 const struct security_descriptor *sd, const obj_handle_t *handles,
                                 unsigned int handle_count, struct token *token )
 {
@@ -703,7 +704,7 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
     process->rawinput_device_count = 0;
     process->rawinput_mouse  = NULL;
     process->rawinput_kbd    = NULL;
-    process->fast_sync       = NULL;
+    process->inproc_sync     = NULL;
     memset( &process->image_info, 0, sizeof(process->image_info) );
     list_init( &process->rawinput_entry );
     list_init( &process->kernel_object );
@@ -805,7 +806,7 @@ static void process_destroy( struct object *obj )
     free( process->dir_cache );
     free( process->image );
 
-    if (process->fast_sync) release_object( process->fast_sync );
+    if (process->inproc_sync) release_object( process->inproc_sync );
 }
 
 /* dump a process on stdout for debugging purposes */
@@ -828,6 +829,8 @@ static unsigned int process_map_access( struct object *obj, unsigned int access 
     access = default_map_access( obj, access );
     if (access & PROCESS_QUERY_INFORMATION) access |= PROCESS_QUERY_LIMITED_INFORMATION;
     if (access & PROCESS_SET_INFORMATION) access |= PROCESS_SET_LIMITED_INFORMATION;
+    if ((access & (PROCESS_VM_OPERATION | PROCESS_VM_WRITE)) == (PROCESS_VM_OPERATION | PROCESS_VM_WRITE))
+        access |= PROCESS_QUERY_LIMITED_INFORMATION;
     return access;
 }
 
@@ -837,14 +840,14 @@ static struct list *process_get_kernel_obj_list( struct object *obj )
     return &process->kernel_object;
 }
 
-static struct fast_sync *process_get_fast_sync( struct object *obj )
+static struct inproc_sync *process_get_inproc_sync( struct object *obj )
 {
     struct process *process = (struct process *)obj;
 
-    if (!process->fast_sync)
-        process->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, !process->running_threads );
-    if (process->fast_sync) grab_object( process->fast_sync );
-    return process->fast_sync;
+    if (!process->inproc_sync)
+        process->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, !process->running_threads );
+    if (process->inproc_sync) grab_object( process->inproc_sync );
+    return process->inproc_sync;
 }
 
 static struct security_descriptor *process_get_sd( struct object *obj )
@@ -871,7 +874,7 @@ static struct security_descriptor *process_get_sd( struct object *obj )
         process_default_sd->dacl_len  = dacl_len;
         sid = (struct sid *)(process_default_sd + 1);
         sid = copy_sid( sid, &builtin_admins_sid );
-        sid = copy_sid( sid, &domain_users_sid );
+        copy_sid( sid, &domain_users_sid );
 
         dacl = (struct acl *)((char *)(process_default_sd + 1) + admins_sid_len + users_sid_len);
         dacl->revision = ACL_REVISION;
@@ -1011,7 +1014,7 @@ static void process_killed( struct process *process )
     release_job_process( process );
     start_sigkill_timer( process );
     wake_up( &process->obj, 0 );
-    fast_set_event( process->fast_sync );
+    set_inproc_event( process->inproc_sync );
 }
 
 /* add a thread to a process running threads list */
@@ -1276,9 +1279,9 @@ DECL_HANDLER(new_process)
 
     if (req->info_size < sizeof(*info->data))
     {
-        /* make sure we have a full startup_info_t structure */
+        /* make sure we have a full startup_info_data structure */
         data_size_t env_size = info->data_size - info->info_size;
-        data_size_t info_size = min( req->info_size, FIELD_OFFSET( startup_info_t, curdir_len ));
+        data_size_t info_size = min( req->info_size, offsetof( struct startup_info_data, curdir_len ));
 
         if (!(info->data = mem_alloc( sizeof(*info->data) + env_size )))
         {
@@ -1288,7 +1291,7 @@ DECL_HANDLER(new_process)
         memcpy( info->data, info_ptr, info_size );
         memset( (char *)info->data + info_size, 0, sizeof(*info->data) - info_size );
         memcpy( info->data + 1, (const char *)info_ptr + req->info_size, env_size );
-        info->info_size = sizeof(startup_info_t);
+        info->info_size = sizeof(struct startup_info_data);
         info->data_size = info->info_size + env_size;
     }
     else
@@ -1421,6 +1424,40 @@ DECL_HANDLER(get_new_process_info)
         reply->exit_code = info->process->exit_code;
         release_object( info );
     }
+}
+
+/* Itererate processes using global process list */
+DECL_HANDLER(get_next_process)
+{
+    struct process *process;
+    struct list *ptr;
+
+    if (req->flags > 1)
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+
+    if (!req->last)
+    {
+        ptr = req->flags ? list_tail( &process_list ) : list_head( &process_list );
+    }
+    else
+    {
+        if (!(process = get_process_from_handle( req->last, 0 ))) return;
+        ptr = req->flags ? list_prev( &process_list, &process->entry )
+                         : list_next( &process_list, &process->entry );
+        release_object( process );
+    }
+
+    while (ptr)
+    {
+        process = LIST_ENTRY( ptr, struct process, entry );
+        if ((reply->handle = alloc_handle( current->process, process, req->access, req->attributes ))) return;
+        ptr = req->flags ? list_prev( &process_list, &process->entry )
+                         : list_next( &process_list, &process->entry );
+    }
+    set_error( STATUS_NO_MORE_ENTRIES );
 }
 
 /* Retrieve the new process startup info */
@@ -1630,6 +1667,18 @@ DECL_HANDLER(get_process_vm_counters)
     release_object( process );
 }
 
+void set_process_priority( struct process *process, int priority )
+{
+    struct thread *thread;
+
+    process->priority = priority;
+
+    LIST_FOR_EACH_ENTRY( thread, &process->thread_list, struct thread, proc_entry )
+    {
+        set_thread_priority( thread, priority, thread->priority );
+    }
+}
+
 static void set_process_affinity( struct process *process, affinity_t affinity )
 {
     struct thread *thread;
@@ -1655,7 +1704,7 @@ DECL_HANDLER(set_process_info)
 
     if ((process = get_process_from_handle( req->handle, PROCESS_SET_INFORMATION )))
     {
-        if (req->mask & SET_PROCESS_INFO_PRIORITY) process->priority = req->priority;
+        if (req->mask & SET_PROCESS_INFO_PRIORITY) set_process_priority( process, req->priority );
         if (req->mask & SET_PROCESS_INFO_AFFINITY) set_process_affinity( process, req->affinity );
         if (req->mask & SET_PROCESS_INFO_TOKEN)
         {
@@ -1748,6 +1797,24 @@ DECL_HANDLER(make_process_system)
         process->is_system = 1;
         if (!--user_processes && !shutdown_stage && master_socket_timeout != TIMEOUT_INFINITE)
             shutdown_timeout = add_timeout_user( master_socket_timeout, server_shutdown_timeout, NULL );
+    }
+    release_object( process );
+}
+
+/* grant a process a primary admin token with Default elevation */
+DECL_HANDLER(grant_process_admin_token)
+{
+    struct process *process;
+    struct token *token;
+
+    if (!(process = get_process_from_handle( req->handle, PROCESS_SET_INFORMATION )))
+        return;
+
+    if ((token = token_create_admin( TRUE, SecurityIdentification,
+                                     TokenElevationTypeDefault, default_session_id )))
+    {
+        release_object( process->token );
+        process->token = token;
     }
     release_object( process );
 }

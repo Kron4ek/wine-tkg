@@ -1345,13 +1345,76 @@ IRichEditOle_fnHandsOffStorage(IRichEditOle *iface, LONG iob)
     return E_NOTIMPL;
 }
 
+static HRESULT import_dataobject(struct text_services *services, LPDATAOBJECT lpdataobj, CLIPFORMAT cf)
+{
+    HRESULT hr;
+    IDataObject *dataobject;
+    FORMATETC fmtetc;
+    STGMEDIUM medium;
+
+    if (lpdataobj != NULL)
+        dataobject = lpdataobj;
+    else
+    {
+        hr = OleGetClipboard(&dataobject);
+        if (FAILED(hr))
+            return hr;
+    }
+
+    fmtetc.cfFormat = cf;
+    fmtetc.ptd = NULL;
+    fmtetc.dwAspect = DVASPECT_CONTENT;
+    fmtetc.lindex = -1;
+    fmtetc.tymed = TYMED_HGLOBAL;
+    hr = IDataObject_GetData(dataobject, &fmtetc, &medium);
+    if (SUCCEEDED(hr))
+    {
+        void *text = GlobalLock(medium.hGlobal);
+        if (text != NULL)
+        {
+            SETTEXTEX settextex;
+            settextex.flags = ST_KEEPUNDO | ST_SELECTION;
+            settextex.codepage = CP_ACP;
+            if (cf == CF_UNICODETEXT)
+                settextex.codepage = CP_UNICODE;
+            hr = ITextServices_TxSendMessage(&services->ITextServices_iface, EM_SETTEXTEX, (WPARAM)&settextex, (LPARAM)text, NULL);
+            GlobalUnlock(medium.hGlobal);
+        }
+        else
+            hr = E_OUTOFMEMORY;
+        ReleaseStgMedium(&medium);
+    }
+
+    if (lpdataobj == NULL)
+        IDataObject_Release(dataobject);
+    return hr;
+}
+
 static HRESULT WINAPI
 IRichEditOle_fnImportDataObject(IRichEditOle *iface, LPDATAOBJECT lpdataobj,
                CLIPFORMAT cf, HGLOBAL hMetaPict)
 {
+    CLIPFORMAT cfRTF;
+    HRESULT hr;
     struct text_services *services = impl_from_IRichEditOle( iface );
-    FIXME("stub %p\n", services);
-    return E_NOTIMPL;
+    TRACE("(%p, %p, %hu, %p)\n", services, lpdataobj, cf, hMetaPict);
+
+    cfRTF = RegisterClipboardFormatA("Rich Text Format");
+    if (cf == cfRTF)
+        hr = import_dataobject(services, lpdataobj, cf);
+    else if (cf == CF_TEXT || cf == CF_UNICODETEXT)
+        hr = import_dataobject(services, lpdataobj, cf);
+    else if (cf == 0)
+    {
+        hr = import_dataobject(services, lpdataobj, cfRTF);
+        if (hr == DV_E_FORMATETC)
+            hr = import_dataobject(services, lpdataobj, CF_UNICODETEXT);
+        if (hr == DV_E_FORMATETC)
+            hr = import_dataobject(services, lpdataobj, CF_TEXT);
+    }
+    else
+        hr = DV_E_FORMATETC;
+    return hr;
 }
 
 static HRESULT WINAPI

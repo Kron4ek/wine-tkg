@@ -79,7 +79,7 @@ static const struct object_ops ranges_ops =
     NULL,                      /* unlink_name */
     no_open_file,              /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
-    no_get_fast_sync,          /* get_fast_sync */
+    no_get_inproc_sync,        /* get_inproc_sync */
     no_close_handle,           /* close_handle */
     ranges_destroy             /* destroy */
 };
@@ -116,7 +116,7 @@ static const struct object_ops shared_map_ops =
     NULL,                      /* unlink_name */
     no_open_file,              /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
-    no_get_fast_sync,          /* get_fast_sync */
+    no_get_inproc_sync,        /* get_inproc_sync */
     no_close_handle,           /* close_handle */
     shared_map_destroy         /* destroy */
 };
@@ -130,7 +130,7 @@ struct memory_view
     struct fd      *fd;              /* fd for mapped file */
     struct ranges  *committed;       /* list of committed ranges in this mapping */
     struct shared_map *shared;       /* temp file for shared PE mapping */
-    pe_image_info_t image;           /* image info (for PE image mapping) */
+    struct pe_image_info image;      /* image info (for PE image mapping) */
     unsigned int    flags;           /* SEC_* flags */
     client_ptr_t    base;            /* view base address (in process addr space) */
     mem_size_t      size;            /* view size */
@@ -160,7 +160,7 @@ struct mapping
     mem_size_t      size;            /* mapping size */
     unsigned int    flags;           /* SEC_* flags */
     struct fd      *fd;              /* fd for mapped file */
-    pe_image_info_t image;           /* image info (for PE image mapping) */
+    struct pe_image_info image;      /* image info (for PE image mapping) */
     struct ranges  *committed;       /* list of committed ranges in this mapping */
     struct shared_map *shared;       /* temp file for shared PE mapping */
 };
@@ -190,7 +190,7 @@ static const struct object_ops mapping_ops =
     default_unlink_name,         /* unlink_name */
     no_open_file,                /* open_file */
     no_kernel_obj_list,          /* get_kernel_obj_list */
-    no_get_fast_sync,            /* get_fast_sync */
+    no_get_inproc_sync,        /* get_inproc_sync */
     no_close_handle,             /* close_handle */
     mapping_destroy              /* destroy */
 };
@@ -265,6 +265,9 @@ void init_memory(void)
     page_mask = sysconf( _SC_PAGESIZE ) - 1;
     free_map_addr( 0x60000000, 0x1c000000 );
     free_map_addr( 0x600000000000, 0x100000000000 );
+    if (page_mask != 0xfff)
+        fprintf( stderr, "wineserver: page size is %uk but Wine requires 4k pages, expect problems\n",
+                 (int)(page_mask + 1) / 1024 );
 }
 
 static void ranges_dump( struct object *obj, int verbose )
@@ -746,7 +749,7 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
     static const char fakedll_signature[] = "Wine placeholder DLL";
 
     IMAGE_COR20_HEADER clr;
-    IMAGE_SECTION_HEADER sec[96];
+    IMAGE_SECTION_HEADER *sec;
     struct
     {
         IMAGE_DOS_HEADER dos;
@@ -770,7 +773,7 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
     off_t pos;
     int size, has_relocs;
     size_t mz_size, clr_va = 0, clr_size = 0, cfg_va, cfg_size;
-    unsigned int i;
+    unsigned int i, ret;
 
     /* load the headers */
 
@@ -918,13 +921,14 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
     /* load the section headers */
 
     pos += sizeof(nt.Signature) + sizeof(nt.FileHeader) + nt.FileHeader.SizeOfOptionalHeader;
-    if (nt.FileHeader.NumberOfSections > ARRAY_SIZE( sec )) return STATUS_INVALID_IMAGE_FORMAT;
     size = sizeof(*sec) * nt.FileHeader.NumberOfSections;
     if (!mapping->size) mapping->size = mapping->image.map_size;
     else if (mapping->size > mapping->image.map_size) return STATUS_SECTION_TOO_BIG;
     if (pos + size > mapping->image.map_size) return STATUS_INVALID_FILE_FOR_SECTION;
     if (pos + size > mapping->image.header_size) mapping->image.header_size = pos + size;
-    if (pread( unix_fd, sec, size, pos ) != size) return STATUS_INVALID_FILE_FOR_SECTION;
+    if (!(sec = malloc( size ))) return STATUS_NO_MEMORY;
+    ret = STATUS_INVALID_FILE_FOR_SECTION;
+    if (pread( unix_fd, sec, size, pos ) != size) goto done;
 
     for (i = 0; i < nt.FileHeader.NumberOfSections && !mapping->image.contains_code; i++)
         if (sec[i].Characteristics & IMAGE_SCN_MEM_EXECUTE) mapping->image.contains_code = 1;
@@ -950,10 +954,12 @@ static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_s
             mapping->image.is_hybrid = !!cfg.cfg64.CHPEMetadataPointer;
     }
 
-    if (!build_shared_mapping( mapping, unix_fd, sec, nt.FileHeader.NumberOfSections ))
-        return STATUS_INVALID_FILE_FOR_SECTION;
+    if (build_shared_mapping( mapping, unix_fd, sec, nt.FileHeader.NumberOfSections ))
+        ret = STATUS_SUCCESS;
 
-    return STATUS_SUCCESS;
+done:
+    free( sec );
+    return ret;
 }
 
 static struct ranges *create_ranges(void)
@@ -1137,7 +1143,7 @@ struct file *get_view_file( const struct memory_view *view, unsigned int access,
 }
 
 /* get the image info for a SEC_IMAGE mapped view */
-const pe_image_info_t *get_view_image_info( const struct memory_view *view, client_ptr_t *base )
+const struct pe_image_info *get_view_image_info( const struct memory_view *view, client_ptr_t *base )
 {
     if (!(view->flags & SEC_IMAGE)) return NULL;
     *base = view->base;
@@ -1422,10 +1428,10 @@ void invalidate_shared_object( const volatile void *object_shm )
     SHARED_WRITE_END;
 }
 
-obj_locator_t get_shared_object_locator( const volatile void *object_shm )
+struct obj_locator get_shared_object_locator( const volatile void *object_shm )
 {
     struct session_object *object = CONTAINING_RECORD( object_shm, struct session_object, obj.shm );
-    obj_locator_t locator = {.offset = object->offset, .id = object->obj.id};
+    struct obj_locator locator = {.offset = object->offset, .id = object->obj.id};
     return locator;
 }
 
@@ -1497,14 +1503,13 @@ DECL_HANDLER(get_mapping_info)
         void *data;
 
         if (mapping->fd) get_nt_name( mapping->fd, &name );
-        size = min( sizeof(pe_image_info_t) + name.len, get_reply_max_size() );
+        size = min( sizeof(struct pe_image_info) + name.len, get_reply_max_size() );
         if ((data = set_reply_data_size( size )))
         {
-            memcpy( data, &mapping->image, min( sizeof(pe_image_info_t), size ));
-            if (size > sizeof(pe_image_info_t))
-                memcpy( (pe_image_info_t *)data + 1, name.str, size - sizeof(pe_image_info_t) );
+            data = mem_append( data, &mapping->image, min( sizeof(struct pe_image_info), size ));
+            if (size > sizeof(struct pe_image_info)) memcpy( data, name.str, size - sizeof(struct pe_image_info) );
         }
-        reply->total = sizeof(pe_image_info_t) + name.len;
+        reply->total = sizeof(struct pe_image_info) + name.len;
     }
 
     if (!(req->access & (SECTION_MAP_READ | SECTION_MAP_WRITE)))  /* query only */
@@ -1633,7 +1638,7 @@ done:
 DECL_HANDLER(map_builtin_view)
 {
     struct memory_view *view;
-    const pe_image_info_t *image = get_req_data();
+    const struct pe_image_info *image = get_req_data();
     data_size_t namelen = get_req_data_size() - sizeof(*image);
 
     if (get_req_data_size() < sizeof(*image) ||

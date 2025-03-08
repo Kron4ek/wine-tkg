@@ -19,6 +19,7 @@
  */
 
 #include "vkd3d_private.h"
+#include <math.h>
 
 static void d3d12_fence_incref(struct d3d12_fence *fence);
 static void d3d12_fence_decref(struct d3d12_fence *fence);
@@ -326,8 +327,11 @@ static void *vkd3d_fence_worker_main(void *arg)
     struct vkd3d_waiting_fence *old_fences, *cur_fences = NULL;
     struct vkd3d_fence_worker *worker = arg;
     unsigned int i;
+    bool timeline;
 
     vkd3d_set_thread_name("vkd3d_fence");
+
+    timeline = worker->device->vk_info.KHR_timeline_semaphore;
 
     for (;;)
     {
@@ -356,7 +360,12 @@ static void *vkd3d_fence_worker_main(void *arg)
         vkd3d_mutex_unlock(&worker->mutex);
 
         for (i = 0; i < cur_fence_count; ++i)
-            worker->wait_for_gpu_fence(worker, &cur_fences[i]);
+        {
+            if (timeline)
+                vkd3d_wait_for_gpu_timeline_semaphore(worker, &cur_fences[i]);
+            else
+                vkd3d_wait_for_gpu_fence(worker, &cur_fences[i]);
+        }
     }
 
     vkd3d_free(cur_fences);
@@ -378,9 +387,6 @@ static HRESULT vkd3d_fence_worker_start(struct vkd3d_fence_worker *worker,
     worker->fences = NULL;
     worker->fences_size = 0;
 
-    worker->wait_for_gpu_fence = device->vk_info.KHR_timeline_semaphore
-            ? vkd3d_wait_for_gpu_timeline_semaphore : vkd3d_wait_for_gpu_fence;
-
     vkd3d_mutex_init(&worker->mutex);
 
     vkd3d_cond_init(&worker->cond);
@@ -398,6 +404,7 @@ static HRESULT vkd3d_fence_worker_start(struct vkd3d_fence_worker *worker,
 static HRESULT vkd3d_fence_worker_stop(struct vkd3d_fence_worker *worker,
         struct d3d12_device *device)
 {
+    unsigned int i;
     HRESULT hr;
 
     TRACE("worker %p.\n", worker);
@@ -414,6 +421,9 @@ static HRESULT vkd3d_fence_worker_stop(struct vkd3d_fence_worker *worker,
 
     vkd3d_mutex_destroy(&worker->mutex);
     vkd3d_cond_destroy(&worker->cond);
+
+    for (i = 0; i < worker->fence_count; ++i)
+        d3d12_fence_decref(worker->fences[i].fence);
 
     vkd3d_free(worker->fences);
 
@@ -555,7 +565,8 @@ static void d3d12_fence_destroy_vk_objects(struct d3d12_fence *fence)
         fence->old_vk_fences[i] = VK_NULL_HANDLE;
     }
 
-    d3d12_fence_garbage_collect_vk_semaphores_locked(fence, true);
+    if (!device->vk_info.KHR_timeline_semaphore)
+        d3d12_fence_garbage_collect_vk_semaphores_locked(fence, true);
     VK_CALL(vkDestroySemaphore(device->vk_device, fence->timeline_semaphore, NULL));
 
     vkd3d_mutex_unlock(&fence->mutex);
@@ -1254,6 +1265,74 @@ VkResult vkd3d_create_timeline_semaphore(const struct d3d12_device *device, uint
     return VK_CALL(vkCreateSemaphore(device->vk_device, &info, NULL, timeline_semaphore));
 }
 
+static void vkd3d_vk_descriptor_pool_array_cleanup(struct vkd3d_vk_descriptor_pool_array *array)
+{
+    vkd3d_free(array->pools);
+}
+
+static void vkd3d_vk_descriptor_pool_array_init(struct vkd3d_vk_descriptor_pool_array *array)
+{
+    memset(array, 0, sizeof(*array));
+}
+
+static bool vkd3d_vk_descriptor_pool_array_push_array(struct vkd3d_vk_descriptor_pool_array *array,
+        const struct vkd3d_vk_descriptor_pool *pools, size_t count)
+{
+    if (!vkd3d_array_reserve((void **)&array->pools, &array->capacity, array->count + count, sizeof(*array->pools)))
+        return false;
+
+    memcpy(&array->pools[array->count], pools, count * sizeof(*pools));
+    array->count += count;
+
+    return true;
+}
+
+static bool vkd3d_vk_descriptor_pool_array_push(struct vkd3d_vk_descriptor_pool_array *array,
+        unsigned int descriptor_count, VkDescriptorPool vk_pool)
+{
+    struct vkd3d_vk_descriptor_pool pool =
+    {
+        .descriptor_count = descriptor_count,
+        .vk_pool = vk_pool,
+    };
+
+    return vkd3d_vk_descriptor_pool_array_push_array(array, &pool, 1);
+}
+
+static VkDescriptorPool vkd3d_vk_descriptor_pool_array_find(struct vkd3d_vk_descriptor_pool_array *array,
+        unsigned int *descriptor_count)
+{
+    VkDescriptorPool vk_pool;
+    size_t i;
+
+    for (i = 0; i < array->count; ++i)
+    {
+        if (array->pools[i].descriptor_count >= *descriptor_count)
+        {
+            *descriptor_count = array->pools[i].descriptor_count;
+            vk_pool = array->pools[i].vk_pool;
+            array->pools[i] = array->pools[--array->count];
+
+            return vk_pool;
+        }
+    }
+
+    return VK_NULL_HANDLE;
+}
+
+static void vkd3d_vk_descriptor_pool_array_destroy_pools(struct vkd3d_vk_descriptor_pool_array *array,
+        const struct d3d12_device *device)
+{
+    const struct vkd3d_vk_device_procs *vk_procs = &device->vk_procs;
+    size_t i;
+
+    for (i = 0; i < array->count; ++i)
+    {
+        VK_CALL(vkDestroyDescriptorPool(device->vk_device, array->pools[i].vk_pool, NULL));
+    }
+    array->count = 0;
+}
+
 /* Command buffers */
 static void d3d12_command_list_mark_as_invalid(struct d3d12_command_list *list,
         const char *message, ...)
@@ -1375,18 +1454,6 @@ static bool d3d12_command_allocator_add_framebuffer(struct d3d12_command_allocat
     return true;
 }
 
-static bool d3d12_command_allocator_add_descriptor_pool(struct d3d12_command_allocator *allocator,
-        VkDescriptorPool pool)
-{
-    if (!vkd3d_array_reserve((void **)&allocator->descriptor_pools, &allocator->descriptor_pools_size,
-            allocator->descriptor_pool_count + 1, sizeof(*allocator->descriptor_pools)))
-        return false;
-
-    allocator->descriptor_pools[allocator->descriptor_pool_count++] = pool;
-
-    return true;
-}
-
 static bool d3d12_command_allocator_add_view(struct d3d12_command_allocator *allocator,
         struct vkd3d_view *view)
 {
@@ -1425,37 +1492,93 @@ static bool d3d12_command_allocator_add_transfer_buffer(struct d3d12_command_all
 }
 
 static VkDescriptorPool d3d12_command_allocator_allocate_descriptor_pool(
-        struct d3d12_command_allocator *allocator)
+        struct d3d12_command_allocator *allocator, enum vkd3d_shader_descriptor_type descriptor_type,
+        unsigned int descriptor_count, bool unbounded)
 {
     struct d3d12_device *device = allocator->device;
     const struct vkd3d_vk_device_procs *vk_procs = &device->vk_procs;
     struct VkDescriptorPoolCreateInfo pool_desc;
     VkDevice vk_device = device->vk_device;
+    VkDescriptorPoolSize vk_pool_sizes[4];
+    unsigned int pool_size, pool_limit;
     VkDescriptorPool vk_pool;
     VkResult vr;
 
-    if (allocator->free_descriptor_pool_count > 0)
+    if (!(vk_pool = vkd3d_vk_descriptor_pool_array_find(&allocator->free_descriptor_pools[descriptor_type],
+            &descriptor_count)))
     {
-        vk_pool = allocator->free_descriptor_pools[allocator->free_descriptor_pool_count - 1];
-        allocator->free_descriptor_pools[allocator->free_descriptor_pool_count - 1] = VK_NULL_HANDLE;
-        --allocator->free_descriptor_pool_count;
-    }
-    else
-    {
+        pool_limit = device->vk_pool_limits[descriptor_type];
+
+        if (descriptor_count > pool_limit)
+        {
+            if (!unbounded)
+            {
+                ERR("Descriptor count %u exceeds maximum pool size %u.\n", descriptor_count, pool_limit);
+                return VK_NULL_HANDLE;
+            }
+
+            WARN("Clamping descriptor count %u to maximum pool size %u for unbounded allocation.\n",
+                    descriptor_count, pool_limit);
+            descriptor_count = pool_limit;
+        }
+
+        pool_size = allocator->vk_pool_sizes[descriptor_type];
+        if (descriptor_count > pool_size)
+        {
+            pool_size = 1u << (vkd3d_log2i(descriptor_count - 1) + 1);
+            pool_size = min(pool_limit, pool_size);
+        }
+        descriptor_count = pool_size;
+
         pool_desc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_desc.pNext = NULL;
         pool_desc.flags = 0;
         pool_desc.maxSets = 512;
-        pool_desc.poolSizeCount = device->vk_pool_count;
-        pool_desc.pPoolSizes = device->vk_pool_sizes;
+        pool_desc.pPoolSizes = vk_pool_sizes;
+
+        if (allocator->device->use_vk_heaps)
+        {
+            /* SRV root descriptors. */
+            vk_pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
+            vk_pool_sizes[0].descriptorCount = descriptor_count;
+
+            /* UAV root descriptors and UAV counters. */
+            vk_pool_sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+            vk_pool_sizes[1].descriptorCount = descriptor_count;
+
+            /* CBV root descriptors. */
+            vk_pool_sizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            vk_pool_sizes[2].descriptorCount = descriptor_count;
+
+            /* Static samplers. */
+            vk_pool_sizes[3].type = VK_DESCRIPTOR_TYPE_SAMPLER;
+            vk_pool_sizes[3].descriptorCount = descriptor_count;
+
+            pool_desc.poolSizeCount = 4;
+        }
+        else
+        {
+            vk_pool_sizes[0].type = vk_descriptor_type_from_vkd3d_descriptor_type(descriptor_type, true);
+            vk_pool_sizes[0].descriptorCount = descriptor_count;
+
+            vk_pool_sizes[1].type = vk_descriptor_type_from_vkd3d_descriptor_type(descriptor_type, false);
+            vk_pool_sizes[1].descriptorCount = descriptor_count;
+
+            pool_desc.poolSizeCount = 1 + (vk_pool_sizes[0].type != vk_pool_sizes[1].type);
+        }
+
         if ((vr = VK_CALL(vkCreateDescriptorPool(vk_device, &pool_desc, NULL, &vk_pool))) < 0)
         {
             ERR("Failed to create descriptor pool, vr %d.\n", vr);
             return VK_NULL_HANDLE;
         }
+
+        if (!unbounded || descriptor_count < pool_limit)
+            allocator->vk_pool_sizes[descriptor_type] = min(pool_limit, descriptor_count * 2);
     }
 
-    if (!(d3d12_command_allocator_add_descriptor_pool(allocator, vk_pool)))
+    if (!(vkd3d_vk_descriptor_pool_array_push(&allocator->descriptor_pools[descriptor_type],
+            descriptor_count, vk_pool)))
     {
         ERR("Failed to add descriptor pool.\n");
         VK_CALL(vkDestroyDescriptorPool(vk_device, vk_pool, NULL));
@@ -1465,9 +1588,9 @@ static VkDescriptorPool d3d12_command_allocator_allocate_descriptor_pool(
     return vk_pool;
 }
 
-static VkDescriptorSet d3d12_command_allocator_allocate_descriptor_set(
-        struct d3d12_command_allocator *allocator, VkDescriptorSetLayout vk_set_layout,
-        unsigned int variable_binding_size, bool unbounded)
+static VkDescriptorSet d3d12_command_allocator_allocate_descriptor_set(struct d3d12_command_allocator *allocator,
+        enum vkd3d_shader_descriptor_type descriptor_type, unsigned int descriptor_count,
+        VkDescriptorSetLayout vk_set_layout, unsigned int variable_binding_size, bool unbounded)
 {
     struct d3d12_device *device = allocator->device;
     const struct vkd3d_vk_device_procs *vk_procs = &device->vk_procs;
@@ -1477,14 +1600,19 @@ static VkDescriptorSet d3d12_command_allocator_allocate_descriptor_set(
     VkDescriptorSet vk_descriptor_set;
     VkResult vr;
 
-    if (!allocator->vk_descriptor_pool)
-        allocator->vk_descriptor_pool = d3d12_command_allocator_allocate_descriptor_pool(allocator);
-    if (!allocator->vk_descriptor_pool)
+    /* With Vulkan heaps we use just one descriptor pool. */
+    if (device->use_vk_heaps)
+        descriptor_type = 0;
+
+    if (!allocator->vk_descriptor_pools[descriptor_type])
+        allocator->vk_descriptor_pools[descriptor_type] = d3d12_command_allocator_allocate_descriptor_pool(allocator,
+                descriptor_type, descriptor_count, unbounded);
+    if (!allocator->vk_descriptor_pools[descriptor_type])
         return VK_NULL_HANDLE;
 
     set_desc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     set_desc.pNext = NULL;
-    set_desc.descriptorPool = allocator->vk_descriptor_pool;
+    set_desc.descriptorPool = allocator->vk_descriptor_pools[descriptor_type];
     set_desc.descriptorSetCount = 1;
     set_desc.pSetLayouts = &vk_set_layout;
     if (unbounded)
@@ -1498,16 +1626,17 @@ static VkDescriptorSet d3d12_command_allocator_allocate_descriptor_set(
     if ((vr = VK_CALL(vkAllocateDescriptorSets(vk_device, &set_desc, &vk_descriptor_set))) >= 0)
         return vk_descriptor_set;
 
-    allocator->vk_descriptor_pool = VK_NULL_HANDLE;
+    allocator->vk_descriptor_pools[descriptor_type] = VK_NULL_HANDLE;
     if (vr == VK_ERROR_FRAGMENTED_POOL || vr == VK_ERROR_OUT_OF_POOL_MEMORY_KHR)
-        allocator->vk_descriptor_pool = d3d12_command_allocator_allocate_descriptor_pool(allocator);
-    if (!allocator->vk_descriptor_pool)
+        allocator->vk_descriptor_pools[descriptor_type] = d3d12_command_allocator_allocate_descriptor_pool(allocator,
+                descriptor_type, descriptor_count, unbounded);
+    if (!allocator->vk_descriptor_pools[descriptor_type])
     {
         ERR("Failed to allocate descriptor set, vr %d.\n", vr);
         return VK_NULL_HANDLE;
     }
 
-    set_desc.descriptorPool = allocator->vk_descriptor_pool;
+    set_desc.descriptorPool = allocator->vk_descriptor_pools[descriptor_type];
     if ((vr = VK_CALL(vkAllocateDescriptorSets(vk_device, &set_desc, &vk_descriptor_set))) < 0)
     {
         FIXME("Failed to allocate descriptor set from a new pool, vr %d.\n", vr);
@@ -1533,38 +1662,50 @@ static void vkd3d_buffer_destroy(struct vkd3d_buffer *buffer, struct d3d12_devic
     VK_CALL(vkDestroyBuffer(device->vk_device, buffer->vk_buffer, NULL));
 }
 
+static void d3d12_command_allocator_reset_descriptor_pool_array(struct d3d12_command_allocator *allocator,
+        enum vkd3d_shader_descriptor_type type)
+{
+    struct vkd3d_vk_descriptor_pool_array *array = &allocator->descriptor_pools[type];
+    struct d3d12_device *device = allocator->device;
+    const struct vkd3d_vk_device_procs *vk_procs;
+    const struct vkd3d_vk_descriptor_pool *pool;
+    size_t i;
+
+    vk_procs = &device->vk_procs;
+    for (i = 0; i < array->count; ++i)
+    {
+        pool = &array->pools[i];
+        if (pool->descriptor_count < allocator->vk_pool_sizes[type]
+                || !vkd3d_vk_descriptor_pool_array_push_array(&allocator->free_descriptor_pools[type], pool, 1))
+            VK_CALL(vkDestroyDescriptorPool(device->vk_device, pool->vk_pool, NULL));
+        else
+            VK_CALL(vkResetDescriptorPool(device->vk_device, pool->vk_pool, 0));
+    }
+    array->count = 0;
+}
+
 static void d3d12_command_allocator_free_resources(struct d3d12_command_allocator *allocator,
         bool keep_reusable_resources)
 {
     struct d3d12_device *device = allocator->device;
     const struct vkd3d_vk_device_procs *vk_procs = &device->vk_procs;
-    unsigned int i, j;
+    unsigned int i;
 
-    allocator->vk_descriptor_pool = VK_NULL_HANDLE;
+    memset(allocator->vk_descriptor_pools, 0, sizeof(allocator->vk_descriptor_pools));
 
     if (keep_reusable_resources)
     {
-        if (vkd3d_array_reserve((void **)&allocator->free_descriptor_pools,
-                &allocator->free_descriptor_pools_size,
-                allocator->free_descriptor_pool_count + allocator->descriptor_pool_count,
-                sizeof(*allocator->free_descriptor_pools)))
+        for (i = 0; i < ARRAY_SIZE(allocator->descriptor_pools); ++i)
         {
-            for (i = 0, j = allocator->free_descriptor_pool_count; i < allocator->descriptor_pool_count; ++i, ++j)
-            {
-                VK_CALL(vkResetDescriptorPool(device->vk_device, allocator->descriptor_pools[i], 0));
-                allocator->free_descriptor_pools[j] = allocator->descriptor_pools[i];
-            }
-            allocator->free_descriptor_pool_count += allocator->descriptor_pool_count;
-            allocator->descriptor_pool_count = 0;
+            d3d12_command_allocator_reset_descriptor_pool_array(allocator, i);
         }
     }
     else
     {
-        for (i = 0; i < allocator->free_descriptor_pool_count; ++i)
+        for (i = 0; i < ARRAY_SIZE(allocator->free_descriptor_pools); ++i)
         {
-            VK_CALL(vkDestroyDescriptorPool(device->vk_device, allocator->free_descriptor_pools[i], NULL));
+            vkd3d_vk_descriptor_pool_array_destroy_pools(&allocator->free_descriptor_pools[i], device);
         }
-        allocator->free_descriptor_pool_count = 0;
     }
 
     for (i = 0; i < allocator->transfer_buffer_count; ++i)
@@ -1585,11 +1726,10 @@ static void d3d12_command_allocator_free_resources(struct d3d12_command_allocato
     }
     allocator->view_count = 0;
 
-    for (i = 0; i < allocator->descriptor_pool_count; ++i)
+    for (i = 0; i < ARRAY_SIZE(allocator->descriptor_pools); ++i)
     {
-        VK_CALL(vkDestroyDescriptorPool(device->vk_device, allocator->descriptor_pools[i], NULL));
+        vkd3d_vk_descriptor_pool_array_destroy_pools(&allocator->descriptor_pools[i], device);
     }
-    allocator->descriptor_pool_count = 0;
 
     for (i = 0; i < allocator->framebuffer_count; ++i)
     {
@@ -1646,6 +1786,7 @@ static ULONG STDMETHODCALLTYPE d3d12_command_allocator_Release(ID3D12CommandAllo
 {
     struct d3d12_command_allocator *allocator = impl_from_ID3D12CommandAllocator(iface);
     unsigned int refcount = vkd3d_atomic_decrement_u32(&allocator->refcount);
+    size_t i;
 
     TRACE("%p decreasing refcount to %u.\n", allocator, refcount);
 
@@ -1663,8 +1804,11 @@ static ULONG STDMETHODCALLTYPE d3d12_command_allocator_Release(ID3D12CommandAllo
         vkd3d_free(allocator->transfer_buffers);
         vkd3d_free(allocator->buffer_views);
         vkd3d_free(allocator->views);
-        vkd3d_free(allocator->descriptor_pools);
-        vkd3d_free(allocator->free_descriptor_pools);
+        for (i = 0; i < ARRAY_SIZE(allocator->free_descriptor_pools); ++i)
+        {
+            vkd3d_vk_descriptor_pool_array_cleanup(&allocator->descriptor_pools[i]);
+            vkd3d_vk_descriptor_pool_array_cleanup(&allocator->free_descriptor_pools[i]);
+        }
         vkd3d_free(allocator->framebuffers);
         vkd3d_free(allocator->passes);
 
@@ -1821,6 +1965,7 @@ static HRESULT d3d12_command_allocator_init(struct d3d12_command_allocator *allo
     struct vkd3d_queue *queue;
     VkResult vr;
     HRESULT hr;
+    size_t i;
 
     if (FAILED(hr = vkd3d_private_store_init(&allocator->private_store)))
         return hr;
@@ -1850,11 +1995,12 @@ static HRESULT d3d12_command_allocator_init(struct d3d12_command_allocator *allo
         return hresult_from_vk_result(vr);
     }
 
-    allocator->vk_descriptor_pool = VK_NULL_HANDLE;
+    memset(allocator->vk_descriptor_pools, 0, sizeof(allocator->vk_descriptor_pools));
 
-    allocator->free_descriptor_pools = NULL;
-    allocator->free_descriptor_pools_size = 0;
-    allocator->free_descriptor_pool_count = 0;
+    for (i = 0; i < ARRAY_SIZE(allocator->free_descriptor_pools); ++i)
+    {
+        vkd3d_vk_descriptor_pool_array_init(&allocator->free_descriptor_pools[i]);
+    }
 
     allocator->passes = NULL;
     allocator->passes_size = 0;
@@ -1864,9 +2010,11 @@ static HRESULT d3d12_command_allocator_init(struct d3d12_command_allocator *allo
     allocator->framebuffers_size = 0;
     allocator->framebuffer_count = 0;
 
-    allocator->descriptor_pools = NULL;
-    allocator->descriptor_pools_size = 0;
-    allocator->descriptor_pool_count = 0;
+    for (i = 0; i < ARRAY_SIZE(allocator->descriptor_pools); ++i)
+    {
+        vkd3d_vk_descriptor_pool_array_init(&allocator->descriptor_pools[i]);
+        allocator->vk_pool_sizes[i] = min(VKD3D_INITIAL_DESCRIPTORS_POOL_SIZE, device->vk_pool_limits[i]);
+    }
 
     allocator->views = NULL;
     allocator->views_size = 0;
@@ -2004,6 +2152,8 @@ static void d3d12_command_list_invalidate_bindings(struct d3d12_command_list *li
 
         vkd3d_array_reserve((void **)&bindings->vk_uav_counter_views, &bindings->vk_uav_counter_views_size,
                 state->uav_counters.binding_count, sizeof(*bindings->vk_uav_counter_views));
+        memset(bindings->vk_uav_counter_views, 0,
+                state->uav_counters.binding_count * sizeof(*bindings->vk_uav_counter_views));
         bindings->uav_counters_dirty = true;
     }
 }
@@ -2098,7 +2248,7 @@ static bool vk_barrier_parameters_from_d3d12_resource_state(unsigned int state, 
                 if (!stencil_state || (stencil_state & D3D12_RESOURCE_STATE_DEPTH_WRITE))
                     *image_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
                 else
-                    *image_layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL;
+                    *image_layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL_KHR;
             }
             return true;
 
@@ -2132,7 +2282,7 @@ static bool vk_barrier_parameters_from_d3d12_resource_state(unsigned int state, 
             {
                 if (stencil_state & D3D12_RESOURCE_STATE_DEPTH_WRITE)
                 {
-                    *image_layout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL;
+                    *image_layout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL_KHR;
                     *access_mask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
                 }
                 else
@@ -2451,6 +2601,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_command_list_Close(ID3D12GraphicsCommandL
     }
 
     list->is_recording = false;
+    list->has_depth_bounds = false;
 
     if (!list->is_valid)
     {
@@ -2479,7 +2630,7 @@ static void d3d12_command_list_reset_state(struct d3d12_command_list *list,
     list->fb_layer_count = 0;
 
     list->xfb_enabled = false;
-
+    list->has_depth_bounds = false;
     list->is_predicated = false;
 
     list->current_framebuffer = VK_NULL_HANDLE;
@@ -2745,7 +2896,8 @@ static void d3d12_command_list_prepare_descriptors(struct d3d12_command_list *li
         }
 
         vk_descriptor_set = d3d12_command_allocator_allocate_descriptor_set(list->allocator,
-                layout->vk_layout, variable_binding_size, unbounded_offset != UINT_MAX);
+                layout->descriptor_type, layout->descriptor_count + variable_binding_size, layout->vk_layout,
+                variable_binding_size, unbounded_offset != UINT_MAX);
         bindings->descriptor_sets[bindings->descriptor_set_count++] = vk_descriptor_set;
     }
 
@@ -2793,39 +2945,23 @@ static bool vk_write_descriptor_set_from_d3d12_desc(VkWriteDescriptorSet *vk_des
             /* We use separate bindings for buffer and texture SRVs/UAVs.
              * See d3d12_root_signature_init(). For unbounded ranges the
              * descriptors exist in two consecutive sets, otherwise they occur
-             * in pairs in one set. */
-            if (range->descriptor_count == UINT_MAX)
-            {
-                if (vk_descriptor_type != VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
-                        && vk_descriptor_type != VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER)
-                {
-                    vk_descriptor_write->dstSet = vk_descriptor_sets[set + 1];
-                    vk_descriptor_write->dstBinding = 0;
-                }
-            }
-            else
-            {
-                if (!use_array)
-                    vk_descriptor_write->dstBinding = vk_binding + 2 * index;
-                if (vk_descriptor_type != VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
-                        && vk_descriptor_type != VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER)
-                    ++vk_descriptor_write->dstBinding;
-            }
-
+             * as consecutive ranges within a set. */
             if (vk_descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
                     || vk_descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER)
             {
                 vk_descriptor_write->pTexelBufferView = &u.view->v.u.vk_buffer_view;
+                break;
             }
-            else
-            {
-                vk_image_info->sampler = VK_NULL_HANDLE;
-                vk_image_info->imageView = u.view->v.u.vk_image_view;
-                vk_image_info->imageLayout = u.header->magic == VKD3D_DESCRIPTOR_MAGIC_SRV
-                        ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
 
-                vk_descriptor_write->pImageInfo = vk_image_info;
-            }
+            vk_descriptor_write->dstSet = vk_descriptor_sets[range->image_set];
+            vk_descriptor_write->dstBinding = use_array ? range->image_binding : range->image_binding + index;
+
+            vk_image_info->sampler = VK_NULL_HANDLE;
+            vk_image_info->imageView = u.view->v.u.vk_image_view;
+            vk_image_info->imageLayout = u.header->magic == VKD3D_DESCRIPTOR_MAGIC_SRV
+                    ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+
+            vk_descriptor_write->pImageInfo = vk_image_info;
             break;
 
         case VKD3D_DESCRIPTOR_MAGIC_SAMPLER:
@@ -2939,10 +3075,11 @@ static void d3d12_command_list_update_descriptor_table(struct d3d12_command_list
 }
 
 static bool vk_write_descriptor_set_from_root_descriptor(VkWriteDescriptorSet *vk_descriptor_write,
-        const struct d3d12_root_parameter *root_parameter, VkDescriptorSet vk_descriptor_set,
+        const struct d3d12_root_parameter *root_parameter, const VkDescriptorSet *vk_descriptor_sets,
         VkBufferView *vk_buffer_view, const VkDescriptorBufferInfo *vk_buffer_info)
 {
     const struct d3d12_root_descriptor *root_descriptor;
+    VkDescriptorSet vk_descriptor_set;
 
     switch (root_parameter->parameter_type)
     {
@@ -2961,6 +3098,7 @@ static bool vk_write_descriptor_set_from_root_descriptor(VkWriteDescriptorSet *v
     }
 
     root_descriptor = &root_parameter->u.descriptor;
+    vk_descriptor_set = vk_descriptor_sets ? vk_descriptor_sets[root_descriptor->set] : VK_NULL_HANDLE;
 
     vk_descriptor_write->sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     vk_descriptor_write->pNext = NULL;
@@ -3016,7 +3154,7 @@ static void d3d12_command_list_update_push_descriptors(struct d3d12_command_list
         }
 
         if (!vk_write_descriptor_set_from_root_descriptor(&descriptor_writes[descriptor_count],
-                root_parameter, bindings->descriptor_sets[0], vk_buffer_view, vk_buffer_info))
+                root_parameter, bindings->descriptor_sets, vk_buffer_view, vk_buffer_info))
             continue;
 
         ++descriptor_count;
@@ -3044,8 +3182,8 @@ static void d3d12_command_list_update_uav_counter_descriptors(struct d3d12_comma
     uav_counter_count = state->uav_counters.binding_count;
     if (!(vk_descriptor_writes = vkd3d_calloc(uav_counter_count, sizeof(*vk_descriptor_writes))))
         return;
-    if (!(vk_descriptor_set = d3d12_command_allocator_allocate_descriptor_set(
-            list->allocator, state->uav_counters.vk_set_layout, 0, false)))
+    if (!(vk_descriptor_set = d3d12_command_allocator_allocate_descriptor_set(list->allocator,
+            VKD3D_SHADER_DESCRIPTOR_TYPE_UAV, uav_counter_count, state->uav_counters.vk_set_layout, 0, false)))
         goto done;
 
     for (i = 0; i < uav_counter_count; ++i)
@@ -3078,7 +3216,7 @@ done:
     vkd3d_free(vk_descriptor_writes);
 }
 
-static void d3d12_command_list_update_descriptors(struct d3d12_command_list *list,
+static void d3d12_command_list_update_virtual_descriptors(struct d3d12_command_list *list,
         enum vkd3d_pipeline_bind_point bind_point)
 {
     struct vkd3d_pipeline_bindings *bindings = &list->pipeline_bindings[bind_point];
@@ -3210,6 +3348,9 @@ static void command_list_flush_vk_heap_updates(struct d3d12_command_list *list)
 
 static void command_list_add_descriptor_heap(struct d3d12_command_list *list, struct d3d12_descriptor_heap *heap)
 {
+    if (!list->device->use_vk_heaps)
+        return;
+
     if (!contains_heap(list->descriptor_heaps, list->descriptor_heap_count, heap))
     {
         if (list->descriptor_heap_count == ARRAY_SIZE(list->descriptor_heaps))
@@ -3296,6 +3437,15 @@ static void d3d12_command_list_update_heap_descriptors(struct d3d12_command_list
     d3d12_command_list_bind_descriptor_heap(list, bind_point, sampler_heap);
 }
 
+static void d3d12_command_list_update_descriptors(struct d3d12_command_list *list,
+        enum vkd3d_pipeline_bind_point bind_point)
+{
+    if (list->device->use_vk_heaps)
+        d3d12_command_list_update_heap_descriptors(list, bind_point);
+    else
+        d3d12_command_list_update_virtual_descriptors(list, bind_point);
+}
+
 static bool d3d12_command_list_update_compute_state(struct d3d12_command_list *list)
 {
     d3d12_command_list_end_current_render_pass(list);
@@ -3303,7 +3453,7 @@ static bool d3d12_command_list_update_compute_state(struct d3d12_command_list *l
     if (!d3d12_command_list_update_compute_pipeline(list))
         return false;
 
-    list->update_descriptors(list, VKD3D_PIPELINE_BIND_POINT_COMPUTE);
+    d3d12_command_list_update_descriptors(list, VKD3D_PIPELINE_BIND_POINT_COMPUTE);
 
     return true;
 }
@@ -3320,7 +3470,7 @@ static bool d3d12_command_list_begin_render_pass(struct d3d12_command_list *list
     if (!d3d12_command_list_update_current_framebuffer(list))
         return false;
 
-    list->update_descriptors(list, VKD3D_PIPELINE_BIND_POINT_GRAPHICS);
+    d3d12_command_list_update_descriptors(list, VKD3D_PIPELINE_BIND_POINT_GRAPHICS);
 
     if (list->current_render_pass != VK_NULL_HANDLE)
         return true;
@@ -3349,6 +3499,12 @@ static bool d3d12_command_list_begin_render_pass(struct d3d12_command_list *list
                 list->so_counter_buffers, list->so_counter_buffer_offsets));
 
         list->xfb_enabled = true;
+    }
+
+    if (graphics->ds_desc.depthBoundsTestEnable && !list->has_depth_bounds)
+    {
+        list->has_depth_bounds = true;
+        VK_CALL(vkCmdSetDepthBounds(list->vk_command_buffer, 0.0f, 1.0f));
     }
 
     return true;
@@ -4599,8 +4755,7 @@ static void d3d12_command_list_set_root_cbv(struct d3d12_command_list *list,
 
     if (vk_info->KHR_push_descriptor)
     {
-        vk_write_descriptor_set_from_root_descriptor(&descriptor_write,
-                root_parameter, VK_NULL_HANDLE, NULL, &buffer_info);
+        vk_write_descriptor_set_from_root_descriptor(&descriptor_write, root_parameter, NULL, NULL, &buffer_info);
         VK_CALL(vkCmdPushDescriptorSetKHR(list->vk_command_buffer, bindings->vk_bind_point,
                 root_signature->vk_pipeline_layout, 0, 1, &descriptor_write));
     }
@@ -4608,7 +4763,7 @@ static void d3d12_command_list_set_root_cbv(struct d3d12_command_list *list,
     {
         d3d12_command_list_prepare_descriptors(list, bind_point);
         vk_write_descriptor_set_from_root_descriptor(&descriptor_write,
-                root_parameter, bindings->descriptor_sets[0], NULL, &buffer_info);
+                root_parameter, bindings->descriptor_sets, NULL, &buffer_info);
         VK_CALL(vkUpdateDescriptorSets(list->device->vk_device, 1, &descriptor_write, 0, NULL));
 
         VKD3D_ASSERT(index < ARRAY_SIZE(bindings->push_descriptors));
@@ -4672,8 +4827,7 @@ static void d3d12_command_list_set_root_descriptor(struct d3d12_command_list *li
 
     if (vk_info->KHR_push_descriptor)
     {
-        vk_write_descriptor_set_from_root_descriptor(&descriptor_write,
-                root_parameter, VK_NULL_HANDLE, &vk_buffer_view, NULL);
+        vk_write_descriptor_set_from_root_descriptor(&descriptor_write, root_parameter, NULL, &vk_buffer_view, NULL);
         VK_CALL(vkCmdPushDescriptorSetKHR(list->vk_command_buffer, bindings->vk_bind_point,
                 root_signature->vk_pipeline_layout, 0, 1, &descriptor_write));
     }
@@ -4681,7 +4835,7 @@ static void d3d12_command_list_set_root_descriptor(struct d3d12_command_list *li
     {
         d3d12_command_list_prepare_descriptors(list, bind_point);
         vk_write_descriptor_set_from_root_descriptor(&descriptor_write,
-                root_parameter, bindings->descriptor_sets[0], &vk_buffer_view,  NULL);
+                root_parameter, bindings->descriptor_sets, &vk_buffer_view,  NULL);
         VK_CALL(vkUpdateDescriptorSets(list->device->vk_device, 1, &descriptor_write, 0, NULL));
 
         VKD3D_ASSERT(index < ARRAY_SIZE(bindings->push_descriptors));
@@ -4791,20 +4945,42 @@ static void STDMETHODCALLTYPE d3d12_command_list_IASetVertexBuffers(ID3D12Graphi
     VkDeviceSize offsets[ARRAY_SIZE(list->strides)];
     const struct vkd3d_vk_device_procs *vk_procs;
     VkBuffer buffers[ARRAY_SIZE(list->strides)];
+    struct d3d12_device *device = list->device;
+    unsigned int i, stride, max_view_count;
     struct d3d12_resource *resource;
     bool invalidate = false;
-    unsigned int i, stride;
 
     TRACE("iface %p, start_slot %u, view_count %u, views %p.\n", iface, start_slot, view_count, views);
 
-    vk_procs = &list->device->vk_procs;
-    null_resources = &list->device->null_resources;
-    gpu_va_allocator = &list->device->gpu_va_allocator;
+    vk_procs = &device->vk_procs;
+    null_resources = &device->null_resources;
+    gpu_va_allocator = &device->gpu_va_allocator;
 
     if (!vkd3d_bound_range(start_slot, view_count, ARRAY_SIZE(list->strides)))
     {
         WARN("Invalid start slot %u / view count %u.\n", start_slot, view_count);
         return;
+    }
+
+    max_view_count = device->vk_info.device_limits.maxVertexInputBindings;
+    if (start_slot < max_view_count)
+        max_view_count -= start_slot;
+    else
+        max_view_count = 0;
+
+    /* Although simply skipping unsupported binding slots isn't especially
+     * likely to work well in the general case, applications sometimes
+     * explicitly set all 32 vertex buffer bindings slots supported by
+     * Direct3D 12, with unused slots set to NULL. "Spider-Man Remastered" is
+     * an example of such an application. */
+    if (view_count > max_view_count)
+    {
+        for (i = max_view_count; i < view_count; ++i)
+        {
+            if (views && views[i].BufferLocation)
+                WARN("Ignoring unsupported vertex buffer slot %u.\n", start_slot + i);
+        }
+        view_count = max_view_count;
     }
 
     for (i = 0; i < view_count; ++i)
@@ -5336,8 +5512,8 @@ static void d3d12_command_list_clear_uav(struct d3d12_command_list *list,
                 view->info.texture.vk_view_type, view->format->type, &pipeline);
     }
 
-    if (!(write_set.dstSet = d3d12_command_allocator_allocate_descriptor_set(
-            list->allocator, pipeline.vk_set_layout, 0, false)))
+    if (!(write_set.dstSet = d3d12_command_allocator_allocate_descriptor_set(list->allocator,
+            VKD3D_SHADER_DESCRIPTOR_TYPE_UAV, 1, pipeline.vk_set_layout, 0, false)))
     {
         ERR("Failed to allocate descriptor set.\n");
         return;
@@ -5939,7 +6115,25 @@ static void STDMETHODCALLTYPE d3d12_command_list_AtomicCopyBufferUINT64(ID3D12Gr
 static void STDMETHODCALLTYPE d3d12_command_list_OMSetDepthBounds(ID3D12GraphicsCommandList6 *iface,
         FLOAT min, FLOAT max)
 {
-    FIXME("iface %p, min %.8e, max %.8e stub!\n", iface, min, max);
+    struct d3d12_command_list *list = impl_from_ID3D12GraphicsCommandList6(iface);
+    const struct vkd3d_vk_device_procs *vk_procs = &list->device->vk_procs;
+
+    TRACE("iface %p, min %.8e, max %.8e.\n", iface, min, max);
+
+    if (isnan(max))
+        max = 0.0f;
+    if (isnan(min))
+        min = 0.0f;
+
+    if (!list->device->vk_info.EXT_depth_range_unrestricted && (min < 0.0f || min > 1.0f || max < 0.0f || max > 1.0f))
+    {
+        WARN("VK_EXT_depth_range_unrestricted was not found, clamping depth bounds to 0.0 and 1.0.\n");
+        max = vkd3d_clamp(max, 0.0f, 1.0f);
+        min = vkd3d_clamp(min, 0.0f, 1.0f);
+    }
+
+    list->has_depth_bounds = true;
+    VK_CALL(vkCmdSetDepthBounds(list->vk_command_buffer, min, max));
 }
 
 static void STDMETHODCALLTYPE d3d12_command_list_SetSamplePositions(ID3D12GraphicsCommandList6 *iface,
@@ -6189,8 +6383,6 @@ static HRESULT d3d12_command_list_init(struct d3d12_command_list *list, struct d
 
     list->allocator = allocator;
 
-    list->update_descriptors = device->use_vk_heaps ? d3d12_command_list_update_heap_descriptors
-            : d3d12_command_list_update_descriptors;
     list->descriptor_heap_count = 0;
 
     if (SUCCEEDED(hr = d3d12_command_allocator_allocate_command_buffer(allocator, list)))
@@ -6294,6 +6486,7 @@ static void d3d12_command_queue_destroy_op(struct vkd3d_cs_op_data *op)
             break;
 
         case VKD3D_CS_OP_SIGNAL:
+        case VKD3D_CS_OP_SIGNAL_ON_CPU:
             d3d12_fence_decref(op->u.signal.fence);
             break;
 
@@ -7284,6 +7477,7 @@ static HRESULT d3d12_command_queue_flush_ops_locked(struct d3d12_command_queue *
     struct vkd3d_cs_op_data *op;
     struct d3d12_fence *fence;
     unsigned int i;
+    HRESULT hr;
 
     queue->is_flushing = true;
 
@@ -7315,6 +7509,11 @@ static HRESULT d3d12_command_queue_flush_ops_locked(struct d3d12_command_queue *
 
                 case VKD3D_CS_OP_SIGNAL:
                     d3d12_command_queue_signal(queue, op->u.signal.fence, op->u.signal.value);
+                    break;
+
+                case VKD3D_CS_OP_SIGNAL_ON_CPU:
+                    if (FAILED(hr = d3d12_fence_Signal(&op->u.signal.fence->ID3D12Fence1_iface, op->u.signal.value)))
+                        ERR("Failed to signal fence %p, hr %s.\n", op->u.signal.fence, debugstr_hresult(hr));
                     break;
 
                 case VKD3D_CS_OP_EXECUTE:
@@ -7457,6 +7656,36 @@ void vkd3d_release_vk_queue(ID3D12CommandQueue *queue)
     struct d3d12_command_queue *d3d12_queue = impl_from_ID3D12CommandQueue(queue);
 
     return vkd3d_queue_release(d3d12_queue->vkd3d_queue);
+}
+
+HRESULT vkd3d_queue_signal_on_cpu(ID3D12CommandQueue *iface, ID3D12Fence *fence_iface, uint64_t value)
+{
+    struct d3d12_command_queue *command_queue = impl_from_ID3D12CommandQueue(iface);
+    struct d3d12_fence *fence = unsafe_impl_from_ID3D12Fence(fence_iface);
+    struct vkd3d_cs_op_data *op;
+    HRESULT hr = S_OK;
+
+    TRACE("iface %p, fence %p, value %#"PRIx64".\n", iface, fence_iface, value);
+
+    vkd3d_mutex_lock(&command_queue->op_mutex);
+
+    if (!(op = d3d12_command_queue_op_array_require_space(&command_queue->op_queue)))
+    {
+        ERR("Failed to add op.\n");
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+    op->opcode = VKD3D_CS_OP_SIGNAL_ON_CPU;
+    op->u.signal.fence = fence;
+    op->u.signal.value = value;
+
+    d3d12_fence_incref(fence);
+
+    d3d12_command_queue_submit_locked(command_queue);
+
+done:
+    vkd3d_mutex_unlock(&command_queue->op_mutex);
+    return hr;
 }
 
 /* ID3D12CommandSignature */

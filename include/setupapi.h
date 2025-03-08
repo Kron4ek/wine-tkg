@@ -1426,18 +1426,6 @@ typedef enum {
 WINSETUPAPI void     WINAPI InstallHinfSectionA( HWND hwnd, HINSTANCE handle, PCSTR cmdline, INT show );
 WINSETUPAPI void     WINAPI InstallHinfSectionW( HWND hwnd, HINSTANCE handle, PCWSTR cmdline, INT show );
 #define                     InstallHinfSection WINELIB_NAME_AW(InstallHinfSection)
-WINSETUPAPI BOOL     WINAPI IsUserAdmin(VOID);
-WINSETUPAPI PWSTR    WINAPI MultiByteToUnicode(PCSTR lpMultiByteStr, UINT uCodePage);
-WINSETUPAPI VOID     WINAPI MyFree(PVOID lpMem);
-WINSETUPAPI PVOID    WINAPI MyMalloc(DWORD dwSize);
-WINSETUPAPI PVOID    WINAPI MyRealloc(PVOID lpSrc, DWORD dwSize);
-WINSETUPAPI DWORD    WINAPI OpenAndMapForRead(PCWSTR, PDWORD, PHANDLE, PHANDLE, PVOID *);
-WINSETUPAPI LONG     WINAPI QueryRegistryValue(HKEY, PCWSTR, PBYTE *, PDWORD, PDWORD);
-/* RetreiveFileSecurity is not a typo, as per Microsoft's dlls */
-WINSETUPAPI DWORD    WINAPI RetreiveFileSecurity(PCWSTR, PSECURITY_DESCRIPTOR *);
-WINSETUPAPI BOOL     WINAPI SetupAddInstallSectionToDiskSpaceListA(HDSKSPC, HINF, HINF, PCSTR, PVOID, UINT);
-WINSETUPAPI BOOL     WINAPI SetupAddInstallSectionToDiskSpaceListW(HDSKSPC, HINF, HINF, PCWSTR, PVOID, UINT);
-#define         SetupAddInstallSectionToDiskSpaceList WINELIB_NAME_AW(SetupAddInstallSectionToDiskSpaceList)
 WINSETUPAPI BOOL     WINAPI SetupAddSectionToDiskSpaceListA(HDSKSPC, HINF, HINF, PCSTR, UINT, PVOID, UINT);
 WINSETUPAPI BOOL     WINAPI SetupAddSectionToDiskSpaceListW(HDSKSPC, HINF, HINF, PCWSTR, UINT, PVOID, UINT);
 #define                     SetupAddSectionToDiskSpaceList WINELIB_NAME_AW(SetupAddSectionToDiskSpaceList)
@@ -1585,6 +1573,7 @@ WINSETUPAPI BOOL     WINAPI SetupDiGetDeviceInterfaceAlias(HDEVINFO, PSP_DEVICE_
 WINSETUPAPI BOOL     WINAPI SetupDiGetDeviceInterfaceDetailA(HDEVINFO, PSP_DEVICE_INTERFACE_DATA, PSP_DEVICE_INTERFACE_DETAIL_DATA_A, DWORD, PDWORD, PSP_DEVINFO_DATA);
 WINSETUPAPI BOOL     WINAPI SetupDiGetDeviceInterfaceDetailW(HDEVINFO, PSP_DEVICE_INTERFACE_DATA, PSP_DEVICE_INTERFACE_DETAIL_DATA_W, DWORD, PDWORD, PSP_DEVINFO_DATA);
 #define                     SetupDiGetDeviceInterfaceDetail WINELIB_NAME_AW(SetupDiGetDeviceInterfaceDetail)
+WINSETUPAPI BOOL WINAPI SetupDiGetDevicePropertyKeys(HDEVINFO, PSP_DEVINFO_DATA, DEVPROPKEY *, DWORD, DWORD *, DWORD);
 WINSETUPAPI BOOL     WINAPI SetupDiGetDevicePropertyW(HDEVINFO, PSP_DEVINFO_DATA, const DEVPROPKEY *, DEVPROPTYPE *, BYTE *, DWORD, DWORD *, DWORD);
 #define                     SetupDiGetDeviceProperty WINELIB_NAME_AW(SetupDiGetDeviceProperty)  /* note: A function doesn't exist */
 WINSETUPAPI BOOL     WINAPI SetupDiGetDeviceRegistryPropertyA(HDEVINFO, PSP_DEVINFO_DATA, DWORD, PDWORD, PBYTE, DWORD, PDWORD);

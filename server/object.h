@@ -42,7 +42,7 @@ struct async;
 struct async_queue;
 struct winstation;
 struct object_type;
-struct fast_sync;
+struct inproc_sync;
 
 
 struct unicode_str
@@ -56,7 +56,7 @@ struct type_descr
 {
     struct unicode_str name;          /* type name */
     unsigned int       valid_access;  /* mask for valid access bits */
-    generic_map_t      mapping;       /* generic access mapping */
+    struct generic_map mapping;       /* generic access mapping */
     unsigned int       index;         /* index in global array of types */
     unsigned int       obj_count;     /* count of objects of this type */
     unsigned int       handle_count;  /* count of handles of this type */
@@ -104,8 +104,8 @@ struct object_ops
                                 unsigned int options);
     /* return list of kernel objects */
     struct list *(*get_kernel_obj_list)(struct object *);
-    /* get a client-waitable fast-synchronization handle to this object */
-    struct fast_sync *(*get_fast_sync)(struct object *);
+    /* get a client-waitable in-process synchronization handle to this object */
+    struct inproc_sync *(*get_inproc_sync)(struct object *);
     /* close a handle to this object */
     int (*close_handle)(struct object *,struct process *,obj_handle_t);
     /* destroy on refcount == 0 */
@@ -199,13 +199,20 @@ extern void close_objects(void);
 static inline void make_object_permanent( struct object *obj ) { obj->is_permanent = 1; }
 static inline void make_object_temporary( struct object *obj ) { obj->is_permanent = 0; }
 
-static inline unsigned int map_access( unsigned int access, const generic_map_t *mapping )
+static inline unsigned int map_access( unsigned int access, const struct generic_map *mapping )
 {
     if (access & GENERIC_READ)    access |= mapping->read;
     if (access & GENERIC_WRITE)   access |= mapping->write;
     if (access & GENERIC_EXECUTE) access |= mapping->exec;
     if (access & GENERIC_ALL)     access |= mapping->all;
     return access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL);
+}
+
+static inline void *mem_append( void *ptr, const void *src, data_size_t len )
+{
+    if (!len) return ptr;
+    memcpy( ptr, src, len );
+    return (char *)ptr + len;
 }
 
 /* event functions */
@@ -227,16 +234,16 @@ extern void reset_event( struct event *event );
 
 extern void abandon_mutexes( struct thread *thread );
 
-/* fast-synchronization functions */
+/* in-process synchronization functions */
 
-extern struct fast_sync *fast_create_event( enum fast_sync_type type, int signaled );
-extern struct fast_sync *fast_create_semaphore( unsigned int count, unsigned int max );
-extern struct fast_sync *fast_create_mutex( thread_id_t owner, unsigned int count );
-extern void fast_set_event( struct fast_sync *obj );
-extern void fast_reset_event( struct fast_sync *obj );
-extern void fast_abandon_mutex( thread_id_t tid, struct fast_sync *fast_sync );
+extern struct inproc_sync *create_inproc_event( enum inproc_sync_type type, int signaled );
+extern struct inproc_sync *create_inproc_mutex( thread_id_t owner, unsigned int count );
+extern struct inproc_sync *create_inproc_semaphore( unsigned int count, unsigned int max );
+extern void set_inproc_event( struct inproc_sync *obj );
+extern void reset_inproc_event( struct inproc_sync *obj );
+extern void abandon_inproc_mutex( thread_id_t tid, struct inproc_sync *inproc_sync );
 
-extern struct fast_sync *no_get_fast_sync( struct object *obj );
+extern struct inproc_sync *no_get_inproc_sync( struct object *obj );
 
 /* serial functions */
 
@@ -297,6 +304,10 @@ extern struct object *get_directory_obj( struct process *process, obj_handle_t h
 extern int directory_link_name( struct object *obj, struct object_name *name, struct object *parent );
 extern void init_directories( struct fd *intl_fd );
 
+/* thread functions */
+
+extern void init_threading(void);
+
 /* symbolic link functions */
 
 extern struct object *create_root_symlink( struct object *root, const struct unicode_str *name,
@@ -341,6 +352,8 @@ extern struct type_descr completion_type;
 extern struct type_descr file_type;
 extern struct type_descr mapping_type;
 extern struct type_descr key_type;
+extern struct type_descr apc_reserve_type;
+extern struct type_descr completion_reserve_type;
 
 #define KEYEDEVENT_WAIT       0x0001
 #define KEYEDEVENT_WAKE       0x0002

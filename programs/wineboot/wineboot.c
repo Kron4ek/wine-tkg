@@ -824,7 +824,7 @@ static void create_bios_processor_values( HKEY system_key, const char *buf, UINT
 {
     const struct smbios_header *hdr;
     const struct smbios_processor *proc;
-    unsigned int pkg, core, offset, i;
+    unsigned int pkg, core, offset, i, thread_count;
     HKEY hkey, cpu_key, fpu_key = 0, env_key;
     SYSTEM_CPU_INFORMATION sci;
     PROCESSOR_POWER_INFORMATION* power_info;
@@ -857,6 +857,7 @@ static void create_bios_processor_values( HKEY system_key, const char *buf, UINT
             fpu_key = 0;
         break;
     }
+    set_reg_value( system_key, L"SystemBiosDate", L"01/01/70" );
 
     if (RegCreateKeyExW( system_key, L"CentralProcessor", 0, NULL, REG_OPTION_VOLATILE,
                          KEY_ALL_ACCESS, NULL, &cpu_key, NULL ))
@@ -865,6 +866,7 @@ static void create_bios_processor_values( HKEY system_key, const char *buf, UINT
     for (pkg = core = 0; ; pkg++)
     {
         if (!(hdr = find_smbios_entry( SMBIOS_TYPE_PROCESSOR, pkg, buf, len ))) break;
+        if (hdr->length < 0x28) break; /* version 2.5 is required */
         proc = (const struct smbios_processor *)hdr;
         offset = (const char *)proc - buf + proc->hdr.length;
         version = get_smbios_string( proc->version, buf, offset, len );
@@ -896,7 +898,8 @@ static void create_bios_processor_values( HKEY system_key, const char *buf, UINT
             break;
         }
 
-        for (i = 0; i < proc->thread_count2; i++, core++)
+        thread_count = (proc->hdr.length >= 0x30) ? proc->thread_count2 : proc->thread_count;
+        for (i = 0; i < thread_count; i++, core++)
         {
             swprintf( buffer, ARRAY_SIZE(buffer), L"%u", core );
             if (!RegCreateKeyExW( cpu_key, buffer, 0, NULL, REG_OPTION_VOLATILE,
@@ -1583,22 +1586,49 @@ static BOOL start_services_process(void)
     return TRUE;
 }
 
+static void set_wait_dialog_text( HWND hwnd, HWND text, const WCHAR *string )
+{
+    RECT win_rect, old_rect, new_rect;
+    HDC hdc = GetDC( text );
+
+    GetClientRect( text, &old_rect );
+    new_rect = old_rect;
+    SelectObject( hdc, (HFONT)SendMessageW( text, WM_GETFONT, 0, 0 ));
+    DrawTextW( hdc, string, -1, &new_rect, DT_CALCRECT | DT_EDITCONTROL | DT_WORDBREAK | DT_NOPREFIX );
+    ReleaseDC( text, hdc );
+    if (new_rect.bottom > old_rect.bottom)
+    {
+        GetWindowRect( hwnd, &win_rect );
+        win_rect.bottom += new_rect.bottom - old_rect.bottom;
+        SetWindowPos( hwnd, 0, 0, 0, win_rect.right - win_rect.left, win_rect.bottom - win_rect.top,
+                      SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER );
+        SetWindowPos( text, 0, 0, 0, new_rect.right, new_rect.bottom,
+                      SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER );
+    }
+    SendMessageW( text, WM_SETTEXT, 0, (LPARAM)string );
+}
+
 static INT_PTR CALLBACK wait_dlgproc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 {
     switch (msg)
     {
     case WM_INITDIALOG:
         {
-            DWORD len;
+            DWORD len, icon_size;
+            RECT rect;
             WCHAR *buffer, text[1024];
             const WCHAR *name = (WCHAR *)lp;
-            HICON icon = LoadImageW( 0, (LPCWSTR)IDI_WINLOGO, IMAGE_ICON, 48, 48, LR_SHARED );
+            HICON icon;
+
+            GetClientRect( GetDlgItem( hwnd, IDC_WAITICON ), &rect );
+            icon_size = min( rect.right, rect.bottom );
+            icon = LoadImageW( 0, (LPCWSTR)IDI_WINLOGO, IMAGE_ICON, icon_size, icon_size, LR_SHARED );
             SendDlgItemMessageW( hwnd, IDC_WAITICON, STM_SETICON, (WPARAM)icon, 0 );
             SendDlgItemMessageW( hwnd, IDC_WAITTEXT, WM_GETTEXT, 1024, (LPARAM)text );
             len = lstrlenW(text) + lstrlenW(name) + 1;
             buffer = malloc( len * sizeof(WCHAR) );
             swprintf( buffer, len, text, name );
-            SendDlgItemMessageW( hwnd, IDC_WAITTEXT, WM_SETTEXT, 0, (LPARAM)buffer );
+            set_wait_dialog_text( hwnd, GetDlgItem( hwnd, IDC_WAITTEXT ), buffer );
             free( buffer );
         }
         break;
@@ -1653,6 +1683,7 @@ static void install_root_pnp_devices(void)
     }
     root_devices[] =
     {
+        {"root\\wine\\winebth", "root\\winebth\0", "C:\\windows\\inf\\winebth.inf"},
         {"root\\wine\\winebus", "root\\winebus\0", "C:\\windows\\inf\\winebus.inf"},
         {"root\\wine\\wineusb", "root\\wineusb\0", "C:\\windows\\inf\\wineusb.inf"},
     };

@@ -12,11 +12,11 @@ SOURCES = \
 	device.c \
 	directory.c \
 	event.c \
-	fast_sync.c \
 	fd.c \
 	file.c \
 	handle.c \
 	hook.c \
+	inproc_sync.c \
 	mach.c \
 	mailslot.c \
 	main.c \
@@ -31,7 +31,6 @@ SOURCES = \
 	region.c \
 	registry.c \
 	request.c \
-	scheduler.c \
 	semaphore.c \
 	serial.c \
 	signal.c \

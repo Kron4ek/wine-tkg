@@ -29,7 +29,7 @@
 #define UINT          VKD3D_FORMAT_TYPE_UINT
 static const struct vkd3d_format vkd3d_formats[] =
 {
-    {DXGI_FORMAT_UNKNOWN,               VK_FORMAT_UNDEFINED,                1,  1, 1,  1},
+    {DXGI_FORMAT_UNKNOWN,               VK_FORMAT_UNDEFINED,                1,  1, 1,  1, 0,     1},
     {DXGI_FORMAT_R32G32B32A32_TYPELESS, VK_FORMAT_R32G32B32A32_SFLOAT,      16, 1, 1,  1, COLOR, 1, TYPELESS},
     {DXGI_FORMAT_R32G32B32A32_FLOAT,    VK_FORMAT_R32G32B32A32_SFLOAT,      16, 1, 1,  1, COLOR, 1},
     {DXGI_FORMAT_R32G32B32A32_UINT,     VK_FORMAT_R32G32B32A32_UINT,        16, 1, 1,  1, COLOR, 1, UINT},
@@ -703,7 +703,7 @@ const char *debug_vk_extent_3d(VkExtent3D extent)
 
 const char *debug_vk_queue_flags(VkQueueFlags flags)
 {
-    char buffer[159];
+    char buffer[191];
 
     buffer[0] = '\0';
 #define FLAG_TO_STR(f) if (flags & f) { strcat(buffer, " | "#f); flags &= ~f; }
@@ -715,6 +715,7 @@ const char *debug_vk_queue_flags(VkQueueFlags flags)
 #undef FLAG_TO_STR
 #define FLAG_TO_STR(f, n) if (flags & f) { strcat(buffer, " | "#n); flags &= ~f; }
     FLAG_TO_STR(0x20, VK_QUEUE_VIDEO_DECODE_BIT_KHR)
+    FLAG_TO_STR(0x40, VK_QUEUE_VIDEO_ENCODE_BIT_KHR)
 #undef FLAG_TO_STR
     if (flags)
         FIXME("Unrecognized flag(s) %#x.\n", flags);

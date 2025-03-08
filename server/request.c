@@ -60,8 +60,7 @@
 #include "thread.h"
 #include "security.h"
 #include "handle.h"
-#define WANT_REQUEST_HANDLERS
-#include "request.h"
+#include "request_handlers.h"
 
 /* Some versions of glibc don't define this */
 #ifndef SCM_RIGHTS
@@ -102,7 +101,7 @@ static const struct object_ops master_socket_ops =
     NULL,                          /* unlink_name */
     no_open_file,                  /* open_file */
     no_kernel_obj_list,            /* get_kernel_obj_list */
-    no_get_fast_sync,              /* get_fast_sync */
+    no_get_inproc_sync,            /* get_inproc_sync */
     no_close_handle,               /* close_handle */
     master_socket_destroy          /* destroy */
 };
@@ -513,11 +512,7 @@ timeout_t monotonic_counter(void)
     static mach_timebase_info_data_t timebase;
 
     if (!timebase.denom) mach_timebase_info( &timebase );
-#ifdef HAVE_MACH_CONTINUOUS_TIME
-    if (&mach_continuous_time != NULL)
-        return mach_continuous_time() * timebase.numer / timebase.denom / 100;
-#endif
-    return mach_absolute_time() * timebase.numer / timebase.denom / 100;
+    return mach_continuous_time() * timebase.numer / timebase.denom / 100;
 #elif defined(HAVE_CLOCK_GETTIME)
     struct timespec ts;
 #ifdef CLOCK_MONOTONIC_RAW

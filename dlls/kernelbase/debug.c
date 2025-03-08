@@ -645,7 +645,7 @@ static BOOL start_debugger( EXCEPTION_POINTERS *epointers, HANDLE event )
     startup.lpDesktop = (WCHAR*)L"WinSta0";
     startup.dwFlags = STARTF_USESHOWWINDOW;
     startup.wShowWindow = SW_SHOWNORMAL;
-    ret = CreateProcessW( NULL, cmdline, NULL, NULL, TRUE, 0, env, NULL, &startup, &info );
+    ret = CreateProcessW( NULL, cmdline, NULL, NULL, TRUE, CREATE_UNICODE_ENVIRONMENT, env, NULL, &startup, &info );
     FreeEnvironmentStringsW( env );
 
     if (ret)
@@ -798,6 +798,16 @@ HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerGetFlags( HANDLE process, DWORD *flags
 
 
 /***********************************************************************
+ *         WerRegisterCustomMetadata  (kernelbase.@)
+ */
+HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerRegisterCustomMetadata( const WCHAR *key, const WCHAR *value )
+{
+    FIXME( "(%s, %s) stub\n", debugstr_w(key), debugstr_w(value) );
+    return S_OK;
+}
+
+
+/***********************************************************************
  *         WerRegisterFile   (kernelbase.@)
  */
 HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerRegisterFile( const WCHAR *file, WER_REGISTER_FILE_TYPE type,
@@ -834,6 +844,16 @@ HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerRegisterRuntimeExceptionModule( const 
 HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerSetFlags( DWORD flags )
 {
     FIXME("(%ld) stub\n", flags);
+    return S_OK;
+}
+
+
+/***********************************************************************
+ *         WerUnregisterCustomMetadata  (kernelbase.@)
+ */
+HRESULT WINAPI /* DECLSPEC_HOTPATCH */ WerUnregisterCustomMetadata( const WCHAR *key )
+{
+    FIXME( "(%s) stub\n", debugstr_w(key));
     return S_OK;
 }
 

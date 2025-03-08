@@ -135,7 +135,7 @@ static const struct object_ops file_ops =
     NULL,                         /* unlink_name */
     file_open_file,               /* open_file */
     file_get_kernel_obj_list,     /* get_kernel_obj_list */
-    default_fd_get_fast_sync,     /* get_fast_sync */
+    default_fd_get_inproc_sync,   /* get_inproc_sync */
     no_close_handle,              /* close_handle */
     file_destroy                  /* destroy */
 };
@@ -436,11 +436,8 @@ struct security_descriptor *mode_to_sd( mode_t mode, const struct sid *user, con
     sd->sacl_len = 0;
     sd->dacl_len = dacl_size;
 
-    ptr = (char *)(sd + 1);
-    memcpy( ptr, user, sd->owner_len );
-    ptr += sd->owner_len;
-    memcpy( ptr, group, sd->group_len );
-    ptr += sd->group_len;
+    ptr = mem_append( sd + 1, user, sd->owner_len );
+    ptr = mem_append( ptr, group, sd->group_len );
 
     dacl = (struct acl *)ptr;
     dacl->revision = ACL_REVISION;

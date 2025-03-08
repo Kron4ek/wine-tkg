@@ -306,7 +306,7 @@ static NTSTATUS tcp_conns_enumerate_all( UINT filter, struct nsi_tcp_conn_key *k
     struct ipv6_addr_scope *addr_scopes = NULL;
     unsigned int addr_scopes_size = 0;
     NTSTATUS ret = STATUS_SUCCESS;
-    tcp_connection *connections = NULL;
+    union tcp_connection *connections = NULL;
 
     if (want_data)
     {
@@ -322,13 +322,17 @@ static NTSTATUS tcp_conns_enumerate_all( UINT filter, struct nsi_tcp_conn_key *k
             *count = reply->count;
         else if (ret == STATUS_BUFFER_TOO_SMALL)
         {
-            *count = reply->count;
-            if (want_data)
+            if (!want_data)
             {
-                free( connections );
-                return STATUS_BUFFER_OVERFLOW;
+                /* If we were given buffers, the outgoing count must never be
+                   greater than the incoming one. If we weren't, the count
+                   should be set to the actual count. */
+                *count = reply->count;
+                return STATUS_SUCCESS;
             }
-            return STATUS_SUCCESS;
+
+            free( connections );
+            return STATUS_BUFFER_OVERFLOW;
         }
     }
     SERVER_END_REQ;
@@ -337,7 +341,7 @@ static NTSTATUS tcp_conns_enumerate_all( UINT filter, struct nsi_tcp_conn_key *k
 
     for (unsigned int i = 0; i < *count; i++)
     {
-        tcp_connection *conn = &connections[i];
+        union tcp_connection *conn = &connections[i];
 
         if (key_data)
         {

@@ -379,6 +379,38 @@ struct GpAdjustableArrowCap{
     REAL width;
 };
 
+typedef enum EffectType {
+    NoneEffect,
+    BlurEffect,
+    SharpenEffect,
+    TintEffect,
+    RedEyeCorrectionEffect,
+    ColorMatrixEffect,
+    ColorLUTEffect,
+    BrightnessContrastEffect,
+    HueSaturationLightnessEffect,
+    ColorBalanceEffect,
+    LevelsEffect,
+    ColorCurveEffect,
+} EffectType;
+
+typedef struct CGpEffect{
+    EffectType type;
+    union {
+        BYTE data[1];
+        struct BlurParams blur;
+        struct TintParams tint;
+        struct RedEyeCorrectionParams redeye;
+        ColorMatrix matrix;
+        struct ColorLUTParams lut;
+        struct BrightnessContrastParams brightness;
+        struct HueSaturationLightnessParams hue;
+        struct ColorBalanceParams balance;
+        struct LevelsParams levels;
+        struct ColorCurveParams curve;
+    } params;
+} CGpEffect;
+
 struct GpImage{
     IWICBitmapDecoder *decoder;
     IWICBitmapEncoder *encoder;

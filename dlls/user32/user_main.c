@@ -35,15 +35,6 @@ HMODULE user32_module = 0;
 extern void WDML_NotifyThreadDetach(void);
 
 
-/***********************************************************************
- *             UserRealizePalette (USER32.@)
- */
-UINT WINAPI UserRealizePalette( HDC hdc )
-{
-    return NtUserRealizePalette( hdc );
-}
-
-
 static NTSTATUS WINAPI User32CopyImage( void *args, ULONG size )
 {
     const struct copy_image_params *params = args;
@@ -126,7 +117,7 @@ static NTSTATUS WINAPI User32PostDDEMessage( void *args, ULONG size )
 {
     const struct post_dde_message_params *params = args;
     return post_dde_message( params->hwnd, params->msg, params->wparam, params->lparam,
-                             params->dest_tid, params->type );
+                             params->dest_tid );
 }
 
 static NTSTATUS WINAPI User32RenderSsynthesizedFormat( void *args, ULONG size )
@@ -166,6 +157,39 @@ static NTSTATUS WINAPI User32CallDispatchCallback( void *args, ULONG size )
     return callback( params, size );
 }
 
+static NTSTATUS WINAPI User32DragDropEnter( void *args, ULONG size )
+{
+    if (!drag_drop_enter( size, args )) return STATUS_UNSUCCESSFUL;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS WINAPI User32DragDropLeave( void *args, ULONG size )
+{
+    drag_drop_leave();
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS WINAPI User32DragDropDrag( void *args, ULONG size )
+{
+    const struct drag_drop_drag_params *params = args;
+    UINT effect = drag_drop_drag( params->hwnd, params->point, params->effect );
+    return NtCallbackReturn( &effect, sizeof(effect), STATUS_SUCCESS );
+}
+
+static NTSTATUS WINAPI User32DragDropDrop( void *args, ULONG size )
+{
+    const struct drag_drop_drop_params *params = args;
+    UINT effect = drag_drop_drop( params->hwnd );
+    return NtCallbackReturn( &effect, sizeof(effect), STATUS_SUCCESS );
+}
+
+static NTSTATUS WINAPI User32DragDropPost( void *args, ULONG size )
+{
+    const struct drag_drop_post_params *params = args;
+    drag_drop_post( params->hwnd, params->drop_size, (DROPFILES *)&params->drop );
+    return STATUS_SUCCESS;
+}
+
 static KERNEL_CALLBACK_PROC kernel_callback_table[NtUserCallCount] =
 {
     User32CallDispatchCallback,
@@ -188,6 +212,11 @@ static KERNEL_CALLBACK_PROC kernel_callback_table[NtUserCallCount] =
     User32PostDDEMessage,
     User32RenderSsynthesizedFormat,
     User32UnpackDDEMessage,
+    User32DragDropEnter,
+    User32DragDropLeave,
+    User32DragDropDrag,
+    User32DragDropDrop,
+    User32DragDropPost,
 };
 
 
@@ -197,10 +226,10 @@ static KERNEL_CALLBACK_PROC kernel_callback_table[NtUserCallCount] =
 static BOOL process_attach(void)
 {
     NtCurrentTeb()->Peb->KernelCallbackTable = kernel_callback_table;
+    RegisterWaitForInputIdle( WaitForInputIdle );
 
     winproc_init();
     SYSPARAMS_Init();
-
     return TRUE;
 }
 

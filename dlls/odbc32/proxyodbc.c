@@ -1070,7 +1070,7 @@ SQLRETURN WINAPI SQLColAttribute(SQLHSTMT StatementHandle, SQLUSMALLINT ColumnNu
 
 static const char *debugstr_sqlstr( const SQLCHAR *str, SQLSMALLINT len )
 {
-    if (len == SQL_NTS) len = strlen( (const char *)str );
+    if (len == SQL_NTS) len = -1;
     return wine_dbgstr_an( (const char *)str, len );
 }
 
@@ -1838,6 +1838,9 @@ SQLRETURN WINAPI SQLExecDirect(SQLHSTMT StatementHandle, SQLCHAR *StatementText,
 static void len_to_user( SQLLEN *ptr, UINT8 *len, UINT row_count, UINT width )
 {
     UINT i;
+
+    if (ptr == NULL) return;
+
     for (i = 0; i < row_count; i++)
     {
         *ptr++ = *(SQLLEN *)(len + i * width);
@@ -1847,6 +1850,9 @@ static void len_to_user( SQLLEN *ptr, UINT8 *len, UINT row_count, UINT width )
 static void len_from_user( UINT8 *len, SQLLEN *ptr, UINT row_count, UINT width )
 {
     UINT i;
+
+    if (ptr == NULL) return;
+
     for (i = 0; i < row_count; i++)
     {
         *(SQLLEN *)(len + i * width) = *ptr++;
@@ -2805,7 +2811,7 @@ SQLRETURN WINAPI SQLGetDiagRec(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSMAL
                                SQLSMALLINT BufferLength, SQLSMALLINT *TextLength)
 {
     struct object *obj = lock_object( Handle, HandleType );
-    SQLRETURN ret = SQL_ERROR;
+    SQLRETURN ret = SQL_NO_DATA;
 
     TRACE("(HandleType %d, Handle %p, RecNumber %d, SqlState %p, NativeError %p, MessageText %p, BufferLength %d,"
           " TextLength %p)\n", HandleType, Handle, RecNumber, SqlState, NativeError, MessageText, BufferLength,
@@ -4417,7 +4423,7 @@ static const WCHAR *get_attribute( const struct attribute_list *list, const WCHA
 static WCHAR *build_connect_string( struct attribute_list *list )
 {
     WCHAR *ret, *ptr;
-    UINT32 i, len = 0;
+    UINT32 i, len = 1;
 
     for (i = 0; i < list->count; i++) len += wcslen( list->attrs[i]->name ) + wcslen( list->attrs[i]->value ) + 2;
     if (!(ptr = ret = malloc( len * sizeof(WCHAR) ))) return NULL;
@@ -6611,7 +6617,7 @@ SQLRETURN WINAPI SQLGetDiagRecW(SQLSMALLINT HandleType, SQLHANDLE Handle, SQLSMA
                                 SQLSMALLINT *TextLength)
 {
     struct object *obj = lock_object( Handle, HandleType );
-    SQLRETURN ret = SQL_ERROR;
+    SQLRETURN ret = SQL_NO_DATA;
 
     TRACE("(HandleType %d, Handle %p, RecNumber %d, SqlState %p, NativeError %p, MessageText %p, BufferLength %d,"
           " TextLength %p)\n", HandleType, Handle, RecNumber, SqlState, NativeError, MessageText, BufferLength,
@@ -7987,7 +7993,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, LPVOID reserved)
         break;
 
     case DLL_PROCESS_DETACH:
-        WINE_UNIX_CALL( process_detach, NULL );
+        if (__wine_unixlib_handle) WINE_UNIX_CALL( process_detach, NULL );
         if (reserved) break;
     }
 

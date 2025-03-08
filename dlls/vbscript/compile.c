@@ -1173,6 +1173,13 @@ static HRESULT compile_redim_statement(compile_ctx_t *ctx, redim_statement_t *st
     HRESULT hres;
 
     while(1) {
+        for (function_decl_t *func = ctx->func_decls; func; func = func->next) {
+            if (!wcsicmp(func->name, decl->identifier)) {
+                /* compilation error: Name redefined */
+                return MAKE_VBSERROR(VBS_COMPILE_ERROR);
+            }
+        }
+
         hres = compile_args(ctx, decl->dims, &arg_cnt);
         if(FAILED(hres))
             return hres;

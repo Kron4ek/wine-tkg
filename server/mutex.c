@@ -38,7 +38,7 @@
 
 static const WCHAR mutex_name[] = {'M','u','t','a','n','t'};
 
-static struct list fast_mutexes = LIST_INIT(fast_mutexes);
+static struct list inproc_mutexes = LIST_INIT(inproc_mutexes);
 
 struct type_descr mutex_type =
 {
@@ -59,8 +59,8 @@ struct mutex
     unsigned int   count;           /* recursion count */
     int            abandoned;       /* has it been abandoned? */
     struct list    entry;           /* entry in owner thread mutex list */
-    struct list    fast_mutexes_entry; /* entry in fast_mutexes list */
-    struct fast_sync *fast_sync;    /* fast synchronization object */
+    struct list    inproc_mutexes_entry; /* entry in inproc_mutexes list */
+    struct inproc_sync *inproc_sync;/* in-process synchronization object */
 };
 
 static void mutex_dump( struct object *obj, int verbose );
@@ -68,7 +68,7 @@ static int mutex_signaled( struct object *obj, struct wait_queue_entry *entry );
 static void mutex_satisfied( struct object *obj, struct wait_queue_entry *entry );
 static void mutex_destroy( struct object *obj );
 static int mutex_signal( struct object *obj, unsigned int access );
-static struct fast_sync *mutex_get_fast_sync( struct object *obj );
+static struct inproc_sync *mutex_get_inproc_sync( struct object *obj );
 
 static const struct object_ops mutex_ops =
 {
@@ -90,7 +90,7 @@ static const struct object_ops mutex_ops =
     default_unlink_name,       /* unlink_name */
     no_open_file,              /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
-    mutex_get_fast_sync,       /* get_fast_sync */
+    mutex_get_inproc_sync,     /* get_inproc_sync */
     no_close_handle,           /* close_handle */
     mutex_destroy              /* destroy */
 };
@@ -133,7 +133,7 @@ static struct mutex *create_mutex( struct object *root, const struct unicode_str
             mutex->owner = NULL;
             mutex->abandoned = 0;
             if (owned) do_grab( mutex, current );
-            mutex->fast_sync = NULL;
+            mutex->inproc_sync = NULL;
         }
     }
     return mutex;
@@ -153,9 +153,9 @@ void abandon_mutexes( struct thread *thread )
         do_release( mutex );
     }
 
-    LIST_FOR_EACH_ENTRY(mutex, &fast_mutexes, struct mutex, fast_mutexes_entry)
+    LIST_FOR_EACH_ENTRY(mutex, &inproc_mutexes, struct mutex, inproc_mutexes_entry)
     {
-        fast_abandon_mutex( thread->id, mutex->fast_sync );
+        abandon_inproc_mutex( thread->id, mutex->inproc_sync );
     }
 }
 
@@ -202,17 +202,21 @@ static int mutex_signal( struct object *obj, unsigned int access )
     return 1;
 }
 
-static struct fast_sync *mutex_get_fast_sync( struct object *obj )
+static struct inproc_sync *mutex_get_inproc_sync( struct object *obj )
 {
     struct mutex *mutex = (struct mutex *)obj;
 
-    if (!mutex->fast_sync)
+    /* This state will always be the state that the mutex was created with.
+     * We could create the inproc_sync at creation time to make this clearer,
+     * but some broken programs create hundreds of thousands of handles which
+     * they never use, and we want to avoid wasting memory or fds in that case. */
+    if (!mutex->inproc_sync)
     {
-        mutex->fast_sync = fast_create_mutex( mutex->owner ? mutex->owner->id : 0, mutex->count );
-        if (mutex->fast_sync) list_add_tail( &fast_mutexes, &mutex->fast_mutexes_entry );
+        mutex->inproc_sync = create_inproc_mutex( mutex->owner ? mutex->owner->id : 0, mutex->count );
+        if (mutex->inproc_sync) list_add_tail( &inproc_mutexes, &mutex->inproc_mutexes_entry );
     }
-    if (mutex->fast_sync) grab_object( mutex->fast_sync );
-    return mutex->fast_sync;
+    if (mutex->inproc_sync) grab_object( mutex->inproc_sync );
+    return mutex->inproc_sync;
 }
 
 static void mutex_destroy( struct object *obj )
@@ -225,10 +229,10 @@ static void mutex_destroy( struct object *obj )
         mutex->count = 0;
         do_release( mutex );
     }
-    if (mutex->fast_sync)
+    if (mutex->inproc_sync)
     {
-        release_object( mutex->fast_sync );
-        list_remove( &mutex->fast_mutexes_entry );
+        release_object( mutex->inproc_sync );
+        list_remove( &mutex->inproc_mutexes_entry );
     }
 }
 

@@ -48,7 +48,7 @@ struct debug_event
     struct file           *file;      /* file object for events that need one */
     enum debug_event_state state;     /* event state */
     int                    status;    /* continuation status */
-    debug_event_t          data;      /* event data */
+    union debug_event_data data;      /* event data */
 };
 
 static const WCHAR debug_obj_name[] = {'D','e','b','u','g','O','b','j','e','c','t'};
@@ -71,7 +71,7 @@ struct debug_obj
     struct object        obj;         /* object header */
     struct list          event_queue; /* pending events queue */
     unsigned int         flags;       /* debug flags */
-    struct fast_sync    *fast_sync;   /* fast synchronization object */
+    struct inproc_sync  *inproc_sync; /* in-process synchronization object */
 };
 
 
@@ -99,14 +99,14 @@ static const struct object_ops debug_event_ops =
     NULL,                          /* unlink_name */
     no_open_file,                  /* open_file */
     no_kernel_obj_list,            /* get_kernel_obj_list */
-    no_get_fast_sync,              /* get_fast_sync */
+    no_get_inproc_sync,            /* get_inproc_sync */
     no_close_handle,               /* close_handle */
     debug_event_destroy            /* destroy */
 };
 
 static void debug_obj_dump( struct object *obj, int verbose );
 static int debug_obj_signaled( struct object *obj, struct wait_queue_entry *entry );
-static struct fast_sync *debug_obj_get_fast_sync( struct object *obj );
+static struct inproc_sync *debug_obj_get_inproc_sync( struct object *obj );
 static void debug_obj_destroy( struct object *obj );
 
 static const struct object_ops debug_obj_ops =
@@ -129,7 +129,7 @@ static const struct object_ops debug_obj_ops =
     default_unlink_name,           /* unlink_name */
     no_open_file,                  /* open_file */
     no_kernel_obj_list,            /* get_kernel_obj_list */
-    debug_obj_get_fast_sync,       /* get_fast_sync */
+    debug_obj_get_inproc_sync,     /* get_inproc_sync */
     no_close_handle,               /* close_handle */
     debug_obj_destroy              /* destroy */
 };
@@ -146,7 +146,7 @@ static client_ptr_t get_teb_user_ptr( struct thread *thread )
 
 static void fill_exception_event( struct debug_event *event, const void *arg )
 {
-    const debug_event_t *data = arg;
+    const union debug_event_data *data = arg;
     event->data.exception = data->exception;
     event->data.exception.nb_params = min( event->data.exception.nb_params, EXCEPTION_MAXIMUM_PARAMETERS );
 }
@@ -161,7 +161,7 @@ static void fill_create_thread_event( struct debug_event *event, const void *arg
 static void fill_create_process_event( struct debug_event *event, const void *arg )
 {
     const struct memory_view *view = arg;
-    const pe_image_info_t *image_info = get_view_image_info( view, &event->data.create_process.base );
+    const struct pe_image_info *image_info = get_view_image_info( view, &event->data.create_process.base );
 
     event->data.create_process.start      = event->sender->entry_point;
     event->data.create_process.dbg_offset = image_info->dbg_offset;
@@ -185,7 +185,7 @@ static void fill_exit_process_event( struct debug_event *event, const void *arg 
 static void fill_load_dll_event( struct debug_event *event, const void *arg )
 {
     const struct memory_view *view = arg;
-    const pe_image_info_t *image_info = get_view_image_info( view, &event->data.load_dll.base );
+    const struct pe_image_info *image_info = get_view_image_info( view, &event->data.load_dll.base );
 
     event->data.load_dll.dbg_offset = image_info->dbg_offset;
     event->data.load_dll.dbg_size   = image_info->dbg_size;
@@ -257,7 +257,7 @@ static void link_event( struct debug_obj *debug_obj, struct debug_event *event )
         /* grab reference since debugger could be killed while trying to wake up */
         grab_object( debug_obj );
         wake_up( &debug_obj->obj, 0 );
-        fast_set_event( debug_obj->fast_sync );
+        set_inproc_event( debug_obj->inproc_sync );
         release_object( debug_obj );
     }
 }
@@ -270,7 +270,7 @@ static void resume_event( struct debug_obj *debug_obj, struct debug_event *event
     {
         grab_object( debug_obj );
         wake_up( &debug_obj->obj, 0 );
-        fast_set_event( debug_obj->fast_sync );
+        set_inproc_event( debug_obj->inproc_sync );
         release_object( debug_obj );
     }
 }
@@ -336,15 +336,15 @@ static int debug_obj_signaled( struct object *obj, struct wait_queue_entry *entr
     return find_event_to_send( debug_obj ) != NULL;
 }
 
-static struct fast_sync *debug_obj_get_fast_sync( struct object *obj )
+static struct inproc_sync *debug_obj_get_inproc_sync( struct object *obj )
 {
     struct debug_obj *debug_obj = (struct debug_obj *)obj;
     int signaled = find_event_to_send( debug_obj ) != NULL;
 
-    if (!debug_obj->fast_sync)
-        debug_obj->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, signaled );
-    if (debug_obj->fast_sync) grab_object( debug_obj->fast_sync );
-    return debug_obj->fast_sync;
+    if (!debug_obj->inproc_sync)
+        debug_obj->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, signaled );
+    if (debug_obj->inproc_sync) grab_object( debug_obj->inproc_sync );
+    return debug_obj->inproc_sync;
 }
 
 static void debug_obj_destroy( struct object *obj )
@@ -360,7 +360,7 @@ static void debug_obj_destroy( struct object *obj )
     while ((ptr = list_head( &debug_obj->event_queue )))
         unlink_event( debug_obj, LIST_ENTRY( ptr, struct debug_event, entry ));
 
-    if (debug_obj->fast_sync) release_object( debug_obj->fast_sync );
+    if (debug_obj->inproc_sync) release_object( debug_obj->inproc_sync );
 }
 
 struct debug_obj *get_debug_obj( struct process *process, obj_handle_t handle, unsigned int access )
@@ -380,7 +380,7 @@ static struct debug_obj *create_debug_obj( struct object *root, const struct uni
         {
             debug_obj->flags = flags;
             list_init( &debug_obj->event_queue );
-            debug_obj->fast_sync = NULL;
+            debug_obj->inproc_sync = NULL;
         }
     }
     return debug_obj;
@@ -591,7 +591,7 @@ DECL_HANDLER(wait_debug_event)
         set_reply_data( &event->data, min( get_reply_max_size(), sizeof(event->data) ));
 
         if (!find_event_to_send( debug_obj ))
-            fast_reset_event( debug_obj->fast_sync );
+            reset_inproc_event( debug_obj->inproc_sync );
     }
     else
     {
@@ -664,7 +664,7 @@ DECL_HANDLER(queue_exception_event)
     reply->handle = 0;
     if (debug_obj)
     {
-        debug_event_t data;
+        union debug_event_data data;
         struct debug_event *event;
         struct thread *thread = current;
 

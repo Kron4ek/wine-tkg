@@ -134,8 +134,8 @@ struct msg_queue
     int                    keystate_lock;   /* owns an input keystate lock */
     const queue_shm_t     *shared;          /* queue in session shared memory */
     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
-    struct fast_sync      *fast_sync;       /* fast synchronization object */
-    int                    in_fast_wait;    /* are we in a client-side wait? */
+    struct inproc_sync    *inproc_sync;     /* in-process synchronization object */
+    int                    in_inproc_wait;  /* are we in a client-side wait? */
 };
 
 struct hotkey
@@ -153,7 +153,7 @@ static int msg_queue_add_queue( struct object *obj, struct wait_queue_entry *ent
 static void msg_queue_remove_queue( struct object *obj, struct wait_queue_entry *entry );
 static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry );
 static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *entry );
-static struct fast_sync *msg_queue_get_fast_sync( struct object *obj );
+static struct inproc_sync *msg_queue_get_inproc_sync( struct object *obj );
 static void msg_queue_destroy( struct object *obj );
 static void msg_queue_poll_event( struct fd *fd, int event );
 static void thread_input_dump( struct object *obj, int verbose );
@@ -180,7 +180,7 @@ static const struct object_ops msg_queue_ops =
     NULL,                      /* unlink_name */
     no_open_file,              /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
-    msg_queue_get_fast_sync,   /* get_fast_sync */
+    msg_queue_get_inproc_sync, /* get_inproc_sync */
     no_close_handle,           /* close_handle */
     msg_queue_destroy          /* destroy */
 };
@@ -218,7 +218,7 @@ static const struct object_ops thread_input_ops =
     NULL,                         /* unlink_name */
     no_open_file,                 /* open_file */
     no_kernel_obj_list,           /* get_kernel_obj_list */
-    no_get_fast_sync,             /* get_fast_sync */
+    no_get_inproc_sync,           /* get_inproc_sync */
     no_close_handle,              /* close_handle */
     thread_input_destroy          /* destroy */
 };
@@ -226,7 +226,7 @@ static const struct object_ops thread_input_ops =
 /* pointer to input structure of foreground thread */
 static unsigned int last_input_time;
 
-static cursor_pos_t cursor_history[64];
+static struct cursor_pos cursor_history[64];
 static unsigned int cursor_history_latest;
 
 static void queue_hardware_message( struct desktop *desktop, struct message *msg, int always_queue );
@@ -319,8 +319,8 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
         queue->last_get_msg    = current_time;
         queue->keystate_lock   = 0;
         queue->ignore_post_msg = 0;
-        queue->fast_sync       = NULL;
-        queue->in_fast_wait    = 0;
+        queue->inproc_sync     = NULL;
+        queue->in_inproc_wait  = 0;
         list_init( &queue->send_result );
         list_init( &queue->callback_result );
         list_init( &queue->pending_timers );
@@ -369,10 +369,9 @@ static void sync_input_keystate( struct thread_input *input )
 {
     const input_shm_t *input_shm = input->shared;
     const desktop_shm_t *desktop_shm;
-    struct desktop *desktop;
     int i;
 
-    if (!(desktop = input->desktop) || input_shm->keystate_lock) return;
+    if (!input->desktop || input_shm->keystate_lock) return;
     desktop_shm = input->desktop->shared;
 
     SHARED_WRITE_BEGIN( input_shm, input_shm_t )
@@ -481,8 +480,8 @@ static struct message *alloc_hardware_message( lparam_t info, struct hw_msg_sour
 static int is_cursor_clipped( struct desktop *desktop )
 {
     const desktop_shm_t *desktop_shm = desktop->shared;
-    rectangle_t top_rect, clip_rect = desktop_shm->cursor.clip;
-    get_top_window_rectangle( desktop, &top_rect );
+    struct rectangle top_rect, clip_rect = desktop_shm->cursor.clip;
+    get_virtual_screen_rect( desktop, &top_rect, 1 );
     return !is_rect_equal( &clip_rect, &top_rect );
 }
 
@@ -594,6 +593,15 @@ static void set_cursor_pos( struct desktop *desktop, int x, int y )
     queue_hardware_message( desktop, msg, 1 );
 }
 
+/* sync cursor position after window change */
+void update_cursor_pos( struct desktop *desktop )
+{
+    const desktop_shm_t *desktop_shm;
+
+    desktop_shm = desktop->shared;
+    set_cursor_pos( desktop, desktop_shm->cursor.x, desktop_shm->cursor.y );
+}
+
 /* retrieve default position and time for synthesized messages */
 static void get_message_defaults( struct msg_queue *queue, int *x, int *y, unsigned int *time )
 {
@@ -606,14 +614,14 @@ static void get_message_defaults( struct msg_queue *queue, int *x, int *y, unsig
 }
 
 /* set the cursor clip rectangle */
-void set_clip_rectangle( struct desktop *desktop, const rectangle_t *rect, unsigned int flags, int reset )
+void set_clip_rectangle( struct desktop *desktop, const struct rectangle *rect, unsigned int flags, int reset )
 {
     const desktop_shm_t *desktop_shm = desktop->shared;
-    rectangle_t top_rect, new_rect;
+    struct rectangle top_rect, new_rect;
     unsigned int old_flags;
     int x, y;
 
-    get_top_window_rectangle( desktop, &top_rect );
+    get_virtual_screen_rect( desktop, &top_rect, 1 );
     if (rect)
     {
         new_rect = *rect;
@@ -732,7 +740,7 @@ static inline void set_queue_bits( struct msg_queue *queue, unsigned int bits )
     if (is_signaled( queue ))
     {
         wake_up( &queue->obj, 0 );
-        fast_set_event( queue->fast_sync );
+        set_inproc_event( queue->inproc_sync );
     }
 }
 
@@ -754,7 +762,7 @@ static inline void clear_queue_bits( struct msg_queue *queue, unsigned int bits 
         queue->keystate_lock = 0;
     }
     if (!is_signaled( queue ))
-        fast_reset_event( queue->fast_sync );
+        reset_inproc_event( queue->inproc_sync );
 }
 
 /* check if message is matched by the filter */
@@ -814,8 +822,8 @@ static inline unsigned int get_unique_post_id(void)
     return id;
 }
 
-/* try to merge a WM_MOUSEMOVE message with the last in the list; return 1 if successful */
-static int merge_mousemove( struct thread_input *input, const struct message *msg )
+/* lookup an already queued mouse message that matches the message, window and type */
+static struct message *find_mouse_message( struct thread_input *input, const struct message *msg )
 {
     struct message *prev;
     struct list *ptr;
@@ -823,14 +831,48 @@ static int merge_mousemove( struct thread_input *input, const struct message *ms
     for (ptr = list_tail( &input->msg_list ); ptr; ptr = list_prev( &input->msg_list, ptr ))
     {
         prev = LIST_ENTRY( ptr, struct message, entry );
+        if (prev->msg >> 31) continue; /* ignore internal messages */
         if (prev->msg != WM_INPUT) break;
     }
-    if (!ptr) return 0;
-    if (prev->result) return 0;
-    if (prev->win && msg->win && prev->win != msg->win) return 0;
-    if (prev->msg != msg->msg) return 0;
-    if (prev->type != msg->type) return 0;
-    /* now we can merge it */
+    if (!ptr) return NULL;
+    if (prev->result) return NULL;
+    if (prev->win && msg->win && prev->win != msg->win) return NULL;
+    if (prev->msg != msg->msg) return NULL;
+    if (prev->type != msg->type) return NULL;
+    return prev;
+}
+
+/* try to merge a WM_MOUSEWHEEL message with the last in the list; return 1 if successful */
+static int merge_mousewheel( struct thread_input *input, const struct message *msg )
+{
+    struct message *prev;
+
+    if (!(prev = find_mouse_message( input, msg ))) return 0;
+    if (prev->x != msg->x || prev->y != msg->y) return 0; /* don't merge if cursor has moved */
+
+    prev->wparam += msg->wparam; /* accumulate wheel delta */
+    prev->lparam  = msg->lparam;
+    prev->x       = msg->x;
+    prev->y       = msg->y;
+    prev->time    = msg->time;
+    if (msg->type == MSG_HARDWARE && prev->data && msg->data)
+    {
+        struct hardware_msg_data *prev_data = prev->data;
+        struct hardware_msg_data *msg_data = msg->data;
+        prev_data->info = msg_data->info;
+    }
+    list_remove( &prev->entry );
+    list_add_tail( &input->msg_list, &prev->entry );
+    return 1;
+}
+
+/* try to merge a WM_MOUSEMOVE message with the last in the list; return 1 if successful */
+static int merge_mousemove( struct thread_input *input, const struct message *msg )
+{
+    struct message *prev;
+
+    if (!(prev = find_mouse_message( input, msg ))) return 0;
+
     prev->wparam  = msg->wparam;
     prev->lparam  = msg->lparam;
     prev->x       = msg->x;
@@ -842,8 +884,8 @@ static int merge_mousemove( struct thread_input *input, const struct message *ms
         struct hardware_msg_data *msg_data = msg->data;
         prev_data->info = msg_data->info;
     }
-    list_remove( ptr );
-    list_add_tail( &input->msg_list, ptr );
+    list_remove( &prev->entry );
+    list_add_tail( &input->msg_list, &prev->entry );
     return 1;
 }
 
@@ -875,6 +917,7 @@ static int merge_unique_message( struct thread_input *input, unsigned int messag
 /* try to merge a message with the messages in the list; return 1 if successful */
 static int merge_message( struct thread_input *input, const struct message *msg )
 {
+    if (msg->msg == WM_MOUSEWHEEL) return merge_mousewheel( input, msg );
     if (msg->msg == WM_MOUSEMOVE) return merge_mousemove( input, msg );
     if (msg->msg == WM_WINE_CLIPCURSOR) return merge_unique_message( input, WM_WINE_CLIPCURSOR, msg );
     if (msg->msg == WM_WINE_SETCURSOR) return merge_unique_message( input, WM_WINE_SETCURSOR, msg );
@@ -1244,7 +1287,7 @@ static int is_queue_hung( struct msg_queue *queue )
             return 0;  /* thread is waiting on queue -> not hung */
     }
 
-    if (queue->in_fast_wait)
+    if (queue->in_inproc_wait)
         return 0;  /* thread is waiting on queue in absentia -> not hung */
 
     return 1;
@@ -1313,18 +1356,17 @@ static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *en
     }
     SHARED_WRITE_END;
 
-    fast_reset_event( queue->fast_sync );
+    reset_inproc_event( queue->inproc_sync );
 }
 
-static struct fast_sync *msg_queue_get_fast_sync( struct object *obj )
+static struct inproc_sync *msg_queue_get_inproc_sync( struct object *obj )
 {
     struct msg_queue *queue = (struct msg_queue *)obj;
-    const queue_shm_t *queue_shm = queue->shared;
 
-    if (!queue->fast_sync)
-        queue->fast_sync = fast_create_event( FAST_SYNC_QUEUE, is_signaled( queue ) );
-    if (queue->fast_sync) grab_object( queue->fast_sync );
-    return queue->fast_sync;
+    if (!queue->inproc_sync)
+        queue->inproc_sync = create_inproc_event( INPROC_SYNC_QUEUE, is_signaled( queue ) );
+    if (queue->inproc_sync) grab_object( queue->inproc_sync );
+    return queue->inproc_sync;
 }
 
 static void msg_queue_destroy( struct object *obj )
@@ -1370,7 +1412,7 @@ static void msg_queue_destroy( struct object *obj )
     if (queue->hooks) release_object( queue->hooks );
     if (queue->fd) release_object( queue->fd );
     if (queue->shared) free_shared_object( queue->shared );
-    if (queue->fast_sync) release_object( queue->fast_sync );
+    if (queue->inproc_sync) release_object( queue->inproc_sync );
 }
 
 static void msg_queue_poll_event( struct fd *fd, int event )
@@ -1381,7 +1423,7 @@ static void msg_queue_poll_event( struct fd *fd, int event )
     if (event & (POLLERR | POLLHUP)) set_fd_events( fd, -1 );
     else set_fd_events( queue->fd, 0 );
     wake_up( &queue->obj, 0 );
-    fast_set_event( queue->fast_sync );
+    set_inproc_event( queue->inproc_sync );
 }
 
 static void thread_input_dump( struct object *obj, int verbose )
@@ -1835,7 +1877,7 @@ found:
     msg->msg       = WM_HOTKEY;
     msg->wparam    = hotkey->id;
     msg->lparam    = ((hotkey->vkey & 0xffff) << 16) | modifiers;
-    msg->unique_id = get_unique_post_id();
+    msg->unique_id = get_unique_hw_id();
 
     free( msg->data );
     msg->data      = NULL;
@@ -1901,7 +1943,7 @@ static struct rawinput_device *find_rawinput_device( struct process *process, un
 
 static void prepend_cursor_history( int x, int y, unsigned int time, lparam_t info )
 {
-    cursor_pos_t *pos = &cursor_history[--cursor_history_latest % ARRAY_SIZE(cursor_history)];
+    struct cursor_pos *pos = &cursor_history[--cursor_history_latest % ARRAY_SIZE(cursor_history)];
 
     pos->x = x;
     pos->y = y;
@@ -1975,6 +2017,7 @@ static void queue_hardware_message( struct desktop *desktop, struct message *msg
     {
         if (input && !(flags & RIDEV_NOLEGACY)) update_thread_input_key_state( input, msg->msg, msg->wparam );
         free_message( msg );
+        if (thread) release_object( thread );
         return;
     }
 
@@ -2143,7 +2186,7 @@ static void rawkeyboard_init( struct rawinput *rawinput, RAWKEYBOARD *keyboard, 
     keyboard->ExtraInformation = info;
 }
 
-static void rawhid_init( struct rawinput *rawinput, RAWHID *hid, const hw_input_t *input )
+static void rawhid_init( struct rawinput *rawinput, RAWHID *hid, const union hw_input *input )
 {
     rawinput->type   = RIM_TYPEHID;
     rawinput->device = input->hw.hid.device;
@@ -2181,6 +2224,7 @@ static void queue_rawinput_message( struct desktop *desktop, struct process *pro
     data_size_t report_size = 0, data_size = 0;
     int wparam = RIM_INPUT;
     lparam_t info = 0;
+    char *ptr;
 
     if (raw_msg->rawinput.type == RIM_TYPEMOUSE)
     {
@@ -2218,8 +2262,8 @@ static void queue_rawinput_message( struct desktop *desktop, struct process *pro
     msg_data = msg->data;
     msg_data->flags = raw_msg->flags;
     msg_data->rawinput = raw_msg->rawinput;
-    memcpy( msg_data + 1, &raw_msg->data, data_size );
-    if (report_size) memcpy( (char *)(msg_data + 1) + data_size, raw_msg->hid_report, report_size );
+    ptr = mem_append( msg_data + 1, &raw_msg->data, data_size );
+    mem_append( ptr, raw_msg->hid_report, report_size );
 
     if (raw_msg->message == WM_INPUT_DEVICE_CHANGE && raw_msg->rawinput.type == RIM_TYPEHID)
     {
@@ -2239,7 +2283,7 @@ static void dispatch_rawinput_message( struct desktop *desktop, struct rawinput_
 }
 
 /* queue a hardware message for a mouse event */
-static int queue_mouse_message( struct desktop *desktop, user_handle_t win, const hw_input_t *input,
+static int queue_mouse_message( struct desktop *desktop, user_handle_t win, const union hw_input *input,
                                 unsigned int origin, struct msg_queue *sender, unsigned int send_flags )
 {
     const desktop_shm_t *desktop_shm = desktop->shared;
@@ -2285,15 +2329,14 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
         {
             x = input->mouse.x;
             y = input->mouse.y;
-            if (flags & ~(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE) &&
-                x == desktop_shm->cursor.x && y == desktop_shm->cursor.y)
-                flags &= ~MOUSEEVENTF_MOVE;
         }
         else
         {
             x = desktop_shm->cursor.x + input->mouse.x;
             y = desktop_shm->cursor.y + input->mouse.y;
         }
+        if (x == desktop_shm->cursor.x && y == desktop_shm->cursor.y)
+            flags &= ~MOUSEEVENTF_MOVE;
     }
     else
     {
@@ -2347,7 +2390,7 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
     return wait;
 }
 
-static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, const hw_input_t *input,
+static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, const union hw_input *input,
                                    unsigned int origin, struct msg_queue *sender, int repeat, unsigned int send_flags);
 
 static void key_repeat_timeout( void *private )
@@ -2367,7 +2410,7 @@ static void stop_key_repeat( struct desktop *desktop )
 }
 
 /* queue a hardware message for a keyboard event */
-static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, const hw_input_t *input,
+static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, const union hw_input *input,
                                    unsigned int origin, struct msg_queue *sender, int repeat, unsigned int send_flags )
 {
     const desktop_shm_t *desktop_shm = desktop->shared;
@@ -2542,7 +2585,7 @@ struct pointer
     struct desktop *desktop;
     user_handle_t win;
     int primary;
-    hw_input_t input;
+    union hw_input input;
 };
 
 static void queue_pointer_message( struct pointer *pointer, int repeated );
@@ -2564,15 +2607,15 @@ static void queue_pointer_message( struct pointer *pointer, int repeated )
     struct hw_msg_source source = { IMDT_UNAVAILABLE, IMDT_TOUCH };
     struct desktop *desktop = pointer->desktop;
     const desktop_shm_t *desktop_shm = desktop->shared;
-    const hw_input_t *input = &pointer->input;
+    const union hw_input *input = &pointer->input;
     unsigned int i, wparam = input->hw.wparam;
     timeout_t time = get_tick_count();
     user_handle_t win = pointer->win;
-    rectangle_t top_rect;
+    struct rectangle top_rect;
     struct message *msg;
     int x, y;
 
-    get_top_window_rectangle( desktop, &top_rect );
+    get_virtual_screen_rect( desktop, &top_rect, 0 );
     x = LOWORD(input->hw.lparam) * (top_rect.right - top_rect.left) / 65535;
     y = HIWORD(input->hw.lparam) * (top_rect.bottom - top_rect.top) / 65535;
 
@@ -2640,7 +2683,7 @@ static struct pointer *find_pointer_from_id( struct desktop *desktop, unsigned i
 
 /* queue a hardware message for a custom type of event */
 static void queue_custom_hardware_message( struct desktop *desktop, user_handle_t win,
-                                           unsigned int origin, const hw_input_t *input )
+                                           unsigned int origin, const union hw_input *input )
 {
     const desktop_shm_t *desktop_shm = desktop->shared;
     struct hw_msg_source source = { IMDT_UNAVAILABLE, origin };
@@ -2742,11 +2785,15 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
                                  struct get_message_reply *reply )
 {
     struct thread_input *input = thread->queue->input;
+    const struct rawinput_device *device;
     struct thread *win_thread;
     struct list *ptr;
     user_handle_t win;
     int clear_bits, got_one = 0;
     unsigned int msg_code;
+    int no_legacy;
+
+    no_legacy = (device = thread->process->rawinput_mouse) && (device->flags & RIDEV_NOLEGACY);
 
     ptr = list_head( &input->msg_list );
     if (hw_id)
@@ -2772,6 +2819,12 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
         struct hardware_msg_data *data = msg->data;
 
         ptr = list_next( &input->msg_list, ptr );
+        if (no_legacy && msg->msg == WM_MOUSEMOVE && msg->type == MSG_HARDWARE)
+        {
+            list_remove( &msg->entry );
+            free_message( msg );
+            continue;
+        }
         win = find_hardware_message_window( input->desktop, input, msg, &msg_code, &win_thread );
         if (!win || !win_thread)
         {
@@ -3154,14 +3207,16 @@ DECL_HANDLER(set_queue_mask)
                     shared->changed_mask = 0;
                 }
                 SHARED_WRITE_END;
-
-                fast_reset_event( queue->fast_sync );
             }
             else
             {
                 wake_up( &queue->obj, 0 );
-                fast_set_event( queue->fast_sync );
+                set_inproc_event( queue->inproc_sync );
             }
+        }
+        else
+        {
+            reset_inproc_event( queue->inproc_sync );
         }
     }
 }
@@ -3185,7 +3240,7 @@ DECL_HANDLER(get_queue_status)
         SHARED_WRITE_END;
 
         if (!is_signaled( queue ))
-            fast_reset_event( queue->fast_sync );
+            reset_inproc_event( queue->inproc_sync );
     }
     else reply->wake_bits = reply->changed_bits = 0;
 }
@@ -3385,7 +3440,7 @@ DECL_HANDLER(get_message)
     SHARED_WRITE_END;
 
     if (!is_signaled( queue ))
-        fast_reset_event( queue->fast_sync );
+        reset_inproc_event( queue->inproc_sync );
 
     /* then check for posted messages */
     if ((filter & QS_POSTMESSAGE) &&
@@ -3456,7 +3511,7 @@ DECL_HANDLER(get_message)
     }
     SHARED_WRITE_END;
 
-    fast_reset_event( queue->fast_sync );
+    reset_inproc_event( queue->inproc_sync );
     set_error( STATUS_PENDING );  /* FIXME */
     return;
 
@@ -3964,6 +4019,8 @@ DECL_HANDLER(set_capture_window)
             reply->full_handle = shared->capture;
         }
         SHARED_WRITE_END;
+        if (reply->previous && !req->handle && !req->flags)
+            update_cursor_pos(input->desktop);
     }
 }
 
@@ -4110,7 +4167,7 @@ DECL_HANDLER(set_cursor)
 /* Get the history of the 64 last cursor positions */
 DECL_HANDLER(get_cursor_history)
 {
-    cursor_pos_t *pos;
+    struct cursor_pos *pos;
     unsigned int i, count = min( 64, get_reply_max_size() / sizeof(*pos) );
 
     if ((pos = set_reply_data_size( count * sizeof(*pos) )))
@@ -4240,62 +4297,6 @@ DECL_HANDLER(update_rawinput_devices)
     }
 }
 
-DECL_HANDLER(fast_select_queue)
-{
-    struct msg_queue *queue;
-    const queue_shm_t *queue_shm;
-
-    if (!(queue = (struct msg_queue *)get_handle_obj( current->process, req->handle,
-                                                      SYNCHRONIZE, &msg_queue_ops )))
-        return;
-    queue_shm = queue->shared;
-    /* a thread can only wait on its own queue */
-    if (current->queue != queue || queue->in_fast_wait)
-    {
-        set_error( STATUS_ACCESS_DENIED );
-    }
-    else
-    {
-        if (current->process->idle_event && !(queue_shm->wake_mask & QS_SMRESULT))
-            set_event( current->process->idle_event );
-
-        if (queue->fd)
-            set_fd_events( queue->fd, POLLIN );
-
-        queue->in_fast_wait = 1;
-    }
-
-    release_object( queue );
-}
-
-DECL_HANDLER(fast_unselect_queue)
-{
-    struct msg_queue *queue;
-    const queue_shm_t *queue_shm;
-
-    if (!(queue = (struct msg_queue *)get_handle_obj( current->process, req->handle,
-                                                      SYNCHRONIZE, &msg_queue_ops )))
-        return;
-
-    queue_shm = queue->shared;
-    if (current->queue != queue || !queue->in_fast_wait)
-    {
-        set_error( STATUS_ACCESS_DENIED );
-    }
-    else
-    {
-        if (queue->fd)
-            set_fd_events( queue->fd, 0 );
-
-        if (req->signaled)
-            msg_queue_satisfied( &queue->obj, NULL );
-
-        queue->in_fast_wait = 0;
-    }
-
-    release_object( queue );
-}
-
 DECL_HANDLER(set_keyboard_repeat)
 {
     struct desktop *desktop;
@@ -4315,3 +4316,41 @@ DECL_HANDLER(set_keyboard_repeat)
     release_object( desktop );
 }
 
+DECL_HANDLER(select_inproc_queue)
+{
+    struct msg_queue *queue = current->queue;
+
+    if (queue->in_inproc_wait)
+    {
+        set_error( STATUS_ACCESS_DENIED );
+    }
+    else
+    {
+        check_thread_queue_idle( current );
+
+        if (queue->fd)
+            set_fd_events( queue->fd, POLLIN );
+
+        queue->in_inproc_wait = 1;
+    }
+}
+
+DECL_HANDLER(unselect_inproc_queue)
+{
+    struct msg_queue *queue = current->queue;
+
+    if (!queue->in_inproc_wait)
+    {
+        set_error( STATUS_ACCESS_DENIED );
+    }
+    else
+    {
+        if (queue->fd)
+            set_fd_events( queue->fd, 0 );
+
+        if (req->signaled)
+            msg_queue_satisfied( &queue->obj, NULL );
+
+        queue->in_inproc_wait = 0;
+    }
+}

@@ -597,7 +597,9 @@ static void map_event_coords( HWND hwnd, Window window, Window event_root, int x
     TRACE( "hwnd %p, window %lx, event_root %lx, x_root %d, y_root %d, input %p\n", hwnd, window, event_root,
            x_root, y_root, input );
 
-    if (!hwnd)
+    if (window == root_window) pt = root_to_virtual_screen( pt.x, pt.y );
+    else if (event_root == root_window) pt = root_to_virtual_screen( x_root, y_root );
+    else if (!hwnd)
     {
         thread_data = x11drv_thread_data();
         if (!thread_data->clipping_cursor) return;
@@ -607,19 +609,15 @@ static void map_event_coords( HWND hwnd, Window window, Window event_root, int x
     }
     else if ((data = get_win_data( hwnd )))
     {
-        if (window == root_window) pt = root_to_virtual_screen( pt.x, pt.y );
-        else if (event_root == root_window) pt = root_to_virtual_screen( x_root, y_root );
+        if (window == data->client_window)
+        {
+            pt.x += data->rects.client.left;
+            pt.y += data->rects.client.top;
+        }
         else
         {
-            if (window == data->whole_window)
-            {
-                pt.x += data->rects.visible.left - data->rects.client.left;
-                pt.y += data->rects.visible.top - data->rects.client.top;
-            }
-
-            if (NtUserGetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYOUTRTL)
-                pt.x = data->rects.client.right - data->rects.client.left - 1 - pt.x;
-            NtUserMapWindowPoints( hwnd, 0, &pt, 1, 0 /* per-monitor DPI */ );
+            pt.x += data->rects.visible.left;
+            pt.y += data->rects.visible.top;
         }
         release_win_data( data );
     }
@@ -1548,22 +1546,15 @@ BOOL X11DRV_ClipCursor( const RECT *clip, BOOL reset )
 /***********************************************************************
  *           move_resize_window
  */
-void move_resize_window( HWND hwnd, int dir )
+void move_resize_window( HWND hwnd, int dir, POINT pos )
 {
     Display *display = thread_display();
-    DWORD pt;
-    POINT pos;
     int button = 0;
     XEvent xev;
     Window win, root, child;
     unsigned int xstate;
 
     if (!(win = X11DRV_get_whole_window( hwnd ))) return;
-
-    pt = NtUserGetThreadInfo()->message_pos;
-    pos.x = (short)LOWORD( pt );
-    pos.y = (short)HIWORD( pt );
-    NtUserLogicalToPerMonitorDPIPhysicalPoint( hwnd, &pos );
     pos = virtual_screen_to_root( pos.x, pos.y );
 
     if (NtUserGetKeyState( VK_LBUTTON ) & 0x8000) button = 1;
@@ -1790,7 +1781,7 @@ static BOOL map_raw_event_coords( XIRawEvent *event, INPUT *input, BOOL send_raw
         FIXME( "Unsupported relative/absolute X/Y axis mismatch\n." );
 
     if (input->mi.dwFlags & MOUSEEVENTF_VIRTUALDESK) SetRect( &virtual_rect, 0, 0, UINT16_MAX, UINT16_MAX );
-    else virtual_rect = NtUserGetVirtualScreenRect();
+    else virtual_rect = NtUserGetVirtualScreenRect( MDT_RAW_DPI );
 
     if (x->max <= x->min) x_scale = 1;
     else x_scale = (virtual_rect.right - virtual_rect.left) / (x->max - x->min);
@@ -1928,7 +1919,7 @@ static BOOL X11DRV_RawButtonEvent( XGenericEventCookie *cookie )
 
 static BOOL X11DRV_TouchEvent( HWND hwnd, XGenericEventCookie *xev )
 {
-    RECT virtual = NtUserGetVirtualScreenRect();
+    RECT virtual = NtUserGetVirtualScreenRect( MDT_RAW_DPI );
     INPUT input = {.type = INPUT_HARDWARE};
     XIDeviceEvent *event = xev->data;
     int flags = 0;

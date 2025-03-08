@@ -3747,9 +3747,10 @@ static const TLBString *decode_string(const BYTE *table, const char *stream, DWO
 
     while ((p = lookup_code(table, table_size, &bits)))
     {
-        static const WCHAR spaceW[] = { ' ',0 };
-        if (buf[0]) lstrcatW(buf, spaceW);
-        MultiByteToWideChar(CP_ACP, 0, p, -1, buf + lstrlenW(buf), buf_size - lstrlenW(buf));
+        int len;
+        if (buf[0]) wcscat(buf, L" ");
+        len = wcslen(buf);
+        MultiByteToWideChar(CP_ACP, 0, p, -1, buf + len, buf_size - len);
     }
 
     tlbstr = TLB_append_str(&lib->string_list, buf);
@@ -4249,7 +4250,7 @@ static void SLTG_DoFuncs(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI,
 	    pFuncDesc->funcdesc.oVft = (unsigned short)(pFunc->vtblpos & ~1) * sizeof(void *) / pTI->pTypeLib->ptr_size;
 
 	if (pFunc->helpstring != 0xffff)
-		pFuncDesc->HelpString = decode_string(hlp_strings, pBlk + pFunc->helpstring, pNameTable - pBlk, pTI->pTypeLib);
+	    pFuncDesc->HelpString = decode_string(hlp_strings, pBlk + pFunc->helpstring, pNameTable - pBlk, pTI->pTypeLib);
 
 	if(pFunc->magic & SLTG_FUNCTION_FLAGS_PRESENT)
 	    pFuncDesc->funcdesc.wFuncFlags = pFunc->funcflags;
@@ -4268,21 +4269,9 @@ static void SLTG_DoFuncs(char *pBlk, char *pFirstItem, ITypeInfoImpl *pTI,
 	pArg = (WORD*)(pBlk + pFunc->arg_off);
 
 	for(param = 0; param < pFuncDesc->funcdesc.cParams; param++) {
-	    char *paramName = pNameTable + (*pArg & ~1);
-	    BOOL HaveOffs;
-	    /* If arg type follows then paramName points to the 2nd
-	       letter of the name, else the next WORD is an offset to
-	       the arg type and paramName points to the first letter.
-	       So let's take one char off paramName and see if we're
-	       pointing at an alphanumeric char.  However if *pArg is
-	       0xffff or 0xfffe then the param has no name, the former
-	       meaning that the next WORD is the type, the latter
-	       meaning that the next WORD is an offset to the type. */
+	    char *paramName = (*pArg & ~1) == 0xfffe ? NULL : pNameTable + (*pArg & ~1);
+	    BOOL HaveOffs = !(*pArg & 1);
 
-	    if(*pArg == 0xffff || *pArg == 0xfffe)
-	        paramName = NULL;
-
-	    HaveOffs = !(*pArg & 1);
 	    pArg++;
 
             TRACE_(typelib)("param %d: paramName %s, *pArg %#x\n",
@@ -4506,9 +4495,6 @@ static ITypeLib2* ITypeLib2_Constructor_SLTG(LPVOID pLib, DWORD dwTLBLength)
 	return NULL;
     }
 
-    /* There are pHeader->nrOfFileBlks - 2 TypeInfo records in this typelib */
-    pTypeLibImpl->TypeInfoCount = pHeader->nrOfFileBlks - 2;
-
     /* This points to pHeader->nrOfFileBlks - 1 of SLTG_BlkEntry */
     pBlkEntry = (SLTG_BlkEntry*)(pHeader + 1);
 
@@ -4529,7 +4515,7 @@ static ITypeLib2* ITypeLib2_Constructor_SLTG(LPVOID pLib, DWORD dwTLBLength)
 
     pIndex = (SLTG_Index*)(pMagic+1);
 
-    pPad9 = (SLTG_Pad9*)(pIndex + pTypeLibImpl->TypeInfoCount);
+    pPad9 = (SLTG_Pad9*)(pIndex + pHeader->nrOfFileBlks - 2);
 
     pFirstBlk = pPad9 + 1;
 
@@ -4564,31 +4550,31 @@ static ITypeLib2* ITypeLib2_Constructor_SLTG(LPVOID pLib, DWORD dwTLBLength)
 	w = *(WORD*)ptr;
 	if(w != 0xffff) {
 	    len += w;
-	    pOtherTypeInfoBlks[i].index_name = malloc(w+1);
+	    pOtherTypeInfoBlks[i].index_name = malloc(w + 1);
 	    memcpy(pOtherTypeInfoBlks[i].index_name, ptr + 2, w);
 	    pOtherTypeInfoBlks[i].index_name[w] = '\0';
 	}
 	w = *(WORD*)(ptr + 2 + len);
 	if(w != 0xffff) {
 	    TRACE_(typelib)("\twith %s\n", debugstr_an(ptr + 4 + len, w));
-	    pOtherTypeInfoBlks[i].other_name = malloc(w+1);
+	    len += w;
+	    pOtherTypeInfoBlks[i].other_name = malloc(w + 1);
 	    memcpy(pOtherTypeInfoBlks[i].other_name, ptr + 4 + len, w);
 	    pOtherTypeInfoBlks[i].other_name[w] = '\0';
-	    len += w;
 	}
-	pOtherTypeInfoBlks[i].res1a = *(WORD*)(ptr + 4 + len);
-	pOtherTypeInfoBlks[i].name_offs = *(WORD*)(ptr + 6 + len);
+	pOtherTypeInfoBlks[i].res1a = *(WORD*)(ptr + len + 4);
+	pOtherTypeInfoBlks[i].name_offs = *(WORD*)(ptr + len + 6);
 	extra = pOtherTypeInfoBlks[i].hlpstr_len = *(WORD*)(ptr + 8 + len);
 	if(extra) {
 	    pOtherTypeInfoBlks[i].extra = malloc(extra);
-	    memcpy(pOtherTypeInfoBlks[i].extra, ptr + 10 + len, extra);
+	    memcpy(pOtherTypeInfoBlks[i].extra, ptr + 10, extra);
 	    len += extra;
 	}
 	pOtherTypeInfoBlks[i].res20 = *(WORD*)(ptr + 10 + len);
 	pOtherTypeInfoBlks[i].helpcontext = *(DWORD*)(ptr + 12 + len);
 	pOtherTypeInfoBlks[i].res26 = *(WORD*)(ptr + 16 + len);
 	memcpy(&pOtherTypeInfoBlks[i].uuid, ptr + 18 + len, sizeof(GUID));
-	pOtherTypeInfoBlks[i].typekind = *(WORD*)(ptr + 18 + sizeof(GUID) + len);
+	pOtherTypeInfoBlks[i].typekind = *(WORD*)(ptr + 18 + len + sizeof(GUID));
 	len += sizeof(SLTG_OtherTypeInfo);
 	ptr += len;
     }
@@ -9179,6 +9165,7 @@ static HRESULT WMSFT_compile_strings(ITypeLibImpl *This,
                 data + sizeof(INT16), file->string_seg.len - last_offs - sizeof(INT16), NULL, NULL);
         if (size == 0) {
             free(file->string_seg.data);
+            file->string_seg.data = NULL;
             return E_UNEXPECTED;
         }
 

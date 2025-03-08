@@ -39,6 +39,9 @@
 #ifdef HAVE_SYS_SYSCTL_H
 # include <sys/sysctl.h>
 #endif
+#ifdef __APPLE__
+# include <mach-o/dyld.h>
+#endif
 
 #ifdef _WIN32
 # include <direct.h>
@@ -56,6 +59,8 @@
 #  define strncasecmp _strnicmp
 #  define strcasecmp _stricmp
 # endif
+# include <windef.h>
+# include <winbase.h>
 #else
 extern char **environ;
 # include <spawn.h>
@@ -191,17 +196,17 @@ static inline void strarray_addall( struct strarray *array, struct strarray adde
     for (i = 0; i < added.count; i++) strarray_add( array, added.str[i] );
 }
 
-static inline int strarray_exists( const struct strarray *array, const char *str )
+static inline int strarray_exists( struct strarray array, const char *str )
 {
     unsigned int i;
 
-    for (i = 0; i < array->count; i++) if (!strcmp( array->str[i], str )) return 1;
+    for (i = 0; i < array.count; i++) if (!strcmp( array.str[i], str )) return 1;
     return 0;
 }
 
 static inline void strarray_add_uniq( struct strarray *array, const char *str )
 {
-    if (!strarray_exists( array, str )) strarray_add( array, str );
+    if (!strarray_exists( *array, str )) strarray_add( array, str );
 }
 
 static inline void strarray_addall_uniq( struct strarray *array, struct strarray added )
@@ -255,12 +260,12 @@ static inline void strarray_qsort( struct strarray *array, int (*func)(const cha
     if (array->count) qsort( array->str, array->count, sizeof(*array->str), (void *)func );
 }
 
-static inline const char *strarray_bsearch( const struct strarray *array, const char *str,
+static inline const char *strarray_bsearch( struct strarray array, const char *str,
                                             int (*func)(const char **, const char **) )
 {
     char **res = NULL;
 
-    if (array->count) res = bsearch( &str, array->str, array->count, sizeof(*array->str), (void *)func );
+    if (array.count) res = bsearch( &str, array.str, array.count, sizeof(*array.str), (void *)func );
     return res ? *res : NULL;
 }
 
@@ -693,7 +698,8 @@ static inline char *get_bindir( const char *argv0 )
 #ifndef _WIN32
     char *dir = NULL;
 
-#if defined(__linux__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__)
+#if defined(__linux__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) \
+        || defined(__CYGWIN__) || defined(__MSYS__)
     dir = realpath( "/proc/self/exe", NULL );
 #elif defined (__FreeBSD__) || defined(__DragonFly__)
     static int pathname[] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
@@ -702,11 +708,20 @@ static inline char *get_bindir( const char *argv0 )
     if (!sysctl( pathname, ARRAY_SIZE(pathname), path, &path_size, NULL, 0 ))
         dir = realpath( path, NULL );
     free( path );
+#elif defined(__APPLE__)
+    uint32_t path_size = PATH_MAX;
+    char *path = xmalloc( path_size );
+    if (!_NSGetExecutablePath( path, &path_size ))
+        dir = realpath( path, NULL );
+    free( path );
 #endif
     if (!dir && !(dir = realpath( argv0, NULL ))) return NULL;
     return get_dirname( dir );
 #else
-    return get_dirname( argv0 );
+    char path[MAX_PATH], *p;
+    GetModuleFileNameA( NULL, path, ARRAYSIZE(path) );
+    for (p = path; *p; p++) if (*p == '\\') *p = '/';
+    return get_dirname( path );
 #endif
 }
 
