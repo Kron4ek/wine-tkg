@@ -8520,10 +8520,13 @@ static void vsir_validate_signature_element(struct validation_context *ctx,
     {
         case VKD3D_SHADER_COMPONENT_INT:
         case VKD3D_SHADER_COMPONENT_UINT:
+        case VKD3D_SHADER_COMPONENT_INT16:
+        case VKD3D_SHADER_COMPONENT_UINT16:
             integer_type = true;
             break;
 
         case VKD3D_SHADER_COMPONENT_FLOAT:
+        case VKD3D_SHADER_COMPONENT_FLOAT16:
             break;
 
         default:

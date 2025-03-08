@@ -19,6 +19,7 @@
 #ifndef __SETUPAPI_PRIVATE_H
 #define __SETUPAPI_PRIVATE_H
 
+#include <stdbool.h>
 #include <windef.h>
 #include <winuser.h>
 
@@ -71,6 +72,8 @@ static inline WCHAR *strdupAtoW( const char *str )
     return ret;
 }
 
+bool array_reserve(void **elements, size_t *capacity, size_t count, size_t size);
+
 /* exported functions not in public headers */
 
 void    WINAPI MyFree( void *mem );
@@ -85,8 +88,6 @@ struct inf_file;
 extern const WCHAR *DIRID_get_string( int dirid );
 extern const WCHAR *PARSER_get_inf_filename( HINF hinf );
 extern WCHAR *PARSER_get_dest_dir( INFCONTEXT *context );
-
-extern WCHAR *get_destination_dir( HINF hinf, const WCHAR *section );
 
 /* support for ANSI queue callback functions */
 

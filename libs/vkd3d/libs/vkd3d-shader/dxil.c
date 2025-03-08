@@ -8578,19 +8578,29 @@ static enum vkd3d_result sm6_parser_metadata_init(struct sm6_parser *sm6, const 
     return VKD3D_OK;
 }
 
-static enum vkd3d_shader_component_type vkd3d_component_type_from_dxil_component_type(enum dxil_component_type type)
+static enum vkd3d_shader_component_type vkd3d_component_type_from_dxil_component_type(
+        enum dxil_component_type type, bool native_16bit)
 {
     switch (type)
     {
         case COMPONENT_TYPE_I1:
             return VKD3D_SHADER_COMPONENT_BOOL;
         case COMPONENT_TYPE_I16:
+            if (native_16bit)
+                return VKD3D_SHADER_COMPONENT_INT16;
+            return VKD3D_SHADER_COMPONENT_INT;
         case COMPONENT_TYPE_I32:
             return VKD3D_SHADER_COMPONENT_INT;
         case COMPONENT_TYPE_U16:
+            if (native_16bit)
+                return VKD3D_SHADER_COMPONENT_UINT16;
+            return VKD3D_SHADER_COMPONENT_UINT;
         case COMPONENT_TYPE_U32:
             return VKD3D_SHADER_COMPONENT_UINT;
         case COMPONENT_TYPE_F16:
+            if (native_16bit)
+                return VKD3D_SHADER_COMPONENT_FLOAT16;
+            return VKD3D_SHADER_COMPONENT_FLOAT;
         case COMPONENT_TYPE_F32:
         case COMPONENT_TYPE_SNORMF32:
         case COMPONENT_TYPE_UNORMF32:
@@ -8605,8 +8615,12 @@ static enum vkd3d_shader_component_type vkd3d_component_type_from_dxil_component
     }
 }
 
-static enum vkd3d_shader_minimum_precision minimum_precision_from_dxil_component_type(enum dxil_component_type type)
+static enum vkd3d_shader_minimum_precision minimum_precision_from_dxil_component_type(
+        enum dxil_component_type type, bool native_16bit)
 {
+    if (native_16bit)
+        return VKD3D_SHADER_MINIMUM_PRECISION_NONE;
+
     switch (type)
     {
         case COMPONENT_TYPE_F16:
@@ -9432,8 +9446,10 @@ static enum vkd3d_result sm6_parser_read_signature(struct sm6_parser *sm6, const
 {
     unsigned int i, j, column_count, operand_count, index;
     const struct sm6_metadata_node *node, *element_node;
+    struct vsir_program *program = sm6->p.program;
     struct signature_element *elements, *e;
     unsigned int values[10];
+    bool native_16bit;
     bool is_register;
 
     if (!m)
@@ -9458,6 +9474,7 @@ static enum vkd3d_result sm6_parser_read_signature(struct sm6_parser *sm6, const
         return VKD3D_ERROR_OUT_OF_MEMORY;
     }
 
+    native_16bit = program->global_flags & VKD3DSGF_FORCE_NATIVE_LOW_PRECISION;
     for (i = 0; i < operand_count; ++i)
     {
         m = node->operands[i];
@@ -9518,8 +9535,8 @@ static enum vkd3d_result sm6_parser_read_signature(struct sm6_parser *sm6, const
         }
         e->semantic_name = element_node->operands[1]->u.string_value;
 
-        e->component_type = vkd3d_component_type_from_dxil_component_type(values[2]);
-        e->min_precision = minimum_precision_from_dxil_component_type(values[2]);
+        e->component_type = vkd3d_component_type_from_dxil_component_type(values[2], native_16bit);
+        e->min_precision = minimum_precision_from_dxil_component_type(values[2], native_16bit);
 
         j = values[3];
         e->sysval_semantic = sysval_semantic_from_dxil_semantic_kind(j, tessellator_domain);
@@ -10682,8 +10699,6 @@ int dxil_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t co
     struct sm6_parser sm6 = {0};
     uint32_t *byte_code = NULL;
     int ret;
-
-    MESSAGE("Creating a DXIL parser. This is unsupported; you get to keep all the pieces if it breaks.\n");
 
     dxbc_desc.is_dxil = true;
     if ((ret = shader_extract_from_dxbc(&compile_info->source, message_context, compile_info->source_name,

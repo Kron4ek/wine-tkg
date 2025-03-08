@@ -476,7 +476,7 @@ typedef int             LONG,       *PLONG;
 #endif
 
 /* Some systems might have wchar_t, but we really need 16 bit characters */
-#if defined(WINE_UNICODE_NATIVE)
+#if defined(WINE_UNICODE_NATIVE) || defined(__MINGW32__) || defined(_MSC_VER)
 typedef wchar_t         WCHAR;
 #elif __cpp_unicode_literals >= 200710
 typedef char16_t        WCHAR;
@@ -7436,6 +7436,36 @@ static FORCEINLINE void YieldProcessor(void)
 #endif
 #endif
 }
+
+#if defined(__x86_64__)
+# if defined(__arm64ec__)
+#  define __shiftright128 ShiftRight128
+#  define _umul128 UnsignedMultiply128
+# else
+#  define ShiftRight128 __shiftright128
+#  define UnsignedMultiply128 _umul128
+#  if defined(_MSC_VER)
+DWORD64 __shiftright128(DWORD64,DWORD64,BYTE);
+DWORD64 _umul128(DWORD64,DWORD64,DWORD64*);
+#   pragma intrinsic(__shiftright128)
+#   pragma intrinsic(_umul128)
+#  endif
+# endif
+#endif
+
+#if (defined(__x86_64__) && !defined(_MSC_VER)) || defined(__aarch64__) || defined(__arm64ec__)
+static FORCEINLINE DWORD64 ShiftRight128( DWORD64 lo, DWORD64 hi, BYTE shift )
+{
+    return ((unsigned __int128)hi << 64 | lo) >> shift;
+}
+
+static FORCEINLINE DWORD64 UnsignedMultiply128( DWORD64 a, DWORD64 b, DWORD64 *hi )
+{
+    unsigned __int128 v = (unsigned __int128)a * b;
+    *hi = v >> 64;
+    return (DWORD64)v;
+}
+#endif
 
 #ifdef __cplusplus
 }

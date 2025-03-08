@@ -32,7 +32,6 @@ SOURCES = \
 	region.c \
 	registry.c \
 	request.c \
-	scheduler.c \
 	semaphore.c \
 	serial.c \
 	signal.c \

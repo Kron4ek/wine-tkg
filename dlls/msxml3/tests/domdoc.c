@@ -4859,6 +4859,16 @@ static void test_whitespace(void)
         check_ws_ignored(class_ptr->name, doc3, NULL);
         check_ws_preserved(class_ptr->name, doc4, NULL);
 
+        hr = IXMLDOMDocument2_put_preserveWhiteSpace(doc4, 1);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = IXMLDOMDocument2_get_preserveWhiteSpace(doc4, &b);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(b == VARIANT_FALSE, "expected true\n");
+        check_ws_ignored(class_ptr->name, doc4, NULL);
+
+        hr = IXMLDOMDocument2_put_preserveWhiteSpace(doc4, VARIANT_TRUE);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
         /* setting after loading xml affects trimming of leading/trailing ws only */
         hr = IXMLDOMDocument2_put_preserveWhiteSpace(doc1, VARIANT_TRUE);
         ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -4924,6 +4934,17 @@ static void test_whitespace(void)
         ok(len == 3, "got %ld\n", len);
         IXMLDOMNodeList_Release(list);
         IXMLDOMElement_Release(root);
+
+        hr = IXMLDOMDocument2_put_preserveWhiteSpace(doc1, VARIANT_TRUE);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = IXMLDOMDocument2_get_preserveWhiteSpace(doc1, &b);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(b == VARIANT_TRUE, "expected true %d\n", b);
+        hr = IXMLDOMDocument2_put_preserveWhiteSpace(doc1, 1);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = IXMLDOMDocument2_get_preserveWhiteSpace(doc1, &b);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(b == VARIANT_FALSE, "expected true %d\n", b);
 
         IXMLDOMDocument2_Release(doc1);
 

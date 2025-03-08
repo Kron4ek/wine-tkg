@@ -1,7 +1,6 @@
 /*
  * SetupAPI DiskSpace functions
  *
- * Copyright 2016 Michael Müller
  * Copyright 2004 CodeWeavers (Aric Stewart)
  *
  * This library is free software; you can redistribute it and/or
@@ -20,7 +19,6 @@
  */
 
 #include <stdarg.h>
-#include <stdlib.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -29,81 +27,48 @@
 #include "winnls.h"
 #include "winreg.h"
 #include "setupapi.h"
-#include "wine/list.h"
 #include "wine/debug.h"
+
 #include "setupapi_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(setupapi);
 
-struct file_entry
+struct file
 {
-    struct list entry;
     WCHAR *path;
-    UINT operation;
     LONGLONG size;
+    UINT op;
 };
 
-struct space_list
+struct disk_space_list
 {
-    struct list files;
-    UINT flags;
+    unsigned int flags;
+    struct file *files;
+    size_t count, capacity;
 };
 
-static LONGLONG get_file_size(WCHAR *path)
+static bool ascii_isalpha(WCHAR c)
 {
-    HANDLE file;
-    LARGE_INTEGER size;
-
-    file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (file == INVALID_HANDLE_VALUE) return 0;
-
-    if (!GetFileSizeEx(file, &size))
-        size.QuadPart = 0;
-
-    CloseHandle(file);
-    return size.QuadPart;
-}
-
-static BOOL get_size_from_inf(HINF layoutinf, WCHAR *filename, LONGLONG *size)
-{
-    static const WCHAR SourceDisksFiles[]  = {'S','o','u','r','c','e','D','i','s','k','s','F','i','l','e','s',0};
-    INFCONTEXT context;
-    WCHAR buffer[20];
-
-    if (!SetupFindFirstLineW(layoutinf, SourceDisksFiles, filename, &context))
-        return FALSE;
-
-    if (!SetupGetStringFieldW(&context, 3, buffer, sizeof(buffer), NULL))
-        return FALSE;
-
-    /* FIXME: is there a atollW ? */
-    *size = wcstol(buffer, NULL, 10);
-    return TRUE;
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
 
 /***********************************************************************
  *		SetupCreateDiskSpaceListW  (SETUPAPI.@)
  */
-HDSKSPC WINAPI SetupCreateDiskSpaceListW(PVOID reserved1, DWORD reserved2, UINT flags)
+HDSKSPC WINAPI SetupCreateDiskSpaceListW(PVOID Reserved1, DWORD Reserved2, UINT Flags)
 {
-    struct space_list *list;
+    struct disk_space_list *list;
 
-    TRACE("(%p, %lu, 0x%08x)\n", reserved1, reserved2, flags);
+    TRACE("(%p, %lu, 0x%08x)\n", Reserved1, Reserved2, Flags);
 
-    if (reserved1 || reserved2 || flags & ~SPDSL_IGNORE_DISK)
+    if (Reserved1 || Reserved2 || Flags & ~SPDSL_IGNORE_DISK)
     {
         SetLastError(ERROR_INVALID_PARAMETER);
         return NULL;
     }
 
-    list = malloc(sizeof(*list));
-    if (list)
-    {
-        list->flags = flags;
-        list_init(&list->files);
-    }
-
+    list = calloc(1, sizeof(*list));
+    list->flags = Flags;
     return list;
 }
 
@@ -119,58 +84,41 @@ HDSKSPC WINAPI SetupCreateDiskSpaceListA(PVOID Reserved1, DWORD Reserved2, UINT 
 /***********************************************************************
  *		SetupDuplicateDiskSpaceListW  (SETUPAPI.@)
  */
-HDSKSPC WINAPI SetupDuplicateDiskSpaceListW(HDSKSPC diskspace, PVOID reserved1, DWORD reserved2, UINT flags)
+HDSKSPC WINAPI SetupDuplicateDiskSpaceListW(HDSKSPC handle, PVOID Reserved1, DWORD Reserved2, UINT Flags)
 {
-    struct space_list *list_copy, *list = diskspace;
-    struct file_entry *file, *file_copy;
+    struct disk_space_list *copy, *list = handle;
 
-    TRACE("(%p, %p, %lu, %u)\n", diskspace, reserved1, reserved2, flags);
-
-    if (reserved1 || reserved2 || flags)
+    if (Reserved1 || Reserved2 || Flags)
     {
         SetLastError(ERROR_INVALID_PARAMETER);
         return NULL;
     }
 
-    if (!diskspace)
+    if (!handle)
     {
         SetLastError(ERROR_INVALID_HANDLE);
         return NULL;
     }
 
-    list_copy = malloc(sizeof(*list_copy));
-    if (!list_copy)
+    if (!(copy = malloc(sizeof(*copy))))
     {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
         return NULL;
     }
 
-    list_copy->flags = list->flags;
-    list_init(&list_copy->files);
-
-    LIST_FOR_EACH_ENTRY(file, &list->files, struct file_entry, entry)
+    copy->flags = list->flags;
+    copy->count = list->count;
+    copy->capacity = 0;
+    copy->files = NULL;
+    array_reserve((void **)&copy->files, &copy->capacity, copy->count, sizeof(*copy->files));
+    for (size_t i = 0; i < list->count; ++i)
     {
-        file_copy = malloc(sizeof(*file_copy));
-        if (!file_copy) goto error;
-
-        file_copy->path = wcsdup(file->path);
-        if (!file_copy->path)
-        {
-            free(file_copy);
-            goto error;
-        }
-
-        file_copy->operation = file->operation;
-        file_copy->size = file->size;
-        list_add_head(&list_copy->files, &file->entry);
+        copy->files[i].path = wcsdup(list->files[i].path);
+        copy->files[i].op = list->files[i].op;
+        copy->files[i].size = list->files[i].size;
     }
 
-    return list_copy;
-
-error:
-    SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    SetupDestroyDiskSpaceList(list_copy);
-    return NULL;
+    return copy;
 }
 
 /***********************************************************************
@@ -182,253 +130,64 @@ HDSKSPC WINAPI SetupDuplicateDiskSpaceListA(HDSKSPC DiskSpace, PVOID Reserved1, 
 }
 
 /***********************************************************************
- *      SetupAddSectionToDiskSpaceListW  (SETUPAPI.@)
- */
-BOOL WINAPI SetupAddSectionToDiskSpaceListW(HDSKSPC diskspace, HINF hinf, HINF hlist,
-                                            PCWSTR section, UINT operation, PVOID reserved1,
-                                            UINT reserved2)
-{
-    static const WCHAR sepW[] = {'\\',0};
-    WCHAR dest[MAX_PATH], src[MAX_PATH], *dest_dir, *full_path;
-    INFCONTEXT context;
-    BOOL ret = FALSE;
-
-    TRACE("(%p, %p, %p, %s, %u, %p, %u)\n", diskspace, hinf, hlist, debugstr_w(section),
-                                            operation, reserved1, reserved2);
-
-    if (!diskspace)
-    {
-        SetLastError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
-
-    if (!section)
-    {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-
-    if (!hlist) hlist = hinf;
-
-    if (!SetupFindFirstLineW(hlist, section, NULL, &context))
-    {
-        SetLastError(ERROR_SECTION_NOT_FOUND);
-        return FALSE;
-    }
-
-    dest_dir = get_destination_dir(hinf, section);
-    if (!dest_dir)
-    {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return FALSE;
-    }
-
-    do
-    {
-        LONGLONG filesize;
-        int path_size;
-        BOOL tmp_ret;
-
-        if (!SetupGetStringFieldW(&context, 1, dest, sizeof(dest) / sizeof(WCHAR), NULL))
-            goto end;
-        if (!SetupGetStringFieldW(&context, 2, src, sizeof(src) / sizeof(WCHAR), NULL))
-            *src = 0;
-        if (!get_size_from_inf(hinf, src[0] ? src : dest, &filesize))
-            goto end;
-
-        path_size = lstrlenW(dest_dir) + lstrlenW(dest) + 2;
-        full_path = HeapAlloc(GetProcessHeap(), 0, path_size * sizeof(WCHAR));
-        if (!full_path)
-        {
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            goto end;
-        }
-
-        lstrcpyW(full_path, dest_dir);
-        lstrcatW(full_path, sepW);
-        lstrcatW(full_path, dest);
-
-        tmp_ret = SetupAddToDiskSpaceListW(diskspace, full_path, filesize, operation, 0, 0);
-        HeapFree(GetProcessHeap(), 0, full_path);
-        if (!tmp_ret) goto end;
-    }
-    while (SetupFindNextLine(&context, &context));
-
-    ret = TRUE;
-
-end:
-    HeapFree(GetProcessHeap(), 0, dest_dir);
-    return ret;
-}
-
-/***********************************************************************
- *      SetupAddInstallSectionToDiskSpaceListA  (SETUPAPI.@)
- */
-BOOL WINAPI SetupAddSectionToDiskSpaceListA(HDSKSPC diskspace, HINF hinf, HINF hlist,
-                                            PCSTR section, UINT operation, PVOID reserved1,
-                                            UINT reserved2)
-{
-    LPWSTR sectionW = NULL;
-    DWORD len;
-    BOOL ret;
-
-    if (section)
-    {
-        len = MultiByteToWideChar(CP_ACP, 0, section, -1, NULL, 0);
-
-        sectionW = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
-        if (!sectionW)
-        {
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            return FALSE;
-        }
-
-        MultiByteToWideChar(CP_ACP, 0, section, -1, sectionW, len);
-    }
-
-    ret = SetupAddSectionToDiskSpaceListW(diskspace, hinf, hlist, sectionW, operation,
-                                          reserved1, reserved2);
-    if (sectionW) HeapFree(GetProcessHeap(), 0, sectionW);
-    return ret;
-}
-
-/***********************************************************************
- *      SetupAddInstallSectionToDiskSpaceListW  (SETUPAPI.@)
- */
-BOOL WINAPI SetupAddInstallSectionToDiskSpaceListW(HDSKSPC diskspace,
-                        HINF inf, HINF layoutinf, LPCWSTR section,
-                        PVOID reserved1, UINT reserved2)
-{
-    static const WCHAR CopyFiles[]  = {'C','o','p','y','F','i','l','e','s',0};
-    static const WCHAR DelFiles[]   = {'D','e','l','F','i','l','e','s',0};
-    WCHAR section_name[MAX_PATH];
-    INFCONTEXT context;
-    BOOL ret;
-    int i;
-
-    TRACE("(%p, %p, %p, %s, %p, %u)\n", diskspace, inf, layoutinf, debugstr_w(section),
-                                        reserved1, reserved2);
-
-    if (!diskspace)
-    {
-        SetLastError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
-
-    if (!section)
-    {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-
-    if (!inf) return TRUE;
-    if (!layoutinf) layoutinf = inf;
-
-    ret = SetupFindFirstLineW(inf, section, CopyFiles, &context);
-    while (ret)
-    {
-        for (i = 1;; i++)
-        {
-            if (!SetupGetStringFieldW(&context, i, section_name, sizeof(section_name) / sizeof(WCHAR), NULL))
-                break;
-            SetupAddSectionToDiskSpaceListW(diskspace, layoutinf, inf, section_name, FILEOP_COPY, 0, 0);
-        }
-        ret = SetupFindNextLine(&context, &context);
-    }
-
-    ret = SetupFindFirstLineW(inf, section, DelFiles, &context);
-    while (ret)
-    {
-        for (i = 1;; i++)
-        {
-            if (!SetupGetStringFieldW(&context, i, section_name, sizeof(section_name) / sizeof(WCHAR), NULL))
-                break;
-            SetupAddSectionToDiskSpaceListW(diskspace, layoutinf, inf, section_name, FILEOP_DELETE, 0, 0);
-        }
-        ret = SetupFindNextLine(&context, &context);
-    }
-
-    return TRUE;
-}
-
-/***********************************************************************
  *		SetupAddInstallSectionToDiskSpaceListA  (SETUPAPI.@)
  */
-BOOL WINAPI SetupAddInstallSectionToDiskSpaceListA(HDSKSPC diskspace,
-                        HINF inf, HINF layoutinf, LPCSTR section,
-                        PVOID reserved1, UINT reserved2)
+BOOL WINAPI SetupAddInstallSectionToDiskSpaceListA(HDSKSPC DiskSpace, 
+                        HINF InfHandle, HINF LayoutInfHandle, 
+                        LPCSTR SectionName, PVOID Reserved1, UINT Reserved2)
 {
-    LPWSTR sectionW = NULL;
-    DWORD len;
-    BOOL ret;
-
-    if (section)
-    {
-        len = MultiByteToWideChar(CP_ACP, 0, section, -1, NULL, 0);
-
-        sectionW = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
-        if (!sectionW)
-        {
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            return FALSE;
-        }
-
-        MultiByteToWideChar(CP_ACP, 0, section, -1, sectionW, len);
-    }
-
-    ret = SetupAddInstallSectionToDiskSpaceListW(diskspace, inf, layoutinf,
-                                                 sectionW, reserved1, reserved2);
-    if (sectionW) HeapFree(GetProcessHeap(), 0, sectionW);
-    return ret;
+    FIXME ("Stub\n");
+    return TRUE;
 }
 
 /***********************************************************************
 *		SetupQuerySpaceRequiredOnDriveW  (SETUPAPI.@)
 */
-BOOL WINAPI SetupQuerySpaceRequiredOnDriveW(HDSKSPC diskspace,
-                        LPCWSTR drivespec, LONGLONG *required,
-                        PVOID reserved1, UINT reserved2)
+BOOL WINAPI SetupQuerySpaceRequiredOnDriveW(HDSKSPC handle,
+        const WCHAR *drive, LONGLONG *ret_size, void *reserved1, UINT reserved2)
 {
-    struct space_list *list = diskspace;
-    struct file_entry *file;
-    LONGLONG sum = 0;
+    struct disk_space_list *list = handle;
+    bool has_files = false;
+    LONGLONG size = 0;
 
-    TRACE("(%p, %s, %p, %p, %u)\n", diskspace, debugstr_w(drivespec), required, reserved1, reserved2);
+    TRACE("handle %p, drive %s, ret_size %p, reserved1 %p, reserved2 %#x.\n",
+            handle, debugstr_w(drive), ret_size, reserved1, reserved2);
 
-    if (!diskspace)
+    if (!handle)
     {
         SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
     }
 
-    if (!drivespec || !drivespec[0])
-    {
-        SetLastError(drivespec ? ERROR_INVALID_DRIVE : ERROR_INVALID_DRIVE);
-        return FALSE;
-    }
-
-    if (!required)
+    if (!drive)
     {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
 
-    if (towlower(drivespec[0]) < 'a' || towlower(drivespec[0]) > 'z' ||
-        drivespec[1] != ':' || drivespec[2] != 0)
+    if (!ascii_isalpha(drive[0]) || drive[1] != ':' || drive[2])
     {
-        FIXME("UNC paths not yet supported (%s)\n", debugstr_w(drivespec));
-        SetLastError((GetVersion() & 0x80000000) ? ERROR_INVALID_DRIVE : ERROR_INVALID_PARAMETER);
+        SetLastError(ERROR_INVALID_DRIVE);
         return FALSE;
     }
 
-    LIST_FOR_EACH_ENTRY(file, &list->files, struct file_entry, entry)
+    for (size_t i = 0; i < list->count; ++i)
     {
-        if (towlower(file->path[0]) == towlower(drivespec[0]) &&
-            file->path[1] == ':' && file->path[2] == '\\')
-            sum += file->size;
+        if (towlower(drive[0]) == towlower(list->files[i].path[0]))
+        {
+            has_files = true;
+            size += list->files[i].size;
+        }
     }
 
-    *required = sum;
+    if (!has_files)
+    {
+        SetLastError(ERROR_INVALID_DRIVE);
+        return FALSE;
+    }
+
+    *ret_size = size;
+    SetLastError(ERROR_SUCCESS);
     return TRUE;
 }
 
@@ -479,242 +238,99 @@ BOOL WINAPI SetupQuerySpaceRequiredOnDriveA(HDSKSPC DiskSpace,
 /***********************************************************************
 *		SetupDestroyDiskSpaceList  (SETUPAPI.@)
 */
-BOOL WINAPI SetupDestroyDiskSpaceList(HDSKSPC diskspace)
+BOOL WINAPI SetupDestroyDiskSpaceList(HDSKSPC handle)
 {
-    struct space_list *list = diskspace;
-    struct file_entry *file, *file2;
+    struct disk_space_list *list = handle;
 
-    if (!diskspace)
-    {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-
-    LIST_FOR_EACH_ENTRY_SAFE(file, file2, &list->files, struct file_entry, entry)
-    {
-        free(file->path);
-        list_remove(&file->entry);
-        free(file);
-    }
-
+    for (size_t i = 0; i < list->count; ++i)
+        free(list->files[i].path);
+    free(list->files);
     free(list);
     return TRUE;
+}
+
+static LONGLONG get_aligned_size(LONGLONG size)
+{
+    return (size + 4095) & ~4095;
+}
+
+/***********************************************************************
+*		SetupAddToDiskSpaceListA  (SETUPAPI.@)
+*/
+BOOL WINAPI SetupAddToDiskSpaceListA(HDSKSPC handle, const char *file,
+        LONGLONG size, UINT op, void *reserved1, UINT reserved2)
+{
+    WCHAR *fileW = strdupAtoW(file);
+    BOOL ret = SetupAddToDiskSpaceListW(handle, fileW, size, op, reserved1, reserved2);
+    free(fileW);
+    return ret;
 }
 
 /***********************************************************************
 *		SetupAddToDiskSpaceListW  (SETUPAPI.@)
 */
-BOOL WINAPI SetupAddToDiskSpaceListW(HDSKSPC diskspace, PCWSTR targetfile,
-                                    LONGLONG filesize, UINT operation,
-                                    PVOID reserved1, UINT reserved2)
+BOOL WINAPI SetupAddToDiskSpaceListW(HDSKSPC handle, const WCHAR *file,
+        LONGLONG size, UINT op, void *reserved1, UINT reserved2)
 {
-    struct space_list *list = diskspace;
-    struct file_entry *file;
-    WCHAR *fullpathW;
-    BOOL ret = FALSE;
-    DWORD size;
-
-    TRACE("(%p, %s, %s, %u, %p, %u)\n", diskspace, debugstr_w(targetfile),
-          wine_dbgstr_longlong(filesize), operation, reserved1, reserved2);
-
-    if (!targetfile)
-        return TRUE;
-
-    if (!diskspace)
-    {
-        SetLastError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
-
-    if (operation != FILEOP_COPY && operation != FILEOP_DELETE)
-    {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-
-    size = GetFullPathNameW(targetfile, 0, NULL, NULL);
-    if (!size)
-    {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-
-    size = (size+1) * sizeof(WCHAR);
-    fullpathW = HeapAlloc(GetProcessHeap(), 0, size);
-
-    if (!GetFullPathNameW(targetfile, size, fullpathW, NULL))
-    {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        goto done;
-    }
-
-    if (fullpathW[1] != ':' && fullpathW[2] != '\\')
-    {
-        FIXME("UNC paths not yet supported\n");
-        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-        goto done;
-    }
-
-    LIST_FOR_EACH_ENTRY(file, &list->files, struct file_entry, entry)
-    {
-        if (!lstrcmpiW(file->path, fullpathW))
-            break;
-    }
-
-    if (&file->entry == &list->files)
-    {
-        file = HeapAlloc(GetProcessHeap(), 0, sizeof(*file));
-        if (!file)
-        {
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            goto done;
-        }
-
-        file->path = wcsdup(fullpathW);
-        if (!file->path)
-        {
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            HeapFree(GetProcessHeap(), 0, file);
-            goto done;
-        }
-
-        list_add_tail(&list->files, &file->entry);
-    }
-    else if (operation == FILEOP_DELETE)
-    {
-        /* delete operations for added files are ignored */
-        ret = TRUE;
-        goto done;
-    }
-
-    file->operation = operation;
-    if (operation == FILEOP_COPY)
-        file->size = filesize;
-    else
-        file->size = 0;
-
-    if (!(list->flags & SPDSL_IGNORE_DISK))
-        file->size -= get_file_size(fullpathW);
-
-    ret = TRUE;
-
-done:
-    HeapFree(GetProcessHeap(), 0, fullpathW);
-    return ret;
-}
-
-/***********************************************************************
-*       SetupAddToDiskSpaceListA  (SETUPAPI.@)
-*/
-BOOL WINAPI SetupAddToDiskSpaceListA(HDSKSPC diskspace, PCSTR targetfile,
-                                    LONGLONG filesize, UINT operation,
-                                    PVOID reserved1, UINT reserved2)
-{
-    LPWSTR targetfileW = NULL;
+    struct disk_space_list *list = handle;
+    WIN32_FILE_ATTRIBUTE_DATA attr;
+    WCHAR *full_path;
     DWORD len;
-    BOOL ret;
 
-    if (targetfile)
-    {
-        len = MultiByteToWideChar(CP_ACP, 0, targetfile, -1, NULL, 0);
+    TRACE("handle %p, file %s, size %I64d, op %#x, reserved1 %p, reserved2 %#x.\n",
+            handle, debugstr_w(file), size, op, reserved1, reserved2);
 
-        targetfileW = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
-        if (!targetfileW)
-        {
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            return FALSE;
-        }
+    size = get_aligned_size(size);
 
-        MultiByteToWideChar(CP_ACP, 0, targetfile, -1, targetfileW, len);
-    }
-
-    ret = SetupAddToDiskSpaceListW(diskspace, targetfileW, filesize,
-                                   operation, reserved1, reserved2);
-    if (targetfileW) HeapFree(GetProcessHeap(), 0, targetfileW);
-    return ret;
-}
-
-/***********************************************************************
- *      SetupQueryDrivesInDiskSpaceListW (SETUPAPI.@)
- */
-BOOL WINAPI SetupQueryDrivesInDiskSpaceListW(HDSKSPC diskspace, PWSTR buffer, DWORD size, PDWORD required_size)
-{
-    struct space_list *list = diskspace;
-    struct file_entry *file;
-    DWORD cur_size = 1;
-    BOOL used[26];
-
-    TRACE("(%p, %p, %ld, %p)\n", diskspace, buffer, size, required_size);
-
-    if (!diskspace)
+    if (op != FILEOP_COPY && op != FILEOP_DELETE)
     {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
 
-    memset(&used, 0, sizeof(used));
-    LIST_FOR_EACH_ENTRY(file, &list->files, struct file_entry, entry)
+    if (op == FILEOP_DELETE)
+        size = 0;
+
+    if (!(len = GetFullPathNameW(file, 0, NULL, NULL)))
     {
-        int device;
+        SetLastError(ERROR_INVALID_NAME);
+        return FALSE;
+    }
+    full_path = malloc(len * sizeof(WCHAR));
+    GetFullPathNameW(file, len, full_path, NULL);
 
-        /* UNC paths are not yet supported by this function */
-        if (towlower(file->path[0]) < 'a' || towlower(file->path[0]) > 'z' || file->path[1] != ':')
-            continue;
+    if (!ascii_isalpha(full_path[0]) || full_path[1] != ':' || full_path[len - 2] == '\\')
+    {
+        free(full_path);
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
 
-        device = towlower(file->path[0]) - 'a';
-        if (used[device]) continue;
+    if (!(list->flags & SPDSL_IGNORE_DISK)
+            && GetFileAttributesExW(full_path, GetFileExInfoStandard, &attr)
+            && !(attr.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+        size -= get_aligned_size(((LONGLONG)attr.nFileSizeHigh << 32) | attr.nFileSizeLow);
 
-        cur_size += 3;
-
-        if (buffer)
+    for (size_t i = 0; i < list->count; ++i)
+    {
+        if (!wcscmp(full_path, list->files[i].path))
         {
-            if (cur_size > size)
+            if (!(op == FILEOP_DELETE && list->files[i].op == FILEOP_COPY))
             {
-                if (required_size) *required_size = cur_size;
-                SetLastError(ERROR_INSUFFICIENT_BUFFER);
-                return FALSE;
+                list->files[i].op = op;
+                list->files[i].size = size;
             }
-            *buffer++ = towlower(file->path[0]);
-            *buffer++ = ':';
-            *buffer++ = 0;
+            free(full_path);
+            SetLastError(ERROR_SUCCESS);
+            return TRUE;
         }
-
-        used[device] = TRUE;
     }
 
-    if (buffer && size) *buffer = 0;
-    if (required_size)  *required_size = cur_size;
+    array_reserve((void **)&list->files, &list->capacity, list->count + 1, sizeof(*list->files));
+    list->files[list->count].path = full_path;
+    list->files[list->count].op = op;
+    list->files[list->count].size = size;
+    ++list->count;
+    SetLastError(ERROR_SUCCESS);
     return TRUE;
-}
-
-/***********************************************************************
- *      SetupQueryDrivesInDiskSpaceListA (SETUPAPI.@)
- */
-BOOL WINAPI SetupQueryDrivesInDiskSpaceListA(HDSKSPC diskspace, PSTR buffer, DWORD size, PDWORD required_size)
-{
-    WCHAR *bufferW = NULL;
-    BOOL ret;
-    int i;
-
-    if (buffer && size)
-    {
-        bufferW = HeapAlloc(GetProcessHeap(), 0, size * sizeof(WCHAR));
-        if (!bufferW)
-        {
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            return FALSE;
-        }
-    }
-
-    ret = SetupQueryDrivesInDiskSpaceListW(diskspace, bufferW ? bufferW : (WCHAR *)buffer,
-                                           size, required_size);
-
-    if (bufferW)
-    {
-        for (i = 0; i < size; i++)
-            buffer[i] = bufferW[i];
-        HeapFree(GetProcessHeap(), 0, bufferW);
-    }
-
-    return ret;
 }

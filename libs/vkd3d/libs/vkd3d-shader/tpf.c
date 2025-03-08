@@ -3229,6 +3229,7 @@ static int signature_element_pointer_compare(const void *x, const void *y)
 
 static void tpf_write_signature(struct tpf_compiler *tpf, const struct shader_signature *signature, uint32_t tag)
 {
+    bool has_minimum_precision = tpf->program->global_flags & VKD3DSGF_ENABLE_MINIMUM_PRECISION;
     bool output = tag == TAG_OSGN || (tag == TAG_PCSG
             && tpf->program->shader_version.type == VKD3D_SHADER_TYPE_HULL);
     const struct signature_element **sorted_elements;
@@ -3257,12 +3258,16 @@ static void tpf_write_signature(struct tpf_compiler *tpf, const struct shader_si
         if (sysval >= VKD3D_SHADER_SV_TARGET)
             sysval = VKD3D_SHADER_SV_NONE;
 
+        if (has_minimum_precision)
+            put_u32(&buffer, 0); /* FIXME: stream index */
         put_u32(&buffer, 0); /* name */
         put_u32(&buffer, element->semantic_index);
         put_u32(&buffer, sysval);
         put_u32(&buffer, element->component_type);
         put_u32(&buffer, element->register_index);
         put_u32(&buffer, vkd3d_make_u16(element->mask, used_mask));
+        if (has_minimum_precision)
+            put_u32(&buffer, element->min_precision);
     }
 
     for (i = 0; i < signature->element_count; ++i)
@@ -3271,9 +3276,21 @@ static void tpf_write_signature(struct tpf_compiler *tpf, const struct shader_si
         size_t string_offset;
 
         string_offset = put_string(&buffer, element->semantic_name);
-        set_u32(&buffer, (2 + i * 6) * sizeof(uint32_t), string_offset);
+        if (has_minimum_precision)
+            set_u32(&buffer, (2 + i * 8 + 1) * sizeof(uint32_t), string_offset);
+        else
+            set_u32(&buffer, (2 + i * 6) * sizeof(uint32_t), string_offset);
     }
 
+    if (has_minimum_precision)
+    {
+        if (tag == TAG_ISGN)
+            tag = TAG_ISG1;
+        else if (tag == TAG_OSGN || tag == TAG_OSG5)
+            tag = TAG_OSG1;
+        else if (tag == TAG_PCSG)
+            tag = TAG_PSG1;
+    }
     add_section(tpf, tag, &buffer);
     vkd3d_free(sorted_elements);
 }
@@ -4233,6 +4250,9 @@ static void tpf_write_sfi0(struct tpf_compiler *tpf)
 
     if (tpf->program->features.rovs)
         *flags |= DXBC_SFI0_REQUIRES_ROVS;
+
+    if (tpf->program->global_flags & VKD3DSGF_ENABLE_MINIMUM_PRECISION)
+        *flags |= DXBC_SFI0_REQUIRES_MINIMUM_PRECISION;
 
     /* FIXME: We also emit code that should require UAVS_AT_EVERY_STAGE,
      * STENCIL_REF, and TYPED_UAV_LOAD_ADDITIONAL_FORMATS. */

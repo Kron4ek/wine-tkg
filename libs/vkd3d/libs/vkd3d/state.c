@@ -2370,6 +2370,8 @@ static unsigned int feature_flags_compile_option(const struct d3d12_device *devi
         flags |= VKD3D_SHADER_COMPILE_OPTION_FEATURE_FLOAT64;
     if (device->feature_options1.WaveOps)
         flags |= VKD3D_SHADER_COMPILE_OPTION_FEATURE_WAVE_OPS;
+    if (device->vk_info.KHR_zero_initialize_workgroup_memory)
+        flags |= VKD3D_SHADER_COMPILE_OPTION_FEATURE_ZERO_INITIALIZE_WORKGROUP_MEMORY;
 
     return flags;
 }

@@ -96,6 +96,7 @@ extern "C" {
 #define _sntprintf    WINE_tchar_routine(snprintf,        snprintf,    _snwprintf)
 #define _stprintf     WINE_tchar_routine(sprintf,         sprintf,     swprintf)
 #define _stscanf      WINE_tchar_routine(sscanf,          sscanf,      swscanf)
+#define _stscanf_s    WINE_tchar_routine(sscanf_s,        sscanf_s,    swscanf_s)
 #define _taccess      WINE_tchar_routine(access,          _access,     _waccess)
 #define _tasctime     WINE_tchar_routine(asctime,         asctime,     _wasctime)
 #define _tccpy        WINE_tchar_routine(WINE_tchar_tccpy,_mbccpy,     WINE_tchar_tccpy)
@@ -248,7 +249,7 @@ typedef unsigned short wctype_t;
 #endif
 
 #ifndef __TCHAR_DEFINED
-#if defined(WINE_UNICODE_NATIVE)
+#if defined(WINE_UNICODE_NATIVE) || defined(__MINGW32__) || defined(_MSC_VER)
 typedef wchar_t       _TCHAR;
 #elif __cpp_unicode_literals >= 200710
 typedef char16_t      _TCHAR;

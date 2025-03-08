@@ -132,6 +132,7 @@ struct vkd3d_vulkan_info
     bool KHR_push_descriptor;
     bool KHR_sampler_mirror_clamp_to_edge;
     bool KHR_timeline_semaphore;
+    bool KHR_zero_initialize_workgroup_memory;
     /* EXT device extensions */
     bool EXT_4444_formats;
     bool EXT_calibrated_timestamps;

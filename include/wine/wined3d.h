@@ -224,6 +224,7 @@ enum wined3d_format_id
     WINED3DFMT_R9G9B9E5_SHAREDEXP,
     WINED3DFMT_R8G8_B8G8_UNORM,
     WINED3DFMT_G8R8_G8B8_UNORM,
+    WINED3DFMT_NV12_PLANAR,
     WINED3DFMT_BC1_TYPELESS,
     WINED3DFMT_BC1_UNORM,
     WINED3DFMT_BC1_UNORM_SRGB,
@@ -2049,6 +2050,14 @@ struct wined3d_blend_state_desc
     } rt[WINED3D_MAX_RENDER_TARGETS];
 };
 
+struct wined3d_decoder_desc
+{
+    GUID codec;
+    unsigned int width, height;
+    enum wined3d_format_id output_format;
+    bool long_slice_info;
+};
+
 struct wined3d_stencil_op_desc
 {
     enum wined3d_stencil_op fail_op;
@@ -2222,6 +2231,7 @@ struct wined3d_adapter;
 struct wined3d_blend_state;
 struct wined3d_buffer;
 struct wined3d_command_list;
+struct wined3d_decoder;
 struct wined3d_depth_stencil_state;
 struct wined3d_device;
 struct wined3d_device_context;
@@ -2356,6 +2366,10 @@ ULONG __cdecl wined3d_buffer_incref(struct wined3d_buffer *buffer);
 ULONG __cdecl wined3d_command_list_decref(struct wined3d_command_list *list);
 ULONG __cdecl wined3d_command_list_incref(struct wined3d_command_list *list);
 
+HRESULT __cdecl wined3d_decoder_create(struct wined3d_device *device,
+        const struct wined3d_decoder_desc *desc, struct wined3d_decoder **decoder);
+ULONG __cdecl wined3d_decoder_decref(struct wined3d_decoder *decoder);
+
 HRESULT __cdecl wined3d_deferred_context_create(struct wined3d_device *device, struct wined3d_device_context **context);
 void __cdecl wined3d_deferred_context_destroy(struct wined3d_device_context *context);
 HRESULT __cdecl wined3d_deferred_context_record_command_list(struct wined3d_device_context *context,
@@ -2402,6 +2416,8 @@ struct wined3d_state * __cdecl wined3d_device_get_state(struct wined3d_device *d
 struct wined3d_swapchain * __cdecl wined3d_device_get_swapchain(const struct wined3d_device *device,
         UINT swapchain_idx);
 UINT __cdecl wined3d_device_get_swapchain_count(const struct wined3d_device *device);
+unsigned int __cdecl wined3d_device_get_video_decode_profile_count(struct wined3d_device *device);
+HRESULT __cdecl wined3d_device_get_video_decode_profile(struct wined3d_device *device, unsigned int idx, GUID *profile);
 struct wined3d * __cdecl wined3d_device_get_wined3d(const struct wined3d_device *device);
 ULONG __cdecl wined3d_device_incref(struct wined3d_device *device);
 HRESULT __cdecl wined3d_device_process_vertices(struct wined3d_device *device, struct wined3d_stateblock *stateblock,

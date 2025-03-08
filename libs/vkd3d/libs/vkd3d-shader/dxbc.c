@@ -381,7 +381,8 @@ static int shader_parse_signature(const struct vkd3d_shader_dxbc_section_desc *s
     uint32_t count, header_size;
     struct signature_element *e;
     const char *ptr = data;
-    unsigned int i, j;
+    bool fail = false;
+    unsigned int i;
 
     if (!require_space(0, 2, sizeof(uint32_t), section->data.size))
     {
@@ -436,17 +437,19 @@ static int shader_parse_signature(const struct vkd3d_shader_dxbc_section_desc *s
         if (!(name = shader_get_string(data, section->data.size, name_offset))
                 || !(e[i].semantic_name = vkd3d_strdup(name)))
         {
-            WARN("Invalid name offset %#zx (data size %#zx).\n", name_offset, section->data.size);
-            for (j = 0; j < i; ++j)
-            {
-                vkd3d_free((void *)e[j].semantic_name);
-            }
-            vkd3d_free(e);
-            return VKD3D_ERROR_INVALID_ARGUMENT;
+            vkd3d_shader_error(message_context, NULL, VKD3D_SHADER_ERROR_DXBC_INVALID_STRING_REFERENCE,
+                    "Element %u has invalid semantic name reference %#zx (data size %#zx).\n",
+                    i, name_offset, section->data.size);
+            fail = true;
         }
         e[i].semantic_index = read_u32(&ptr);
         e[i].sysval_semantic = read_u32(&ptr);
-        e[i].component_type = read_u32(&ptr);
+        if ((e[i].component_type = read_u32(&ptr)) > VKD3D_SHADER_COMPONENT_FLOAT)
+        {
+            vkd3d_shader_error(message_context, NULL, VKD3D_SHADER_ERROR_DXBC_INVALID_COMPONENT_TYPE,
+                    "Element %u has invalid component type %#x.\n", i, e[i].component_type);
+            fail = true;
+        }
         e[i].register_index = read_u32(&ptr);
         e[i].target_location = e[i].register_index;
         e[i].register_count = 1;
@@ -477,7 +480,14 @@ static int shader_parse_signature(const struct vkd3d_shader_dxbc_section_desc *s
     }
 
     s->elements = e;
+    s->elements_capacity = count;
     s->element_count = count;
+
+    if (fail)
+    {
+        shader_signature_cleanup(s);
+        return VKD3D_ERROR_INVALID_ARGUMENT;
+    }
 
     return VKD3D_OK;
 }

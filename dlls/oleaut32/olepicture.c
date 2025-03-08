@@ -1955,7 +1955,7 @@ static HRESULT WINAPI OLEPictureImpl_SaveAsFile(IPicture *iface,
 {
     OLEPictureImpl *This = impl_from_IPicture(iface);
     void *data;
-    unsigned data_size;
+    unsigned int data_size;
     ULONG written;
     HRESULT hr;
 
@@ -1989,8 +1989,8 @@ static HRESULT WINAPI OLEPictureImpl_SaveAsFile(IPicture *iface,
             switch (This->keepOrigFormat ? This->loadtime_format : BITMAP_FORMAT_BMP)
             {
             case BITMAP_FORMAT_BMP:
-                if (!serializeBMP(This->desc.bmp.hbitmap, &data, &data_size))
-                    return E_FAIL;
+                hr = serializeBMP(This->desc.bmp.hbitmap, &data, &data_size);
+                if (hr != S_OK) return hr;
                 break;
             case BITMAP_FORMAT_JPEG:
                 FIXME("BITMAP_FORMAT_JPEG is not implemented\n");
@@ -2023,8 +2023,8 @@ static HRESULT WINAPI OLEPictureImpl_SaveAsFile(IPicture *iface,
 
         if (This->bIsDirty || !This->data)
         {
-            if (!serializeEMF(This->desc.emf.hemf, &data, &data_size))
-                return E_FAIL;
+            hr = serializeEMF(This->desc.emf.hemf, &data, &data_size);
+            if (hr != S_OK) return hr;
             HeapFree(GetProcessHeap(), 0, This->data);
             This->data = data;
             This->datalen = data_size;
