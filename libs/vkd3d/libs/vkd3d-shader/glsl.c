@@ -64,7 +64,6 @@ struct vkd3d_glsl_generator
 
     const struct vkd3d_shader_interface_info *interface_info;
     const struct vkd3d_shader_descriptor_offset_info *offset_info;
-    const struct vkd3d_shader_scan_descriptor_info1 *descriptor_info;
     const struct vkd3d_shader_scan_combined_resource_sampler_info *combined_sampler_info;
 };
 
@@ -130,7 +129,7 @@ static const struct glsl_resource_type_info *shader_glsl_get_resource_type_info(
 static const struct vkd3d_shader_descriptor_info1 *shader_glsl_get_descriptor(struct vkd3d_glsl_generator *gen,
         enum vkd3d_shader_descriptor_type type, unsigned int idx, unsigned int space)
 {
-    const struct vkd3d_shader_scan_descriptor_info1 *info = gen->descriptor_info;
+    const struct vkd3d_shader_scan_descriptor_info1 *info = &gen->program->descriptors;
 
     for (unsigned int i = 0; i < info->descriptor_count; ++i)
     {
@@ -146,7 +145,7 @@ static const struct vkd3d_shader_descriptor_info1 *shader_glsl_get_descriptor(st
 static const struct vkd3d_shader_descriptor_info1 *shader_glsl_get_descriptor_by_id(
         struct vkd3d_glsl_generator *gen, enum vkd3d_shader_descriptor_type type, unsigned int id)
 {
-    const struct vkd3d_shader_scan_descriptor_info1 *info = gen->descriptor_info;
+    const struct vkd3d_shader_scan_descriptor_info1 *info = &gen->program->descriptors;
 
     for (unsigned int i = 0; i < info->descriptor_count; ++i)
     {
@@ -269,15 +268,15 @@ static void shader_glsl_print_register_name(struct vkd3d_string_buffer *buffer,
                 vkd3d_string_buffer_printf(buffer, "<unhandled register %#x>", reg->type);
                 break;
             }
-            if (reg->idx[0].rel_addr || reg->idx[2].rel_addr)
+            if (reg->idx[0].rel_addr)
             {
                 vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
                         "Internal compiler error: Unhandled constant buffer register indirect addressing.");
                 vkd3d_string_buffer_printf(buffer, "<unhandled register %#x>", reg->type);
                 break;
             }
-            vkd3d_string_buffer_printf(buffer, "%s_cb_%u[%u]",
-                    gen->prefix, reg->idx[0].offset, reg->idx[2].offset);
+            vkd3d_string_buffer_printf(buffer, "%s_cb_%u", gen->prefix, reg->idx[0].offset);
+            shader_glsl_print_subscript(buffer, gen, reg->idx[2].rel_addr, reg->idx[2].offset);
             break;
 
         case VKD3DSPR_THREADID:
@@ -485,8 +484,7 @@ static void shader_glsl_print_subscript(struct vkd3d_string_buffer *buffer, stru
     vkd3d_string_buffer_printf(buffer, "[%s", r.str->buffer);
     if (offset)
         vkd3d_string_buffer_printf(buffer, " + %u", offset);
-    else
-        vkd3d_string_buffer_printf(buffer, "]");
+    vkd3d_string_buffer_printf(buffer, "]");
     glsl_src_cleanup(&r, &gen->string_buffers);
 }
 
@@ -1658,6 +1656,9 @@ static void vkd3d_glsl_handle_instruction(struct vkd3d_glsl_generator *gen,
         case VKD3DSIH_SWITCH:
             shader_glsl_switch(gen, ins);
             break;
+        case VKD3DSIH_XOR:
+            shader_glsl_binop(gen, ins, "^");
+            break;
         default:
             shader_glsl_unhandled(gen, ins);
             break;
@@ -2078,7 +2079,7 @@ static void shader_glsl_generate_sampler_declaration(struct vkd3d_glsl_generator
 static void shader_glsl_generate_descriptor_declarations(struct vkd3d_glsl_generator *gen)
 {
     const struct vkd3d_shader_scan_combined_resource_sampler_info *sampler_info = gen->combined_sampler_info;
-    const struct vkd3d_shader_scan_descriptor_info1 *info = gen->descriptor_info;
+    const struct vkd3d_shader_scan_descriptor_info1 *info = &gen->program->descriptors;
     const struct vkd3d_shader_descriptor_info1 *descriptor;
     unsigned int i;
 
@@ -2429,7 +2430,6 @@ static void shader_glsl_init_limits(struct vkd3d_glsl_generator *gen, const stru
 
 static void vkd3d_glsl_generator_init(struct vkd3d_glsl_generator *gen,
         struct vsir_program *program, const struct vkd3d_shader_compile_info *compile_info,
-        const struct vkd3d_shader_scan_descriptor_info1 *descriptor_info,
         const struct vkd3d_shader_scan_combined_resource_sampler_info *combined_sampler_info,
         struct vkd3d_shader_message_context *message_context)
 {
@@ -2453,12 +2453,10 @@ static void vkd3d_glsl_generator_init(struct vkd3d_glsl_generator *gen,
 
     gen->interface_info = vkd3d_find_struct(compile_info->next, INTERFACE_INFO);
     gen->offset_info = vkd3d_find_struct(compile_info->next, DESCRIPTOR_OFFSET_INFO);
-    gen->descriptor_info = descriptor_info;
     gen->combined_sampler_info = combined_sampler_info;
 }
 
 int glsl_compile(struct vsir_program *program, uint64_t config_flags,
-        const struct vkd3d_shader_scan_descriptor_info1 *descriptor_info,
         const struct vkd3d_shader_scan_combined_resource_sampler_info *combined_sampler_info,
         const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context)
@@ -2472,7 +2470,7 @@ int glsl_compile(struct vsir_program *program, uint64_t config_flags,
     VKD3D_ASSERT(program->normalisation_level == VSIR_NORMALISED_SM6);
 
     vkd3d_glsl_generator_init(&generator, program, compile_info,
-            descriptor_info, combined_sampler_info, message_context);
+            combined_sampler_info, message_context);
     ret = vkd3d_glsl_generator_generate(&generator, out);
     vkd3d_glsl_generator_cleanup(&generator);
 

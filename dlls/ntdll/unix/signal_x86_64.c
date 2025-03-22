@@ -2391,6 +2391,7 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
     {
         struct syscall_frame *frame = amd64_thread_data()->syscall_frame;
         ULONG64 saved_compaction = 0;
+        I386_CONTEXT *wow_context;
         struct xcontext *context;
 
         context = (struct xcontext *)(((ULONG_PTR)RSP_sig(ucontext) - 128 /* red zone */ - sizeof(*context)) & ~15);
@@ -2414,6 +2415,13 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
             /* xstate is updated directly in frame's xstate */
             context->c.ContextFlags &= ~0x40;
             frame->restore_flags |= 0x40;
+        }
+        if ((wow_context = get_cpu_area( IMAGE_FILE_MACHINE_I386 ))
+             && (wow_context->ContextFlags & CONTEXT_I386_CONTROL) == CONTEXT_I386_CONTROL)
+        {
+            WOW64_CPURESERVED *cpu = NtCurrentTeb()->TlsSlots[WOW64_TLS_CPURESERVED];
+
+            cpu->Flags |= WOW64_CPURESERVED_FLAG_RESET_STATE;
         }
         NtSetContextThread( GetCurrentThread(), &context->c );
     }
@@ -2452,7 +2460,11 @@ static void sigsys_handler( int signal, siginfo_t *siginfo, void *sigcontext )
     if (instrumentation_callback) frame->restore_flags |= RESTORE_FLAGS_INSTRUMENTATION;
     RCX_sig(ucontext) = (ULONG_PTR)frame;
     R11_sig(ucontext) = frame->eflags;
-    EFL_sig(ucontext) &= ~0x100;  /* clear single-step flag */
+    if (EFL_sig(ucontext) & 0x100)
+    {
+        EFL_sig(ucontext) &= ~0x100;  /* clear single-step flag */
+        frame->restore_flags |= CONTEXT_CONTROL;
+    }
     RIP_sig(ucontext) = (ULONG64)__wine_syscall_dispatcher_prolog_end_ptr;
 }
 #endif
@@ -3135,6 +3147,9 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "jnz 1f\n\t"
                    /* CONTEXT_CONTROL */
                    "movq (%rsp),%rcx\n\t"          /* frame->rip */
+                   "pushq %r11\n\t"
+                   /* make sure that if trap flag is set the trap happens on the first instruction after iret */
+                   "popfq\n\t"
                    "iretq\n"
                    /* CONTEXT_INTEGER */
                    "1:\tmovq 0x00(%rcx),%rax\n\t"
@@ -3158,6 +3173,9 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "testl $0x2,%edx\n\t"          /* CONTEXT_INTEGER */
                    "jnz 1b\n\t"
                    "xchgq %r10,(%rsp)\n\t"
+                   "pushq %r11\n\t"
+                   /* make sure that if trap flag is set the trap happens on the first instruction after iret */
+                   "popfq\n\t"
                    "iretq\n\t"
 
                    /* pop rbp-based kernel stack cfi */

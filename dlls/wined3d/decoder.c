@@ -26,7 +26,17 @@ struct wined3d_decoder
     LONG ref;
     struct wined3d_device *device;
     struct wined3d_decoder_desc desc;
+    struct wined3d_buffer *bitstream, *parameters, *matrix, *slice_control;
+    struct wined3d_decoder_output_view *output_view;
 };
+
+static void wined3d_decoder_cleanup(struct wined3d_decoder *decoder)
+{
+    wined3d_buffer_decref(decoder->bitstream);
+    wined3d_buffer_decref(decoder->parameters);
+    wined3d_buffer_decref(decoder->matrix);
+    wined3d_buffer_decref(decoder->slice_control);
+}
 
 ULONG CDECL wined3d_decoder_decref(struct wined3d_decoder *decoder)
 {
@@ -59,12 +69,62 @@ static bool is_supported_codec(struct wined3d_adapter *adapter, const GUID *code
     return false;
 }
 
-static void wined3d_decoder_init(struct wined3d_decoder *decoder,
+static HRESULT wined3d_decoder_init(struct wined3d_decoder *decoder,
         struct wined3d_device *device, const struct wined3d_decoder_desc *desc)
 {
+    HRESULT hr;
+
+    struct wined3d_buffer_desc buffer_desc =
+    {
+        .access = WINED3D_RESOURCE_ACCESS_CPU | WINED3D_RESOURCE_ACCESS_MAP_R | WINED3D_RESOURCE_ACCESS_MAP_W,
+    };
+
     decoder->ref = 1;
     decoder->device = device;
     decoder->desc = *desc;
+
+    buffer_desc.byte_width = sizeof(DXVA_PicParams_H264);
+    if (FAILED(hr = wined3d_buffer_create(device, &buffer_desc,
+            NULL, NULL, &wined3d_null_parent_ops, &decoder->parameters)))
+        return hr;
+
+    buffer_desc.byte_width = sizeof(DXVA_Qmatrix_H264);
+    if (FAILED(hr = wined3d_buffer_create(device, &buffer_desc,
+            NULL, NULL, &wined3d_null_parent_ops, &decoder->matrix)))
+    {
+        wined3d_buffer_decref(decoder->parameters);
+        return hr;
+    }
+
+    /* NVidia gives 64 * sizeof(DXVA_Slice_H264_Long).
+     * AMD gives 4096 bytes. Pick the smaller one. */
+    buffer_desc.byte_width = 4096;
+    if (FAILED(hr = wined3d_buffer_create(device, &buffer_desc,
+            NULL, NULL, &wined3d_null_parent_ops, &decoder->slice_control)))
+    {
+        wined3d_buffer_decref(decoder->matrix);
+        wined3d_buffer_decref(decoder->parameters);
+        return hr;
+    }
+
+    /* NVidia makes this buffer as large as width * height (as if each pixel
+     * is at most 1 byte). AMD makes it larger than that.
+     * Go with the smaller of the two. */
+    buffer_desc.byte_width = desc->width * desc->height;
+    buffer_desc.bind_flags = WINED3D_BIND_DECODER_SRC;
+    buffer_desc.access = WINED3D_RESOURCE_ACCESS_GPU | WINED3D_RESOURCE_ACCESS_MAP_W;
+    buffer_desc.usage = WINED3DUSAGE_DYNAMIC;
+
+    if (FAILED(hr = wined3d_buffer_create(device, &buffer_desc,
+            NULL, NULL, &wined3d_null_parent_ops, &decoder->bitstream)))
+    {
+        wined3d_buffer_decref(decoder->matrix);
+        wined3d_buffer_decref(decoder->parameters);
+        wined3d_buffer_decref(decoder->slice_control);
+        return hr;
+    }
+
+    return S_OK;
 }
 
 HRESULT CDECL wined3d_decoder_create(struct wined3d_device *device,
@@ -97,6 +157,8 @@ struct wined3d_decoder_vk
     struct wined3d_decoder d;
     VkVideoSessionKHR vk_session;
     uint64_t command_buffer_id;
+    struct wined3d_allocator_block *session_memory;
+    VkDeviceMemory vk_session_memory;
 };
 
 static struct wined3d_decoder_vk *wined3d_decoder_vk(struct wined3d_decoder *decoder)
@@ -198,11 +260,18 @@ static void wined3d_decoder_vk_get_profiles(struct wined3d_adapter *adapter, uns
 static void wined3d_decoder_vk_destroy_object(void *object)
 {
     struct wined3d_decoder_vk *decoder_vk = object;
+    struct wined3d_device_vk *device_vk = wined3d_device_vk(decoder_vk->d.device);
+    struct wined3d_vk_info *vk_info = &device_vk->vk_info;
     struct wined3d_context_vk *context_vk;
 
     TRACE("decoder_vk %p.\n", decoder_vk);
 
     context_vk = wined3d_context_vk(context_acquire(decoder_vk->d.device, NULL, 0));
+
+    if (decoder_vk->session_memory)
+        wined3d_context_vk_free_memory(context_vk, decoder_vk->session_memory);
+    else
+        VK_CALL(vkFreeMemory(device_vk->vk_device, decoder_vk->vk_session_memory, NULL));
 
     wined3d_context_vk_destroy_vk_video_session(context_vk, decoder_vk->vk_session, decoder_vk->command_buffer_id);
 
@@ -213,7 +282,81 @@ static void wined3d_decoder_vk_destroy(struct wined3d_decoder *decoder)
 {
     struct wined3d_decoder_vk *decoder_vk = wined3d_decoder_vk(decoder);
 
+    wined3d_decoder_cleanup(decoder);
     wined3d_cs_destroy_object(decoder->device->cs, wined3d_decoder_vk_destroy_object, decoder_vk);
+}
+
+static void bind_video_session_memory(struct wined3d_decoder_vk *decoder_vk)
+{
+    struct wined3d_adapter_vk *adapter_vk = wined3d_adapter_vk(decoder_vk->d.device->adapter);
+    struct wined3d_device_vk *device_vk = wined3d_device_vk(decoder_vk->d.device);
+    const struct wined3d_vk_info *vk_info = &device_vk->vk_info;
+    VkVideoSessionMemoryRequirementsKHR *requirements;
+    VkBindVideoSessionMemoryInfoKHR *memory;
+    struct wined3d_context_vk *context_vk;
+    uint32_t count;
+    VkResult vr;
+
+    context_vk = wined3d_context_vk(context_acquire(&device_vk->d, NULL, 0));
+
+    VK_CALL(vkGetVideoSessionMemoryRequirementsKHR(device_vk->vk_device, decoder_vk->vk_session, &count, NULL));
+
+    if (!(requirements = calloc(count, sizeof(*requirements))))
+    {
+        context_release(&context_vk->c);
+        return;
+    }
+
+    for (uint32_t i = 0; i < count; ++i)
+        requirements[i].sType = VK_STRUCTURE_TYPE_VIDEO_SESSION_MEMORY_REQUIREMENTS_KHR;
+
+    VK_CALL(vkGetVideoSessionMemoryRequirementsKHR(device_vk->vk_device, decoder_vk->vk_session, &count, requirements));
+
+    if (!(memory = calloc(count, sizeof(*memory))))
+    {
+        free(requirements);
+        context_release(&context_vk->c);
+        return;
+    }
+
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        unsigned int memory_type_idx;
+
+        /* It's not at all clear what memory properties we should be passing
+         * here. The spec doesn't say, and it doesn't give a hint as to what's
+         * most performant either.
+         *
+         * Of course, this is a terrible, terrible API generally speaking, and
+         * there is no reason for it to exist. */
+        memory_type_idx = wined3d_adapter_vk_get_memory_type_index(adapter_vk,
+                requirements[i].memoryRequirements.memoryTypeBits, 0);
+        if (memory_type_idx == ~0u)
+        {
+            ERR("Failed to find suitable memory type.\n");
+            goto out;
+        }
+        if (requirements[i].memoryRequirements.alignment > WINED3D_ALLOCATOR_MIN_BLOCK_SIZE)
+            ERR("Required alignment is %I64u, but we only support %u.\n",
+                    requirements[i].memoryRequirements.alignment, WINED3D_ALLOCATOR_MIN_BLOCK_SIZE);
+        decoder_vk->session_memory = wined3d_context_vk_allocate_memory(context_vk,
+                memory_type_idx, requirements[i].memoryRequirements.size, &decoder_vk->vk_session_memory);
+
+        memory[i].sType = VK_STRUCTURE_TYPE_BIND_VIDEO_SESSION_MEMORY_INFO_KHR;
+        memory[i].memoryBindIndex = requirements[i].memoryBindIndex;
+        memory[i].memory = decoder_vk->vk_session_memory;
+        memory[i].memoryOffset = decoder_vk->session_memory ? decoder_vk->session_memory->offset : 0;
+        memory[i].memorySize = requirements[i].memoryRequirements.size;
+    }
+
+    if ((vr = VK_CALL(vkBindVideoSessionMemoryKHR(device_vk->vk_device,
+            decoder_vk->vk_session, count, memory))) != VK_SUCCESS)
+        ERR("Failed to bind memory, vr %s.\n", wined3d_debug_vkresult(vr));
+
+out:
+    free(requirements);
+    free(memory);
+    context_release(&context_vk->c);
 }
 
 static void wined3d_decoder_vk_cs_init(void *object)
@@ -270,17 +413,24 @@ static void wined3d_decoder_vk_cs_init(void *object)
     }
 
     TRACE("Created video session 0x%s.\n", wine_dbgstr_longlong(decoder_vk->vk_session));
+
+    bind_video_session_memory(decoder_vk);
 }
 
 static HRESULT wined3d_decoder_vk_create(struct wined3d_device *device,
         const struct wined3d_decoder_desc *desc, struct wined3d_decoder **decoder)
 {
     struct wined3d_decoder_vk *object;
+    HRESULT hr;
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
-    wined3d_decoder_init(&object->d, device, desc);
+    if (FAILED(hr = wined3d_decoder_init(&object->d, device, desc)))
+    {
+        free(object);
+        return hr;
+    }
 
     wined3d_cs_init_object(device->cs, wined3d_decoder_vk_cs_init, object);
 
@@ -296,3 +446,58 @@ const struct wined3d_decoder_ops wined3d_decoder_vk_ops =
     .create = wined3d_decoder_vk_create,
     .destroy = wined3d_decoder_vk_destroy,
 };
+
+struct wined3d_resource * CDECL wined3d_decoder_get_buffer(
+        struct wined3d_decoder *decoder, enum wined3d_decoder_buffer_type type)
+{
+    switch (type)
+    {
+        case WINED3D_DECODER_BUFFER_BITSTREAM:
+            return &decoder->bitstream->resource;
+
+        case WINED3D_DECODER_BUFFER_INVERSE_QUANTIZATION_MATRIX:
+            return &decoder->matrix->resource;
+
+        case WINED3D_DECODER_BUFFER_PICTURE_PARAMETERS:
+            return &decoder->parameters->resource;
+
+        case WINED3D_DECODER_BUFFER_SLICE_CONTROL:
+            return &decoder->slice_control->resource;
+    }
+
+    FIXME("Unhandled buffer type %#x.\n", type);
+    return NULL;
+}
+
+HRESULT CDECL wined3d_decoder_begin_frame(struct wined3d_decoder *decoder,
+        struct wined3d_decoder_output_view *view)
+{
+    TRACE("decoder %p, view %p.\n", decoder, view);
+
+    if (decoder->output_view)
+    {
+        ERR("Already in frame.\n");
+        return E_INVALIDARG;
+    }
+
+    wined3d_decoder_output_view_incref(view);
+    decoder->output_view = view;
+
+    return S_OK;
+}
+
+HRESULT CDECL wined3d_decoder_end_frame(struct wined3d_decoder *decoder)
+{
+    TRACE("decoder %p.\n", decoder);
+
+    if (!decoder->output_view)
+    {
+        ERR("Not in frame.\n");
+        return E_INVALIDARG;
+    }
+
+    wined3d_decoder_output_view_decref(decoder->output_view);
+    decoder->output_view = NULL;
+
+    return S_OK;
+}

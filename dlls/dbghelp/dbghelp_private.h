@@ -45,6 +45,7 @@ void*    pool_alloc(struct pool* a, size_t len) __WINE_ALLOC_SIZE(2) __WINE_MALL
 void*    pool_realloc(struct pool* a, void* ptr, size_t len) __WINE_ALLOC_SIZE(3);
 char*    pool_strdup(struct pool* a, const char* str) __WINE_MALLOC;
 WCHAR*   pool_wcsdup(struct pool* a, const WCHAR* str) __WINE_MALLOC;
+void     pool_free(struct pool* a, void* ptr);
 
 struct vector
 {
@@ -469,7 +470,6 @@ struct module
 
     /* types */
     struct hash_table           ht_types;
-    struct vector               vtypes;
 
     /* source files */
     unsigned                    sources_used;
@@ -827,6 +827,7 @@ extern BOOL         symt_get_address(const struct symt* type, ULONG64* addr);
 extern int __cdecl  symt_cmp_addr(const void* p1, const void* p2);
 extern void         copy_symbolW(SYMBOL_INFOW* siw, const SYMBOL_INFO* si);
 extern void         symbol_setname(SYMBOL_INFO* si, const char* name);
+extern BOOL         symt_match_stringAW(const char *string, const WCHAR *re, BOOL _case);
 extern struct symt_ht*
                     symt_find_nearest(struct module* module, DWORD_PTR addr);
 extern struct symt_ht*
@@ -929,9 +930,9 @@ extern BOOL         symt_add_udt_element(struct module* module,
 extern struct symt_enum*
                     symt_new_enum(struct module* module, const char* typename,
                                   struct symt* basetype);
-extern BOOL         symt_add_enum_element(struct module* module, 
-                                          struct symt_enum* enum_type, 
-                                          const char* name, int value);
+extern BOOL         symt_add_enum_element(struct module* module,
+                                          struct symt_enum* enum_type,
+                                          const char* name, const VARIANT *value);
 extern struct symt_array*
                     symt_new_array(struct module* module, int min, DWORD count,
                                    struct symt* base, struct symt* index);

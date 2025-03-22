@@ -2275,6 +2275,12 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
         return get_thread_wow64_context( handle, data, length );
 
     case ThreadHideFromDebugger:
+        /* TP Shell Service depends on ThreadHideFromDebugger returning
+         * STATUS_ACCESS_VIOLATION if *ret_len is not writable, before
+         * any other checks. Despite the status, the variable does not
+         * actually seem to be written at that time. */
+        if (ret_len) *(volatile ULONG *)ret_len |= 0;
+
         if (length != sizeof(BOOLEAN)) return STATUS_INFO_LENGTH_MISMATCH;
         if (!data) return STATUS_ACCESS_VIOLATION;
         SERVER_START_REQ( get_thread_info )
@@ -2367,13 +2373,13 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
 
     case ThreadBasePriority:
     {
-        const DWORD *pprio = data;
+        const DWORD *base_priority = data;
         if (length != sizeof(DWORD)) return STATUS_INVALID_PARAMETER;
         SERVER_START_REQ( set_thread_info )
         {
-            req->handle   = wine_server_obj_handle( handle );
-            req->priority = *pprio;
-            req->mask     = SET_THREAD_INFO_PRIORITY;
+            req->handle         = wine_server_obj_handle( handle );
+            req->base_priority  = *base_priority;
+            req->mask           = SET_THREAD_INFO_BASE_PRIORITY;
             status = wine_server_call( req );
         }
         SERVER_END_REQ;

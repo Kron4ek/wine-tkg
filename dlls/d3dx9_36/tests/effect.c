@@ -8890,740 +8890,298 @@ static void test_effect_parameter_block(void)
     DestroyWindow(window);
 }
 
-/*
- * fxc.exe /Tfx_2_0
- */
-#if 0
-bool b = false;
-bool4 b4 = {false,false,false,false};
-bool4x4 b44 = {{false,false,false,false}, {false,false,false,false},
-        {false,false,false,false}, {false,false,false,false}};
-int i = 0;
-int4 i4 = {0,0,0,0};
-int4x4 i44 = {{4411, 4421, 4431, 4441}, {4412, 4422, 4432, 4442},
-        {4413, 4423, 4433, 4443}, {4414, 4424, 4434, 4444}};
-float f = 0.0;
-float4 f4 = {4.1, 4.2, 4.3, 4.4};
-float4x4 f44 = {{4.1, 4.2, 4.3, 4.4}, {4.5, 4.6, 4.7, 4.8},
-        {4.9, 4.10, 4.11, 4.12}, {4.13, 4.14, 4.15, 4.16}};
-string s = "blank";
-string s_2[2] = {"blank1", "blank2"};
-texture tex;
-texture2D tex2d;
-texture2D tex3d;
-Vertexshader v;
-Vertexshader v_2[2];
-Pixelshader p;
-Pixelshader p_2[2];
-technique t { pass p { } };
-#endif
-static const BYTE test_set_raw_value_blob[] =
+#if D3DX_SDK_VERSION >= 27
+static void test_effect_set_raw_value(IDirect3DDevice9 *device)
 {
-      1,   9, 255, 254, 136,   3,
-      0,   0,   0,   0,   0,   0,
-      1,   0,   0,   0,   0,   0,
-      0,   0,  36,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   1,   0,   0,   0,
-      1,   0,   0,   0,   0,   0,
-      0,   0,   2,   0,   0,   0,
-     98,   0,   0,   0,   1,   0,
-      0,   0,   1,   0,   0,   0,
-     88,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      4,   0,   0,   0,   1,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      3,   0,   0,   0,  98,  52,
-      0,   0,   1,   0,   0,   0,
-      2,   0,   0,   0, 188,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   4,   0,
-      0,   0,   4,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   4,   0,
-      0,   0,  98,  52,  52,   0,
-      2,   0,   0,   0,   0,   0,
-      0,   0, 228,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   1,   0,   0,   0,
-      1,   0,   0,   0,   0,   0,
-      0,   0,   2,   0,   0,   0,
-    105,   0,   0,   0,   2,   0,
-      0,   0,   1,   0,   0,   0,
-     24,   1,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      4,   0,   0,   0,   1,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      3,   0,   0,   0, 105,  52,
-      0,   0,   2,   0,   0,   0,
-      2,   0,   0,   0, 124,   1,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   4,   0,
-      0,   0,   4,   0,   0,   0,
-     59,  17,   0,   0,  69,  17,
-      0,   0,  79,  17,   0,   0,
-     89,  17,   0,   0,  60,  17,
-      0,   0,  70,  17,   0,   0,
-     80,  17,   0,   0,  90,  17,
-      0,   0,  61,  17,   0,   0,
-     71,  17,   0,   0,  81,  17,
-      0,   0,  91,  17,   0,   0,
-     62,  17,   0,   0,  72,  17,
-      0,   0,  82,  17,   0,   0,
-     92,  17,   0,   0,   4,   0,
-      0,   0, 105,  52,  52,   0,
-      3,   0,   0,   0,   0,   0,
-      0,   0, 164,   1,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   1,   0,   0,   0,
-      1,   0,   0,   0,   0,   0,
-      0,   0,   2,   0,   0,   0,
-    102,   0,   0,   0,   3,   0,
-      0,   0,   1,   0,   0,   0,
-    216,   1,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      4,   0,   0,   0,   1,   0,
-      0,   0,  51,  51, 131,  64,
-    102, 102, 134,  64, 154, 153,
-    137,  64, 205, 204, 140,  64,
-      3,   0,   0,   0, 102,  52,
-      0,   0,   3,   0,   0,   0,
-      2,   0,   0,   0,  60,   2,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   4,   0,
-      0,   0,   4,   0,   0,   0,
-     51,  51, 131,  64, 102, 102,
-    134,  64, 154, 153, 137,  64,
-    205, 204, 140,  64,   0,   0,
-    144,  64,  51,  51, 147,  64,
-    102, 102, 150,  64, 154, 153,
-    153,  64, 205, 204, 156,  64,
-     51,  51, 131,  64,  31, 133,
-    131,  64,  10, 215, 131,  64,
-    246,  40, 132,  64, 225, 122,
-    132,  64, 205, 204, 132,  64,
-    184,  30, 133,  64,   4,   0,
-      0,   0, 102,  52,  52,   0,
-      4,   0,   0,   0,   4,   0,
-      0,   0,  92,   2,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   1,   0,   0,   0,
-      2,   0,   0,   0, 115,   0,
-      0,   0,   4,   0,   0,   0,
-      4,   0,   0,   0, 128,   2,
-      0,   0,   0,   0,   0,   0,
-      2,   0,   0,   0,   2,   0,
-      0,   0,   3,   0,   0,   0,
-      4,   0,   0,   0, 115,  95,
-     50,   0,   5,   0,   0,   0,
-      4,   0,   0,   0, 160,   2,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   4,   0,
-      0,   0,   4,   0,   0,   0,
-    116, 101, 120,   0,   7,   0,
-      0,   0,   4,   0,   0,   0,
-    192,   2,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      5,   0,   0,   0,   6,   0,
-      0,   0, 116, 101, 120,  50,
-    100,   0,   0,   0,   7,   0,
-      0,   0,   4,   0,   0,   0,
-    228,   2,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      6,   0,   0,   0,   6,   0,
-      0,   0, 116, 101, 120,  51,
-    100,   0,   0,   0,  16,   0,
-      0,   0,   4,   0,   0,   0,
-      8,   3,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      7,   0,   0,   0,   2,   0,
-      0,   0, 118,   0,   0,   0,
-     16,   0,   0,   0,   4,   0,
-      0,   0,  44,   3,   0,   0,
-      0,   0,   0,   0,   2,   0,
-      0,   0,   8,   0,   0,   0,
-      9,   0,   0,   0,   4,   0,
-      0,   0, 118,  95,  50,   0,
-     15,   0,   0,   0,   4,   0,
-      0,   0,  76,   3,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,  10,   0,   0,   0,
-      2,   0,   0,   0, 112,   0,
-      0,   0,  15,   0,   0,   0,
-      4,   0,   0,   0, 112,   3,
-      0,   0,   0,   0,   0,   0,
-      2,   0,   0,   0,  11,   0,
-      0,   0,  12,   0,   0,   0,
-      4,   0,   0,   0, 112,  95,
-     50,   0,   2,   0,   0,   0,
-    112,   0,   0,   0,   2,   0,
-      0,   0, 116,   0,   0,   0,
-     18,   0,   0,   0,   1,   0,
-      0,   0,   7,   0,   0,   0,
-     13,   0,   0,   0,   4,   0,
-      0,   0,  32,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,  44,   0,   0,   0,
-     72,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-     96,   0,   0,   0, 124,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0, 196,   0,
-      0,   0, 224,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0, 236,   0,   0,   0,
-      8,   1,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-     32,   1,   0,   0,  60,   1,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0, 132,   1,
-      0,   0, 160,   1,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0, 172,   1,   0,   0,
-    200,   1,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-    224,   1,   0,   0, 252,   1,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,  68,   2,
-      0,   0,  88,   2,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0, 100,   2,   0,   0,
-    120,   2,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-    136,   2,   0,   0, 156,   2,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0, 168,   2,
-      0,   0, 188,   2,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0, 204,   2,   0,   0,
-    224,   2,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-    240,   2,   0,   0,   4,   3,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,  16,   3,
-      0,   0,  36,   3,   0,   0,
-      0,   0,   0,   0,   0,   0,
-      0,   0,  52,   3,   0,   0,
-     72,   3,   0,   0,   0,   0,
-      0,   0,   0,   0,   0,   0,
-     84,   3,   0,   0, 104,   3,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0, 128,   3,
-      0,   0,   0,   0,   0,   0,
-      1,   0,   0,   0, 120,   3,
-      0,   0,   0,   0,   0,   0,
-      0,   0,   0,   0,  12,   0,
-      0,   0,   0,   0,   0,   0,
-     11,   0,   0,   0,   0,   0,
-      0,   0,  12,   0,   0,   0,
-      0,   0,   0,   0,  10,   0,
-      0,   0,   0,   0,   0,   0,
-      8,   0,   0,   0,   0,   0,
-      0,   0,   9,   0,   0,   0,
-      0,   0,   0,   0,   7,   0,
-      0,   0,   0,   0,   0,   0,
-      6,   0,   0,   0,   0,   0,
-      0,   0,   5,   0,   0,   0,
-      0,   0,   0,   0,   4,   0,
-      0,   0,   0,   0,   0,   0,
-      2,   0,   0,   0,   7,   0,
-      0,   0,  98, 108,  97, 110,
-    107,  49,   0,   0,   3,   0,
-      0,   0,   7,   0,   0,   0,
-     98, 108,  97, 110, 107,  50,
-      0,   0,   1,   0,   0,   0,
-      6,   0,   0,   0,  98, 108,
-     97, 110, 107,   0,   0,   0
-};
-
-struct test_set_raw_data_value
-{
-    const char *param_name;
-    D3DXPARAMETER_TYPE param_type;
-    const void *data;
-    unsigned int data_size;
-    unsigned int offset;
-    HRESULT expected_hr;
-    const void *expected_data;
-    unsigned int expected_data_size;
-};
-
-static const DWORD set_rawdata_clear[16] = { 0 };
-static const int set_rawdata_bool44_a[16] = { 1 };
-static const int set_rawdata_bool4_ba[16] = { 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-static const int set_rawdata_bool44_ba[16] = { 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-static const int set_rawdata_int44_a[16] = { 2 };
-static const int set_rawdata_int44_b[16] = { 3 };
-static const int set_rawdata_int4_ba[16] = { (3 << 8) | 3, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
-static const int set_rawdata_int4_bba[16] = { (3 << 8) | 3, 2, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
-static const int set_rawdata_int44_ba[16] = { (3 << 8) | 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-static const int set_rawdata_int44_bba[16] = { (3 << 8) | 3, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-static const int set_rawdata_int44_bbaa[16] = { (3 << 8) | 3, 0, 0, 0, 514, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-static const int set_rawdata_int44_bbaaa[16] = { (3 << 8) | 3, 0, 0, 0, 131586, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-static const int set_rawdata_int44_bbaaaa[16] = { (3 << 8) | 3, 0, 0, 0, 33686018, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-static const int set_rawdata_int44_bbaaaab[16] = { (3 << 8) | 3, 0, 0, 0, 33686018, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0 };
-static const float set_rawdata_float44_a[16] = { 1.0f };
-static const float set_rawdata_float44_b[16] = { 1.2f };
-/* Note: The values below need to have index 0 updated with a value (1.0f) with
- * an off-by-one byte alignment copied to them.
- * See test_effect_setrawvalue_init_floats() below.
- *
- * E.x. arr[0] = (1.0f & 0x00FFFFFF) | 1.2f;
- */
-static float set_rawdata_float4_ba[16] = { 1.2f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
-static float set_rawdata_float4_bba[16] = { 1.2f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
-        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
-static float set_rawdata_float44_ba[16] = { 1.2f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-static float set_rawdata_float44_bba[16] = { 1.2f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-
-static void test_effect_setrawvalue_init_floats(void)
-{
-    memcpy(((unsigned char*)&set_rawdata_float4_ba) + 1, &set_rawdata_float44_a, sizeof(FLOAT));
-    memcpy(((unsigned char*)&set_rawdata_float4_bba) + 1, &set_rawdata_float44_a, sizeof(FLOAT));
-    set_rawdata_float4_bba[1] = 1.0f;
-    memcpy(((unsigned char*)&set_rawdata_float44_ba) + 1, &set_rawdata_float44_a, sizeof(FLOAT));
-    set_rawdata_float44_ba[4] = set_rawdata_float44_ba[1];
-    set_rawdata_float44_ba[1] = 0.0f;
-    memcpy(((unsigned char*)&set_rawdata_float44_bba) + 1, &set_rawdata_float44_a, sizeof(FLOAT));
-    set_rawdata_float44_bba[1] = 0.0f;
-}
-
-static inline void dbg_print_bits(void * byte, unsigned int count, char *str)
-{
-    int x, y;
-
-    for (y = 0; y < count; y++)
+    static const char test_set_raw_value_shader[] =
+        "bool b;\n"
+        "bool b_2[2];\n"
+        "bool2 b2;\n"
+        "bool2 b2_2[2];\n"
+        "bool4 b4;\n"
+        "bool4 b4_2[2];\n"
+        "bool2x2 b22;\n"
+        "bool2x2 b22_2[2];\n"
+        "bool4x4 b44;\n"
+        "bool4x4 b44_2[2];\n"
+        "int i;\n"
+        "int i_2[2];\n"
+        "int2 i2;\n"
+        "int2 i2_2[2];\n"
+        "int4 i4;\n"
+        "int4 i4_2[2];\n"
+        "int2x2 i22;\n"
+        "int2x2 i22_2[2];\n"
+        "int4x4 i44;\n"
+        "int4x4 i44_2[2];\n"
+        "float f;\n"
+        "float f_2[2];\n"
+        "float2 f2;\n"
+        "float2 f2_2[2];\n"
+        "float4 f4;\n"
+        "float4 f4_2[2];\n"
+        "float2x2 f22;\n"
+        "float2x2 f22_2[2];\n"
+        "float4x4 f44;\n"
+        "float4x4 f44_2[2];\n"
+        "technique t { pass p { } };\n";
+    static const char *param_type_str[] = { "b", "i", "f" };
+    static const struct
     {
-        for (x = 0; x < CHAR_BIT; x++)
+        const char *suffix;
+        UINT value_offset;
+        UINT value_bytes;
+        union
         {
-            str[(y * CHAR_BIT) + x] = (((unsigned char*)byte)[y] & (1 << x)) ? '1' : '0';
-        }
-    }
-}
-
-static void test_effect_setrawvalue(IDirect3DDevice9 *device)
-{
-    const struct test_set_raw_data_value tests[] =
+            float f[32];
+            DWORD dword[32];
+        } value;
+        union
+        {
+            float f[32];
+            DWORD dword[32];
+        } expected_value;
+        BOOL todo_hr;
+    } tests[] =
     {
-        /* All of these cause C0000005 on win10.
-        { "b", D3DXPT_BOOL, NULL, sizeof( BOOL ), 0, D3DERR_INVALIDCALL, NULL, sizeof( BOOL ), 0 },
-        { "b4", D3DXPT_BOOL, NULL, sizeof( BOOL ) * 4, 0, D3DERR_INVALIDCALL, NULL, sizeof( BOOL ) * 4 },
-        { "b44", D3DXPT_BOOL, NULL, sizeof( BOOL ) * 16, 0, D3DERR_INVALIDCALL, NULL, sizeof( BOOL ) * 16 },
-        { "i", D3DXPT_INT, NULL, sizeof( DWORD ), 0, D3DERR_INVALIDCALL, NULL, sizeof( DWORD ) },
-        { "i4", D3DXPT_INT, NULL, sizeof( DWORD ) * 4, 0, D3DERR_INVALIDCALL, NULL, sizeof( DWORD ) * 4 },
-        { "i44", D3DXPT_INT, NULL, sizeof( DWORD ) * 16, 0, D3DERR_INVALIDCALL, NULL, sizeof( DWORD ) * 16 },
-        { "f", D3DXPT_FLOAT, NULL, sizeof( DWORD ), 0, D3DERR_INVALIDCALL, NULL, sizeof( DWORD ) },
-        { "f4", D3DXPT_FLOAT, NULL, sizeof( DWORD ) * 4, 0, D3DERR_INVALIDCALL, NULL, sizeof( DWORD ) * 4 },
-        { "f44", D3DXPT_FLOAT, NULL, sizeof( DWORD ) * 16, 0, D3DERR_INVALIDCALL, NULL, sizeof( DWORD ) * 16 },
-        { "s_2", D3DXPT_STRING, NULL, sizeof( "test" ), 0, D3DERR_INVALIDCALL, "test", sizeof( "test" ) },
-
-        All of these fail on win10 due to the paramater being destroyed* by a previous test.
-            *: GetParamaterByName() returns an invalid handle for the given parameter.
-        { "s", D3DXPT_STRING, "test_longer_string", 0, 0, D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "s", D3DXPT_STRING, "test_longer_string", sizeof( "test_longer_string" ), 0, D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "s", D3DXPT_STRING, "test_longer_string", sizeof( "test_longer_string" ), sizeof( "test" ), D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "tex", D3DXPT_TEXTURE, "DEADBEEF", 0, 0, D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "tex", D3DXPT_TEXTURE, "DEAFCAFE", sizeof( "DEAFCAFE" ), sizeof( "DEAFCAFE" ), D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "tex2d", D3DXPT_TEXTURE2D, "DEADBEEF", 0, 0, D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "tex2d", D3DXPT_TEXTURE2D, "DEAFCAFE", sizeof( "DEAFCAFE" ), sizeof( "DEAFCAFE" ), D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "tex3d", D3DXPT_TEXTURE3D, "DEADBEEF", 0, 0, D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "tex3d", D3DXPT_TEXTURE3D, "DEAFCAFE", sizeof( "DEAFCAFE" ), sizeof( "DEAFCAFE" ), D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "v", D3DXPT_VERTEXSHADER, "DEADBEEF", 0, 0, D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "v", D3DXPT_VERTEXSHADER, "DEAFCAFE", sizeof( "DEAFCAFE" ), sizeof( "DEAFCAFE" ), D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "v_2", D3DXPT_VERTEXSHADER, "DEADBEEF", 0, 0, D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "v_2", D3DXPT_VERTEXSHADER, "DEAFCAFE", sizeof( "DEAFCAFE" ), sizeof( "DEAFCAFE" ), D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "p", D3DXPT_PIXELSHADER, "DEADBEEF", 0, 0, D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "p", D3DXPT_PIXELSHADER, "DEAFCAFE", sizeof( "DEAFCAFE" ), sizeof( "DEAFCAFE" ), D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "p_2", D3DXPT_PIXELSHADER, "DEADBEEF", 0, 0, D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        { "p_2", D3DXPT_PIXELSHADER, "DEAFCAFE", sizeof( "DEAFCAFE" ), sizeof( "DEAFCAFE" ), D3DERR_INVALIDCALL, "", sizeof( "" ) },
-        */
-
-        /* Boolean. Test# 0 */
-        { "b", D3DXPT_BOOL, &set_rawdata_bool44_a, sizeof( BOOL ), 0, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) },
-        { "b", D3DXPT_BOOL, &set_rawdata_int44_b, 0, 0, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) },
-        { "b", D3DXPT_BOOL, &set_rawdata_int44_b, sizeof( BOOL ), sizeof( BOOL ), S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) },
-        { "b", D3DXPT_BOOL, &set_rawdata_int44_b, sizeof( BOOL ), 0, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) },
-
-        /* Boolean vector. Test# 4 */
-        { "b4", D3DXPT_BOOL, &set_rawdata_bool44_a, sizeof( BOOL ) * 4, 0, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) * 4 },
-        { "b4", D3DXPT_BOOL, &set_rawdata_int44_b, 0, 0, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) * 4 },
-        { "b4", D3DXPT_BOOL, &set_rawdata_int44_b, sizeof( BOOL ) * 4, 0, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) * 4 },
-        { "b4", D3DXPT_BOOL, &set_rawdata_int44_b, sizeof( BOOL ) * 4, 1, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) * 4 },
-        { "b4", D3DXPT_BOOL, &set_rawdata_int44_b, sizeof( BOOL ) * 4, sizeof( BOOL ), S_OK, &set_rawdata_bool4_ba, sizeof( BOOL ) * 4 },
-
-        /* Boolean matrix. Test# 9 */
-        { "b44", D3DXPT_BOOL, &set_rawdata_bool44_a, sizeof( DWORD ) * 16, 0, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) * 16 },
-        { "b44", D3DXPT_BOOL, &set_rawdata_int44_b, 0, 0, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) * 16 },
-        { "b44", D3DXPT_BOOL, &set_rawdata_int44_b, sizeof( BOOL ) * 16, 0, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) * 16 },
-        { "b44", D3DXPT_BOOL, &set_rawdata_int44_b, sizeof( BOOL ) * 16, 1, S_OK, &set_rawdata_bool44_a, sizeof( BOOL ) * 16 },
-        { "b44", D3DXPT_BOOL, &set_rawdata_int44_b, sizeof( BOOL ) * 16, sizeof( BOOL ), S_OK, &set_rawdata_bool44_ba, sizeof( BOOL ) * 16 },
-
-        /* Integer. Test# 14 */
-        { "i", D3DXPT_INT, &set_rawdata_int44_a, sizeof( DWORD ), 0, S_OK, &set_rawdata_int44_a, sizeof( DWORD ) },
-        { "i", D3DXPT_INT, &set_rawdata_int44_b, 0, 0, S_OK, &set_rawdata_int44_a, sizeof( DWORD ) },
-        { "i", D3DXPT_INT, &set_rawdata_int44_b, sizeof( DWORD ), sizeof( DWORD ), S_OK, &set_rawdata_int44_a, sizeof( DWORD ) },
-
-        /* Integer vector. Test# 17 */
-        { "i4", D3DXPT_INT, &set_rawdata_int44_a, sizeof( DWORD ) * 4, 0, S_OK, &set_rawdata_int44_a, sizeof( DWORD ) * 4 },
-        { "i4", D3DXPT_INT, &set_rawdata_int44_b, 0, 0, S_OK, &set_rawdata_int44_a, sizeof( DWORD ) * 4 },
-        { "i4", D3DXPT_INT, &set_rawdata_int44_b, sizeof( DWORD ), 0, S_OK, &set_rawdata_int44_b, sizeof( DWORD ) * 4 },
-        { "i4", D3DXPT_INT, &set_rawdata_int44_b, sizeof( DWORD ), 1, S_OK, &set_rawdata_int4_ba, sizeof( DWORD ) * 4 },
-        { "i4", D3DXPT_INT, &set_rawdata_int44_a, sizeof( DWORD ), sizeof( DWORD ), S_OK, &set_rawdata_int4_bba, sizeof( DWORD ) * 4 },
-
-        /* Integer matrix. Test# 22 */
-        { "i44", D3DXPT_INT, &set_rawdata_int44_a, sizeof( DWORD ) * 16, 0, S_OK, &set_rawdata_int44_a, sizeof( DWORD ) * 16 },
-        { "i44", D3DXPT_INT, &set_rawdata_int44_b, 0, 0, S_OK, &set_rawdata_int44_a, sizeof( DWORD ) * 16 },
-        { "i44", D3DXPT_INT, &set_rawdata_int44_b, sizeof( DWORD ), 0, S_OK, &set_rawdata_int44_b, sizeof( DWORD ) * 16 },
-        { "i44", D3DXPT_INT, &set_rawdata_int44_b, sizeof( DWORD ), 1, S_OK, &set_rawdata_int44_ba, sizeof( DWORD ) * 16 },
-        { "i44", D3DXPT_INT, &set_rawdata_int44_a, sizeof( DWORD ), sizeof( DWORD ), S_OK, &set_rawdata_int44_bba, sizeof( DWORD ) * 16 },
-        { "i44", D3DXPT_INT, &set_rawdata_int44_a, sizeof( DWORD ), sizeof( DWORD ) + 1, S_OK, &set_rawdata_int44_bbaa, sizeof( DWORD ) * 16 },
-        { "i44", D3DXPT_INT, &set_rawdata_int44_a, sizeof( DWORD ), sizeof( DWORD ) + 2, S_OK, &set_rawdata_int44_bbaaa, sizeof( DWORD ) * 16 },
-        { "i44", D3DXPT_INT, &set_rawdata_int44_a, sizeof( DWORD ), sizeof( DWORD ) + 3, S_OK, &set_rawdata_int44_bbaaaa, sizeof( DWORD ) * 16 },
-        { "i44", D3DXPT_INT, &set_rawdata_int44_b, sizeof( DWORD ), sizeof( DWORD ) * 2, S_OK, set_rawdata_int44_bbaaaab, sizeof( DWORD ) * 16 },
-
-        /* Float. Test# 31 */
-        { "f", D3DXPT_FLOAT, &set_rawdata_float44_a, sizeof( FLOAT ), 0, S_OK, &set_rawdata_float44_a, sizeof( FLOAT ) },
-        { "f", D3DXPT_FLOAT, &set_rawdata_float44_b, 0, 0, S_OK, &set_rawdata_float44_a, sizeof( FLOAT ) },
-        { "f", D3DXPT_FLOAT, &set_rawdata_float44_b, sizeof( FLOAT ), sizeof( FLOAT ), S_OK, &set_rawdata_float44_a, sizeof( FLOAT ) },
-
-        /* Float vector. Test# 34 */
-        { "f4", D3DXPT_FLOAT, &set_rawdata_float44_a, sizeof( FLOAT ) * 4, 0, S_OK, &set_rawdata_float44_a, sizeof( FLOAT ) * 4 },
-        { "f4", D3DXPT_FLOAT, &set_rawdata_float44_b, 0, 0, S_OK, &set_rawdata_float44_a, sizeof( FLOAT ) * 4 },
-        { "f4", D3DXPT_FLOAT, &set_rawdata_float44_b, sizeof( FLOAT ), 0, S_OK, &set_rawdata_float44_b, sizeof( FLOAT ) * 4 },
-        { "f4", D3DXPT_FLOAT, &set_rawdata_float44_a, sizeof( FLOAT ), 1, S_OK, &set_rawdata_float4_ba, sizeof( FLOAT ) * 4 },
-        { "f4", D3DXPT_FLOAT, &set_rawdata_float44_a, sizeof( FLOAT ), sizeof( FLOAT ), S_OK, &set_rawdata_float4_bba, sizeof( FLOAT ) * 4 },
-
-        /* Float matrix. Test# 39 */
-        { "f44", D3DXPT_FLOAT, &set_rawdata_float44_a, sizeof( FLOAT ) * 16, 0, S_OK, &set_rawdata_float44_a, sizeof( FLOAT ) * 16 },
-        { "f44", D3DXPT_FLOAT, &set_rawdata_float44_b, 0, 0, S_OK, &set_rawdata_float44_a, sizeof( FLOAT ) * 16 },
-        { "f44", D3DXPT_FLOAT, &set_rawdata_float44_b, sizeof( FLOAT ), 0, S_OK, &set_rawdata_float44_b, sizeof( FLOAT ) * 16 },
-        { "f44", D3DXPT_FLOAT, &set_rawdata_float44_a, sizeof( FLOAT ), 1, S_OK, &set_rawdata_float44_ba, sizeof( FLOAT ) * 16 },
-        { "f44", D3DXPT_FLOAT, &set_rawdata_float44_a, sizeof( FLOAT ), sizeof( FLOAT ), S_OK, &set_rawdata_float44_bba, sizeof( FLOAT ) * 16 },
-
-        /* String vector. Test# 44
-            Note: These tests will always allow getting a handle to their
-                paramater. But the GetString() call will fail without a crash.
-                (Probably due to the string being destroyed. See below.)
-
-                So for these we set the check string to "0xBADBEEF" to allow
-                checking the return value of GetString().
-        */
-        { "s_2", D3DXPT_STRING, "test", sizeof( "test" ), 0, S_OK, "0xBADBEEF", sizeof( "" ) },
-        { "s_2", D3DXPT_STRING, "test_longer_string", 0, 0, S_OK, "0xBADBEEF", sizeof( "" ) },
-        { "s_2", D3DXPT_STRING, "test_longer_string", sizeof( "test_longer_string" ), 0, S_OK, "0xBADBEEF", sizeof( "" ) },
-
-        /* Strings. Test# 47
-            Note: All tests below this point are to check if
-            1) The paramater is destroyed.
-            2) The paramater handle can no longer be
-                retrived by GetParamaterByName().
-
-            Any attempt to get the paramater after it's destruction via it's
-                relevant GetXXX() function will cause us to crash.
-
-            As such the GetParamaterByName() tests have their expected data
-                set to NULL. (Which prevents the call to SetRawValue().)
-
-            The destroying tests have their expected data length set to 0 and
-                expected data set to "". (Which allows calling SetRawValue(),
-                but avoids calling the relavent GetXXX() function.)
-        */
-        { "s", D3DXPT_STRING, "test", sizeof( "test" ), 0, S_OK, "", 0 },
-        { "s", D3DXPT_STRING, NULL, sizeof( "test" ), 0, D3DERR_INVALIDCALL, NULL, 0 },
-
-        /* Textures. Test# 49 */
-        { "tex", D3DXPT_TEXTURE, "DEAFCAFE", sizeof( "DEAFCAFE" ), 0, S_OK, "", 0 },
-        { "tex", D3DXPT_TEXTURE, NULL, sizeof( "DEAFCAFE" ), 0, D3DERR_INVALIDCALL, NULL, 0 },
-
-        /* 2D Textures. Test# 51 */
-        { "tex2d", D3DXPT_TEXTURE2D, "DEAFCAFE", sizeof( "DEAFCAFE" ), 0, S_OK, "", 0 },
-        { "tex2d", D3DXPT_TEXTURE2D, NULL, sizeof( "DEAFCAFE" ), 0, D3DERR_INVALIDCALL, NULL, 0 },
-
-        /* 3D Textures. Test# 53 */
-        { "tex3d", D3DXPT_TEXTURE3D, "DEAFCAFE", sizeof( "DEAFCAFE" ), 0, S_OK, "", 0 },
-        { "tex3d", D3DXPT_TEXTURE3D, NULL, sizeof( "DEAFCAFE" ), 0, D3DERR_INVALIDCALL, NULL, 0 },
-
-        /* Vertex Shaders. Test# 55 */
-        { "v", D3DXPT_VERTEXSHADER, "DEAFCAFE", sizeof( "DEAFCAFE" ), 0, S_OK, "", 0 },
-        { "v", D3DXPT_VERTEXSHADER, NULL, sizeof( "DEAFCAFE" ), 0, D3DERR_INVALIDCALL, NULL, 0 },
-
-        /* Vertex Shaders vector. Test# 57 */
-        { "v_2", D3DXPT_VERTEXSHADER, "DEAFCAFE", sizeof( "DEAFCAFE" ), 0, S_OK, "", 0 },
-        { "v_2", D3DXPT_VERTEXSHADER, NULL, sizeof( "DEAFCAFE" ), 0, D3DERR_INVALIDCALL, NULL, 0 },
-
-        /* Pixel Shaders. Test# 59 */
-        { "p", D3DXPT_PIXELSHADER, "DEAFCAFE", sizeof( "DEAFCAFE" ), 0, S_OK, "", 0 },
-        { "p", D3DXPT_PIXELSHADER, NULL, sizeof( "DEAFCAFE" ), 0, D3DERR_INVALIDCALL, NULL, 0 },
-
-        /* Pixel Shaders vector. Test# 61. */
-        { "p_2", D3DXPT_PIXELSHADER, "DEAFCAFE", sizeof( "DEAFCAFE" ), 0, S_OK, "", 0 },
-        { "p_2", D3DXPT_PIXELSHADER, NULL, sizeof( "DEAFCAFE" ), 0, D3DERR_INVALIDCALL, NULL, 0 }
+        { NULL, 0, 4,
+          { .f = { 1.0f } },
+          { .f = { 1.0f } },
+          .todo_hr = TRUE
+        },
+        { "_2", 0, 8,
+          { .f = { 1.0f, 2.0f } },
+          { .f = { 1.0f, 0.0f } },
+          .todo_hr = TRUE
+        },
+        { "_2", 0, 20,
+          { .f = { 1.0f, 2.0f, 0.0f, 0.0f, 3.0f } },
+          { .f = { 1.0f, 3.0f, 0.0f, 0.0f, 0.0f } },
+          .todo_hr = TRUE
+        },
+        /* Offset of 4, nothing gets set. */
+        { "_2", 4, 4,
+          { .f = { 1.0f } },
+          { .f = { 0.0f, 0.0f } },
+          .todo_hr = TRUE
+        },
+        /*
+         * To set the second value in the array, we need to start at an offset
+         * of 16.
+         */
+        { "_2", 16, 4,
+          { .f = { 2.0f } },
+          { .f = { 0.0f, 2.0f } },
+          .todo_hr = TRUE
+        },
+        /* 5. */
+        { "2", 0, 8,
+          { .f = { 0.0f, 1.0f } },
+          { .f = { 0.0f, 1.0f } },
+          .todo_hr = TRUE
+        },
+        { "2_2", 0, 16,
+          { .f = { 0.0f, 1.0f, 0.0f, 2.0f } },
+          { .f = { 0.0f, 1.0f, 0.0f, 0.0f } },
+          .todo_hr = TRUE
+        },
+        { "2_2", 0, 24,
+          { .f = { 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 0.0f } },
+          { .f = { 0.0f, 1.0f, 4.0f, 0.0f } },
+          .todo_hr = TRUE
+        },
+        { "4", 0, 16,
+          { .f = { 1.0f, 2.0f, 0.0f, 3.0f } },
+          { .f = { 1.0f, 2.0f, 0.0f, 3.0f } },
+        },
+        { "4_2", 0, 32,
+          { .f = { 2.0f, 0.0f, 0.0f, 8.0f, 3.0f, 4.0f, 0.0f, 5.0f } },
+          { .f = { 2.0f, 0.0f, 0.0f, 8.0f, 3.0f, 4.0f, 0.0f, 5.0f } },
+        },
+        /* 10. */
+        { "22", 0, 64,
+          { .f = {  1.0f,  2.0f,  3.0f,  4.0f,
+                    5.0f,  6.0f,  7.0f,  0.0f,
+                    8.0f,  9.0f, 10.0f, 11.0f,
+                   12.0f, 13.0f, 14.0f,  0.0f }
+          },
+          { .f = { 1.0f, 5.0f, 2.0f, 6.0f } },
+          .todo_hr = TRUE
+        },
+        { "22_2", 0, 128,
+          { .f = {  1.0f,  2.0f,  3.0f,  4.0f,
+                    5.0f,  6.0f,  7.0f,  0.0f,
+                    8.0f,  9.0f, 10.0f, 11.0f,
+                   12.0f, 13.0f, 14.0f,  0.0f,
+                   /* Matrix 2. */
+                   15.0f, 16.0f, 17.0f, 18.0f,
+                   19.0f, 20.0f, 21.0f, 22.0f,
+                   23.0f, 24.0f, 25.0f, 26.0f,
+                   27.0f, 28.0f, 29.0f, 30.0f }
+          },
+          { .f = { 1.0f, 5.0f, 2.0f, 6.0f, 15.0f, 19.0f, 16.0f, 20.0f } },
+          .todo_hr = TRUE
+        },
+        { "44", 0, 64,
+          { .f = {  1.0f,  2.0f,  3.0f,  4.0f,
+                    5.0f,  6.0f,  7.0f,  0.0f,
+                    8.0f,  9.0f, 10.0f, 11.0f,
+                   12.0f, 13.0f, 14.0f,  0.0f }
+          },
+          { .f = {  1.0f,  5.0f,  8.0f, 12.0f,
+                    2.0f,  6.0f,  9.0f, 13.0f,
+                    3.0f,  7.0f, 10.0f, 14.0f,
+                    4.0f,  0.0f, 11.0f,  0.0f }
+          },
+        },
+        { "44_2", 0, 128,
+          { .f = {  1.0f,  2.0f,  3.0f,  4.0f,
+                    5.0f,  6.0f,  7.0f,  0.0f,
+                    8.0f,  9.0f, 10.0f, 11.0f,
+                   12.0f, 13.0f, 14.0f,  0.0f,
+                   /* Matrix 2. */
+                   15.0f, 16.0f, 17.0f, 18.0f,
+                   19.0f, 20.0f, 21.0f, 22.0f,
+                   23.0f, 24.0f, 25.0f, 26.0f,
+                   27.0f, 28.0f, 29.0f, 30.0f }
+          },
+          { .f = {  1.0f,  5.0f,  8.0f, 12.0f,
+                    2.0f,  6.0f,  9.0f, 13.0f,
+                    3.0f,  7.0f, 10.0f, 14.0f,
+                    4.0f,  0.0f, 11.0f,  0.0f,
+                   /* Matrix 2. */
+                   15.0f, 19.0f, 23.0f, 27.0f,
+                   16.0f, 20.0f, 24.0f, 28.0f,
+                   17.0f, 21.0f, 25.0f, 29.0f,
+                   18.0f, 22.0f, 26.0f, 30.0f }
+          },
+        },
+        /* Set second element. */
+        { "44_2", 64, 64,
+          { .f = {  1.0f,  2.0f,  3.0f,  4.0f,
+                    5.0f,  6.0f,  7.0f,  0.0f,
+                    8.0f,  9.0f, 10.0f, 11.0f,
+                   12.0f, 13.0f, 14.0f,  0.0f }
+          },
+          { .f = {  0.0f,  0.0f,  0.0f,  0.0f,
+                    0.0f,  0.0f,  0.0f,  0.0f,
+                    0.0f,  0.0f,  0.0f,  0.0f,
+                    0.0f,  0.0f,  0.0f,  0.0f,
+                   /* Matrix 2. */
+                    1.0f,  5.0f,  8.0f, 12.0f,
+                    2.0f,  6.0f,  9.0f, 13.0f,
+                    3.0f,  7.0f, 10.0f, 14.0f,
+                    4.0f,  0.0f, 11.0f,  0.0f }
+          },
+        },
     };
-
-    void *current_result, *current_expected;
-    char result_buf[64] = { '\0' };
-    char expected_bit_buf[33] = { '\0' };
-    char result_bit_buf[33] = { '\0' };
-    unsigned int x, y, single_size;
-    D3DXHANDLE param_hr;
+    static const DWORD test_int_val[] = { 1, 2, 3, 4 };
+    D3DXPARAMETER_DESC param_desc;
+    D3DXHANDLE param, param2;
+    unsigned int i, j, k;
+    char param_name[64];
     ID3DXEffect *effect;
-    int memcmp_ret;
+    ULONG refcount;
+    DWORD tmp[32];
     HRESULT hr;
 
-    hr = D3DXCreateEffect(device, test_set_raw_value_blob,
-            sizeof(test_set_raw_value_blob), NULL, NULL, 0, NULL, &effect, NULL);
-    ok(hr == D3D_OK, "Got result %#1.1x, expected 0 (D3D_OK).\n", hr);
+    hr = D3DXCreateEffect(device, test_set_raw_value_shader,
+            sizeof(test_set_raw_value_shader), NULL, NULL, 0, NULL, &effect, NULL);
+    ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
 
-    /* All of these cause C0000005 on win10.  */
-    if (0)
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
     {
-        hr = effect->lpVtbl->SetRawValue(effect, INVALID_HANDLE_VALUE, NULL, 0, 0);
-        ok(hr == D3DERR_INVALIDCALL, "Got result %#x, expected 0 (D3D_INVALIDCALL).\n", hr);
-        hr = effect->lpVtbl->SetRawValue(effect, INVALID_HANDLE_VALUE, NULL, 1, 0);
-        ok(hr == D3DERR_INVALIDCALL, "Got result %#x, expected 0 (D3D_INVALIDCALL).\n", hr);
-        hr = effect->lpVtbl->SetRawValue(effect, INVALID_HANDLE_VALUE, NULL, 0, 1);
-        ok(hr == D3DERR_INVALIDCALL, "Got result %#x, expected 0 (D3D_INVALIDCALL).\n", hr);
-        hr = effect->lpVtbl->SetRawValue(effect, INVALID_HANDLE_VALUE, NULL, 1, 1);
-        ok(hr == D3DERR_INVALIDCALL, "Got result %#x, expected 0 (D3D_INVALIDCALL).\n", hr);
-    }
-
-    test_effect_setrawvalue_init_floats();
-
-    /* Begin value loop. */
-    for (x = 0; x < (sizeof(tests) / sizeof(struct test_set_raw_data_value)); x++)
-    {
-        param_hr = effect->lpVtbl->GetParameterByName(effect, NULL, tests[x].param_name);
-        ok((param_hr != NULL && tests[x].expected_data != NULL) ||
-                (param_hr == NULL && tests[x].expected_data == NULL),
-                "Test # %d GetParameterByName() did not return the expected result.\n", x);
-        if (tests[x].expected_data != NULL)
+        for (j = 0; j < ARRAY_SIZE(param_type_str); ++j)
         {
-            memset(result_buf, '\0', tests[x].expected_data_size);
-            hr = effect->lpVtbl->SetRawValue(effect,
-                    param_hr,
-                    tests[x].data,
-                    tests[x].offset,
-                    tests[x].data_size);
-            ok(hr == tests[x].expected_hr,
-                    "Test # %d var name %s : got HRESULT %#1.1x, expected %#1.1x.\n",
-                    x,
-                    tests[x].param_name,
-                    hr,
-                    tests[x].expected_hr);
-            switch (tests[x].param_type)
+            strcpy(param_name, param_type_str[j]);
+            if (tests[i].suffix)
+                strcat(param_name, tests[i].suffix);
+
+            winetest_push_context("Test %u (param %s)", i, param_name);
+            param = effect->lpVtbl->GetParameterByName(effect, NULL, param_name);
+
+            hr = effect->lpVtbl->GetParameterDesc(effect, param, &param_desc);
+            ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+
+            /* Clear our values first. */
+            memset(tmp, 0, sizeof(tmp));
+            hr = effect->lpVtbl->SetValue(effect, param, tmp, sizeof(tmp));
+            ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+
+            hr = effect->lpVtbl->SetRawValue(effect, param, tests[i].value.dword, tests[i].value_offset,
+                    tests[i].value_bytes);
+            todo_wine_if(tests[i].todo_hr) ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+            if (SUCCEEDED(hr))
             {
-                case D3DXPT_BOOL:
-                case D3DXPT_INT:
-                case D3DXPT_FLOAT:
-                    ok(effect->lpVtbl->GetValue(effect,
-                            param_hr,
-                            result_buf,
-                            tests[x].expected_data_size) == S_OK,
-                            "Test # %d var name %s : could not get value.\n",
-                            x,
-                            tests[x].param_name);
-                    single_size = (tests[x].param_type == D3DXPT_BOOL) ? sizeof(BOOL) :
-                            (tests[x].param_type == D3DXPT_INT) ? sizeof(DWORD) :
-                            sizeof(FLOAT);
+                unsigned int unexpected_values = 0;
 
-                    for (y = 0; y < tests[x].expected_data_size / single_size; y++)
-                    {
-                        current_result = ((unsigned char*)result_buf) + (single_size * y);
-                        current_expected = ((unsigned char*)tests[x].expected_data) +
-                                (single_size * y);
-                        memcmp_ret = memcmp(current_result, current_expected,
-                                single_size);
-                        if (memcmp_ret != 0)
-                        {
-                            dbg_print_bits(current_result, single_size, result_bit_buf);
-                            dbg_print_bits(current_expected, single_size, expected_bit_buf);
-                        }
-                        switch (tests[x].param_type)
-                        {
-                            case D3DXPT_FLOAT:
-                                ok(memcmp_ret == 0,
-                                        "Test # %d type %#1.1x var name %s index %#1.1x: got %.8e (bits: %s), expected %.8e (bits: %s).\n",
-                                        x,
-                                        tests[x].param_type,
-                                        tests[x].param_name,
-                                        y,
-                                        *(float*)current_result,
-                                        result_bit_buf,
-                                        *(float*)current_expected,
-                                        expected_bit_buf);
-                                break;
-                            case D3DXPT_INT:
-                                ok(memcmp_ret == 0,
-                                        "Test # %d type %#1.1x var name %s index %#1.1x: got %#1.1x (bits: %s), expected %#1.1x (bits: %s).\n",
-                                        x,
-                                        tests[x].param_type,
-                                        tests[x].param_name,
-                                        y,
-                                        *(unsigned int*)current_result,
-                                        result_bit_buf,
-                                        *(unsigned int*)current_expected,
-                                        expected_bit_buf);
-                                break;
-                            case D3DXPT_BOOL:
-                                ok(memcmp_ret == 0,
-                                        "Test # %d type %#1.1x var name %s index %#1.1x: got %#1.1x (bits: %s), expected %#1.1x (bits: %s).\n",
-                                        x,
-                                        tests[x].param_type,
-                                        tests[x].param_name,
-                                        y,
-                                        *(unsigned char*)current_result,
-                                        result_bit_buf,
-                                        *(unsigned char*)current_expected,
-                                        expected_bit_buf);
-                                break;
-                            default:
-                                /* Should never get here, but gcc complains without a default... */
-                                skip("Test # %d not performed. Reached dead codepath.\n", x);
-                                return;
-                                break;
-                        };
-                    }
-                    break;
-                /* All types below will crash if we call their GetXXX() function
-                    after the paramater has been destroyed.
+                memset(tmp, 0xff, sizeof(tmp));
+                hr = effect->lpVtbl->GetValue(effect, param, tmp, sizeof(tmp));
+                ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
 
-                   We use the size check to avoid the crash.
-                */
-                case D3DXPT_STRING:
-                    if (tests[x].expected_data_size > 0)
-                    {
-                        hr = effect->lpVtbl->GetString(effect,
-                                param_hr,
-                                (const char**)&current_result);
-                        if (memcmp(tests[x].expected_data,
-                                "0xBADBEEF",
-                                sizeof("0xBADBEEF")) != 0)
-                        {
-                            ok(hr == S_OK,
-                                    "Test # %d var name %s : could not get value.\n",
-                                    x,
-                                    tests[x].param_name);
-                            ok(memcmp(current_result,
-                                    tests[x].expected_data,
-                                    tests[x].expected_data_size) == 0,
-                                    "Test # %d type %#1.1x var name %s: got %s, expected %s.\n",
-                                    x,
-                                    tests[x].param_type,
-                                    tests[x].param_name,
-                                    (char *)current_result,
-                                    (char *)tests[x].expected_data);
-                        }
-                        else
-                        {
-                            /* Check for invalid call on destroyed string vector. */
-                            ok(hr == D3DERR_INVALIDCALL,
-                                    "Test # %d var name %s : got %#x expected %#x\n",
-                                    x,
-                                    tests[x].param_name,
-                                    hr,
-                                    D3DERR_INVALIDCALL);
-                        }
-                    }
-                    break;
-                case D3DXPT_TEXTURE:
-                case D3DXPT_TEXTURE2D:
-                case D3DXPT_TEXTURE3D:
-                    if (tests[x].expected_data_size > 0)
-                    {
-                        ok(effect->lpVtbl->GetTexture(effect,
-                                param_hr,
-                                (LPDIRECT3DBASETEXTURE9*)&current_result) == S_OK,
-                                "Test # %d var name %s : could not get value.\n",
-                                x,
-                                tests[x].param_name);
-                        ok(memcmp(current_result,
-                                tests[x].expected_data,
-                                tests[x].expected_data_size) == 0,
-                                "Test # %d type %#1.1x var name %s: did not get expected result.\n",
-                                x,
-                                tests[x].param_type,
-                                tests[x].param_name);
-                    }
-                    break;
-                case D3DXPT_VERTEXSHADER:
-                    if (tests[x].expected_data_size > 0)
-                    {
-                        ok(effect->lpVtbl->GetVertexShader(effect,
-                                param_hr,
-                                (LPDIRECT3DVERTEXSHADER9*)&current_result) == S_OK,
-                                "Test # %d var name %s : could not get value.\n",
-                                x,
-                                tests[x].param_name);
-                        ok(memcmp(current_result,
-                                tests[x].expected_data,
-                                tests[x].expected_data_size) == 0,
-                                "Test # %d type %#1.1x var name %s: did not get expected result.\n",
-                                x,
-                                tests[x].param_type,
-                                tests[x].param_name);
-                    }
-                    break;
-                case D3DXPT_PIXELSHADER:
-                    if (tests[x].expected_data_size > 0)
-                    {
-                        ok(effect->lpVtbl->GetPixelShader(effect,
-                                param_hr,
-                                (LPDIRECT3DPIXELSHADER9*)&current_result) == S_OK,
-                                "Test # %d var name %s : could not get value.\n",
-                                x,
-                                tests[x].param_name);
-                        ok(memcmp(current_result,
-                                tests[x].expected_data,
-                                tests[x].expected_data_size) == 0,
-                                "Test # %d type %#1.1x var name %s: did not get expected result.\n",
-                                x,
-                                tests[x].param_type,
-                                tests[x].param_name);
-                    }
-                    break;
-                default:
-                    /* Should never get here. */
-                    skip("Test # %d type %#1.1x var name %s : unknown type.\n",
-                            x,
-                            tests[x].param_type,
-                            tests[x].param_name);
-                    break;
-            };
-            /*effect->lpVtbl->SetRawValue( effect,
-                    effect->lpVtbl->GetParameterByName( effect, NULL, tests[x].param_name ),
-                    set_rawdata_clear,
-                    0,
-                    sizeof( set_rawdata_clear ) );*/
-        }
-        else
-        {
-            effect->lpVtbl->Release(effect);
-            hr = D3DXCreateEffect(device, test_set_raw_value_blob,
-                    sizeof(test_set_raw_value_blob), NULL, NULL, 0, NULL, &effect, NULL);
-            ok(hr == D3D_OK, "Test # %d Unable to recreate effect. Got result %#1.1x, expected 0 (D3D_OK).\n",
-                    x, hr);
-            if (hr != D3D_OK)
-                return;
+                for (k = 0; k < (param_desc.Bytes / sizeof(*tmp)); ++k)
+                {
+                    const DWORD *expected_val = &tests[i].expected_value.dword[k];
+                    DWORD *ret_val = &tmp[k];
+
+                    if (param_desc.Type == D3DXPT_BOOL && (!!(*expected_val) != (*ret_val)))
+                        unexpected_values++;
+                    else if (param_desc.Type != D3DXPT_BOOL && memcmp(ret_val, expected_val, sizeof(*ret_val)))
+                        unexpected_values++;
+                }
+
+                for (; k < ARRAY_SIZE(tmp); ++k)
+                {
+                    if (tmp[k] != 0xffffffffu)
+                        unexpected_values++;
+                }
+
+                ok(!unexpected_values, "Got %u unexpected values.\n", unexpected_values);
+            }
+            winetest_pop_context();
         }
     }
-    effect->lpVtbl->Release(effect);
+
+    /* Test passing a NULL parameter. */
+    hr = effect->lpVtbl->SetRawValue(effect, NULL, tmp, 4, 0);
+    ok(hr == D3DERR_INVALIDCALL, "Unexpected hr %#lx.\n", hr);
+
+    param = effect->lpVtbl->GetParameterByName(effect, NULL, "i4");
+    param2 = effect->lpVtbl->GetParameterByName(effect, NULL, "i44");
+
+    /* Test setting with a size of 0. */
+    hr = effect->lpVtbl->SetRawValue(effect, param, tmp, 0, 0);
+    ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = effect->lpVtbl->SetRawValue(effect, param2, tmp, 0, 0);
+    ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+
+    param = effect->lpVtbl->GetParameterByName(effect, NULL, "i4");
+    param2 = effect->lpVtbl->GetParameterByName(effect, NULL, "i4_2");
+
+    /* Test setting adjacent variables. */
+    memset(tmp, 0, sizeof(tmp));
+    hr = effect->lpVtbl->SetValue(effect, param, tmp, sizeof(tmp));
+    ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+    hr = effect->lpVtbl->SetValue(effect, param2, tmp, sizeof(tmp));
+    ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* An offset of 16 bytes on variable i4 sets adjacent variable i4_2. */
+    hr = effect->lpVtbl->SetRawValue(effect, param, test_int_val, 16, sizeof(test_int_val));
+    todo_wine ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = effect->lpVtbl->GetValue(effect, param, tmp, sizeof(tmp));
+    ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!tmp[0], "Unexpected value.\n");
+
+    hr = effect->lpVtbl->GetValue(effect, param2, tmp, sizeof(tmp));
+    ok(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
+    todo_wine ok(!memcmp(tmp, test_int_val, sizeof(test_int_val)), "Got unexpected values.\n");
+
+    refcount = effect->lpVtbl->Release(effect);
+    ok(!refcount, "Unexpected refcount %lu.\n", refcount);
 }
+#endif /* D3DX_SDK_VERSION >= 27 */
 
 START_TEST(effect)
 {
@@ -9653,7 +9211,9 @@ START_TEST(effect)
     test_effect_large_address_aware_flag(device);
     test_effect_get_pass_desc(device);
     test_effect_skip_constants(device);
-    test_effect_setrawvalue( device );
+#if D3DX_SDK_VERSION >= 27
+    test_effect_set_raw_value(device);
+#endif
 
     refcount = IDirect3DDevice9_Release(device);
     ok(!refcount, "Device has %lu references left.\n", refcount);

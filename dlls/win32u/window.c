@@ -2091,7 +2091,7 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, stru
             extra_rects[0] = extra_rects[1] = new_rects->visible;
             if (new_surface)
             {
-                extra_rects[1] = new_surface->rect;
+                extra_rects[1] = is_layered ? dummy_surface.rect : new_surface->rect;
                 OffsetRect( &extra_rects[1], new_rects->visible.left, new_rects->visible.top );
             }
             if (valid_rects) extra_rects[2] = valid_rects[0];
@@ -2481,7 +2481,11 @@ BOOL WINAPI NtUserUpdateLayeredWindow( HWND hwnd, HDC hdc_dst, const POINT *pts_
     apply_window_pos( hwnd, 0, swp_flags, surface, &new_rects, NULL );
     if (!surface) return FALSE;
 
-    if (!hdc_src || surface == &dummy_surface) ret = TRUE;
+    if (!hdc_src || surface == &dummy_surface)
+    {
+        user_driver->pUpdateLayeredWindow( hwnd, blend->SourceConstantAlpha, flags );
+        ret = TRUE;
+    }
     else
     {
         BLENDFUNCTION src_blend = { AC_SRC_OVER, 0, 255, 0 };
@@ -2502,7 +2506,6 @@ BOOL WINAPI NtUserUpdateLayeredWindow( HWND hwnd, HDC hdc_dst, const POINT *pts_
         if (pts_src) OffsetRect( &src_rect, pts_src->x, pts_src->y );
         NtGdiTransformPoints( hdc_src, (POINT *)&src_rect, (POINT *)&src_rect, 2, NtGdiDPtoLP );
 
-        if (flags & ULW_ALPHA) src_blend = *blend;
         ret = NtGdiAlphaBlend( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
                                hdc_src, src_rect.left, src_rect.top, src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
                                *(DWORD *)&src_blend, 0 );
@@ -2514,7 +2517,7 @@ BOOL WINAPI NtUserUpdateLayeredWindow( HWND hwnd, HDC hdc_dst, const POINT *pts_
         if (!(flags & ULW_COLORKEY)) key = CLR_INVALID;
         window_surface_set_layered( surface, key, -1, 0xff000000 );
 
-        user_driver->pUpdateLayeredWindow( hwnd, flags );
+        user_driver->pUpdateLayeredWindow( hwnd, blend->SourceConstantAlpha, flags );
         window_surface_flush( surface );
     }
 
@@ -3829,10 +3832,11 @@ BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y )
 
     if (!(winpos->flags & (SWP_NOACTIVATE|SWP_HIDEWINDOW)))
     {
+        UINT style = get_window_long( winpos->hwnd, GWL_STYLE );
         /* child windows get WM_CHILDACTIVATE message */
-        if ((get_window_long( winpos->hwnd, GWL_STYLE ) & (WS_CHILD | WS_POPUP)) == WS_CHILD)
+        if ((style & (WS_CHILD | WS_POPUP)) == WS_CHILD)
             send_message( winpos->hwnd, WM_CHILDACTIVATE, 0, 0 );
-        else
+        else if (!(style & WS_MINIMIZE))
             set_foreground_window( winpos->hwnd, FALSE );
     }
 
@@ -6246,4 +6250,13 @@ HWND WINAPI NtUserSetTaskmanWindow( HWND hwnd )
     }
     SERVER_END_REQ;
     return hwnd;
+}
+
+/***********************************************************************
+ *            NtUserIsChildWindowDpiMessageEnabled (win32u.@)
+ */
+BOOL WINAPI NtUserIsChildWindowDpiMessageEnabled( HWND hwnd )
+{
+    FIXME( "%p: stub\n", hwnd );
+    return FALSE;
 }
