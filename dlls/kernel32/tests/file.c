@@ -3370,6 +3370,10 @@ static void test_async_file_errors(void)
     }
     ok(completion_count == 0, "completion routine should only be called when ReadFileEx succeeds (this rule was violated %d times)\n", completion_count);
     /*printf("Error = %ld\n", GetLastError());*/
+
+    SleepEx(0, TRUE); /* Flush pending APCs */
+    ok(CloseHandle(hFile), "CloseHandle: error %ld\n", GetLastError());
+    ok(CloseHandle(hSem), "CloseHandle: error %ld\n", GetLastError());
     HeapFree(GetProcessHeap(), 0, lpBuffer);
 }
 
@@ -4196,6 +4200,26 @@ static void test_ReplaceFileW(void)
            broken(GetLastError() == ERROR_ACCESS_DENIED), /* win2k */
            "DeleteFileW: error (backup) %ld\n", GetLastError());
     }
+
+    /* test with forward slashes in the destination and use
+     * Z:/tmp in Wine to ensure the root is not writable
+     */
+    ret = GetFileAttributesW(L"Z:/tmp");
+    if (ret != INVALID_FILE_ATTRIBUTES && (ret & FILE_ATTRIBUTE_DIRECTORY))
+        wcscpy(temp_path, L"Z:/tmp");
+
+    ret = GetTempFileNameW(temp_path, prefix, 0, replaced);
+    ok(ret, "GetTempFileNameW error (replaced) %ld\n", GetLastError());
+    for (int i = 0; i < wcslen(replaced); i++)
+        if (replaced[i] == L'\\') replaced[i] = L'/';
+
+    ret = GetTempFileNameW(temp_path, prefix, 0, replacement);
+    ok(ret, "GetTempFileNameW error (replacement) %ld\n", GetLastError());
+    ret = pReplaceFileW(replaced, replacement, NULL, 0, 0, 0);
+    ok(ret, "ReplaceFileW: error %ld\n", GetLastError());
+
+    DeleteFileW(replaced);
+    DeleteFileW(replacement);
 }
 
 static void test_CreateFile(void)

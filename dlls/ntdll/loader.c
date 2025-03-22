@@ -2712,7 +2712,7 @@ static NTSTATUS get_dll_load_path_search_flags( LPCWSTR module, DWORD flags, WCH
     if (flags & LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR)
     {
         DWORD type = RtlDetermineDosPathNameType_U( module );
-        if (type != ABSOLUTE_DRIVE_PATH && type != ABSOLUTE_PATH && type != DEVICE_PATH && type != UNC_PATH)
+        if (type != RtlPathTypeDriveAbsolute && type != RtlPathTypeRooted && type != RtlPathTypeLocalDevice && type != RtlPathTypeUncAbsolute)
             return STATUS_INVALID_PARAMETER;
         mod_end = get_module_path_end( module );
         len += (mod_end - module) + 1;
@@ -3362,7 +3362,7 @@ static NTSTATUS find_dll_file( const WCHAR *load_path, const WCHAR *libname, UNI
         }
     }
 
-    if (RtlDetermineDosPathNameType_U( libname ) == RELATIVE_PATH)
+    if (RtlDetermineDosPathNameType_U( libname ) == RtlPathTypeRelative)
     {
         status = search_dll_file( load_path, libname, nt_name, pwm, mapping, image_info, id );
         if (status == STATUS_DLL_NOT_FOUND)
@@ -4568,7 +4568,10 @@ void loader_init( CONTEXT *context, void **entry )
         FIXME_(winediag)("Please don't report bugs about it on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead.\n");
     }
     else
+    {
         WARN_(winediag)("Wine TkG (staging) %s is a testing version containing experimental patches.\n", wine_get_version());
+        NtClose( staging_event );
+    }
 
     NtCurrentTeb()->FlsSlots = fls_alloc_data();
 
@@ -4771,9 +4774,9 @@ NTSTATUS WINAPI LdrAddDllDirectory( const UNICODE_STRING *dir, void **cookie )
     OBJECT_ATTRIBUTES attr;
     DWORD len;
     struct dll_dir_entry *ptr;
-    DOS_PATHNAME_TYPE type = RtlDetermineDosPathNameType_U( dir->Buffer );
+    RTL_PATH_TYPE type = RtlDetermineDosPathNameType_U( dir->Buffer );
 
-    if (type != ABSOLUTE_PATH && type != ABSOLUTE_DRIVE_PATH && type != UNC_PATH)
+    if (type != RtlPathTypeRooted && type != RtlPathTypeDriveAbsolute && type != RtlPathTypeUncAbsolute)
         return STATUS_INVALID_PARAMETER;
 
     status = RtlDosPathNameToNtPathName_U_WithStatus( dir->Buffer, &nt_name, NULL, NULL );

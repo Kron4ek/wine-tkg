@@ -2409,18 +2409,17 @@ typedef struct _MEMORY_RANGE_ENTRY
 } MEMORY_RANGE_ENTRY, *PMEMORY_RANGE_ENTRY;
 
 
-/* return type of RtlDetermineDosPathNameType_U (FIXME: not the correct names) */
-typedef enum
+typedef enum _RTL_PATH_TYPE
 {
-    INVALID_PATH = 0,
-    UNC_PATH,              /* "//foo" */
-    ABSOLUTE_DRIVE_PATH,   /* "c:/foo" */
-    RELATIVE_DRIVE_PATH,   /* "c:foo" */
-    ABSOLUTE_PATH,         /* "/foo" */
-    RELATIVE_PATH,         /* "foo" */
-    DEVICE_PATH,           /* "//./foo" */
-    UNC_DOT_PATH           /* "//." */
-} DOS_PATHNAME_TYPE;
+    RtlPathTypeUnknown = 0,
+    RtlPathTypeUncAbsolute,     /* "//foo" */
+    RtlPathTypeDriveAbsolute,   /* "c:/foo" */
+    RtlPathTypeDriveRelative,   /* "c:foo" */
+    RtlPathTypeRooted,          /* "/foo" */
+    RtlPathTypeRelative,        /* "foo" */
+    RtlPathTypeLocalDevice,     /* "//./foo" */
+    RtlPathTypeRootLocalDevice  /* "//." */
+} RTL_PATH_TYPE;
 
 
 /***********************************************************************
@@ -4853,7 +4852,7 @@ NTSYSAPI NTSTATUS  WINAPI RtlDestroyHandleTable(RTL_HANDLE_TABLE *);
 NTSYSAPI HANDLE    WINAPI RtlDestroyHeap(HANDLE);
 NTSYSAPI void      WINAPI RtlDestroyProcessParameters(RTL_USER_PROCESS_PARAMETERS*);
 NTSYSAPI NTSTATUS  WINAPI RtlDestroyQueryDebugBuffer(PDEBUG_BUFFER);
-NTSYSAPI DOS_PATHNAME_TYPE WINAPI RtlDetermineDosPathNameType_U(PCWSTR);
+NTSYSAPI RTL_PATH_TYPE WINAPI RtlDetermineDosPathNameType_U(PCWSTR);
 NTSYSAPI BOOLEAN   WINAPI RtlDllShutdownInProgress(void);
 NTSYSAPI BOOLEAN   WINAPI RtlDoesFileExists_U(LPCWSTR);
 NTSYSAPI BOOLEAN   WINAPI RtlDosPathNameToNtPathName_U(PCWSTR,PUNICODE_STRING,PWSTR*,CURDIR*);
@@ -4934,6 +4933,7 @@ NTSYSAPI NTSTATUS  WINAPI RtlGetExtendedContextLength2(ULONG,ULONG*,ULONG64);
 NTSYSAPI ULONG64   WINAPI RtlGetExtendedFeaturesMask(CONTEXT_EX*);
 NTSYSAPI TEB_ACTIVE_FRAME * WINAPI RtlGetFrame(void);
 NTSYSAPI ULONG     WINAPI RtlGetFullPathName_U(PCWSTR,ULONG,PWSTR,PWSTR*);
+NTSYSAPI ULONG     WINAPI RtlGetFullPathName_UEx(PCWSTR,ULONG,PWSTR,PWSTR*,RTL_PATH_TYPE*);
 NTSYSAPI NTSTATUS  WINAPI RtlGetGroupSecurityDescriptor(PSECURITY_DESCRIPTOR,PSID *,PBOOLEAN);
 NTSYSAPI NTSTATUS  WINAPI RtlGetLastNtStatus(void);
 NTSYSAPI DWORD     WINAPI RtlGetLastWin32Error(void);

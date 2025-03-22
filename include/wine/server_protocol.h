@@ -827,6 +827,7 @@ struct pe_image_info
     mem_size_t     stack_commit;
     unsigned int   entry_point;
     unsigned int   map_size;
+    unsigned int   alignment;
     unsigned int   zerobits;
     unsigned int   subsystem;
     unsigned short subsystem_minor;
@@ -844,6 +845,7 @@ struct pe_image_info
     unsigned char  image_flags;
     unsigned int   loader_flags;
     unsigned int   header_size;
+    unsigned int   header_map_size;
     unsigned int   file_size;
     unsigned int   checksum;
     unsigned int   dbg_offset;
@@ -1329,7 +1331,7 @@ struct set_thread_info_request
     struct request_header __header;
     obj_handle_t handle;
     int          mask;
-    int          priority;
+    int          base_priority;
     affinity_t   affinity;
     client_ptr_t entry_point;
     obj_handle_t token;
@@ -1340,12 +1342,12 @@ struct set_thread_info_reply
 {
     struct reply_header __header;
 };
-#define SET_THREAD_INFO_PRIORITY    0x01
-#define SET_THREAD_INFO_AFFINITY    0x02
-#define SET_THREAD_INFO_TOKEN       0x04
-#define SET_THREAD_INFO_ENTRYPOINT  0x08
-#define SET_THREAD_INFO_DESCRIPTION 0x10
-#define SET_THREAD_INFO_DBG_HIDDEN  0x20
+#define SET_THREAD_INFO_BASE_PRIORITY   0x01
+#define SET_THREAD_INFO_AFFINITY        0x02
+#define SET_THREAD_INFO_TOKEN           0x04
+#define SET_THREAD_INFO_ENTRYPOINT      0x08
+#define SET_THREAD_INFO_DESCRIPTION     0x10
+#define SET_THREAD_INFO_DBG_HIDDEN      0x20
 
 
 
@@ -7022,6 +7024,6 @@ union generic_reply
     struct get_fsync_apc_idx_reply get_fsync_apc_idx_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 858
+#define SERVER_PROTOCOL_VERSION 861
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

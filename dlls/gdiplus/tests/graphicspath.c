@@ -75,7 +75,7 @@ typedef struct
     int todo;
 } path_test_t;
 
-#define ok_path(a,b,c,d) _ok_path_fudge(a,b,c,d,1.0,__LINE__)
+#define ok_path(a,b,c,d) _ok_path_fudge(a,b,c,d,0.4,__LINE__)
 #define ok_path_fudge(a,b,c,d,e) _ok_path_fudge(a,b,c,d,e,__LINE__)
 static void _ok_path_fudge(GpPath* path, const path_test_t *expected, INT expected_size,
         BOOL todo_size, REAL fudge, int line)
@@ -1226,26 +1226,26 @@ static path_test_t flattenellipse_path[] = {
     {96.0, 34.8, PathPointTypeLine,  0, 0}, /*2*/
     {91.5, 39.0, PathPointTypeLine,  0, 0}, /*3*/
     {85.5, 42.8, PathPointTypeLine,  0, 0}, /*4*/
-    {69.5, 48.0, PathPointTypeLine,  0, 1}, /*5*/
-    {50.0, 50.0, PathPointTypeLine,  0, 1}, /*6*/
-    {30.5, 48.0, PathPointTypeLine,  0, 1}, /*7*/
-    {14.8, 42.8, PathPointTypeLine,  0, 1}, /*8*/
-    {8.5,  39.0, PathPointTypeLine,  0, 1}, /*9*/
-    {4.0,  34.8, PathPointTypeLine,  0, 1}, /*10*/
-    {1.0,  30.0, PathPointTypeLine,  0, 1}, /*11*/
-    {0.0,  25.0, PathPointTypeLine,  0, 1}, /*12*/
-    {1.0,  20.0, PathPointTypeLine,  0, 1}, /*13*/
-    {4.0,  15.3, PathPointTypeLine,  0, 1}, /*14*/
-    {8.5,  11.0, PathPointTypeLine,  0, 1}, /*15*/
-    {14.8, 7.3,  PathPointTypeLine,  0, 1}, /*16*/
-    {30.5, 2.0,  PathPointTypeLine,  0, 1}, /*17*/
-    {50.0, 0.0,  PathPointTypeLine,  0, 1}, /*18*/
-    {69.5, 2.0,  PathPointTypeLine,  0, 1}, /*19*/
-    {85.5, 7.3,  PathPointTypeLine,  0, 1}, /*20*/
-    {91.5, 11.0, PathPointTypeLine,  0, 1}, /*21*/
-    {96.0, 15.3, PathPointTypeLine,  0, 1}, /*22*/
-    {99.0, 20.0, PathPointTypeLine,  0, 1}, /*23*/
-    {100.0,25.0, PathPointTypeLine | PathPointTypeCloseSubpath,  0, 1}  /*24*/
+    {69.5, 48.0, PathPointTypeLine,  0, 0}, /*5*/
+    {50.0, 50.0, PathPointTypeLine,  0, 0}, /*6*/
+    {30.5, 48.0, PathPointTypeLine,  0, 0}, /*7*/
+    {14.8, 42.8, PathPointTypeLine,  0, 0}, /*8*/
+    {8.5,  39.0, PathPointTypeLine,  0, 0}, /*9*/
+    {4.0,  34.8, PathPointTypeLine,  0, 0}, /*10*/
+    {1.0,  30.0, PathPointTypeLine,  0, 0}, /*11*/
+    {0.0,  25.0, PathPointTypeLine,  0, 0}, /*12*/
+    {1.0,  20.0, PathPointTypeLine,  0, 0}, /*13*/
+    {4.0,  15.3, PathPointTypeLine,  0, 0}, /*14*/
+    {8.5,  11.0, PathPointTypeLine,  0, 0}, /*15*/
+    {14.8, 7.3,  PathPointTypeLine,  0, 0}, /*16*/
+    {30.5, 2.0,  PathPointTypeLine,  0, 0}, /*17*/
+    {50.0, 0.0,  PathPointTypeLine,  0, 0}, /*18*/
+    {69.5, 2.0,  PathPointTypeLine,  0, 0}, /*19*/
+    {85.5, 7.3,  PathPointTypeLine,  0, 0}, /*20*/
+    {91.5, 11.0, PathPointTypeLine,  0, 0}, /*21*/
+    {96.0, 15.3, PathPointTypeLine,  0, 0}, /*22*/
+    {99.0, 20.0, PathPointTypeLine,  0, 0}, /*23*/
+    {100.0,25.0, PathPointTypeLine | PathPointTypeCloseSubpath,  0, 0}  /*24*/
     };
 
 static path_test_t flattenline_path[] = {
@@ -1253,14 +1253,36 @@ static path_test_t flattenline_path[] = {
     {50.0, 100.0, PathPointTypeLine,  0, 0} /*1*/
     };
 
-static path_test_t flattenarc_path[] = {
+static path_test_t arc_path3[] = {
+    {100.0, 25.0, PathPointTypeStart,  0, 0}, /*0*/
+    {100.0, 38.8, PathPointTypeBezier, 0, 0}, /*1*/
+    {77.6,  50.0, PathPointTypeBezier, 0, 0}, /*2*/
+    {50.0,  50.0, PathPointTypeBezier, 0, 0}  /*3*/
+    };
+
+static path_test_t flattenarc_path3[] = {
     {100.0, 25.0,PathPointTypeStart, 0, 0}, /*0*/
     {99.0, 30.0, PathPointTypeLine,  0, 0}, /*1*/
     {96.0, 34.8, PathPointTypeLine,  0, 0}, /*2*/
     {91.5, 39.0, PathPointTypeLine,  0, 0}, /*3*/
     {85.5, 42.8, PathPointTypeLine,  0, 0}, /*4*/
-    {69.5, 48.0, PathPointTypeLine,  0, 1}, /*5*/
-    {50.0, 50.0, PathPointTypeLine,  0, 1}  /*6*/
+    {69.5, 48.0, PathPointTypeLine,  0, 0}, /*5*/
+    {50.0, 50.0, PathPointTypeLine,  0, 0}  /*6*/
+    };
+
+static path_test_t flattenarc_path4[] = {
+    {100.0,25.0, PathPointTypeStart, 0, 0}, /*0*/
+    {99.8, 27.6, PathPointTypeLine,  0, 0}, /*1*/
+    {99.0, 30.1, PathPointTypeLine,  0, 0}, /*2*/
+    {97.8, 32.4, PathPointTypeLine,  0, 0}, /*3*/
+    {96.0, 34.8, PathPointTypeLine,  0, 0}, /*4*/
+    {93.9, 36.9, PathPointTypeLine,  0, 0}, /*5*/
+    {91.4, 39.0, PathPointTypeLine,  0, 0}, /*6*/
+    {85.4, 42.7, PathPointTypeLine,  0, 0}, /*7*/
+    {77.9, 45.8, PathPointTypeLine,  0, 0}, /*8*/
+    {69.5, 48.0, PathPointTypeLine,  0, 0}, /*9*/
+    {60.0, 49.5, PathPointTypeLine,  0, 0}, /*10*/
+    {50.0, 50.0, PathPointTypeLine,  0, 0}  /*11*/
     };
 
 static path_test_t flattenquater_path[] = {
@@ -1304,7 +1326,7 @@ static void test_flatten(void)
 
     status = GdipFlattenPath(path, NULL, 1.0);
     expect(Ok, status);
-    ok_path(path, flattenellipse_path, ARRAY_SIZE(flattenellipse_path), TRUE);
+    ok_path(path, flattenellipse_path, ARRAY_SIZE(flattenellipse_path), FALSE);
 
     status = GdipResetPath(path);
     expect(Ok, status);
@@ -1314,13 +1336,35 @@ static void test_flatten(void)
     expect(Ok, status);
     ok_path(path, flattenline_path, ARRAY_SIZE(flattenline_path), FALSE);
 
+    // Flatten line with FlatnessDefault (0.25f)
+    status = GdipResetPath(path);
+    expect(Ok, status);
+    status = GdipAddPathLine(path, 5.0, 10.0, 50.0, 100.0);
+    expect(Ok, status);
+    status = GdipFlattenPath(path, NULL, FlatnessDefault);
+    expect(Ok, status);
+    ok_path(path, flattenline_path, ARRAY_SIZE(flattenline_path), FALSE);
+
+    /* Flatten arc path with Flatness = 1.0) */
     status = GdipResetPath(path);
     expect(Ok, status);
     status = GdipAddPathArc(path, 0.0, 0.0, 100.0, 50.0, 0.0, 90.0);
     expect(Ok, status);
+    ok_path(path, arc_path3, ARRAY_SIZE(arc_path3), FALSE);
+
     status = GdipFlattenPath(path, NULL, 1.0);
     expect(Ok, status);
-    ok_path(path, flattenarc_path, ARRAY_SIZE(flattenarc_path), TRUE);
+    ok_path(path, flattenarc_path3, ARRAY_SIZE(flattenarc_path3), FALSE);
+
+    /* Flatten arc path with FlatnessDefault (0.25f) */
+    status = GdipResetPath(path);
+    expect(Ok, status);
+    status = GdipAddPathArc(path, 0.0, 0.0, 100.0, 50.0, 0.0, 90.0);
+    expect(Ok, status);
+
+    status = GdipFlattenPath(path, NULL, FlatnessDefault);
+    expect(Ok, status);
+    ok_path(path, flattenarc_path4, ARRAY_SIZE(flattenarc_path4), FALSE);
 
     /* easy case - quater of a full circle */
     status = GdipResetPath(path);
@@ -1698,14 +1742,14 @@ static path_test_t widenline_capdiamondanchor_path[] = {
     };
 
 static path_test_t widenline_caparrowanchor_path[] = {
-    {15.0, 5.0,       PathPointTypeStart, 0, 1}, /*0*/
-    {40.0, 5.0,       PathPointTypeLine,  0, 1}, /*1*/
-    {40.0, 15.0,      PathPointTypeLine,  0, 1}, /*2*/
-    {15.0, 15.0,      PathPointTypeLine|PathPointTypeCloseSubpath, 0, 1}, /*3*/
-    {5.0, 10.0,       PathPointTypeStart, 0, 0}, /*4*/
+    {15.0,      5.0,  PathPointTypeStart, 0, 0}, /*0*/
+    {40.0,      5.0,  PathPointTypeLine,  0, 0}, /*1*/
+    {40.0,      15.0, PathPointTypeLine,  0, 0}, /*2*/
+    {15.0,      15.0, PathPointTypeLine|PathPointTypeCloseSubpath, 0, 0}, /*3*/
+    {5.0,       10.0, PathPointTypeStart, 0, 0}, /*4*/
     {22.320507, 0.0,  PathPointTypeLine,  0, 0}, /*5*/
     {22.320507, 20.0, PathPointTypeLine|PathPointTypeCloseSubpath, 0, 0}, /*6*/
-    {50.0, 10.0,      PathPointTypeStart, 0, 0}, /*7*/
+    {50.0,      10.0, PathPointTypeStart, 0, 0}, /*7*/
     {32.679489, 20.0, PathPointTypeLine,  0, 0}, /*8*/
     {32.679489, 0.0,  PathPointTypeLine|PathPointTypeCloseSubpath, 0, 0}, /*9*/
     };

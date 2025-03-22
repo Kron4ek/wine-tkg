@@ -4317,7 +4317,7 @@ static CONFIGRET get_device_id_list(const WCHAR *filter, WCHAR *buffer, ULONG *l
     unsigned int i, id_len;
     ULONG query_flags = 0;
     HDEVINFO set;
-    WCHAR id[64];
+    WCHAR id[256];
     ULONG needed;
     WCHAR *p;
 
@@ -4362,7 +4362,7 @@ static CONFIGRET get_device_id_list(const WCHAR *filter, WCHAR *buffer, ULONG *l
     p = buffer;
     for (i = 0; SetupDiEnumDeviceInfo(set, i, &device); ++i)
     {
-        ret = SetupDiGetDeviceInstanceIdW(set, &device, id, sizeof(id), NULL);
+        ret = SetupDiGetDeviceInstanceIdW(set, &device, id, ARRAY_SIZE(id), NULL);
         if (!ret) continue;
         id_len = wcslen(id) + 1;
         needed += id_len;

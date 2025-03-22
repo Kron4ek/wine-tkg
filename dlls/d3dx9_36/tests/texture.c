@@ -168,13 +168,6 @@ static inline void check_texture_mip_levels_(uint32_t line, IDirect3DBaseTexture
             mip_levels, expected_mip_levels);
 }
 
-static BOOL compare_uint(unsigned int x, unsigned int y, unsigned int max_diff)
-{
-    unsigned int diff = x > y ? x - y : y - x;
-
-    return diff <= max_diff;
-}
-
 static BOOL compare_color(DWORD c1, DWORD c2, BYTE max_diff)
 {
     return compare_uint(c1 & 0xff, c2 & 0xff, max_diff)
@@ -3237,7 +3230,6 @@ static void test_D3DXSaveTextureToFileInMemory(IDirect3DDevice9 *device)
         return;
     }
 
-    todo_wine {
     hr = D3DXSaveTextureToFileInMemory(&buffer, D3DXIFF_BMP, (IDirect3DBaseTexture9 *)volume_texture, NULL);
     ok(hr == D3D_OK, "D3DXSaveTextureToFileInMemory returned %#lx, expected %#lx\n", hr, D3D_OK);
     if (SUCCEEDED(hr))
@@ -3256,6 +3248,7 @@ static void test_D3DXSaveTextureToFileInMemory(IDirect3DDevice9 *device)
         ID3DXBuffer_Release(buffer);
     }
 
+    todo_wine {
     hr = D3DXSaveTextureToFileInMemory(&buffer, D3DXIFF_DDS, (IDirect3DBaseTexture9 *)volume_texture, NULL);
     ok(hr == D3D_OK, "D3DXSaveTextureToFileInMemory returned %#lx, expected %#lx\n", hr, D3D_OK);
     if (SUCCEEDED(hr))

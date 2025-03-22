@@ -9963,6 +9963,7 @@ static void sm6_parser_gs_properties_init(struct sm6_parser *sm6, const struct s
             {
                 input_primitive = VKD3D_PT_PATCH;
                 patch_vertex_count = i - INPUT_PRIMITIVE_PATCH1 + 1;
+                input_control_point_count = patch_vertex_count;
                 break;
             }
 
@@ -9973,6 +9974,7 @@ static void sm6_parser_gs_properties_init(struct sm6_parser *sm6, const struct s
     }
 
     sm6_parser_emit_dcl_primitive_topology(sm6, VKD3DSIH_DCL_INPUT_PRIMITIVE, input_primitive, patch_vertex_count);
+    sm6->p.program->input_primitive = input_primitive;
     sm6->p.program->input_control_point_count = input_control_point_count;
 
     i = operands[1];
@@ -9984,6 +9986,7 @@ static void sm6_parser_gs_properties_init(struct sm6_parser *sm6, const struct s
                 "Geometry shader output vertex count %u is invalid.", i);
     }
     sm6_parser_emit_dcl_count(sm6, VKD3DSIH_DCL_VERTICES_OUT, i);
+    sm6->p.program->vertices_out_count = i;
 
     if (operands[2] > 1)
     {
@@ -10001,6 +10004,7 @@ static void sm6_parser_gs_properties_init(struct sm6_parser *sm6, const struct s
         output_primitive = VKD3D_PT_TRIANGLELIST;
     }
     sm6_parser_emit_dcl_primitive_topology(sm6, VKD3DSIH_DCL_OUTPUT_TOPOLOGY, output_primitive, 0);
+    sm6->p.program->output_topology = output_primitive;
 
     i = operands[4];
     if (!i || i > MAX_GS_INSTANCE_COUNT)

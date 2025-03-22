@@ -1712,7 +1712,8 @@ bool hlsl_normalize_binary_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *inst
             progress = true;
         }
 
-        if (!progress && e1 && (tmp = collect_exprs(ctx, &block, instr, op, e1->operands[1].node, arg2)))
+        if (!progress && e1 && e1->op == op
+                && (tmp = collect_exprs(ctx, &block, instr, op, e1->operands[1].node, arg2)))
         {
             /* (y OPR (x OPL a)) OPR (x OPL b) -> y OPR (x OPL (a OPR b)) */
             arg1 = e1->operands[0].node;
@@ -1720,7 +1721,7 @@ bool hlsl_normalize_binary_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *inst
             progress = true;
         }
 
-        if (!progress && is_op_commutative(op) && e1
+        if (!progress && is_op_commutative(op) && e1 && e1->op == op
                 && (tmp = collect_exprs(ctx, &block, instr, op, e1->operands[0].node, arg2)))
         {
             /* ((x OPL a) OPR y) OPR (x OPL b) -> (x OPL (a OPR b)) OPR y */
@@ -1729,7 +1730,8 @@ bool hlsl_normalize_binary_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *inst
             progress = true;
         }
 
-        if (!progress && e2 && (tmp = collect_exprs(ctx, &block, instr, op, arg1, e2->operands[0].node)))
+        if (!progress && e2 && e2->op == op
+                && (tmp = collect_exprs(ctx, &block, instr, op, arg1, e2->operands[0].node)))
         {
             /* (x OPL a) OPR ((x OPL b) OPR y) -> (x OPL (a OPR b)) OPR y */
             arg1 = tmp;
@@ -1737,7 +1739,7 @@ bool hlsl_normalize_binary_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *inst
             progress = true;
         }
 
-        if (!progress && is_op_commutative(op) && e2
+        if (!progress && is_op_commutative(op) && e2 && e2->op == op
                 && (tmp = collect_exprs(ctx, &block, instr, op, arg1, e2->operands[1].node)))
         {
             /* (x OPL a) OPR (y OPR (x OPL b)) -> (x OPL (a OPR b)) OPR y */
