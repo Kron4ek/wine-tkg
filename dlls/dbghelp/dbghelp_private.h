@@ -414,14 +414,47 @@ enum format_info
     DFI_LAST
 };
 
-struct module_format
+struct lineinfo_t
 {
-    struct module*              module;
-    void                        (*remove)(struct process* pcs, struct module_format* modfmt);
-    void                        (*loc_compute)(struct process* pcs,
-                                               const struct module_format* modfmt,
+    BOOL                        unicode;
+    PVOID                       key;
+    DWORD                       line_number;
+    union
+    {
+        CHAR*                   file_nameA;
+        WCHAR*                  file_nameW;
+    };
+    DWORD64                     address;
+};
+
+struct module_format;
+enum method_result {MR_SUCCESS, MR_FAILURE, MR_NOT_FOUND};
+struct module_format_vtable
+{
+    /* module handling */
+    void                        (*remove)(struct module_format* modfmt);
+    /* stack walk */
+    void                        (*loc_compute)(const struct module_format* modfmt,
                                                const struct symt_function* func,
                                                struct location* loc);
+    /* line information */
+    enum method_result          (*get_line_from_address)(struct module_format *modfmt,
+                                                         DWORD64 address, struct lineinfo_t *line_info);
+    enum method_result          (*advance_line_info)(struct module_format *modfmt,
+                                                     struct lineinfo_t *line_info, BOOL forward);
+    enum method_result          (*enumerate_lines)(struct module_format *modfmt, const WCHAR* compiland_regex,
+                                                   const WCHAR *source_file_regex, PSYM_ENUMLINES_CALLBACK cb, void *user);
+
+    /* source files information */
+    enum method_result          (*enumerate_sources)(struct module_format *modfmt, const WCHAR *sourcefile_regex,
+                                                     PSYM_ENUMSOURCEFILES_CALLBACKW cb, void *user);
+};
+
+struct module_format
+{
+    struct module*                      module;
+    const struct module_format_vtable*  vtable;
+
     union
     {
         struct elf_module_info*         elf_info;
@@ -477,6 +510,29 @@ struct module
     char*                       sources;
     struct wine_rb_tree         sources_offsets_tree;
 };
+
+struct module_format_vtable_iterator
+{
+    int dfi;
+    struct module_format *modfmt;
+};
+
+#define MODULE_FORMAT_VTABLE_INDEX(f) (offsetof(struct module_format_vtable, f) / sizeof(void*))
+
+static inline BOOL module_format_vtable_iterator_next(struct module *module, struct module_format_vtable_iterator *iter, size_t method_index)
+{
+    for ( ; iter->dfi < DFI_LAST; iter->dfi++)
+    {
+        iter->modfmt = module->format_info[iter->dfi];
+        if (iter->modfmt && ((const void**)iter->modfmt->vtable)[method_index])
+        {
+            iter->dfi++;
+            return TRUE;
+        }
+    }
+    iter->modfmt = NULL;
+    return FALSE;
+}
 
 typedef BOOL (*enum_modules_cb)(const WCHAR*, ULONG_PTR addr, void* user);
 
@@ -910,6 +966,7 @@ extern DWORD        symt_ptr2index(struct module* module, const struct symt* sym
 extern struct symt_custom*
                     symt_new_custom(struct module* module, const char* name,
                                     DWORD64 addr, DWORD size);
+extern BOOL         lineinfo_set_nameA(struct process* pcs, struct lineinfo_t* intl, char* str);
 
 /* type.c */
 extern void         symt_init_basic(struct module* module);
@@ -985,3 +1042,14 @@ extern struct symt_function*
 #define IFC_DEPTH_MASK   0x3FFFFFFF
 #define IFC_MODE(x)      ((x) & ~IFC_DEPTH_MASK)
 #define IFC_DEPTH(x)     ((x) & IFC_DEPTH_MASK)
+
+/* temporary helpers for PDB rewriting */
+struct _PDB_FPO_DATA;
+extern BOOL pdb_fpo_unwind_parse_cmd_string(struct cpu_stack_walk* csw, struct _PDB_FPO_DATA* fpoext,
+                                            const char* cmd, struct pdb_cmd_pair* cpair);
+extern BOOL pdb_old_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
+                                   union ctx *context, struct pdb_cmd_pair *cpair);
+struct pdb_reader;
+extern BOOL pdb_hack_get_main_info(struct module_format *modfmt, struct pdb_reader **pdb, unsigned *fpoext_stream);
+extern void pdb_reader_dispose(struct pdb_reader *pdb);
+extern struct pdb_reader *pdb_hack_reader_init(struct module *module, HANDLE file, const IMAGE_SECTION_HEADER *sections, unsigned num_sections);

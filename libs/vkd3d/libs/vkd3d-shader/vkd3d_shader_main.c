@@ -1127,7 +1127,7 @@ static void vkd3d_shader_scan_combined_sampler_declaration(
             &semantic->resource.range, semantic->resource_type, VKD3D_SHADER_RESOURCE_DATA_FLOAT);
 }
 
-static const struct vkd3d_shader_descriptor_info1 *find_descriptor(
+const struct vkd3d_shader_descriptor_info1 *vkd3d_shader_find_descriptor(
         const struct vkd3d_shader_scan_descriptor_info1 *info,
         enum vkd3d_shader_descriptor_type type, unsigned int register_id)
 {
@@ -1181,11 +1181,11 @@ static void vkd3d_shader_scan_combined_sampler_usage(struct vkd3d_shader_scan_co
         if (dynamic_resource || dynamic_sampler)
             return;
 
-        if ((d = find_descriptor(context->scan_descriptor_info,
+        if ((d = vkd3d_shader_find_descriptor(context->scan_descriptor_info,
                 VKD3D_SHADER_DESCRIPTOR_TYPE_SRV, resource->idx[0].offset)))
             resource_space = d->register_space;
 
-        if (sampler && (d = find_descriptor(context->scan_descriptor_info,
+        if (sampler && (d = vkd3d_shader_find_descriptor(context->scan_descriptor_info,
                 VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER, sampler->idx[0].offset)))
             sampler_space = d->register_space;
     }
@@ -1605,6 +1605,9 @@ static int vsir_program_scan(struct vsir_program *program, const struct vkd3d_sh
 
     vkd3d_shader_scan_context_init(&context, &program->shader_version, compile_info,
             add_descriptor_info ? &program->descriptors : NULL, combined_sampler_info, message_context);
+
+    if (add_descriptor_info)
+        program->has_descriptor_info = true;
 
     if (TRACE_ON())
         vsir_program_trace(program);
@@ -2046,6 +2049,9 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
         VKD3D_SHADER_TARGET_SPIRV_BINARY,
 #if defined(HAVE_SPIRV_TOOLS) || defined(VKD3D_SHADER_UNSUPPORTED_SPIRV_PARSER)
         VKD3D_SHADER_TARGET_SPIRV_TEXT,
+#endif
+#ifdef VKD3D_SHADER_UNSUPPORTED_GLSL
+        VKD3D_SHADER_TARGET_GLSL,
 #endif
         VKD3D_SHADER_TARGET_D3D_ASM,
         VKD3D_SHADER_TARGET_D3D_BYTECODE,

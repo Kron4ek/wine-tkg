@@ -2366,6 +2366,7 @@ static inline bool is_object_fx_type(enum state_property_component_type type)
         case FX_BLEND:
         case FX_VERTEXSHADER:
         case FX_PIXELSHADER:
+        case FX_GEOMETRYSHADER:
             return true;
         default:
             return false;
@@ -2761,7 +2762,8 @@ static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl
                 struct hlsl_ir_constant *c = hlsl_ir_constant(node);
                 struct hlsl_type *data_type = c->node.data_type;
 
-                if (data_type->class == HLSL_CLASS_SCALAR && data_type->e.numeric.type == HLSL_TYPE_UINT)
+                if (data_type->class == HLSL_CLASS_SCALAR
+                        && (data_type->e.numeric.type == HLSL_TYPE_INT || data_type->e.numeric.type == HLSL_TYPE_UINT))
                 {
                     if (c->value.u[0].u != 0)
                         hlsl_error(ctx, &ctx->location, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,

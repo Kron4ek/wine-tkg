@@ -1565,6 +1565,9 @@ void hlsl_block_add_store_component(struct hlsl_ctx *ctx, struct hlsl_block *blo
 void hlsl_block_add_store_index(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_deref *lhs, struct hlsl_ir_node *idx, struct hlsl_ir_node *rhs,
         unsigned int writemask, const struct vkd3d_shader_location *loc);
+void hlsl_block_add_store_parent(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        const struct hlsl_deref *lhs, unsigned int path_len, struct hlsl_ir_node *rhs,
+        unsigned int writemask, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_block_add_swizzle(struct hlsl_ctx *ctx, struct hlsl_block *block, uint32_t s,
         unsigned int width, struct hlsl_ir_node *val, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_block_add_uint_constant(struct hlsl_ctx *ctx, struct hlsl_block *block,

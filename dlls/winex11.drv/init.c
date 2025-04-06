@@ -444,10 +444,9 @@ static const struct user_driver_funcs x11drv_funcs =
     .pProcessEvents = X11DRV_ProcessEvents,
     .pReleaseDC = X11DRV_ReleaseDC,
     .pScrollDC = X11DRV_ScrollDC,
-    .pSetActiveWindow = X11DRV_SetActiveWindow,
     .pSetCapture = X11DRV_SetCapture,
     .pSetDesktopWindow = X11DRV_SetDesktopWindow,
-    .pSetFocus = X11DRV_SetFocus,
+    .pActivateWindow = X11DRV_ActivateWindow,
     .pSetLayeredWindowAttributes = X11DRV_SetLayeredWindowAttributes,
     .pSetParent = X11DRV_SetParent,
     .pSetWindowIcon = X11DRV_SetWindowIcon,
@@ -468,7 +467,7 @@ static const struct user_driver_funcs x11drv_funcs =
     .pWindowPosChanged = X11DRV_WindowPosChanged,
     .pSystemParametersInfo = X11DRV_SystemParametersInfo,
     .pVulkanInit = X11DRV_VulkanInit,
-    .pwine_get_wgl_driver = X11DRV_wine_get_wgl_driver,
+    .pOpenGLInit = X11DRV_OpenGLInit,
     .pThreadDetach = X11DRV_ThreadDetach,
 };
 

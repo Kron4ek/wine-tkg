@@ -1205,9 +1205,9 @@ struct get_process_info_reply
     unsigned int session_id;
     int          exit_code;
     int          priority;
+    unsigned short base_priority;
     unsigned short machine;
     /* VARARG(image,pe_image_info); */
-    char __pad_62[2];
 };
 
 
@@ -1299,7 +1299,7 @@ struct get_thread_info_reply
     affinity_t   affinity;
     int          exit_code;
     int          priority;
-    int          last;
+    int          base_priority;
     int          suspend_count;
     unsigned int flags;
     data_size_t  desc_len;
@@ -1307,6 +1307,7 @@ struct get_thread_info_reply
 };
 #define GET_THREAD_INFO_FLAG_DBG_HIDDEN 0x01
 #define GET_THREAD_INFO_FLAG_TERMINATED 0x02
+#define GET_THREAD_INFO_FLAG_LAST       0x04
 
 
 
@@ -1330,24 +1331,25 @@ struct set_thread_info_request
 {
     struct request_header __header;
     obj_handle_t handle;
-    int          mask;
+    int          priority;
     int          base_priority;
     affinity_t   affinity;
     client_ptr_t entry_point;
     obj_handle_t token;
+    unsigned int mask;
     /* VARARG(desc,unicode_str); */
-    char __pad_44[4];
 };
 struct set_thread_info_reply
 {
     struct reply_header __header;
 };
-#define SET_THREAD_INFO_BASE_PRIORITY   0x01
-#define SET_THREAD_INFO_AFFINITY        0x02
-#define SET_THREAD_INFO_TOKEN           0x04
-#define SET_THREAD_INFO_ENTRYPOINT      0x08
-#define SET_THREAD_INFO_DESCRIPTION     0x10
-#define SET_THREAD_INFO_DBG_HIDDEN      0x20
+#define SET_THREAD_INFO_PRIORITY        0x01
+#define SET_THREAD_INFO_BASE_PRIORITY   0x02
+#define SET_THREAD_INFO_AFFINITY        0x04
+#define SET_THREAD_INFO_TOKEN           0x08
+#define SET_THREAD_INFO_ENTRYPOINT      0x10
+#define SET_THREAD_INFO_DESCRIPTION     0x20
+#define SET_THREAD_INFO_DBG_HIDDEN      0x40
 
 
 
@@ -7024,6 +7026,6 @@ union generic_reply
     struct get_fsync_apc_idx_reply get_fsync_apc_idx_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 861
+#define SERVER_PROTOCOL_VERSION 865
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

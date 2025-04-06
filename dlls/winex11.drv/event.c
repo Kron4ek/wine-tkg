@@ -601,7 +601,17 @@ DWORD EVENT_x11_time_to_win32_time(Time time)
 static inline BOOL can_activate_window( HWND hwnd )
 {
     LONG style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
+    struct x11drv_win_data *data;
     RECT rect;
+
+    if ((data = get_win_data( hwnd )))
+    {
+        style = style & ~(WS_VISIBLE | WS_MINIMIZE | WS_MAXIMIZE);
+        if (data->current_state.wm_state != WithdrawnState) style |= WS_VISIBLE;
+        if (data->current_state.wm_state == IconicState) style |= WS_MINIMIZE;
+        if (data->current_state.net_wm_state & (1 << NET_WM_STATE_MAXIMIZED)) style |= WS_MAXIMIZE;
+        release_win_data( data );
+    }
 
     if (!(style & WS_VISIBLE)) return FALSE;
     if ((style & (WS_POPUP|WS_CHILD)) == WS_CHILD) return FALSE;
@@ -646,37 +656,25 @@ static void set_input_focus( struct x11drv_win_data *data )
 /**********************************************************************
  *              set_focus
  */
-static void set_focus( Display *display, HWND hwnd, Time time )
+static void set_focus( Display *display, HWND focus, Time time )
 {
-    HWND focus, old_active;
     Window win;
     GUITHREADINFO threadinfo;
 
-    old_active = NtUserGetForegroundWindow();
+    TRACE( "setting foreground window to %p\n", focus );
 
-    /* prevent recursion */
-    x11drv_thread_data()->active_window = hwnd;
+    if (!is_net_supported( x11drv_atom(_NET_ACTIVE_WINDOW) ))
+    {
+        NtUserSetForegroundWindow( focus );
 
-    TRACE( "setting foreground window to %p\n", hwnd );
-    NtUserSetForegroundWindow( hwnd );
+        threadinfo.cbSize = sizeof(threadinfo);
+        NtUserGetGUIThreadInfo( 0, &threadinfo );
+        focus = threadinfo.hwndFocus;
+        if (!focus) focus = threadinfo.hwndActive;
+        if (focus) focus = NtUserGetAncestor( focus, GA_ROOT );
+    }
 
-    /* Some applications expect that a being deactivated topmost window
-     * receives the WM_WINDOWPOSCHANGING/WM_WINDOWPOSCHANGED messages,
-     * and perform some specific actions. Chessmaster is one of such apps.
-     * Window Manager keeps a topmost window on top in z-oder, so there is
-     * no need to actually do anything, just send the messages.
-     */
-    if (old_active && (NtUserGetWindowLongW( old_active, GWL_EXSTYLE ) & WS_EX_TOPMOST))
-        NtUserSetWindowPos( old_active, hwnd, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER );
-
-    threadinfo.cbSize = sizeof(threadinfo);
-    NtUserGetGUIThreadInfo( 0, &threadinfo );
-    focus = threadinfo.hwndFocus;
-    if (!focus) focus = threadinfo.hwndActive;
-    if (focus) focus = NtUserGetAncestor( focus, GA_ROOT );
-    win = X11DRV_get_whole_window(focus);
-
-    if (win)
+    if ((win = X11DRV_get_whole_window( focus )))
     {
         TRACE( "setting focus to %p (%lx) time=%ld\n", focus, win, time );
         XSetInputFocus( display, win, RevertToParent, time );
@@ -711,8 +709,6 @@ static void handle_wm_protocols( HWND hwnd, XClientMessageEvent *event )
 
     if (protocol == x11drv_atom(WM_DELETE_WINDOW))
     {
-        update_user_time( event_time );
-
         if (hwnd == NtUserGetDesktopWindow())
         {
             /* The desktop window does not have a close button that we can
@@ -767,7 +763,7 @@ static void handle_wm_protocols( HWND hwnd, XClientMessageEvent *event )
     {
         HWND last_focus = x11drv_thread_data()->last_focus, foreground = NtUserGetForegroundWindow();
 
-        if (window_has_pending_wm_state( hwnd, -1 ))
+        if (window_has_pending_wm_state( hwnd, -1 ) || (hwnd != foreground && !window_should_take_focus( foreground, event_time )))
         {
             WARN( "Ignoring window %p/%lx WM_TAKE_FOCUS serial %lu, event_time %ld, foreground %p during WM_STATE change\n",
                   hwnd, event->window, event->serial, event_time, foreground );
@@ -921,10 +917,8 @@ static void focus_out( Display *display , HWND hwnd )
     /* don't reset the foreground window, if the window which is
        getting the focus is a Wine window */
 
-    if (!is_current_process_focused())
+    if (!is_net_supported( x11drv_atom(_NET_ACTIVE_WINDOW) ) && !is_current_process_focused())
     {
-        x11drv_thread_data()->active_window = 0;
-
         /* Abey : 6-Oct-99. Check again if the focus out window is the
            Foreground window, because in most cases the messages sent
            above must have already changed the foreground window, in which
@@ -1236,12 +1230,15 @@ static void handle_wm_state_notify( HWND hwnd, XPropertyEvent *event )
 {
     struct x11drv_win_data *data;
     UINT value = 0;
+    BOOL activate;
 
     if (!(data = get_win_data( hwnd ))) return;
     if (event->state == PropertyNewValue) value = get_window_wm_state( event->display, event->window );
-    window_wm_state_notify( data, event->serial, value );
+    window_wm_state_notify( data, event->serial, value, event->time );
+    activate = value == NormalState && !data->wm_state_serial && data->current_state.activate;
     release_win_data( data );
 
+    if (hwnd == NtUserGetForegroundWindow() && activate) set_net_active_window( hwnd, 0 );
     NtUserPostMessage( hwnd, WM_WINE_WINDOW_STATE_CHANGED, 0, 0 );
 }
 
@@ -1252,7 +1249,7 @@ static void handle_xembed_info_notify( HWND hwnd, XPropertyEvent *event )
 
     if (!(data = get_win_data( hwnd ))) return;
     if (event->state == PropertyNewValue) value = get_window_xembed_info( event->display, event->window );
-    window_wm_state_notify( data, event->serial, value ? NormalState : WithdrawnState );
+    window_wm_state_notify( data, event->serial, value ? NormalState : WithdrawnState, event->time );
     release_win_data( data );
 }
 
@@ -1284,6 +1281,14 @@ static void handle_net_supported_notify( XPropertyEvent *event )
     if (event->state == PropertyNewValue) net_supported_init( data );
 }
 
+static void handle_net_active_window( XPropertyEvent *event )
+{
+    Window window = 0;
+
+    if (event->state == PropertyNewValue) window = get_net_active_window( event->display );
+    net_active_window_notify( event->serial, window, event->time );
+}
+
 /***********************************************************************
  *           X11DRV_PropertyNotify
  */
@@ -1296,31 +1301,24 @@ static BOOL X11DRV_PropertyNotify( HWND hwnd, XEvent *xev )
     if (event->atom == x11drv_atom(_XEMBED_INFO)) handle_xembed_info_notify( hwnd, event );
     if (event->atom == x11drv_atom(_NET_WM_STATE)) handle_net_wm_state_notify( hwnd, event );
     if (event->atom == x11drv_atom(_NET_SUPPORTED)) handle_net_supported_notify( event );
+    if (event->atom == x11drv_atom(_NET_ACTIVE_WINDOW)) handle_net_active_window( event );
 
     return TRUE;
 }
 
 
 /*****************************************************************
- *		SetFocus   (X11DRV.@)
+ *		ActivateWindow   (X11DRV.@)
  *
  * Set the X focus.
  */
-void X11DRV_SetFocus( HWND hwnd )
+void X11DRV_ActivateWindow( HWND hwnd, HWND previous )
 {
     struct x11drv_win_data *data;
 
-    HWND parent;
+    set_net_active_window( hwnd, previous );
 
-    for (;;)
-    {
-        if (!(data = get_win_data( hwnd ))) return;
-        if (data->embedded) break;
-        parent = NtUserGetAncestor( hwnd, GA_PARENT );
-        if (!parent || parent == NtUserGetDesktopWindow()) break;
-        release_win_data( data );
-        hwnd = parent;
-    }
+    if (!(data = get_win_data( hwnd ))) return;
     if (!data->managed || data->embedder) set_input_focus( data );
     release_win_data( data );
 }

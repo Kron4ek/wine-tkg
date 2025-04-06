@@ -3334,8 +3334,8 @@ static void test_priority(void)
         thread_base_priority, tbi.BasePriority );
     status = pNtQueryInformationProcess( GetCurrentProcess(), ProcessBasicInformation, &pbi, sizeof(pbi), NULL );
     expected_nt_priority = pbi.BasePriority + THREAD_PRIORITY_HIGHEST;
-    todo_wine ok( expected_nt_priority == tbi.Priority, "After setting, effective NT priority (%ld) does not match expected priority %d.\n",
-                  tbi.Priority, expected_nt_priority );
+    ok( expected_nt_priority == tbi.Priority, "After setting, effective NT priority (%ld) does not match expected priority %d.\n",
+        tbi.Priority, expected_nt_priority );
 
     /* Test setting the thread priority to THREAD_PRIORITY_LOWEST now, but using
      * pNtSetInformationThread, also testing NT priority directly afterwards. */
@@ -3349,21 +3349,21 @@ static void test_priority(void)
     ok( nt_thread_priority == tbi.BasePriority, "After setting, BasePriority (%ld) does not match set BasePriority (%ld)\n",
         nt_thread_priority, tbi.BasePriority );
     expected_nt_priority = pbi.BasePriority + THREAD_PRIORITY_LOWEST;
-    todo_wine ok( expected_nt_priority == tbi.Priority, "After setting, effective NT priority (%ld) does not match expected priority %d.\n",
-                  tbi.Priority, expected_nt_priority );
+    ok( expected_nt_priority == tbi.Priority, "After setting, effective NT priority (%ld) does not match expected priority %d.\n",
+        tbi.Priority, expected_nt_priority );
     /* Now set NT thread priority directly to 12, a value normally impossible to
      * reach in NORMAL_PRIORITY_CLASS without boost. */
     nt_thread_priority = 12;
     status = pNtSetInformationThread( GetCurrentThread(), ThreadPriority, &nt_thread_priority, sizeof(ULONG) );
-    todo_wine ok( status == STATUS_SUCCESS, "NtSetInformationThread(ThreadPriority) failed: %08lx\n", status );
+    ok( status == STATUS_SUCCESS, "NtSetInformationThread(ThreadPriority) failed: %08lx\n", status );
     /* Effective thread priority should be now 12, BasePriority should be
      * unchanged. */
     status = pNtQueryInformationThread( GetCurrentThread(), ThreadBasicInformation, &tbi, sizeof(tbi), NULL );
     ok( status == STATUS_SUCCESS, "NtQueryInformationThread failed after setting priority: %08lx\n", status );
     ok( THREAD_PRIORITY_LOWEST == tbi.BasePriority, "After setting, BasePriority (%ld) does not match set BasePriority THREAD_PRIORITY_LOWEST.\n",
         tbi.BasePriority );
-    todo_wine ok( nt_thread_priority == tbi.Priority, "After setting, effective NT priority (%ld) does not match expected priority %lu.\n",
-                  tbi.Priority, nt_thread_priority );
+    ok( nt_thread_priority == tbi.Priority, "After setting, effective NT priority (%ld) does not match expected priority %lu.\n",
+        tbi.Priority, nt_thread_priority );
     /* Changing process priority recalculates all priorities again and
      * overwrites our custom priority of 12. */
     ret = SetPriorityClass( GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS );
@@ -3374,20 +3374,20 @@ static void test_priority(void)
     ok( status == STATUS_SUCCESS, "NtQueryInformationThread failed after setting priority: %08lx\n", status );
     status = pNtQueryInformationProcess( GetCurrentProcess(), ProcessBasicInformation, &pbi, sizeof(pbi), NULL );
     expected_nt_priority = pbi.BasePriority + THREAD_PRIORITY_LOWEST;
-    todo_wine ok( expected_nt_priority == tbi.Priority, "After setting, effective NT priority (%ld) does not match expected priority %d.\n",
-                  tbi.Priority, expected_nt_priority );
+    ok( expected_nt_priority == tbi.Priority, "After setting, effective NT priority (%ld) does not match expected priority %d.\n",
+        tbi.Priority, expected_nt_priority );
     /* Setting an out of range priority above HIGH_PRIORITY (31) or LOW_PRIORITY (0)
      * and lower fails. */
     nt_thread_priority = 42;
     status = pNtSetInformationThread( GetCurrentThread(), ThreadPriority, &nt_thread_priority, sizeof(ULONG) );
-    todo_wine ok( status == STATUS_INVALID_PARAMETER, "got %08lx, expected STATUS_INVALID_PARAMETER.\n", status );
+    ok( status == STATUS_INVALID_PARAMETER, "got %08lx, expected STATUS_INVALID_PARAMETER.\n", status );
     nt_thread_priority = 0; /* 0 also fails in addition to negative values. */
     status = pNtSetInformationThread( GetCurrentThread(), ThreadPriority, &nt_thread_priority, sizeof(ULONG) );
-    todo_wine ok( status == STATUS_INVALID_PARAMETER, "got %08lx, expected STATUS_INVALID_PARAMETER.\n", status );
+    ok( status == STATUS_INVALID_PARAMETER, "got %08lx, expected STATUS_INVALID_PARAMETER.\n", status );
     /* Moving a thread into the realtime band is normally not possible in a non-realtime process. */
     nt_thread_priority = 24;
     status = pNtSetInformationThread( GetCurrentThread(), ThreadPriority, &nt_thread_priority, sizeof(ULONG) );
-    todo_wine ok( status == STATUS_PRIVILEGE_NOT_HELD, "got %08lx, expected STATUS_PRIVILEGE_NOT_HELD.\n", status );
+    ok( status == STATUS_PRIVILEGE_NOT_HELD, "got %08lx, expected STATUS_PRIVILEGE_NOT_HELD.\n", status );
 
     /* Restore thread priority and boosting behaviour back to normal */
     SetThreadPriorityBoost( GetCurrentThread(), FALSE );

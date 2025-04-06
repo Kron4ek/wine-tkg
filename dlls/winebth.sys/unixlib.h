@@ -80,6 +80,15 @@ struct bluetooth_adapter_stop_discovery_params
     unix_name_t adapter;
 };
 
+struct bluetooth_auth_send_response_params
+{
+    unix_name_t device;
+    BLUETOOTH_AUTHENTICATION_METHOD method;
+    UINT32 numeric_or_passkey;
+    BOOL negative;
+    BOOL *authenticated;
+};
+
 struct bluetooth_get_event_params
 {
     struct winebluetooth_event result;
@@ -97,6 +106,9 @@ enum bluetoothapis_funcs
     unix_bluetooth_adapter_free,
 
     unix_bluetooth_device_free,
+
+    unix_bluetooth_auth_agent_enable_incoming,
+    unix_bluetooth_auth_send_response,
 
     unix_bluetooth_get_event,
 

@@ -98,6 +98,7 @@ static pthread_mutex_t dc_pbuffers_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 static struct opengl_funcs opengl_funcs;
+static const struct opengl_driver_funcs macdrv_driver_funcs;
 
 static void (*pglCopyColorTable)(GLenum target, GLenum internalformat, GLint x, GLint y,
                                  GLsizei width);
@@ -1323,43 +1324,6 @@ static BOOL init_gl_info(void)
 }
 
 
-static int get_dc_pixel_format(HWND hwnd, HDC hdc)
-{
-    int format;
-
-    if (hwnd)
-    {
-        struct macdrv_win_data *data;
-
-        if (!(data = get_win_data(hwnd)))
-        {
-            FIXME("DC for window %p of other process: not implemented\n", hwnd);
-            return 0;
-        }
-
-        format = data->pixel_format;
-        release_win_data(data);
-    }
-    else
-    {
-        struct wgl_pbuffer *pbuffer;
-
-        pthread_mutex_lock(&dc_pbuffers_mutex);
-        pbuffer = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, hdc);
-        if (pbuffer)
-            format = pbuffer->format;
-        else
-        {
-            WARN("no window or pbuffer for DC %p\n", hdc);
-            format = 0;
-        }
-        pthread_mutex_unlock(&dc_pbuffers_mutex);
-    }
-
-    return format;
-}
-
-
 /**********************************************************************
  *              create_context
  */
@@ -1509,35 +1473,11 @@ static BOOL create_context(struct wgl_context *context, CGLContextObj share, uns
     return TRUE;
 }
 
-
-/**********************************************************************
- *              set_pixel_format
- *
- * Implementation of wglSetPixelFormat and wglSetPixelFormatWINE.
- */
-static BOOL set_pixel_format(HDC hdc, int fmt, BOOL internal)
+static BOOL macdrv_set_pixel_format(HWND hwnd, int old_format, int new_format, BOOL internal)
 {
     struct macdrv_win_data *data;
-    const pixel_format *pf;
-    HWND hwnd = NtUserWindowFromDC(hdc);
-    BOOL ret = FALSE;
 
-    TRACE("hdc %p format %d\n", hdc, fmt);
-
-    if (!hwnd || hwnd == NtUserGetDesktopWindow())
-    {
-        WARN("not a proper window DC %p/%p\n", hdc, hwnd);
-        return FALSE;
-    }
-
-    if (!internal)
-    {
-        /* cannot change it if already set */
-        int prev = win32u_get_window_pixel_format( hwnd );
-
-        if (prev)
-            return prev == fmt;
-    }
+    TRACE("hwnd %p, old_format %d, new_format %d, internal %u\n", hwnd, old_format, new_format, internal);
 
     if (!(data = get_win_data(hwnd)))
     {
@@ -1545,44 +1485,9 @@ static BOOL set_pixel_format(HDC hdc, int fmt, BOOL internal)
         return FALSE;
     }
 
-    /* Check if fmt is in our list of supported formats to see if it is supported. */
-    pf = get_pixel_format(fmt, FALSE /* non-displayable */);
-    if (!pf)
-    {
-        ERR("Invalid pixel format: %d\n", fmt);
-        goto done;
-    }
-
-    if (!pf->window)
-    {
-        WARN("Pixel format %d is not compatible for window rendering\n", fmt);
-        goto done;
-    }
-
-    data->pixel_format = fmt;
-
-    TRACE("pixel format:\n");
-    TRACE("           window: %u\n", (unsigned int)pf->window);
-    TRACE("          pBuffer: %u\n", (unsigned int)pf->pbuffer);
-    TRACE("      accelerated: %u\n", (unsigned int)pf->accelerated);
-    TRACE("       color bits: %u%s\n", (unsigned int)color_modes[pf->color_mode].color_bits, (color_modes[pf->color_mode].is_float ? " float" : ""));
-    TRACE("       alpha bits: %u\n", (unsigned int)color_modes[pf->color_mode].alpha_bits);
-    TRACE("      aux buffers: %u\n", (unsigned int)pf->aux_buffers);
-    TRACE("       depth bits: %u\n", (unsigned int)pf->depth_bits);
-    TRACE("     stencil bits: %u\n", (unsigned int)pf->stencil_bits);
-    TRACE("       accum bits: %u\n", (unsigned int)pf->accum_mode ? color_modes[pf->accum_mode - 1].color_bits : 0);
-    TRACE("    double_buffer: %u\n", (unsigned int)pf->double_buffer);
-    TRACE("           stereo: %u\n", (unsigned int)pf->stereo);
-    TRACE("   sample_buffers: %u\n", (unsigned int)pf->sample_buffers);
-    TRACE("          samples: %u\n", (unsigned int)pf->samples);
-    TRACE("    backing_store: %u\n", (unsigned int)pf->backing_store);
-    ret = TRUE;
-
-done:
+    data->pixel_format = new_format;
     release_win_data(data);
-    if (ret && gl_surface_mode == GL_SURFACE_BEHIND)
-        win32u_set_window_pixel_format(hwnd, fmt, internal);
-    return ret;
+    return TRUE;
 }
 
 
@@ -2373,328 +2278,6 @@ static BOOL macdrv_wglBindTexImageARB(struct wgl_pbuffer *pbuffer, int iBuffer)
 
 
 /***********************************************************************
- *              macdrv_wglChoosePixelFormatARB
- *
- * WGL_ARB_pixel_format: wglChoosePixelFormatARB
- */
-static BOOL macdrv_wglChoosePixelFormatARB(HDC hdc, const int *piAttribIList,
-                                           const FLOAT *pfAttribFList, UINT nMaxFormats,
-                                           int *piFormats, UINT *nNumFormats)
-{
-    pixel_format pf, valid;
-    const int *iptr;
-    int color_bits, red_bits, green_bits, blue_bits, alpha_bits;
-    int accum_bits, accum_red_bits, accum_green_bits, accum_blue_bits, accum_alpha_bits;
-    int float_color;
-    BOOL srgb;
-    int i, found = 0;
-
-    TRACE("hdc %p piAttribIList %p pfAttribFList %p nMaxFormats %u piFormats %p nNumFormats %p\n",
-          hdc, piAttribIList, pfAttribFList, nMaxFormats, piFormats, nNumFormats);
-    if (pfAttribFList)
-        FIXME("unused pfAttribFList\n");
-
-    memset(&pf, 0, sizeof(pf));
-    memset(&valid, 0, sizeof(valid));
-    color_bits = red_bits = green_bits = blue_bits = alpha_bits = 0;
-    accum_bits = accum_red_bits = accum_green_bits = accum_blue_bits = accum_alpha_bits = 0;
-    float_color = -1;
-    srgb = FALSE;
-
-    for (iptr = piAttribIList; iptr && *iptr; iptr += 2)
-    {
-        int attr = iptr[0];
-        int value = iptr[1];
-
-        TRACE("%s\n", debugstr_attrib(attr, value));
-
-        switch (attr)
-        {
-            case WGL_DRAW_TO_WINDOW_ARB:
-                if (valid.window && (!pf.window != !value)) goto cant_match;
-                pf.window = (value != 0);
-                valid.window = 1;
-                break;
-
-            case WGL_DRAW_TO_BITMAP_ARB:
-                goto cant_match;
-
-            case WGL_ACCELERATION_ARB:
-                if (value == WGL_FULL_ACCELERATION_ARB)
-                    value = 1;
-                else if (value == WGL_NO_ACCELERATION_ARB)
-                    value = 0;
-                else
-                    goto cant_match;
-                if (valid.accelerated && pf.accelerated != value) goto cant_match;
-                pf.accelerated = value;
-                valid.accelerated = 1;
-                break;
-
-            case WGL_NEED_PALETTE_ARB:
-            case WGL_NEED_SYSTEM_PALETTE_ARB:
-            case WGL_SWAP_LAYER_BUFFERS_ARB:
-                if (value) goto cant_match;
-                break;
-
-            case WGL_SWAP_METHOD_ARB:
-                if (value == WGL_SWAP_COPY_ARB)
-                    value = 1;
-                else if (value == WGL_SWAP_UNDEFINED_ARB)
-                    value = 0;
-                else
-                    goto cant_match;
-                if (valid.backing_store && pf.backing_store != value) goto cant_match;
-                if (valid.double_buffer && !pf.double_buffer && value) goto cant_match;
-                pf.backing_store = value;
-                valid.backing_store = 1;
-                break;
-
-            case WGL_NUMBER_OVERLAYS_ARB:
-            case WGL_NUMBER_UNDERLAYS_ARB:
-                if (value) goto cant_match;
-                break;
-
-            case WGL_SHARE_DEPTH_ARB:
-            case WGL_SHARE_STENCIL_ARB:
-            case WGL_SHARE_ACCUM_ARB:
-                /* no effect */
-                break;
-
-            case WGL_SUPPORT_GDI_ARB:
-                if (value) goto cant_match;
-                break;
-
-            case WGL_SUPPORT_OPENGL_ARB:
-                if (!value) goto cant_match;
-                break;
-
-            case WGL_DOUBLE_BUFFER_ARB:
-                if (valid.double_buffer && (!pf.double_buffer != !value)) goto cant_match;
-                pf.double_buffer = (value != 0);
-                valid.double_buffer = 1;
-                if (valid.backing_store && pf.backing_store && !pf.double_buffer) goto cant_match;
-                break;
-
-            case WGL_STEREO_ARB:
-                if (valid.stereo && (!pf.stereo != !value)) goto cant_match;
-                pf.stereo = (value != 0);
-                valid.stereo = 1;
-                break;
-
-            case WGL_PIXEL_TYPE_ARB:
-                if (value == WGL_TYPE_RGBA_FLOAT_ARB)
-                    value = 1;
-                else if (value == WGL_TYPE_RGBA_ARB)
-                    value = 0;
-                else
-                {
-                    /* Mac contexts don't support rendering to unsigned floating
-                       point formats, even if GL_EXT_packed_float is supported.
-                       So, WGL_TYPE_RGBA_UNSIGNED_FLOAT_EXT is not supported. */
-                    goto cant_match;
-                }
-                if (float_color != -1 && float_color != value) goto cant_match;
-                if (srgb && value) goto cant_match;
-                float_color = value;
-                break;
-
-            case WGL_COLOR_BITS_ARB:
-                if (color_bits < value) color_bits = value;
-                break;
-
-            case WGL_RED_BITS_ARB:
-                if (srgb && value > 8) goto cant_match;
-                if (red_bits < value) red_bits = value;
-                break;
-
-            case WGL_GREEN_BITS_ARB:
-                if (srgb && value > 8) goto cant_match;
-                if (green_bits < value) green_bits = value;
-                break;
-
-            case WGL_BLUE_BITS_ARB:
-                if (srgb && value > 8) goto cant_match;
-                if (blue_bits < value) blue_bits = value;
-                break;
-
-            case WGL_ALPHA_BITS_ARB:
-                if (alpha_bits < value) alpha_bits = value;
-                break;
-
-            case WGL_ACCUM_BITS_ARB:
-                if (accum_bits < value) accum_bits = value;
-                break;
-
-            case WGL_ACCUM_RED_BITS_ARB:
-                if (accum_red_bits < value) accum_red_bits = value;
-                break;
-
-            case WGL_ACCUM_GREEN_BITS_ARB:
-                if (accum_green_bits < value) accum_green_bits = value;
-                break;
-
-            case WGL_ACCUM_BLUE_BITS_ARB:
-                if (accum_blue_bits < value) accum_blue_bits = value;
-                break;
-
-            case WGL_ACCUM_ALPHA_BITS_ARB:
-                if (accum_alpha_bits < value) accum_alpha_bits = value;
-                break;
-
-            case WGL_DEPTH_BITS_ARB:
-                if (value > 255) goto cant_match;
-                if (pf.depth_bits < value) pf.depth_bits = value;
-                break;
-
-            case WGL_STENCIL_BITS_ARB:
-                if (value > 255) goto cant_match;
-                if (pf.stencil_bits < value) pf.stencil_bits = value;
-                break;
-
-            case WGL_AUX_BUFFERS_ARB:
-                if (value > 7) goto cant_match;
-                if (pf.aux_buffers < value) pf.aux_buffers = value;
-                break;
-
-            case WGL_SAMPLE_BUFFERS_ARB:
-                if (value > 1) goto cant_match;
-                if (pf.sample_buffers < value) pf.sample_buffers = value;
-                break;
-
-            case WGL_SAMPLES_ARB:
-                if (value > 31) goto cant_match;
-                if (pf.samples < value) pf.samples = value;
-                break;
-
-            case WGL_FRAMEBUFFER_SRGB_CAPABLE_ARB: /* a.k.a. WGL_FRAMEBUFFER_SRGB_CAPABLE_EXT */
-                /* sRGB is only supported for 8-bit integer color components */
-                if (float_color >= 1 || red_bits > 8 || green_bits > 8 || blue_bits > 8)
-                    goto cant_match;
-                srgb = TRUE;
-                break;
-
-            case WGL_NUMBER_PIXEL_FORMATS_ARB:
-            case WGL_RED_SHIFT_ARB:
-            case WGL_GREEN_SHIFT_ARB:
-            case WGL_BLUE_SHIFT_ARB:
-            case WGL_ALPHA_SHIFT_ARB:
-            case WGL_TRANSPARENT_ARB:
-            case WGL_TRANSPARENT_RED_VALUE_ARB:
-            case WGL_TRANSPARENT_GREEN_VALUE_ARB:
-            case WGL_TRANSPARENT_BLUE_VALUE_ARB:
-            case WGL_TRANSPARENT_ALPHA_VALUE_ARB:
-            case WGL_TRANSPARENT_INDEX_VALUE_ARB:
-                /* ignored */
-                break;
-
-            case WGL_DRAW_TO_PBUFFER_ARB:
-            case WGL_BIND_TO_TEXTURE_RGB_ARB:
-            case WGL_BIND_TO_TEXTURE_RGBA_ARB:
-            case WGL_BIND_TO_TEXTURE_RECTANGLE_RGB_NV:
-            case WGL_BIND_TO_TEXTURE_RECTANGLE_RGBA_NV:
-                if (valid.pbuffer && (!pf.pbuffer != !value)) goto cant_match;
-                pf.pbuffer = (value != 0);
-                valid.pbuffer = 1;
-                if ((attr == WGL_BIND_TO_TEXTURE_RGBA_ARB || attr == WGL_BIND_TO_TEXTURE_RECTANGLE_RGBA_NV) &&
-                    !alpha_bits)
-                    alpha_bits = 1;
-                break;
-
-            default:
-                WARN("invalid attribute %s\n", debugstr_attrib(attr, value));
-                return GL_FALSE;
-        }
-    }
-
-    TRACE("required: w/p/a %s/%s/%s col/r/g/b/a %d%s/%d/%d/%d/%d srgb %d ac %d/%d/%d/%d/%d dp/stn/ax/b/db/str %u/%u/%u/%s/%s/%s samp %u/%u\n",
-          valid.window ? (pf.window ? "1" : "0") : "?",
-          valid.pbuffer ? (pf.pbuffer ? "1" : "0") : "?",
-          valid.accelerated ? (pf.accelerated ? "1" : "0") : "?",
-          color_bits,
-          float_color == -1 ? "?" : float_color ? "f" : "",
-          red_bits,
-          green_bits,
-          blue_bits,
-          alpha_bits,
-          (int)srgb,
-          accum_bits,
-          accum_red_bits,
-          accum_green_bits,
-          accum_blue_bits,
-          accum_alpha_bits,
-          pf.depth_bits,
-          pf.stencil_bits,
-          pf.aux_buffers,
-          valid.backing_store ? (pf.backing_store ? "1" : "0") : "?",
-          valid.double_buffer ? (pf.double_buffer ? "1" : "0") : "?",
-          valid.stereo ? (pf.stereo ? "1" : "0") : "?",
-          pf.sample_buffers,
-          pf.samples);
-
-    for (i = 0; i < nb_formats && found < nMaxFormats; i++)
-    {
-        const struct color_mode *mode;
-
-        if (valid.window && pixel_formats[i].window != pf.window) continue;
-        if (valid.pbuffer && pixel_formats[i].pbuffer != pf.pbuffer) continue;
-        if (valid.accelerated && pixel_formats[i].accelerated != pf.accelerated) continue;
-        if (valid.double_buffer && pixel_formats[i].double_buffer != pf.double_buffer) continue;
-        if (valid.stereo && pixel_formats[i].stereo != pf.stereo) continue;
-        if (valid.backing_store && pixel_formats[i].backing_store != pf.backing_store) continue;
-
-        if (pixel_formats[i].aux_buffers < pf.aux_buffers) continue;
-        if (pixel_formats[i].depth_bits < pf.depth_bits) continue;
-        if (pixel_formats[i].stencil_bits < pf.stencil_bits) continue;
-        if (pixel_formats[i].sample_buffers < pf.sample_buffers) continue;
-        if (pixel_formats[i].samples < pf.samples) continue;
-
-        mode = &color_modes[pixel_formats[i].color_mode];
-        /* If the mode doesn't have alpha, check requested color bits against
-           bits per pixel instead of the mode's color bits.  On Windows, color
-           bits sometimes exceeds r+g+b (e.g. it's 32 for an R8G8B8A0 pixel format).
-           If an app depends on that and requests WGL_COLOR_BITS_ARB == 32 and
-           expects that to match such a pixel format, we need to accommodate that. */
-        if (mode->alpha_bits)
-        {
-            if (mode->color_bits < color_bits)
-                continue;
-        }
-        else
-        {
-            if (mode->bits_per_pixel < color_bits)
-                continue;
-        }
-        if (mode->red_bits < red_bits || mode->green_bits < green_bits ||
-            mode->blue_bits < blue_bits || mode->alpha_bits < alpha_bits)
-            continue;
-        if (float_color != -1 && (!mode->is_float != !float_color)) continue;
-        if (srgb && (mode->red_bits != 8 || mode->green_bits != 8 || mode->blue_bits != 8 || mode->is_float))
-            continue;
-
-        if (pixel_formats[i].accum_mode)
-        {
-            mode = &color_modes[pixel_formats[i].accum_mode - 1];
-            if (mode->color_bits < accum_bits || mode->red_bits < accum_red_bits ||
-                mode->green_bits < accum_green_bits || mode->blue_bits < accum_blue_bits ||
-                mode->alpha_bits < accum_alpha_bits)
-                continue;
-        }
-        else if (accum_bits || accum_red_bits || accum_green_bits || accum_blue_bits || accum_alpha_bits)
-            continue;
-
-        piFormats[found++] = i + 1;
-        TRACE("match: pixel format %d %s\n", i + 1, debugstr_pf(&pixel_formats[i]));
-    }
-
-cant_match:
-    *nNumFormats = found;
-
-    return TRUE;
-}
-
-
-/***********************************************************************
  *              macdrv_wglCreateContextAttribsARB
  *
  * WGL_ARB_create_context: wglCreateContextAttribsARB
@@ -2712,7 +2295,7 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
 
     TRACE("hdc %p, share_context %p, attrib_list %p\n", hdc, share_context, attrib_list);
 
-    format = get_dc_pixel_format(NtUserWindowFromDC(hdc), hdc);
+    format = opengl_funcs.p_wglGetPixelFormat(hdc);
 
     if (!is_valid_pixel_format(format))
     {
@@ -3033,32 +2616,6 @@ static BOOL macdrv_wglDestroyPbufferARB(struct wgl_pbuffer *pbuffer)
 
 
 /**********************************************************************
- *              macdrv_wglGetExtensionsStringARB
- *
- * WGL_ARB_extensions_string: wglGetExtensionsStringARB
- */
-static const char *macdrv_wglGetExtensionsStringARB(HDC hdc)
-{
-    /* FIXME: Since we're given an HDC, this should be device-specific.  I.e.
-              this can be specific to the CGL renderer like we're supposed to do. */
-    TRACE("returning \"%s\"\n", gl_info.wglExtensions);
-    return gl_info.wglExtensions;
-}
-
-
-/**********************************************************************
- *              macdrv_wglGetExtensionsStringEXT
- *
- * WGL_EXT_extensions_string: wglGetExtensionsStringEXT
- */
-static const char *macdrv_wglGetExtensionsStringEXT(void)
-{
-    TRACE("returning \"%s\"\n", gl_info.wglExtensions);
-    return gl_info.wglExtensions;
-}
-
-
-/**********************************************************************
  *              macdrv_wglGetPbufferDCARB
  *
  * WGL_ARB_pbuffer: wglGetPbufferDCARB
@@ -3081,303 +2638,9 @@ static HDC macdrv_wglGetPbufferDCARB(struct wgl_pbuffer *pbuffer)
     CFDictionarySetValue(dc_pbuffers, hdc, pbuffer);
     pthread_mutex_unlock(&dc_pbuffers_mutex);
 
+    NtGdiSetPixelFormat(hdc, pbuffer->format);
     TRACE("pbuffer %p -> hdc %p\n", pbuffer, hdc);
     return hdc;
-}
-
-
-/**********************************************************************
- *              macdrv_wglGetPixelFormatAttribivARB
- *
- * WGL_ARB_pixel_format: wglGetPixelFormatAttribivARB
- */
-static BOOL macdrv_wglGetPixelFormatAttribivARB(HDC hdc, int iPixelFormat, int iLayerPlane,
-                                                UINT nAttributes, const int *piAttributes, int *piValues)
-{
-    const pixel_format *pf;
-    UINT i;
-
-    TRACE("hdc %p iPixelFormat %d iLayerPlane %d nAttributes %u piAttributes %p piValues %p\n",
-          hdc, iPixelFormat, iLayerPlane, nAttributes, piAttributes, piValues);
-
-    if (!nAttributes) return GL_TRUE;
-
-    if (nAttributes == 1 && piAttributes[0] == WGL_NUMBER_PIXEL_FORMATS_ARB)
-    {
-        piValues[0] = nb_formats;
-        TRACE("%s\n", debugstr_attrib(piAttributes[0], piValues[0]));
-        return GL_TRUE;
-    }
-
-    pf = get_pixel_format(iPixelFormat, TRUE /* non-displayable */);
-    if (!pf)
-    {
-        WARN("invalid pixel format %d\n", iPixelFormat);
-        RtlSetLastWin32Error(ERROR_INVALID_PIXEL_FORMAT);
-        return GL_FALSE;
-    }
-
-    for (i = 0; i < nAttributes; ++i)
-    {
-        switch (piAttributes[i])
-        {
-            case WGL_NUMBER_PIXEL_FORMATS_ARB:
-                piValues[i] = nb_formats;
-                break;
-
-            case WGL_DRAW_TO_WINDOW_ARB:
-                piValues[i] = pf->window ? GL_TRUE : GL_FALSE;
-                break;
-
-            case WGL_DRAW_TO_BITMAP_ARB:
-                piValues[i] = GL_FALSE;
-                break;
-
-            case WGL_ACCELERATION_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                if (pf->accelerated)
-                    piValues[i] = WGL_FULL_ACCELERATION_ARB;
-                else
-                    piValues[i] = WGL_NO_ACCELERATION_ARB;
-                break;
-
-            case WGL_NEED_PALETTE_ARB:
-            case WGL_NEED_SYSTEM_PALETTE_ARB:
-            case WGL_SWAP_LAYER_BUFFERS_ARB:
-                piValues[i] = GL_FALSE;
-                break;
-
-            case WGL_SWAP_METHOD_ARB:
-                if (pf->double_buffer && pf->backing_store)
-                    piValues[i] = WGL_SWAP_COPY_ARB;
-                else
-                    piValues[i] = WGL_SWAP_UNDEFINED_ARB;
-                break;
-
-            case WGL_NUMBER_OVERLAYS_ARB:
-            case WGL_NUMBER_UNDERLAYS_ARB:
-                piValues[i] = 0;
-                break;
-
-            case WGL_TRANSPARENT_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = GL_FALSE;
-                break;
-
-            case WGL_TRANSPARENT_RED_VALUE_ARB:
-            case WGL_TRANSPARENT_GREEN_VALUE_ARB:
-            case WGL_TRANSPARENT_BLUE_VALUE_ARB:
-            case WGL_TRANSPARENT_ALPHA_VALUE_ARB:
-            case WGL_TRANSPARENT_INDEX_VALUE_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = 0;
-                break;
-
-            case WGL_SHARE_DEPTH_ARB:
-            case WGL_SHARE_STENCIL_ARB:
-            case WGL_SHARE_ACCUM_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = GL_TRUE;
-                break;
-
-            case WGL_SUPPORT_GDI_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = GL_FALSE;
-                break;
-
-            case WGL_SUPPORT_OPENGL_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = GL_TRUE;
-                break;
-
-            case WGL_DOUBLE_BUFFER_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = pf->double_buffer ? GL_TRUE : GL_FALSE;
-                break;
-
-            case WGL_STEREO_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = pf->stereo ? GL_TRUE : GL_FALSE;
-                break;
-
-            case WGL_PIXEL_TYPE_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                if (color_modes[pf->color_mode].is_float)
-                    piValues[i] = WGL_TYPE_RGBA_FLOAT_ARB;
-                else
-                    piValues[i] = WGL_TYPE_RGBA_ARB;
-                /* WGL_EXT_pixel_format_packed_float may be supported, which should in theory
-                   make another pixel type available: WGL_TYPE_RGBA_UNSIGNED_FLOAT_EXT.
-                   However, Mac contexts don't support rendering to unsigned floating-point
-                   formats, even when GL_EXT_packed_float is supported. */
-                break;
-
-            case WGL_COLOR_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                /* If the mode doesn't have alpha, return bits per pixel instead
-                   of color bits.  On Windows, color bits sometimes exceeds r+g+b
-                   (e.g. it's 32 for an R8G8B8A0 pixel format).  If an app depends
-                   on that and expects that WGL_COLOR_BITS_ARB >= 32 for such a
-                   pixel format, we need to accommodate that. */
-                if (color_modes[pf->color_mode].alpha_bits)
-                    piValues[i] = color_modes[pf->color_mode].color_bits;
-                else
-                    piValues[i] = color_modes[pf->color_mode].bits_per_pixel;
-                break;
-
-            case WGL_RED_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = color_modes[pf->color_mode].red_bits;
-                break;
-
-            case WGL_RED_SHIFT_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = color_modes[pf->color_mode].red_shift;
-                break;
-
-            case WGL_GREEN_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = color_modes[pf->color_mode].green_bits;
-                break;
-
-            case WGL_GREEN_SHIFT_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = color_modes[pf->color_mode].green_shift;
-                break;
-
-            case WGL_BLUE_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = color_modes[pf->color_mode].blue_bits;
-                break;
-
-            case WGL_BLUE_SHIFT_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = color_modes[pf->color_mode].blue_shift;
-                break;
-
-            case WGL_ALPHA_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = color_modes[pf->color_mode].alpha_bits;
-                break;
-
-            case WGL_ALPHA_SHIFT_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = color_modes[pf->color_mode].alpha_shift;
-                break;
-
-            case WGL_ACCUM_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                if (pf->accum_mode)
-                    piValues[i] = color_modes[pf->accum_mode - 1].color_bits;
-                else
-                    piValues[i] = 0;
-                break;
-
-            case WGL_ACCUM_RED_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                if (pf->accum_mode)
-                    piValues[i] = color_modes[pf->accum_mode - 1].red_bits;
-                else
-                    piValues[i] = 0;
-                break;
-
-            case WGL_ACCUM_GREEN_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                if (pf->accum_mode)
-                    piValues[i] = color_modes[pf->accum_mode - 1].green_bits;
-                else
-                    piValues[i] = 0;
-                break;
-
-            case WGL_ACCUM_BLUE_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                if (pf->accum_mode)
-                    piValues[i] = color_modes[pf->accum_mode - 1].blue_bits;
-                else
-                    piValues[i] = 0;
-                break;
-
-            case WGL_ACCUM_ALPHA_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                if (pf->accum_mode)
-                    piValues[i] = color_modes[pf->accum_mode - 1].alpha_bits;
-                else
-                    piValues[i] = 0;
-                break;
-
-            case WGL_DEPTH_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = pf->depth_bits;
-                break;
-
-            case WGL_STENCIL_BITS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = pf->stencil_bits;
-                break;
-
-            case WGL_AUX_BUFFERS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = pf->aux_buffers;
-                break;
-
-            case WGL_SAMPLE_BUFFERS_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = pf->sample_buffers;
-                break;
-
-            case WGL_SAMPLES_ARB:
-                if (iLayerPlane) goto invalid_layer;
-                piValues[i] = pf->samples;
-                break;
-
-            case WGL_FRAMEBUFFER_SRGB_CAPABLE_ARB: /* a.k.a. WGL_FRAMEBUFFER_SRGB_CAPABLE_EXT */
-                if (iLayerPlane) goto invalid_layer;
-                /* sRGB is only supported for 8-bit integer color components */
-                if (color_modes[pf->color_mode].red_bits == 8 &&
-                    color_modes[pf->color_mode].green_bits == 8 &&
-                    color_modes[pf->color_mode].blue_bits == 8 &&
-                    !color_modes[pf->color_mode].is_float)
-                    piValues[i] = GL_TRUE;
-                else
-                    piValues[i] = GL_FALSE;
-                break;
-
-            case WGL_DRAW_TO_PBUFFER_ARB:
-            case WGL_BIND_TO_TEXTURE_RGB_ARB:
-            case WGL_BIND_TO_TEXTURE_RECTANGLE_RGB_NV:
-                piValues[i] = pf->pbuffer ? GL_TRUE : GL_FALSE;
-                break;
-
-            case WGL_BIND_TO_TEXTURE_RGBA_ARB:
-            case WGL_BIND_TO_TEXTURE_RECTANGLE_RGBA_NV:
-                piValues[i] = (pf->pbuffer && color_modes[pf->color_mode].alpha_bits) ? GL_TRUE : GL_FALSE;
-                break;
-
-            case WGL_MAX_PBUFFER_WIDTH_ARB:
-                piValues[i] = gl_info.max_viewport_dims[0];
-                break;
-
-            case WGL_MAX_PBUFFER_HEIGHT_ARB:
-                piValues[i] = gl_info.max_viewport_dims[1];
-                break;
-
-            case WGL_MAX_PBUFFER_PIXELS_ARB:
-                piValues[i] = gl_info.max_viewport_dims[0] * gl_info.max_viewport_dims[1];
-                break;
-
-            default:
-                WARN("invalid attribute %x\n", piAttributes[i]);
-                return GL_FALSE;
-        }
-
-        TRACE("%s\n", debugstr_attrib(piAttributes[i], piValues[i]));
-    }
-
-    return GL_TRUE;
-
-invalid_layer:
-    FIXME("unsupported iLayerPlane %d\n", iLayerPlane);
-    return GL_FALSE;
 }
 
 
@@ -3993,17 +3256,6 @@ static BOOL macdrv_wglSetPbufferAttribARB(struct wgl_pbuffer *pbuffer, const int
 
 
 /**********************************************************************
- *              macdrv_wglSetPixelFormatWINE
- *
- * WGL_WINE_pixel_format_passthrough: wglSetPixelFormatWINE
- */
-static BOOL macdrv_wglSetPixelFormatWINE(HDC hdc, int fmt)
-{
-    return set_pixel_format(hdc, fmt, TRUE);
-}
-
-
-/**********************************************************************
  *              macdrv_wglSwapIntervalEXT
  *
  * WGL_EXT_swap_control: wglSwapIntervalEXT
@@ -4073,22 +3325,14 @@ static void register_extension(const char *ext)
     TRACE("'%s'\n", ext);
 }
 
-static void load_extensions(void)
+static const char *macdrv_init_wgl_extensions(void)
 {
     /*
      * ARB Extensions
      */
-    register_extension("WGL_ARB_extensions_string");
-    opengl_funcs.p_wglGetExtensionsStringARB = macdrv_wglGetExtensionsStringARB;
-
     register_extension("WGL_ARB_make_current_read");
     opengl_funcs.p_wglGetCurrentReadDCARB   = (void *)1;  /* never called */
     opengl_funcs.p_wglMakeContextCurrentARB = macdrv_wglMakeContextCurrentARB;
-
-    register_extension("WGL_ARB_pixel_format");
-    opengl_funcs.p_wglChoosePixelFormatARB      = macdrv_wglChoosePixelFormatARB;
-    opengl_funcs.p_wglGetPixelFormatAttribfvARB = (void *)1; /* never called */
-    opengl_funcs.p_wglGetPixelFormatAttribivARB = macdrv_wglGetPixelFormatAttribivARB;
 
     if (gluCheckExtension((GLubyte*)"GL_ARB_color_buffer_float", (GLubyte*)gl_info.glExtensions))
     {
@@ -4128,9 +3372,6 @@ static void load_extensions(void)
     /*
      * EXT Extensions
      */
-    register_extension("WGL_EXT_extensions_string");
-    opengl_funcs.p_wglGetExtensionsStringEXT = macdrv_wglGetExtensionsStringEXT;
-
     if (allow_vsync)
     {
         register_extension("WGL_EXT_swap_control");
@@ -4150,38 +3391,33 @@ static void load_extensions(void)
      * WINE-specific WGL Extensions
      */
 
-    /* In WineD3D we need the ability to set the pixel format more than once (e.g. after a device reset).
-     * The default wglSetPixelFormat doesn't allow this, so add our own which allows it.
-     */
-    register_extension("WGL_WINE_pixel_format_passthrough");
-    opengl_funcs.p_wglSetPixelFormatWINE = macdrv_wglSetPixelFormatWINE;
-
     register_extension("WGL_WINE_query_renderer");
     opengl_funcs.p_wglQueryCurrentRendererIntegerWINE = macdrv_wglQueryCurrentRendererIntegerWINE;
     opengl_funcs.p_wglQueryCurrentRendererStringWINE = macdrv_wglQueryCurrentRendererStringWINE;
     opengl_funcs.p_wglQueryRendererIntegerWINE = macdrv_wglQueryRendererIntegerWINE;
     opengl_funcs.p_wglQueryRendererStringWINE = macdrv_wglQueryRendererStringWINE;
+
+    return gl_info.wglExtensions;
 }
 
-
 /**********************************************************************
- *              macdrv_wine_get_wgl_driver
+ *              macdrv_OpenGLInit
  */
-struct opengl_funcs *macdrv_wine_get_wgl_driver(UINT version)
+UINT macdrv_OpenGLInit(UINT version, struct opengl_funcs **funcs, const struct opengl_driver_funcs **driver_funcs)
 {
     TRACE("()\n");
 
     if (version != WINE_OPENGL_DRIVER_VERSION)
     {
         ERR("version mismatch, opengl32 wants %u but macdrv has %u\n", version, WINE_OPENGL_DRIVER_VERSION);
-        return NULL;
+        return STATUS_INVALID_PARAMETER;
     }
 
     dc_pbuffers = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
     if (!dc_pbuffers)
     {
         WARN("CFDictionaryCreateMutable failed\n");
-        return NULL;
+        return STATUS_NOT_SUPPORTED;
     }
 
     opengl_handle = dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_LAZY|RTLD_LOCAL|RTLD_NOLOAD);
@@ -4189,7 +3425,7 @@ struct opengl_funcs *macdrv_wine_get_wgl_driver(UINT version)
     {
         ERR("Failed to load OpenGL: %s\n", dlerror());
         ERR("OpenGL support is disabled.\n");
-        return NULL;
+        return STATUS_NOT_SUPPORTED;
     }
 
 #define USE_GL_FUNC(func) \
@@ -4226,16 +3462,17 @@ struct opengl_funcs *macdrv_wine_get_wgl_driver(UINT version)
     if (gluCheckExtension((GLubyte*)"GL_APPLE_flush_render", (GLubyte*)gl_info.glExtensions))
         pglFlushRenderAPPLE = dlsym(opengl_handle, "glFlushRenderAPPLE");
 
-    load_extensions();
     if (!init_pixel_formats())
         goto failed;
 
-    return &opengl_funcs;
+    *funcs = &opengl_funcs;
+    *driver_funcs = &macdrv_driver_funcs;
+    return STATUS_SUCCESS;
 
 failed:
     dlclose(opengl_handle);
     opengl_handle = NULL;
-    return NULL;
+    return STATUS_NOT_SUPPORTED;
 }
 
 
@@ -4262,23 +3499,23 @@ void sync_gl_view(struct macdrv_win_data* data, const struct window_rects *old_r
 }
 
 
-static void describe_pixel_format(const pixel_format *pf, PIXELFORMATDESCRIPTOR *descr)
+static void describe_pixel_format(const pixel_format *pf, struct wgl_pixel_format *descr)
 {
     const struct color_mode *mode;
 
     memset(descr, 0, sizeof(*descr));
-    descr->nSize            = sizeof(*descr);
-    descr->nVersion         = 1;
+    descr->pfd.nSize        = sizeof(*descr);
+    descr->pfd.nVersion     = 1;
 
-    descr->dwFlags          = PFD_SUPPORT_OPENGL;
-    if (pf->window)         descr->dwFlags |= PFD_DRAW_TO_WINDOW;
-    if (!pf->accelerated)   descr->dwFlags |= PFD_GENERIC_FORMAT;
-    else                    descr->dwFlags |= PFD_SUPPORT_COMPOSITION;
-    if (pf->double_buffer)  descr->dwFlags |= PFD_DOUBLEBUFFER;
-    if (pf->stereo)         descr->dwFlags |= PFD_STEREO;
-    if (pf->backing_store)  descr->dwFlags |= PFD_SWAP_COPY;
+    descr->pfd.dwFlags      = PFD_SUPPORT_OPENGL;
+    if (pf->window)         descr->pfd.dwFlags |= PFD_DRAW_TO_WINDOW;
+    if (!pf->accelerated)   descr->pfd.dwFlags |= PFD_GENERIC_FORMAT;
+    else                    descr->pfd.dwFlags |= PFD_SUPPORT_COMPOSITION;
+    if (pf->double_buffer)  descr->pfd.dwFlags |= PFD_DOUBLEBUFFER;
+    if (pf->stereo)         descr->pfd.dwFlags |= PFD_STEREO;
+    if (pf->backing_store)  descr->pfd.dwFlags |= PFD_SWAP_COPY;
 
-    descr->iPixelType       = PFD_TYPE_RGBA;
+    descr->pfd.iPixelType   = PFD_TYPE_RGBA;
 
     mode = &color_modes[pf->color_mode];
     /* If the mode doesn't have alpha, return bits per pixel instead of color bits.
@@ -4286,32 +3523,65 @@ static void describe_pixel_format(const pixel_format *pf, PIXELFORMATDESCRIPTOR 
        R8G8B8A0 pixel format).  If an app depends on that and expects that
        cColorBits >= 32 for such a pixel format, we need to accommodate that. */
     if (mode->alpha_bits)
-        descr->cColorBits   = mode->color_bits;
+        descr->pfd.cColorBits = mode->color_bits;
     else
-        descr->cColorBits   = mode->bits_per_pixel;
-    descr->cRedBits         = mode->red_bits;
-    descr->cRedShift        = mode->red_shift;
-    descr->cGreenBits       = mode->green_bits;
-    descr->cGreenShift      = mode->green_shift;
-    descr->cBlueBits        = mode->blue_bits;
-    descr->cBlueShift       = mode->blue_shift;
-    descr->cAlphaBits       = mode->alpha_bits;
-    descr->cAlphaShift      = mode->alpha_shift;
+        descr->pfd.cColorBits = mode->bits_per_pixel;
+    descr->pfd.cRedBits     = mode->red_bits;
+    descr->pfd.cRedShift    = mode->red_shift;
+    descr->pfd.cGreenBits   = mode->green_bits;
+    descr->pfd.cGreenShift  = mode->green_shift;
+    descr->pfd.cBlueBits    = mode->blue_bits;
+    descr->pfd.cBlueShift   = mode->blue_shift;
+    descr->pfd.cAlphaBits   = mode->alpha_bits;
+    descr->pfd.cAlphaShift  = mode->alpha_shift;
 
     if (pf->accum_mode)
     {
         mode = &color_modes[pf->accum_mode - 1];
-        descr->cAccumBits       = mode->color_bits;
-        descr->cAccumRedBits    = mode->red_bits;
-        descr->cAccumGreenBits  = mode->green_bits;
-        descr->cAccumBlueBits   = mode->blue_bits;
-        descr->cAccumAlphaBits  = mode->alpha_bits;
+        descr->pfd.cAccumBits      = mode->color_bits;
+        descr->pfd.cAccumRedBits   = mode->red_bits;
+        descr->pfd.cAccumGreenBits = mode->green_bits;
+        descr->pfd.cAccumBlueBits  = mode->blue_bits;
+        descr->pfd.cAccumAlphaBits = mode->alpha_bits;
     }
 
-    descr->cDepthBits       = pf->depth_bits;
-    descr->cStencilBits     = pf->stencil_bits;
-    descr->cAuxBuffers      = pf->aux_buffers;
-    descr->iLayerType       = PFD_MAIN_PLANE;
+    descr->pfd.cDepthBits   = pf->depth_bits;
+    descr->pfd.cStencilBits = pf->stencil_bits;
+    descr->pfd.cAuxBuffers  = pf->aux_buffers;
+    descr->pfd.iLayerType   = PFD_MAIN_PLANE;
+
+    if (pf->double_buffer && pf->backing_store) descr->swap_method = WGL_SWAP_COPY_ARB;
+    else descr->swap_method = WGL_SWAP_UNDEFINED_ARB;
+
+    /* WGL_EXT_pixel_format_packed_float may be supported, which should in theory
+       make another pixel type available: WGL_TYPE_RGBA_UNSIGNED_FLOAT_EXT.
+       However, Mac contexts don't support rendering to unsigned floating-point
+       formats, even when GL_EXT_packed_float is supported. */
+    if (color_modes[pf->color_mode].is_float) descr->pixel_type = WGL_TYPE_RGBA_FLOAT_ARB;
+    else descr->pixel_type = WGL_TYPE_RGBA_ARB;
+
+    descr->sample_buffers = pf->sample_buffers;
+    descr->samples = pf->samples;
+
+    /* sRGB is only supported for 8-bit integer color components */
+    if (color_modes[pf->color_mode].red_bits == 8 &&
+        color_modes[pf->color_mode].green_bits == 8 &&
+        color_modes[pf->color_mode].blue_bits == 8 &&
+        !color_modes[pf->color_mode].is_float)
+        descr->framebuffer_srgb_capable = GL_TRUE;
+    else
+        descr->framebuffer_srgb_capable = GL_FALSE;
+
+    descr->draw_to_pbuffer = pf->pbuffer ? GL_TRUE : GL_FALSE;
+    descr->bind_to_texture_rgb = pf->pbuffer ? GL_TRUE : GL_FALSE;
+    descr->bind_to_texture_rectangle_rgb = pf->pbuffer ? GL_TRUE : GL_FALSE;
+
+    descr->bind_to_texture_rgba = (pf->pbuffer && color_modes[pf->color_mode].alpha_bits) ? GL_TRUE : GL_FALSE;
+    descr->bind_to_texture_rectangle_rgba = (pf->pbuffer && color_modes[pf->color_mode].alpha_bits) ? GL_TRUE : GL_FALSE;
+
+    descr->max_pbuffer_width = gl_info.max_viewport_dims[0];
+    descr->max_pbuffer_height = gl_info.max_viewport_dims[1];
+    descr->max_pbuffer_pixels = gl_info.max_viewport_dims[0] * gl_info.max_viewport_dims[1];
 }
 
 /***********************************************************************
@@ -4360,32 +3630,6 @@ static BOOL macdrv_wglDeleteContext(struct wgl_context *context)
 }
 
 /***********************************************************************
- *              macdrv_wglGetPixelFormat
- */
-static int macdrv_wglGetPixelFormat(HDC hdc)
-{
-    int format;
-    HWND hwnd;
-
-    if ((hwnd = NtUserWindowFromDC( hdc )))
-        return win32u_get_window_pixel_format( hwnd );
-
-    format = get_dc_pixel_format(NULL, hdc);
-
-    if (!is_valid_pixel_format(format))  /* not set yet */
-        format = 0;
-    else if (!is_displayable_pixel_format(format))
-    {
-        /* Non-displayable formats can't be used with traditional WGL calls.
-         * As has been verified on Windows GetPixelFormat doesn't fail but returns pixel format 1. */
-        format = 1;
-    }
-
-    TRACE(" hdc %p -> %d\n", hdc, format);
-    return format;
-}
-
-/***********************************************************************
  *              macdrv_wglGetProcAddress
  */
 static PROC macdrv_wglGetProcAddress(const char *proc)
@@ -4419,14 +3663,6 @@ static BOOL macdrv_wglMakeCurrent(HDC hdc, struct wgl_context *context)
           (context ? context->cglcontext : NULL));
 
     return macdrv_wglMakeContextCurrentARB(hdc, hdc, context);
-}
-
-/**********************************************************************
- *              macdrv_wglSetPixelFormat
- */
-static BOOL macdrv_wglSetPixelFormat(HDC hdc, int fmt, const PIXELFORMATDESCRIPTOR *descr)
-{
-    return set_pixel_format(hdc, fmt, FALSE);
 }
 
 /***********************************************************************
@@ -4561,21 +3797,25 @@ static void macdrv_get_pixel_formats(struct wgl_pixel_format *formats,
     if (formats)
     {
         for (i = 0; i < min(max_formats, nb_formats); ++i)
-            describe_pixel_format(&pixel_formats[i], &formats[i].pfd);
+            describe_pixel_format(&pixel_formats[i], &formats[i]);
     }
     *num_formats = nb_formats;
     *num_onscreen_formats = nb_displayable_formats;
 }
+
+static const struct opengl_driver_funcs macdrv_driver_funcs =
+{
+    .p_init_wgl_extensions = macdrv_init_wgl_extensions,
+    .p_set_pixel_format = macdrv_set_pixel_format,
+};
 
 static struct opengl_funcs opengl_funcs =
 {
     .p_wglCopyContext = macdrv_wglCopyContext,
     .p_wglCreateContext = macdrv_wglCreateContext,
     .p_wglDeleteContext = macdrv_wglDeleteContext,
-    .p_wglGetPixelFormat = macdrv_wglGetPixelFormat,
     .p_wglGetProcAddress = macdrv_wglGetProcAddress,
     .p_wglMakeCurrent = macdrv_wglMakeCurrent,
-    .p_wglSetPixelFormat = macdrv_wglSetPixelFormat,
     .p_wglShareLists = macdrv_wglShareLists,
     .p_wglSwapBuffers = macdrv_wglSwapBuffers,
     .p_get_pixel_formats = macdrv_get_pixel_formats,

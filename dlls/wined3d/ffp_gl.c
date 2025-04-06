@@ -100,22 +100,15 @@ void state_shademode(struct wined3d_context *context, const struct wined3d_state
 {
     const struct wined3d_gl_info *gl_info = wined3d_context_gl(context)->gl_info;
 
-    switch (state->render_states[WINED3D_RS_SHADEMODE])
+    if (state->extra_ps_args.flat_shading)
     {
-        case WINED3D_SHADE_FLAT:
-            gl_info->gl_ops.gl.p_glShadeModel(GL_FLAT);
-            checkGLcall("glShadeModel(GL_FLAT)");
-            break;
-        case WINED3D_SHADE_GOURAUD:
-        /* WINED3D_SHADE_PHONG in practice is the same as WINED3D_SHADE_GOURAUD
-         * in D3D. */
-        case WINED3D_SHADE_PHONG:
-            gl_info->gl_ops.gl.p_glShadeModel(GL_SMOOTH);
-            checkGLcall("glShadeModel(GL_SMOOTH)");
-            break;
-        default:
-            FIXME("Unrecognized shade mode %#x.\n",
-                    state->render_states[WINED3D_RS_SHADEMODE]);
+        gl_info->gl_ops.gl.p_glShadeModel(GL_FLAT);
+        checkGLcall("glShadeModel(GL_FLAT)");
+    }
+    else
+    {
+        gl_info->gl_ops.gl.p_glShadeModel(GL_SMOOTH);
+        checkGLcall("glShadeModel(GL_SMOOTH)");
     }
 }
 
@@ -1570,15 +1563,15 @@ static void validate_state_table(struct wined3d_state_entry *state_table)
         { 11,  14},
         { 16,  24},
         { 27,  27},
-        { 30,  33},
-        { 39,  40},
+        { 30,  34},
+        { 36,  40},
         { 42,  47},
         { 49, 135},
         {138, 139},
         {144, 144},
         {149, 150},
         {153, 153},
-        {157, 160},
+        {156, 160},
         {162, 165},
         {167, 193},
         {195, 209},
