@@ -1046,6 +1046,9 @@ static BOOL get_event(IMFMediaEventGenerator *generator, MediaEventType expected
 
             break;
         }
+
+        IMFMediaEvent_Release(callback->media_event);
+        callback->media_event = NULL;
     }
 
     if (callback->media_event)
@@ -1230,6 +1233,7 @@ static void test_compressed_media_types(IMFSourceResolver *resolver)
         IMFStreamDescriptor_Release(sd);
 
         IMFPresentationDescriptor_Release(descriptor);
+        IMFMediaSource_Shutdown(source);
         IMFMediaSource_Release(source);
         IMFByteStream_Release(stream);
 
@@ -1377,8 +1381,8 @@ static void test_source_resolver(void)
     ok(mediasource != NULL, "got %p\n", mediasource);
     ok(obj_type == MF_OBJECT_MEDIASOURCE, "got %d\n", obj_type);
 
+    IMFMediaSource_Shutdown(mediasource);
     refcount = IMFMediaSource_Release(mediasource);
-    todo_wine
     ok(!refcount, "Unexpected refcount %ld\n", refcount);
     IMFByteStream_Release(stream);
 
@@ -1390,7 +1394,11 @@ static void test_source_resolver(void)
     hr = IMFSourceResolver_CreateObjectFromByteStream(resolver, stream, NULL, MF_RESOLUTION_MEDIASOURCE, NULL,
             &obj_type, (IUnknown **)&mediasource);
     ok(hr == S_OK || broken(hr == MF_E_UNSUPPORTED_BYTESTREAM_TYPE) /* w7 || w8 */, "Unexpected hr %#lx.\n", hr);
-    if (hr == S_OK) IMFMediaSource_Release(mediasource);
+    if (hr == S_OK)
+    {
+        IMFMediaSource_Shutdown(mediasource);
+        IMFMediaSource_Release(mediasource);
+    }
     IMFByteStream_Release(stream);
 
     hr = MFCreateFile(MF_ACCESSMODE_READ, MF_OPENMODE_FAIL_IF_NOT_EXIST, MF_FILEFLAGS_NONE, filename, &stream);
@@ -1402,7 +1410,11 @@ static void test_source_resolver(void)
     hr = IMFSourceResolver_CreateObjectFromByteStream(resolver, stream, NULL, MF_RESOLUTION_MEDIASOURCE, NULL,
             &obj_type, (IUnknown **)&mediasource);
     ok(hr == S_OK || broken(hr == MF_E_UNSUPPORTED_BYTESTREAM_TYPE) /* w7 || w8 */, "Unexpected hr %#lx.\n", hr);
-    if (hr == S_OK) IMFMediaSource_Release(mediasource);
+    if (hr == S_OK)
+    {
+        IMFMediaSource_Shutdown(mediasource);
+        IMFMediaSource_Release(mediasource);
+    }
     IMFByteStream_Release(stream);
 
     /* stream must have a valid header, media cannot start in the middle of a stream */
@@ -6346,6 +6358,9 @@ static void test_local_handlers(void)
         return;
     }
 
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
     hr = pMFRegisterLocalSchemeHandler(NULL, NULL);
     ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
 
@@ -6375,6 +6390,9 @@ static void test_local_handlers(void)
 
     hr = pMFRegisterLocalByteStreamHandler(localW, localW, &local_activate);
     ok(hr == S_OK, "Failed to register stream handler, hr %#lx.\n", hr);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Failed to shut down, hr %#lx.\n", hr);
 }
 
 static void test_create_property_store(void)

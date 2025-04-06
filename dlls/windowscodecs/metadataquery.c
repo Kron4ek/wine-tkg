@@ -247,7 +247,7 @@ struct query_parser
     HRESULT hr;
 };
 
-static bool wincodecs_array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
+bool wincodecs_array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
 {
     size_t new_capacity, max_capacity;
     void *new_elements;
@@ -528,8 +528,8 @@ static void parse_query_component(struct query_parser *parser)
 static HRESULT parser_set_top_level_metadata_handler(struct query_handler *query_handler,
         struct query_parser *parser)
 {
+    IWICMetadataReader *handler = NULL;
     struct query_component *comp;
-    IWICMetadataReader *handler;
     HRESULT hr;
     GUID format;
     UINT count, i, matched_index;

@@ -21,6 +21,14 @@
 
 #include <pshpack1.h>
 
+#ifndef USE_WS_PREFIX
+#define BTHPROTO_RFCOMM    0x03
+#else
+#define WS_BTHPROTO_RFCOMM 0x03
+#endif
+
+#define BT_PORT_ANY -1
+
 typedef struct _SOCKADDR_BTH
 {
     USHORT addressFamily;

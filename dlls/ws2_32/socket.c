@@ -168,6 +168,21 @@ static const WSAPROTOCOL_INFOW supported_protocols[] =
         .szProtocol = L"SPX II",
     },
     {
+        .dwServiceFlags1 = XP1_IFS_HANDLES | XP1_GRACEFUL_CLOSE | XP1_GUARANTEED_ORDER |
+                           XP1_GUARANTEED_DELIVERY,
+        .dwProviderFlags = PFL_MATCHES_PROTOCOL_ZERO,
+        .ProviderId = {0x9fc48064, 0x7298, 0x43e4, {0xb7, 0xbd, 0x18, 0x1f, 0x20, 0x89, 0x79, 0x2a}},
+        .dwCatalogEntryId = 1040,
+        .ProtocolChain.ChainLen = 1,
+        .iVersion = 2,
+        .iAddressFamily = AF_BTH,
+        .iMinSockAddr = sizeof(SOCKADDR_BTH),
+        .iMaxSockAddr = sizeof(SOCKADDR_BTH),
+        .iSocketType = SOCK_STREAM,
+        .iProtocol = BTHPROTO_RFCOMM,
+        .szProtocol = L"MSAFD RfComm [Bluetooth]",
+    },
+    {
         .dwServiceFlags1 = XP1_GUARANTEED_DELIVERY | XP1_GUARANTEED_ORDER | XP1_IFS_HANDLES,
         .dwProviderFlags = PFL_MATCHES_PROTOCOL_ZERO,
         .ProviderId = {0xa00943d9, 0x9c2e, 0x4633, {0x9b, 0x59, 0x00, 0x57, 0xa3, 0x16, 0x09, 0x94}},
@@ -1175,6 +1190,14 @@ int WINAPI bind( SOCKET s, const struct sockaddr *addr, int len )
 
         case AF_IRDA:
             if (len < sizeof(SOCKADDR_IRDA))
+            {
+                SetLastError( WSAEFAULT );
+                return -1;
+            }
+            break;
+
+        case AF_BTH:
+            if (len < sizeof(SOCKADDR_BTH))
             {
                 SetLastError( WSAEFAULT );
                 return -1;

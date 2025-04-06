@@ -1821,6 +1821,11 @@ BOOL SYSCALL_API NtUserInvalidateRgn( HWND hwnd, HRGN hrgn, BOOL erase )
     SYSCALL_FUNC( NtUserInvalidateRgn );
 }
 
+BOOL SYSCALL_API NtUserIsChildWindowDpiMessageEnabled( HWND hwnd )
+{
+    SYSCALL_FUNC( NtUserIsChildWindowDpiMessageEnabled );
+}
+
 BOOL SYSCALL_API NtUserIsClipboardFormatAvailable( UINT format )
 {
     SYSCALL_FUNC( NtUserIsClipboardFormatAvailable );
@@ -2048,6 +2053,11 @@ UINT SYSCALL_API NtUserSendInput( UINT count, INPUT *inputs, int size )
 HWND SYSCALL_API NtUserSetActiveWindow( HWND hwnd )
 {
     SYSCALL_FUNC( NtUserSetActiveWindow );
+}
+
+BOOL SYSCALL_API NtUserSetAdditionalForegroundBoostProcesses( HWND hwnd, DWORD count, HANDLE *handles )
+{
+    SYSCALL_FUNC( NtUserSetAdditionalForegroundBoostProcesses );
 }
 
 HWND SYSCALL_API NtUserSetCapture( HWND hwnd )

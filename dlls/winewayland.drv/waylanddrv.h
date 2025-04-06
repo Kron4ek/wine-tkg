@@ -120,7 +120,7 @@ struct wayland_text_input
     WCHAR *preedit_string;
     DWORD preedit_cursor_pos;
     WCHAR *commit_string;
-    struct wl_surface *wl_surface;
+    HWND focused_hwnd;
     pthread_mutex_t mutex;
 };
 
@@ -133,9 +133,21 @@ struct wayland_seat
 
 struct wayland_data_device
 {
-    struct zwlr_data_control_device_v1 *zwlr_data_control_device_v1;
-    struct zwlr_data_control_source_v1 *zwlr_data_control_source_v1;
-    struct zwlr_data_control_offer_v1 *clipboard_zwlr_data_control_offer_v1;
+    union
+    {
+        struct
+        {
+            struct zwlr_data_control_device_v1 *zwlr_data_control_device_v1;
+            struct zwlr_data_control_source_v1 *zwlr_data_control_source_v1;
+            struct zwlr_data_control_offer_v1 *clipboard_zwlr_data_control_offer_v1;
+        };
+        struct
+        {
+            struct wl_data_device *wl_data_device;
+            struct wl_data_source *wl_data_source;
+            struct wl_data_offer *clipboard_wl_data_offer;
+        };
+    };
     pthread_mutex_t mutex;
 };
 
@@ -155,6 +167,7 @@ struct wayland
     struct zwp_relative_pointer_manager_v1 *zwp_relative_pointer_manager_v1;
     struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3;
     struct zwlr_data_control_manager_v1 *zwlr_data_control_manager_v1;
+    struct wl_data_device_manager *wl_data_device_manager;
     struct wayland_seat seat;
     struct wayland_keyboard keyboard;
     struct wayland_pointer pointer;
@@ -163,6 +176,7 @@ struct wayland
     struct wl_list output_list;
     /* Protects the output_list and the wayland_output.current states. */
     pthread_mutex_t output_mutex;
+    LONG input_serial;
 };
 
 struct wayland_output_mode
@@ -425,6 +439,6 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
 BOOL WAYLAND_WindowPosChanging(HWND hwnd, UINT swp_flags, BOOL shaped, const struct window_rects *rects);
 BOOL WAYLAND_CreateWindowSurface(HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface);
 UINT WAYLAND_VulkanInit(UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs);
-struct opengl_funcs *WAYLAND_wine_get_wgl_driver(UINT version);
+UINT WAYLAND_OpenGLInit(UINT version, struct opengl_funcs **opengl_funcs, const struct opengl_driver_funcs **driver_funcs);
 
 #endif /* __WINE_WAYLANDDRV_H */

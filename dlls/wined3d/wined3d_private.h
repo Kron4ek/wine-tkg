@@ -1812,11 +1812,6 @@ void dispatch_compute(struct wined3d_device *device, const struct wined3d_state 
 #define STATE_UNORDERED_ACCESS_VIEW_BINDING(a) ((a) == WINED3D_PIPELINE_GRAPHICS ? \
     STATE_GRAPHICS_UNORDERED_ACCESS_VIEW_BINDING : STATE_COMPUTE_UNORDERED_ACCESS_VIEW_BINDING)
 
-enum fogsource {
-    FOGSOURCE_FFP,
-    FOGSOURCE_VS,
-};
-
 /* Direct3D terminology with little modifications. We do not have an issued
  * state because only the driver knows about it, but we have a created state
  * because D3D allows GetData() on a created query, but OpenGL doesn't. */
@@ -1916,8 +1911,6 @@ struct wined3d_context
 
     DWORD constant_update_mask;
     DWORD numbered_array_mask;
-    enum fogsource fog_source;
-
 
     void *shader_backend_data;
 
@@ -2561,6 +2554,10 @@ struct wined3d_adapter_ops
             struct wined3d_resource *resource, void *parent, const struct wined3d_parent_ops *parent_ops,
             struct wined3d_unordered_access_view **view);
     void (*adapter_destroy_unordered_access_view)(struct wined3d_unordered_access_view *view);
+    HRESULT (*adapter_create_video_decoder_output_view)(const struct wined3d_view_desc *desc,
+            struct wined3d_texture *texture, void *parent, const struct wined3d_parent_ops *parent_ops,
+            struct wined3d_decoder_output_view **view);
+    void (*adapter_destroy_video_decoder_output_view)(struct wined3d_decoder_output_view *view);
     HRESULT (*adapter_create_sampler)(struct wined3d_device *device, const struct wined3d_sampler_desc *desc,
             void *parent, const struct wined3d_parent_ops *parent_ops, struct wined3d_sampler **sampler);
     void (*adapter_destroy_sampler)(struct wined3d_sampler *sampler);
@@ -2845,7 +2842,13 @@ struct wined3d_ffp_ps_constants
 
     /* States not used by the HLSL pipeline. */
     float alpha_test_ref;
-    float padding[3]; /* to align to 16 bytes */
+    struct wined3d_ffp_fog_constants
+    {
+        float scale;
+        float end;
+        float density;
+        struct wined3d_color colour;
+    } fog;
 };
 
 /* Float/int/bool constants are bound to VKD3D_SHADER_D3DBC_*_CONSTANT_REGISTER
@@ -2865,6 +2868,16 @@ enum wined3d_push_constants
     WINED3D_PUSH_CONSTANTS_VS_FFP,
     WINED3D_PUSH_CONSTANTS_PS_FFP,
     WINED3D_PUSH_CONSTANTS_COUNT,
+};
+
+/* Pixel shader states part of the Direct3D 1-9 FFP, which are also used when
+ * using shaders, which are not implemented as uniforms.
+ * These eventually make their way into vs_compile_args / ps_compile_args, but
+ * those structs also include states other than the FFP states. */
+struct wined3d_extra_ps_args
+{
+    bool point_sprite;
+    bool flat_shading;
 };
 
 struct wined3d_blend_state
@@ -2967,6 +2980,7 @@ struct wined3d_state
     uint32_t sample_mask;
     struct wined3d_depth_stencil_state *depth_stencil_state;
     unsigned int stencil_ref;
+    struct wined3d_extra_ps_args extra_ps_args;
     bool depth_bounds_enable;
     float depth_bounds_min, depth_bounds_max;
     struct wined3d_rasterizer_state *rasterizer_state;
@@ -3698,6 +3712,8 @@ void wined3d_cs_emit_add_dirty_texture_region(struct wined3d_cs *cs,
         struct wined3d_texture *texture, unsigned int layer);
 void wined3d_cs_emit_clear(struct wined3d_cs *cs, DWORD rect_count, const RECT *rects,
         uint32_t flags, const struct wined3d_color *color, float depth, DWORD stencil);
+void wined3d_cs_emit_decode(struct wined3d_decoder *decoder, struct wined3d_decoder_output_view *output_view,
+        unsigned int bitstream_size, unsigned int slice_control_size);
 void wined3d_device_context_emit_clear_uav(struct wined3d_device_context *context,
         struct wined3d_unordered_access_view *view, const struct wined3d_uvec4 *clear_value, bool fp);
 void wined3d_cs_emit_preload_resource(struct wined3d_cs *cs, struct wined3d_resource *resource);
@@ -3754,6 +3770,8 @@ void wined3d_device_context_emit_set_depth_stencil_state(struct wined3d_device_c
         struct wined3d_depth_stencil_state *state, unsigned int stencil_ref);
 void wined3d_device_context_emit_set_depth_stencil_view(struct wined3d_device_context *context,
         struct wined3d_rendertarget_view *view);
+void wined3d_device_context_emit_set_extra_ps_args(struct wined3d_device_context *context,
+        const struct wined3d_extra_ps_args *args);
 void wined3d_device_context_emit_set_feature_level(struct wined3d_device_context *context,
         enum wined3d_feature_level level);
 void wined3d_device_context_emit_set_index_buffer(struct wined3d_device_context *context, struct wined3d_buffer *buffer,
@@ -4017,6 +4035,19 @@ void wined3d_unordered_access_view_invalidate_location(struct wined3d_unordered_
         uint32_t location);
 void wined3d_unordered_access_view_set_counter(struct wined3d_unordered_access_view *view,
         unsigned int value);
+
+struct wined3d_decoder_output_view
+{
+    LONG refcount;
+
+    struct wined3d_texture *texture;
+    void *parent;
+    const struct wined3d_parent_ops *parent_ops;
+
+    struct wined3d_view_desc desc;
+};
+
+void wined3d_decoder_output_view_cleanup(struct wined3d_decoder_output_view *view);
 
 struct wined3d_swapchain_state
 {
@@ -4449,8 +4480,6 @@ void get_texture_matrix(const struct wined3d_stateblock_state *state,
         const unsigned int tex, struct wined3d_matrix *mat);
 void get_pointsize_minmax(const struct wined3d_context *context, const struct wined3d_state *state,
         float *out_min, float *out_max);
-void get_fog_start_end(const struct wined3d_context *context, const struct wined3d_state *state,
-        float *start, float *end);
 
 struct wined3d_palette
 {
@@ -4470,6 +4499,9 @@ struct wined3d_decoder_ops
     HRESULT (*create)(struct wined3d_device *device,
             const struct wined3d_decoder_desc *desc, struct wined3d_decoder **decoder);
     void (*destroy)(struct wined3d_decoder *decoder);
+    void (*decode)(struct wined3d_context *context, struct wined3d_decoder *decoder,
+            struct wined3d_decoder_output_view *output_view,
+            unsigned int bitstream_size, unsigned int slice_control_size);
 };
 
 extern const struct wined3d_decoder_ops wined3d_decoder_vk_ops;

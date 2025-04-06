@@ -1220,30 +1220,27 @@ static BOOL write_gpu_to_registry( const struct gpu *gpu, const struct pci_id *p
     value = (ULONG)min( memory_size, (ULONGLONG)ULONG_MAX );
     set_reg_value( hkey, memory_sizeW, REG_DWORD, &value, sizeof(value) );
 
-    if (pci->vendor)
+    /* The last seven digits are the driver number. */
+    switch (pci->vendor)
     {
-        /* The last seven digits are the driver number. */
-        switch (pci->vendor)
-        {
-        /* Intel */
-        case 0x8086:
-            strcpy( buffer, "31.0.101.4576" );
-            break;
-        /* AMD */
-        case 0x1002:
-            strcpy( buffer, "31.0.14051.5006" );
-            break;
-        /* Nvidia */
-        case 0x10de:
-            strcpy( buffer, "31.0.15.3625" );
-            break;
-        /* Default value for any other vendor. */
-        default:
-            strcpy( buffer, "31.0.10.1000" );
-            break;
-        }
-        set_reg_ascii_value( hkey, "DriverVersion", buffer );
+    /* Intel */
+    case 0x8086:
+        strcpy( buffer, "31.0.101.4576" );
+        break;
+    /* AMD */
+    case 0x1002:
+        strcpy( buffer, "31.0.14051.5006" );
+        break;
+    /* Nvidia */
+    case 0x10de:
+        strcpy( buffer, "31.0.15.3625" );
+        break;
+    /* Default value for any other vendor. */
+    default:
+        strcpy( buffer, "31.0.10.1000" );
+        break;
     }
+    set_reg_ascii_value( hkey, "DriverVersion", buffer );
 
     NtClose( hkey );
 
@@ -6971,6 +6968,16 @@ BOOL WINAPI NtUserMessageBeep( UINT type )
     NtUserSystemParametersInfo( SPI_GETBEEP, 0, &active, FALSE );
     if (active) user_driver->pBeep();
     return TRUE;
+}
+
+/***********************************************************************
+ *	     NtUserSetAdditionalForegroundBoostProcesses    (win32u.@)
+ */
+BOOL WINAPI NtUserSetAdditionalForegroundBoostProcesses( HWND hwnd, DWORD count, HANDLE *handles )
+{
+    FIXME( "%p %u %p stub!\n", hwnd, (unsigned int)count, handles );
+    RtlSetLastWin32Error( ERROR_CALL_NOT_IMPLEMENTED );
+    return FALSE;
 }
 
 static DWORD exiting_thread_id;

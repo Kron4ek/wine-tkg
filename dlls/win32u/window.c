@@ -360,7 +360,7 @@ HWND get_parent( HWND hwnd )
     if (win == WND_DESKTOP) return 0;
     if (win == WND_OTHER_PROCESS)
     {
-        LONG style = get_window_long( hwnd, GWL_STYLE );
+        DWORD style = get_window_long( hwnd, GWL_STYLE );
         if (style & (WS_POPUP | WS_CHILD))
         {
             SERVER_START_REQ( get_window_tree )
@@ -744,7 +744,7 @@ BOOL is_window_drawable( HWND hwnd, BOOL icon )
     HWND *list;
     BOOL retval = TRUE;
     int i;
-    LONG style = get_window_long( hwnd, GWL_STYLE );
+    DWORD style = get_window_long( hwnd, GWL_STYLE );
 
     if (!(style & WS_VISIBLE)) return FALSE;
     if ((style & WS_MINIMIZE) && icon && get_class_long_ptr( hwnd, GCLP_HICON, FALSE ))  return FALSE;
@@ -849,7 +849,7 @@ static BOOL is_hung_app_window( HWND hwnd )
 /* see IsWindowEnabled */
 BOOL is_window_enabled( HWND hwnd )
 {
-    LONG ret;
+    DWORD ret;
 
     RtlSetLastWin32Error( NO_ERROR );
     ret = get_window_long( hwnd, GWL_STYLE );
@@ -1457,7 +1457,7 @@ LONG_PTR WINAPI NtUserSetWindowLongPtr( HWND hwnd, INT offset, LONG_PTR newval, 
     return set_window_long( hwnd, offset, sizeof(LONG_PTR), newval, ansi );
 }
 
-BOOL win32u_set_window_pixel_format( HWND hwnd, int format, BOOL internal )
+BOOL set_window_pixel_format( HWND hwnd, int format, BOOL internal )
 {
     WND *win = get_win_ptr( hwnd );
 
@@ -1476,7 +1476,7 @@ BOOL win32u_set_window_pixel_format( HWND hwnd, int format, BOOL internal )
     return TRUE;
 }
 
-int win32u_get_window_pixel_format( HWND hwnd )
+int get_window_pixel_format( HWND hwnd )
 {
     WND *win = get_win_ptr( hwnd );
     int ret;
@@ -2091,7 +2091,7 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, stru
             extra_rects[0] = extra_rects[1] = new_rects->visible;
             if (new_surface)
             {
-                extra_rects[1] = new_surface->rect;
+                extra_rects[1] = is_layered ? dummy_surface.rect : new_surface->rect;
                 OffsetRect( &extra_rects[1], new_rects->visible.left, new_rects->visible.top );
             }
             if (valid_rects) extra_rects[2] = valid_rects[0];
@@ -2481,7 +2481,11 @@ BOOL WINAPI NtUserUpdateLayeredWindow( HWND hwnd, HDC hdc_dst, const POINT *pts_
     apply_window_pos( hwnd, 0, swp_flags, surface, &new_rects, NULL );
     if (!surface) return FALSE;
 
-    if (!hdc_src || surface == &dummy_surface) ret = TRUE;
+    if (!hdc_src || surface == &dummy_surface)
+    {
+        user_driver->pUpdateLayeredWindow( hwnd, blend->SourceConstantAlpha, flags );
+        ret = TRUE;
+    }
     else
     {
         BLENDFUNCTION src_blend = { AC_SRC_OVER, 0, 255, 0 };
@@ -2502,7 +2506,6 @@ BOOL WINAPI NtUserUpdateLayeredWindow( HWND hwnd, HDC hdc_dst, const POINT *pts_
         if (pts_src) OffsetRect( &src_rect, pts_src->x, pts_src->y );
         NtGdiTransformPoints( hdc_src, (POINT *)&src_rect, (POINT *)&src_rect, 2, NtGdiDPtoLP );
 
-        if (flags & ULW_ALPHA) src_blend = *blend;
         ret = NtGdiAlphaBlend( hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
                                hdc_src, src_rect.left, src_rect.top, src_rect.right - src_rect.left, src_rect.bottom - src_rect.top,
                                *(DWORD *)&src_blend, 0 );
@@ -2514,7 +2517,7 @@ BOOL WINAPI NtUserUpdateLayeredWindow( HWND hwnd, HDC hdc_dst, const POINT *pts_
         if (!(flags & ULW_COLORKEY)) key = CLR_INVALID;
         window_surface_set_layered( surface, key, -1, 0xff000000 );
 
-        user_driver->pUpdateLayeredWindow( hwnd, flags );
+        user_driver->pUpdateLayeredWindow( hwnd, blend->SourceConstantAlpha, flags );
         window_surface_flush( surface );
     }
 
@@ -2589,7 +2592,7 @@ HWND window_from_point( HWND hwnd, POINT pt, INT *hittest )
 
     for (i = 0; list[i]; i++)
     {
-        LONG style = get_window_long( list[i], GWL_STYLE );
+        DWORD style = get_window_long( list[i], GWL_STYLE );
 
         /* If window is minimized or disabled, return at once */
         if (style & WS_DISABLED)
@@ -2649,7 +2652,7 @@ HWND WINAPI NtUserChildWindowFromPointEx( HWND parent, LONG x, LONG y, UINT flag
         if (!PtInRect( &rect, pt )) continue;
         if (flags & (CWP_SKIPINVISIBLE|CWP_SKIPDISABLED))
         {
-            LONG style = get_window_long( list[i], GWL_STYLE );
+            DWORD style = get_window_long( list[i], GWL_STYLE );
             if ((flags & CWP_SKIPINVISIBLE) && !(style & WS_VISIBLE)) continue;
             if ((flags & CWP_SKIPDISABLED) && (style & WS_DISABLED)) continue;
         }
@@ -3829,10 +3832,11 @@ BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y )
 
     if (!(winpos->flags & (SWP_NOACTIVATE|SWP_HIDEWINDOW)))
     {
+        UINT style = get_window_long( winpos->hwnd, GWL_STYLE );
         /* child windows get WM_CHILDACTIVATE message */
-        if ((get_window_long( winpos->hwnd, GWL_STYLE ) & (WS_CHILD | WS_POPUP)) == WS_CHILD)
+        if ((style & (WS_CHILD | WS_POPUP)) == WS_CHILD)
             send_message( winpos->hwnd, WM_CHILDACTIVATE, 0, 0 );
-        else
+        else if (!(style & WS_MINIMIZE))
             set_foreground_window( winpos->hwnd, FALSE );
     }
 
@@ -4128,7 +4132,7 @@ UINT win_set_flags( HWND hwnd, UINT set_mask, UINT clear_mask )
  */
 static BOOL can_activate_window( HWND hwnd )
 {
-    LONG style;
+    DWORD style;
 
     if (!hwnd) return FALSE;
     style = get_window_long( hwnd, GWL_STYLE );
@@ -4204,11 +4208,11 @@ static void send_parent_notify( HWND hwnd, UINT msg )
  */
 MINMAXINFO get_min_max_info( HWND hwnd )
 {
-    LONG style = get_window_long( hwnd, GWL_STYLE );
-    LONG exstyle = get_window_long( hwnd, GWL_EXSTYLE );
+    DWORD style = get_window_long( hwnd, GWL_STYLE );
+    DWORD exstyle = get_window_long( hwnd, GWL_EXSTYLE );
     UINT context;
     RECT rc_work, rc_primary;
-    LONG adjusted_style;
+    DWORD adjusted_style;
     MINMAXINFO minmax;
     INT xinc, yinc;
     RECT rc;
@@ -4425,7 +4429,7 @@ static POINT get_minimized_pos( HWND hwnd, POINT pt )
 static UINT window_min_maximize( HWND hwnd, UINT cmd, RECT *rect )
 {
     UINT swp_flags = 0;
-    LONG old_style;
+    DWORD old_style;
     MINMAXINFO minmax;
     WINDOWPLACEMENT wpl;
 
@@ -4614,7 +4618,7 @@ static BOOL show_window( HWND hwnd, INT cmd )
 {
     WND *win;
     HWND parent;
-    LONG style = get_window_long( hwnd, GWL_STYLE ), new_style;
+    DWORD style = get_window_long( hwnd, GWL_STYLE ), new_style;
     BOOL was_visible = (style & WS_VISIBLE) != 0;
     BOOL show_flag = TRUE;
     RECT newPos = {0, 0, 0, 0};
@@ -6246,4 +6250,13 @@ HWND WINAPI NtUserSetTaskmanWindow( HWND hwnd )
     }
     SERVER_END_REQ;
     return hwnd;
+}
+
+/***********************************************************************
+ *            NtUserIsChildWindowDpiMessageEnabled (win32u.@)
+ */
+BOOL WINAPI NtUserIsChildWindowDpiMessageEnabled( HWND hwnd )
+{
+    FIXME( "%p: stub\n", hwnd );
+    return FALSE;
 }

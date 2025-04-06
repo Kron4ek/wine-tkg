@@ -226,7 +226,6 @@ extern void X11DRV_GetDC( HDC hdc, HWND hwnd, HWND top, const RECT *win_rect,
                           const RECT *top_rect, DWORD flags );
 extern void X11DRV_ReleaseDC( HWND hwnd, HDC hdc );
 extern BOOL X11DRV_ScrollDC( HDC hdc, INT dx, INT dy, HRGN update );
-extern void X11DRV_SetActiveWindow( HWND hwnd );
 extern void X11DRV_SetCapture( HWND hwnd, UINT flags );
 extern void X11DRV_SetDesktopWindow( HWND hwnd );
 extern void X11DRV_SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha,
@@ -240,11 +239,11 @@ extern UINT X11DRV_ShowWindow( HWND hwnd, INT cmd, RECT *rect, UINT swp );
 extern LRESULT X11DRV_SysCommand( HWND hwnd, WPARAM wparam, LPARAM lparam, const POINT *pos );
 extern LRESULT X11DRV_ClipboardWindowProc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp );
 extern void X11DRV_UpdateClipboard(void);
-extern void X11DRV_UpdateLayeredWindow( HWND hwnd, UINT flags );
+extern void X11DRV_UpdateLayeredWindow( HWND hwnd, BYTE alpha, UINT flags );
 extern LRESULT X11DRV_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp );
 extern BOOL X11DRV_WindowPosChanging( HWND hwnd, UINT swp_flags, BOOL shaped, const struct window_rects *rects );
 extern BOOL X11DRV_GetWindowStyleMasks( HWND hwnd, UINT style, UINT ex_style, UINT *style_mask, UINT *ex_style_mask );
-extern BOOL X11DRV_GetWindowStateUpdates( HWND hwnd, UINT *state_cmd, UINT *config_cmd, RECT *rect );
+extern BOOL X11DRV_GetWindowStateUpdates( HWND hwnd, UINT *state_cmd, UINT *config_cmd, RECT *rect, HWND *foreground );
 extern BOOL X11DRV_CreateWindowSurface( HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface );
 extern void X11DRV_MoveWindowBits( HWND hwnd, const struct window_rects *old_rects,
                                    const struct window_rects *new_rects, const RECT *valid_rects );
@@ -283,7 +282,7 @@ extern BOOL client_side_with_render;
 extern BOOL shape_layered_windows;
 extern const struct gdi_dc_funcs *X11DRV_XRender_Init(void);
 
-extern struct opengl_funcs *X11DRV_wine_get_wgl_driver( UINT version );
+extern UINT X11DRV_OpenGLInit( UINT, struct opengl_funcs **, const struct opengl_driver_funcs ** );
 extern UINT X11DRV_VulkanInit( UINT, void *, const struct vulkan_driver_funcs ** );
 
 extern struct format_entry *import_xdnd_selection( Display *display, Window win, Atom selection,
@@ -382,12 +381,16 @@ extern RECT host_window_configure_child( struct host_window *win, Window window,
 extern POINT host_window_map_point( struct host_window *win, int x, int y );
 extern struct host_window *get_host_window( Window window, BOOL create );
 
+struct display_state
+{
+    Window net_active_window;
+};
+
 struct x11drv_thread_data
 {
     Display *display;
     XEvent  *current_event;        /* event currently being processed */
     HWND     grab_hwnd;            /* window that currently grabs the mouse */
-    HWND     active_window;        /* active window */
     HWND     last_focus;           /* last window that had focus */
     HWND     keymapnotify_hwnd;    /* window that should receive modifier release events */
     XIM      xim;                  /* input method */
@@ -406,6 +409,11 @@ struct x11drv_thread_data
     int      xinput2_pointer;      /* XInput2 master pointer device id */
     int      xinput2_rawinput;     /* XInput2 rawinput-only thread */
 #endif /* HAVE_X11_EXTENSIONS_XINPUT2_H */
+
+    struct display_state desired_state;       /* display state tracking the desired / win32 state */
+    struct display_state pending_state;       /* display state tracking the pending / requested state */
+    struct display_state current_state;       /* display state tracking the current X11 state */
+    unsigned long net_active_window_serial;   /* serial of last pending _NET_ACTIVE_WINDOW request */
 };
 
 extern struct x11drv_thread_data *x11drv_init_thread_data(void);
@@ -616,6 +624,7 @@ enum x11drv_net_wm_state
 struct window_state
 {
     UINT wm_state;
+    BOOL activate;
     UINT net_wm_state;
     RECT rect;
 };
@@ -639,7 +648,6 @@ struct x11drv_win_data
     UINT        use_alpha : 1;  /* does window use an alpha channel? */
     UINT        skip_taskbar : 1; /* does window should be deleted from taskbar */
     UINT        add_taskbar : 1; /* does window should be added to taskbar regardless of style */
-    UINT        net_wm_fullscreen_monitors_set : 1; /* is _NET_WM_FULLSCREEN_MONITORS set */
     UINT        is_fullscreen : 1; /* is the window visible rect fullscreen */
     UINT        is_offscreen : 1; /* has been moved offscreen by the window manager */
     UINT        parent_invalid : 1; /* is the parent host window possibly invalid */
@@ -648,6 +656,7 @@ struct x11drv_win_data
     Pixmap         icon_mask;
     unsigned long *icon_bits;
     unsigned int   icon_size;
+    Time           user_time;
 
     struct window_state desired_state; /* window state tracking the desired / win32 state */
     struct window_state pending_state; /* window state tracking the pending / requested state */
@@ -668,16 +677,21 @@ extern void set_gl_drawable_parent( HWND hwnd, HWND parent );
 extern void destroy_gl_drawable( HWND hwnd );
 extern void destroy_vk_surface( HWND hwnd );
 
+extern BOOL window_should_take_focus( HWND hwnd, Time time );
 extern BOOL window_has_pending_wm_state( HWND hwnd, UINT state );
-extern void window_wm_state_notify( struct x11drv_win_data *data, unsigned long serial, UINT value );
+extern void window_wm_state_notify( struct x11drv_win_data *data, unsigned long serial, UINT value, Time time );
 extern void window_net_wm_state_notify( struct x11drv_win_data *data, unsigned long serial, UINT value );
 extern void window_configure_notify( struct x11drv_win_data *data, unsigned long serial, const RECT *rect );
-extern BOOL get_window_state_updates( HWND hwnd, UINT *state_cmd, UINT *config_cmd, RECT *rect );
 
+extern void set_net_active_window( HWND hwnd, HWND previous );
+extern Window get_net_active_window( Display *display );
+extern void net_active_window_notify( unsigned long serial, Window window, Time time );
+extern void net_active_window_init( struct x11drv_thread_data *data );
 extern void net_supported_init( struct x11drv_thread_data *data );
+extern BOOL is_net_supported( Atom atom );
 
 extern Window init_clip_window(void);
-extern void update_user_time( Time time );
+extern void window_set_user_time( struct x11drv_win_data *data, Time time, BOOL init );
 extern UINT get_window_net_wm_state( Display *display, Window window );
 extern void make_window_embedded( struct x11drv_win_data *data );
 extern Window create_client_window( HWND hwnd, const XVisualInfo *visual, Colormap colormap );
@@ -705,7 +719,7 @@ extern XContext winContext;
 extern XContext cursor_context;
 
 extern BOOL is_current_process_focused(void);
-extern void X11DRV_SetFocus( HWND hwnd );
+extern void X11DRV_ActivateWindow( HWND hwnd, HWND previous );
 extern void set_window_cursor( Window window, HCURSOR handle );
 extern void reapply_cursor_clipping(void);
 extern void ungrab_clipping_window(void);
@@ -713,7 +727,6 @@ extern void move_resize_window( HWND hwnd, int dir, POINT pos );
 extern void X11DRV_InitKeyboard( Display *display );
 extern void X11DRV_InitMouse( Display *display );
 extern BOOL X11DRV_ProcessEvents( DWORD mask );
-extern HWND *build_hwnd_list(void);
 
 typedef int (*x11drv_error_callback)( Display *display, XErrorEvent *event, void *arg );
 
@@ -723,7 +736,7 @@ extern POINT virtual_screen_to_root( INT x, INT y );
 extern POINT root_to_virtual_screen( INT x, INT y );
 extern RECT get_host_primary_monitor_rect(void);
 extern RECT get_work_area( const RECT *monitor_rect );
-extern BOOL xinerama_get_fullscreen_monitors( const RECT *rect, long *indices );
+extern void xinerama_get_fullscreen_monitors( const RECT *rect, long *indices );
 extern void xinerama_init( unsigned int width, unsigned int height );
 extern void init_recursive_mutex( pthread_mutex_t *mutex );
 

@@ -145,11 +145,12 @@ BOOL WINAPI SymEnumSourceFilesW(HANDLE hProcess, ULONG64 ModBase, PCWSTR Mask,
     char*               ptr;
     WCHAR*              conversion_buffer = NULL;
     DWORD               conversion_buffer_len = 0;
+    struct module_format_vtable_iterator iter = {};
 
     if (!cbSrcFiles) return FALSE;
     pair.pcs = process_find_by_handle(hProcess);
     if (!pair.pcs) return FALSE;
-         
+
     if (ModBase)
     {
         pair.requested = module_find_by_addr(pair.pcs, ModBase);
@@ -157,10 +158,18 @@ BOOL WINAPI SymEnumSourceFilesW(HANDLE hProcess, ULONG64 ModBase, PCWSTR Mask,
     }
     else
     {
-        if (Mask[0] == '!')
+        WCHAR *bang = wcschr(Mask, '!');
+        if (bang)
         {
-            pair.requested = module_find_by_nameW(pair.pcs, Mask + 1);
+            WCHAR    *module_name;
+
+            if (!(module_name = HeapAlloc(GetProcessHeap(), 0, (bang - Mask + 1) * sizeof(WCHAR)))) return FALSE;
+            memcpy(module_name, Mask, (bang - Mask) * sizeof(WCHAR));
+            module_name[bang - Mask] = L'\0';
+            pair.requested = module_find_by_nameW(pair.pcs, module_name);
+            HeapFree(GetProcessHeap(), 0, module_name);
             if (!module_get_debug(&pair)) return FALSE;
+            Mask = bang + 1;
         }
         else
         {
@@ -168,6 +177,23 @@ BOOL WINAPI SymEnumSourceFilesW(HANDLE hProcess, ULONG64 ModBase, PCWSTR Mask,
             return FALSE;
         }
     }
+
+    while ((module_format_vtable_iterator_next(pair.effective, &iter,
+                                               MODULE_FORMAT_VTABLE_INDEX(enumerate_sources))))
+    {
+        enum method_result result = iter.modfmt->vtable->enumerate_sources(iter.modfmt, NULL, cbSrcFiles, UserContext);
+        switch (result)
+        {
+        case MR_SUCCESS:
+            return TRUE;
+        case MR_NOT_FOUND: /* continue */
+            break;
+        default:
+            /* SetLastError(...); */
+            return FALSE;
+        }
+    }
+
     if (!pair.effective->sources) return FALSE;
     for (ptr = pair.effective->sources; *ptr; ptr += strlen(ptr) + 1)
     {
@@ -183,10 +209,12 @@ BOOL WINAPI SymEnumSourceFilesW(HANDLE hProcess, ULONG64 ModBase, PCWSTR Mask,
 
         MultiByteToWideChar(CP_ACP, 0, ptr, -1, conversion_buffer, len);
 
-        /* FIXME: not using Mask */
-        sf.ModBase = ModBase;
-        sf.FileName = conversion_buffer;
-        if (!cbSrcFiles(&sf, UserContext)) break;
+        if (!Mask || !*Mask || SymMatchStringW(conversion_buffer, Mask, FALSE))
+        {
+            sf.ModBase = pair.requested->module.BaseOfImage;
+            sf.FileName = conversion_buffer;
+            if (!cbSrcFiles(&sf, UserContext)) break;
+        }
     }
 
     HeapFree(GetProcessHeap(), 0, conversion_buffer);

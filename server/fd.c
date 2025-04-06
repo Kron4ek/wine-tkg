@@ -576,6 +576,9 @@ static inline void main_loop_epoll(void)
     int i, ret, timeout;
     struct timespec ts;
     struct epoll_event events[128];
+#ifdef HAVE_EPOLL_PWAIT2
+    static int failed_epoll_pwait2 = 0;
+#endif
 
     assert( POLLIN == EPOLLIN );
     assert( POLLOUT == EPOLLOUT );
@@ -592,10 +595,15 @@ static inline void main_loop_epoll(void)
         if (epoll_fd == -1) break;  /* an error occurred with epoll */
 
 #ifdef HAVE_EPOLL_PWAIT2
-        ret = epoll_pwait2( epoll_fd, events, ARRAY_SIZE( events ), timeout == -1 ? NULL : &ts, NULL );
-#else
-        ret = epoll_wait( epoll_fd, events, ARRAY_SIZE( events ), timeout );
+        if (!failed_epoll_pwait2)
+        {
+            ret = epoll_pwait2( epoll_fd, events, ARRAY_SIZE( events ), timeout == -1 ? NULL : &ts, NULL );
+            if (ret == -1 && errno == ENOSYS)
+                failed_epoll_pwait2 = 1;
+        }
+        if (failed_epoll_pwait2)
 #endif
+            ret = epoll_wait( epoll_fd, events, ARRAY_SIZE( events ), timeout );
 
         set_current_time();
 
@@ -2113,7 +2121,7 @@ skip_open_fail:
     *mode = st.st_mode;
 
     /* only bother with an inode for normal files, directories, and socket files */
-    if (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode) || S_ISSOCK(st.st_mode))
+    if (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode) || S_ISSOCK(st.st_mode))
     {
         unsigned int err;
         struct inode *inode = get_inode( st.st_dev, st.st_ino, fd->unix_fd );

@@ -40,6 +40,11 @@
 #define ADDRESS_AND_SIZE_TO_SPAN_PAGES(va, length) \
     ((BYTE_OFFSET(va) + ((SIZE_T)(length)) + (PAGE_SIZE - 1)) >> PAGE_SHIFT)
 
+#define LOW_PRIORITY             0
+#define LOW_REALTIME_PRIORITY   16
+#define HIGH_PRIORITY           31
+#define MAXIMUM_PRIORITY        32
+
 typedef LONG KPRIORITY;
 
 typedef ULONG_PTR KSPIN_LOCK, *PKSPIN_LOCK;
@@ -1859,10 +1864,12 @@ PMDL      WINAPI MmAllocatePagesForMdl(PHYSICAL_ADDRESS,PHYSICAL_ADDRESS,PHYSICA
 void      WINAPI MmBuildMdlForNonPagedPool(MDL*);
 NTSTATUS  WINAPI MmCopyVirtualMemory(PEPROCESS,void*,PEPROCESS,void*,SIZE_T,KPROCESSOR_MODE,SIZE_T*);
 void *    WINAPI MmGetSystemRoutineAddress(UNICODE_STRING*);
+PVOID     WINAPI MmMapLockedPages(MDL*,KPROCESSOR_MODE);
 PVOID     WINAPI MmMapLockedPagesSpecifyCache(PMDLX,KPROCESSOR_MODE,MEMORY_CACHING_TYPE,PVOID,ULONG,MM_PAGE_PRIORITY);
 MM_SYSTEMSIZE WINAPI MmQuerySystemSize(void);
 void      WINAPI MmProbeAndLockPages(PMDLX, KPROCESSOR_MODE, LOCK_OPERATION);
 void      WINAPI MmUnmapLockedPages(void*, PMDL);
+void      WINAPI MmUnlockPages(PMDLX);
 
 void    FASTCALL ObfReferenceObject(void*);
 void      WINAPI ObDereferenceObject(void*);

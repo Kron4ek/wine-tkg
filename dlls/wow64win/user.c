@@ -3293,6 +3293,13 @@ NTSTATUS WINAPI wow64_NtUserInvalidateRgn( UINT *args )
     return NtUserInvalidateRgn( hwnd, hrgn, erase );
 }
 
+NTSTATUS WINAPI wow64_NtUserIsChildWindowDpiMessageEnabled( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+
+    return NtUserIsChildWindowDpiMessageEnabled( hwnd );
+}
+
 NTSTATUS WINAPI wow64_NtUserIsClipboardFormatAvailable( UINT *args )
 {
     UINT format = get_ulong( &args );
@@ -4157,6 +4164,25 @@ NTSTATUS WINAPI wow64_NtUserSetActiveWindow( UINT *args )
     HWND hwnd = get_handle( &args );
 
     return HandleToUlong( NtUserSetActiveWindow( hwnd ));
+}
+
+NTSTATUS WINAPI wow64_NtUserSetAdditionalForegroundBoostProcesses( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    DWORD count = get_ulong( &args );
+    ULONG *handles32 = get_ptr( &args );
+
+    HANDLE handles[32];
+    unsigned int i;
+
+    if (count > ARRAYSIZE(handles))
+    {
+        set_last_error32( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    for (i = 0; i < count; i++) handles[i] = LongToHandle( handles32[i] );
+
+    return NtUserSetAdditionalForegroundBoostProcesses( hwnd, count, handles );
 }
 
 NTSTATUS WINAPI wow64_NtUserSetCapture( UINT *args )

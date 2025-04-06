@@ -43,7 +43,7 @@
 @ stub BluetoothGATTSetCharacteristicValue
 @ stub BluetoothGATTSetDescriptorValue
 @ stub BluetoothGATTUnregisterEvent
-@ stub BluetoothGetDeviceInfo
+@ stdcall BluetoothGetDeviceInfo(ptr long)
 @ stub BluetoothGetLocalServiceInfo
 @ stdcall BluetoothGetRadioInfo(ptr ptr)
 @ stub BluetoothGetServicePnpInstance
@@ -59,7 +59,7 @@
 @ stdcall BluetoothSdpGetElementData(ptr long ptr)
 @ stub BluetoothSdpGetString
 @ stub BluetoothSendAuthenticationResponse
-@ stub BluetoothSendAuthenticationResponseEx
+@ stdcall BluetoothSendAuthenticationResponseEx(ptr ptr)
 @ stub BluetoothSetLocalServiceInfo
 @ stub BluetoothSetServiceState
 @ stub BluetoothSetServiceStateEx

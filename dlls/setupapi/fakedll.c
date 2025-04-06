@@ -505,6 +505,35 @@ static HANDLE create_dest_file( const WCHAR *name, BOOL delete )
         SetFilePointer( h, 0, NULL, FILE_BEGIN );
         SetEndOfFile( h );
     }
+    else if (GetLastError() == ERROR_SHARING_VIOLATION &&
+             (h = CreateFileW( name, GENERIC_READ, FILE_SHARE_READ, NULL,
+                               OPEN_EXISTING, 0, NULL )) != INVALID_HANDLE_VALUE)
+    {
+        if (!is_fake_dll( h ))
+        {
+            TRACE( "%s is not a fake dll, not overwriting it\n", debugstr_w(name) );
+            CloseHandle( h );
+            return 0;
+        }
+        CloseHandle( h );
+        h = INVALID_HANDLE_VALUE;
+
+        if (!delete)
+        {
+            WCHAR *p, *path = wcsdup( name );
+            WCHAR tmpname[MAX_PATH];
+
+            if ((p = wcsrchr( path, '\\' ))) *p = 0;
+            if (GetTempFileNameW( path, L"dll", 0, tmpname ))
+            {
+                h = CreateFileW( tmpname, GENERIC_READ|GENERIC_WRITE, 0, NULL, TRUNCATE_EXISTING, 0, NULL );
+                if (h != INVALID_HANDLE_VALUE)
+                    MoveFileExW( tmpname, name, MOVEFILE_DELAY_UNTIL_REBOOT | MOVEFILE_REPLACE_EXISTING );
+            }
+            free( path );
+        }
+        else MoveFileExW( name, NULL, MOVEFILE_DELAY_UNTIL_REBOOT );
+    }
     else if (!delete)
     {
         if (GetLastError() == ERROR_PATH_NOT_FOUND) create_directories( name );

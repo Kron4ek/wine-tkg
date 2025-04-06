@@ -2061,7 +2061,7 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
                 info.ClientId.UniqueThread  = ULongToHandle(reply->tid);
                 info.AffinityMask           = reply->affinity & affinity_mask;
                 info.Priority               = reply->priority;
-                info.BasePriority           = reply->priority;  /* FIXME */
+                info.BasePriority           = reply->base_priority;
             }
         }
         SERVER_END_REQ;
@@ -2153,7 +2153,7 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
             status = wine_server_call( req );
             if (status == STATUS_SUCCESS)
             {
-                ULONG last = reply->last;
+                ULONG last = !!(reply->flags & GET_THREAD_INFO_FLAG_LAST);
                 if (data) memcpy( data, &last, sizeof(last) );
                 if (ret_len) *ret_len = sizeof(last);
             }
@@ -2275,6 +2275,12 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
         return get_thread_wow64_context( handle, data, length );
 
     case ThreadHideFromDebugger:
+        /* TP Shell Service depends on ThreadHideFromDebugger returning
+         * STATUS_ACCESS_VIOLATION if *ret_len is not writable, before
+         * any other checks. Despite the status, the variable does not
+         * actually seem to be written at that time. */
+        if (ret_len) *(volatile ULONG *)ret_len |= 0;
+
         if (length != sizeof(BOOLEAN)) return STATUS_INFO_LENGTH_MISMATCH;
         if (!data) return STATUS_ACCESS_VIOLATION;
         SERVER_START_REQ( get_thread_info )
@@ -2365,15 +2371,30 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
         return status;
     }
 
-    case ThreadBasePriority:
+    case ThreadPriority:
     {
-        const DWORD *pprio = data;
+        const DWORD *priority = data;
         if (length != sizeof(DWORD)) return STATUS_INVALID_PARAMETER;
         SERVER_START_REQ( set_thread_info )
         {
-            req->handle   = wine_server_obj_handle( handle );
-            req->priority = *pprio;
-            req->mask     = SET_THREAD_INFO_PRIORITY;
+            req->handle    = wine_server_obj_handle( handle );
+            req->priority  = *priority;
+            req->mask      = SET_THREAD_INFO_PRIORITY;
+            status = wine_server_call( req );
+        }
+        SERVER_END_REQ;
+        return status;
+    }
+
+    case ThreadBasePriority:
+    {
+        const DWORD *base_priority = data;
+        if (length != sizeof(DWORD)) return STATUS_INVALID_PARAMETER;
+        SERVER_START_REQ( set_thread_info )
+        {
+            req->handle         = wine_server_obj_handle( handle );
+            req->base_priority  = *base_priority;
+            req->mask           = SET_THREAD_INFO_BASE_PRIORITY;
             status = wine_server_call( req );
         }
         SERVER_END_REQ;
@@ -2542,7 +2563,6 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
 
     case ThreadBasicInformation:
     case ThreadTimes:
-    case ThreadPriority:
     case ThreadDescriptorTableEntry:
     case ThreadEventPair_Reusable:
     case ThreadPerformanceCount:

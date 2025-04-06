@@ -718,9 +718,10 @@ static inline int stabs_pts_read_aggregate(struct ParseTypedefData* ptd,
     return 0;
 }
 
-static inline int stabs_pts_read_enum(struct ParseTypedefData* ptd, 
+static inline int stabs_pts_read_enum(struct ParseTypedefData* ptd,
                                       struct symt_enum* edt)
 {
+    VARIANT     v;
     LONG_PTR    value;
     int		idx;
 
@@ -730,7 +731,9 @@ static inline int stabs_pts_read_enum(struct ParseTypedefData* ptd,
 	PTS_ABORTIF(ptd, stabs_pts_read_id(ptd) == -1);
 	PTS_ABORTIF(ptd, stabs_pts_read_number(ptd, &value) == -1);
 	PTS_ABORTIF(ptd, *ptd->ptr++ != ',');
-	symt_add_enum_element(ptd->module, edt, ptd->buf + idx, value);
+	V_VT(&v) = VT_I4;
+	V_I4(&v) = value;
+	symt_add_enum_element(ptd->module, edt, ptd->buf + idx, &v);
 	ptd->idx = idx;
     }
     ptd->ptr++;
@@ -1490,21 +1493,24 @@ BOOL stabs_parse(struct module* module, ULONG_PTR load_offset,
             if (curr_func != NULL) pending_add_var(&pending_block, ptr, DataIsLocal, &loc);
             break;
         case N_SLINE:
-            /*
-             * This is a line number.  These are always relative to the start
-             * of the function (N_FUN), and this makes the lookup easier.
-             */
-            assert(source_idx >= 0);
-            if (curr_func != NULL)
+            if (SymGetOptions() & SYMOPT_LOAD_LINES)
             {
-                ULONG_PTR offset = n_value;
-                if (module->type == DMT_MACHO)
-                    offset -= curr_func->ranges[0].low - load_offset;
-                symt_add_func_line(module, curr_func, source_idx, 
-                                   stab_ptr->n_desc, curr_func->ranges[0].low + offset);
+                /*
+                 * This is a line number.  These are always relative to the start
+                 * of the function (N_FUN), and this makes the lookup easier.
+                 */
+                assert(source_idx >= 0);
+                if (curr_func != NULL)
+                {
+                    ULONG_PTR offset = n_value;
+                    if (module->type == DMT_MACHO)
+                        offset -= curr_func->ranges[0].low - load_offset;
+                    symt_add_func_line(module, curr_func, source_idx,
+                                       stab_ptr->n_desc, curr_func->ranges[0].low + offset);
+                }
+                else pending_add_line(&pending_func, source_idx, stab_ptr->n_desc,
+                                      n_value, load_offset);
             }
-            else pending_add_line(&pending_func, source_idx, stab_ptr->n_desc,
-                                  n_value, load_offset);
             break;
         case N_FUN:
             /*

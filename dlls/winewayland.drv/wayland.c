@@ -147,8 +147,11 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
         pthread_mutex_unlock(&seat->mutex);
         if (process_wayland.zwp_text_input_manager_v3) wayland_text_input_init();
         /* Recreate the data device for the new seat. */
-        if (process_wayland.data_device.zwlr_data_control_device_v1)
+        if (process_wayland.data_device.zwlr_data_control_device_v1 ||
+            process_wayland.data_device.wl_data_device)
+        {
             wayland_data_device_init();
+        }
     }
     else if (strcmp(interface, "wp_viewporter") == 0)
     {
@@ -180,6 +183,11 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
     {
         process_wayland.zwlr_data_control_manager_v1 =
             wl_registry_bind(registry, id, &zwlr_data_control_manager_v1_interface, 1);
+    }
+    else if (strcmp(interface, "wl_data_device_manager") == 0)
+    {
+        process_wayland.wl_data_device_manager =
+            wl_registry_bind(registry, id, &wl_data_device_manager_interface, 2);
     }
 }
 
@@ -302,6 +310,14 @@ BOOL wayland_process_init(void)
 
     if (!process_wayland.zwp_text_input_manager_v3)
         ERR("Wayland compositor doesn't support optional zwp_text_input_manager_v3 (host input methods won't work)\n");
+
+    if (!process_wayland.zwlr_data_control_manager_v1)
+    {
+        if (!process_wayland.wl_data_device_manager)
+            ERR("Wayland compositor doesn't support optional wl_data_device_manager (clipboard won't work)\n");
+        else
+            ERR("Wayland compositor doesn't support optional zwlr_data_control_manager_v1 (clipboard functionality will be limited)\n");
+    }
 
     process_wayland.initialized = TRUE;
 

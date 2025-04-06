@@ -2104,6 +2104,7 @@ static const char *get_semantic_register_name(enum vkd3d_shader_sysval_semantic 
 {
     switch (semantic)
     {
+        case VKD3D_SHADER_SV_PRIMITIVE_ID:        return "primID";
         case VKD3D_SHADER_SV_DEPTH:               return "oDepth";
         case VKD3D_SHADER_SV_DEPTH_GREATER_EQUAL: return "oDepthGE";
         case VKD3D_SHADER_SV_DEPTH_LESS_EQUAL:    return "oDepthLE";

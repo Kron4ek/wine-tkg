@@ -213,14 +213,6 @@ static struct symt* symt_find_type_by_name(const struct module* module,
     return NULL;
 }
 
-static void symt_add_type(struct module* module, struct symt* symt)
-{
-    struct symt**       p;
-    p = vector_add(&module->vtypes, &module->pool);
-    assert(p);
-    *p = symt;
-}
-
 struct symt_basic* symt_get_basic(enum BasicType bt, unsigned size)
 {
     static struct symt_basic cache[32] = { { {SymTagBaseType}, btNoType, 0 } };
@@ -260,8 +252,7 @@ struct symt_udt* symt_new_udt(struct module* module, const char* typename,
             sym->hash_elt.name = pool_strdup(&module->pool, typename);
             hash_table_add(&module->ht_types, &sym->hash_elt);
         } else sym->hash_elt.name = NULL;
-        vector_init(&sym->vchildren, sizeof(struct symt*), 8);
-        symt_add_type(module, &sym->symt);
+        vector_init(&sym->vchildren, sizeof(struct symt*), 0);
     }
     return sym;
 }
@@ -345,14 +336,13 @@ struct symt_enum* symt_new_enum(struct module* module, const char* typename,
             hash_table_add(&module->ht_types, &sym->hash_elt);
         } else sym->hash_elt.name = NULL;
         sym->base_type           = basetype;
-        vector_init(&sym->vchildren, sizeof(struct symt*), 8);
-        symt_add_type(module, &sym->symt);
+        vector_init(&sym->vchildren, sizeof(struct symt*), 0);
     }
     return sym;
 }
 
 BOOL symt_add_enum_element(struct module* module, struct symt_enum* enum_type,
-                           const char* name, int value)
+                           const char* name, const VARIANT *variant)
 {
     struct symt_data*   e;
     struct symt**       p;
@@ -367,8 +357,7 @@ BOOL symt_add_enum_element(struct module* module, struct symt_enum* enum_type,
     e->kind = DataIsConstant;
     e->container = &enum_type->symt;
     e->type = enum_type->base_type;
-    V_VT(&e->u.value) = VT_I4;
-    V_I4(&e->u.value) = value;
+    e->u.value = *variant;
 
     p = vector_add(&enum_type->vchildren, &module->pool);
     if (!p) return FALSE; /* FIXME we leak e */
@@ -389,7 +378,6 @@ struct symt_array* symt_new_array(struct module* module, int min, DWORD cnt,
         sym->count      = cnt;
         sym->base_type  = base;
         sym->index_type = index;
-        symt_add_type(module, &sym->symt);
     }
     return sym;
 }
@@ -404,9 +392,8 @@ struct symt_function_signature* symt_new_function_signature(struct module* modul
     {
         sym->symt.tag = SymTagFunctionType;
         sym->rettype  = ret_type;
-        vector_init(&sym->vchildren, sizeof(struct symt*), 4);
+        vector_init(&sym->vchildren, sizeof(struct symt*), 0);
         sym->call_conv = call_conv;
-        symt_add_type(module, &sym->symt);
     }
     return sym;
 }
@@ -439,13 +426,12 @@ struct symt_pointer* symt_new_pointer(struct module* module, struct symt* ref_ty
         sym->symt.tag = SymTagPointerType;
         sym->pointsto = ref_type;
         sym->size     = size;
-        symt_add_type(module, &sym->symt);
     }
     return sym;
 }
 
-struct symt_typedef* symt_new_typedef(struct module* module, struct symt* ref, 
-                                      const char* name)
+struct symt_typedef* symt_new_typedef(struct module* module, struct symt* ref,
+                                      const char* typename)
 {
     struct symt_typedef* sym;
 
@@ -453,11 +439,46 @@ struct symt_typedef* symt_new_typedef(struct module* module, struct symt* ref,
     {
         sym->symt.tag = SymTagTypedef;
         sym->type     = ref;
-        sym->hash_elt.name = pool_strdup(&module->pool, name);
+        sym->hash_elt.name = pool_strdup(&module->pool, typename);
         hash_table_add(&module->ht_types, &sym->hash_elt);
-        symt_add_type(module, &sym->symt);
     }
     return sym;
+}
+
+static BOOL sym_enum_types(struct module_pair *pair, const char *type_name, PSYM_ENUMERATESYMBOLS_CALLBACK cb, void *user)
+{
+    char                buffer[sizeof(SYMBOL_INFO) + 256];
+    SYMBOL_INFO        *sym_info = (SYMBOL_INFO*)buffer;
+    struct hash_table_iter hti;
+    void*               ptr;
+    struct symt_ht     *type;
+    DWORD64             size;
+
+    sym_info->SizeOfStruct = sizeof(SYMBOL_INFO);
+    sym_info->MaxNameLen = sizeof(buffer) - sizeof(SYMBOL_INFO);
+
+    hash_table_iter_init(&pair->effective->ht_types, &hti, type_name);
+    while ((ptr = hash_table_iter_up(&hti)))
+    {
+        type = CONTAINING_RECORD(ptr, struct symt_ht, hash_elt);
+
+        if (type_name && !SymMatchStringA(type->hash_elt.name, type_name, TRUE)) continue;
+
+        sym_info->TypeIndex = symt_ptr2index(pair->effective, &type->symt);
+        sym_info->Index = 0; /* FIXME */
+        symt_get_info(pair->effective, &type->symt, TI_GET_LENGTH, &size);
+        sym_info->Size = size;
+        sym_info->ModBase = pair->requested->module.BaseOfImage;
+        sym_info->Flags = 0; /* FIXME */
+        sym_info->Value = 0; /* FIXME */
+        sym_info->Address = 0; /* FIXME */
+        sym_info->Register = 0; /* FIXME */
+        sym_info->Scope = 0; /* FIXME */
+        sym_info->Tag = type->symt.tag;
+        symbol_setname(sym_info, type->hash_elt.name);
+        if (!cb(sym_info, sym_info->Size, user)) return FALSE;
+    }
+    return TRUE;
 }
 
 /******************************************************************
@@ -469,36 +490,12 @@ BOOL WINAPI SymEnumTypes(HANDLE hProcess, ULONG64 BaseOfDll,
                          PVOID UserContext)
 {
     struct module_pair  pair;
-    char                buffer[sizeof(SYMBOL_INFO) + 256];
-    SYMBOL_INFO*        sym_info = (SYMBOL_INFO*)buffer;
-    struct symt*        type;
-    DWORD64             size;
-    unsigned int        i;
 
     TRACE("(%p %I64x %p %p)\n", hProcess, BaseOfDll, EnumSymbolsCallback, UserContext);
 
     if (!module_init_pair(&pair, hProcess, BaseOfDll)) return FALSE;
 
-    sym_info->SizeOfStruct = sizeof(SYMBOL_INFO);
-    sym_info->MaxNameLen = sizeof(buffer) - sizeof(SYMBOL_INFO);
-
-    for (i=0; i<vector_length(&pair.effective->vtypes); i++)
-    {
-        type = *(struct symt**)vector_at(&pair.effective->vtypes, i);
-        sym_info->TypeIndex = symt_ptr2index(pair.effective, type);
-        sym_info->Index = 0; /* FIXME */
-        symt_get_info(pair.effective, type, TI_GET_LENGTH, &size);
-        sym_info->Size = size;
-        sym_info->ModBase = pair.requested->module.BaseOfImage;
-        sym_info->Flags = 0; /* FIXME */
-        sym_info->Value = 0; /* FIXME */
-        sym_info->Address = 0; /* FIXME */
-        sym_info->Register = 0; /* FIXME */
-        sym_info->Scope = 0; /* FIXME */
-        sym_info->Tag = type->tag;
-        symbol_setname(sym_info, symt_get_name(type));
-        if (!EnumSymbolsCallback(sym_info, sym_info->Size, UserContext)) break;
-    }
+    sym_enum_types(&pair, NULL, EnumSymbolsCallback, UserContext);
     return TRUE;
 }
 
@@ -534,41 +531,6 @@ BOOL WINAPI SymEnumTypesW(HANDLE hProcess, ULONG64 BaseOfDll,
     return SymEnumTypes(hProcess, BaseOfDll, enum_types_AtoW, &et);
 }
 
-static void enum_types_of_module(struct module_pair* pair, const char* name, PSYM_ENUMERATESYMBOLS_CALLBACK cb, PVOID user)
-{
-    char                buffer[sizeof(SYMBOL_INFO) + 256];
-    SYMBOL_INFO*        sym_info = (SYMBOL_INFO*)buffer;
-    struct symt*        type;
-    DWORD64             size;
-    unsigned            i;
-    const char*         tname;
-
-    sym_info->SizeOfStruct = sizeof(SYMBOL_INFO);
-    sym_info->MaxNameLen = sizeof(buffer) - sizeof(SYMBOL_INFO);
-
-    for (i = 0; i < vector_length(&pair->effective->vtypes); i++)
-    {
-        type = *(struct symt**)vector_at(&pair->effective->vtypes, i);
-        tname = symt_get_name(type);
-        if (tname && SymMatchStringA(tname, name, TRUE))
-        {
-            sym_info->TypeIndex = symt_ptr2index(pair->effective, type);
-            sym_info->Index = 0; /* FIXME */
-            symt_get_info(pair->effective, type, TI_GET_LENGTH, &size);
-            sym_info->Size = size;
-            sym_info->ModBase = pair->requested->module.BaseOfImage;
-            sym_info->Flags = 0; /* FIXME */
-            sym_info->Value = 0; /* FIXME */
-            sym_info->Address = 0; /* FIXME */
-            sym_info->Register = 0; /* FIXME */
-            sym_info->Scope = 0; /* FIXME */
-            sym_info->Tag = type->tag;
-            symbol_setname(sym_info, tname);
-            if (!cb(sym_info, sym_info->Size, user)) break;
-        }
-    }
-}
-
 static BOOL walk_modules(struct module_pair* pair)
 {
     /* first walk PE only modules */
@@ -597,8 +559,7 @@ BOOL WINAPI SymEnumTypesByName(HANDLE proc, ULONG64 base, PCSTR name, PSYM_ENUME
 
     TRACE("(%p %I64x %s %p %p)\n", proc, base, debugstr_a(name), cb, user);
 
-    if (!name) return SymEnumTypes(proc, base, cb, user);
-    bang = strchr(name, '!');
+    bang = name ? strchr(name, '!') : NULL;
     if (bang)
     {
         DWORD sz;
@@ -614,14 +575,15 @@ BOOL WINAPI SymEnumTypesByName(HANDLE proc, ULONG64 base, PCSTR name, PSYM_ENUME
         while (walk_modules(&pair))
         {
             if (SymMatchStringW(pair.requested->modulename, modW, FALSE))
-                enum_types_of_module(&pair, bang + 1, cb, user);
+                if (!sym_enum_types(&pair, bang + 1, cb, user))
+                    break;
         }
         free(modW);
     }
     else
     {
         if (!module_init_pair(&pair, proc, base) || !module_get_debug(&pair)) return FALSE;
-        enum_types_of_module(&pair, name, cb, user);
+        sym_enum_types(&pair, name, cb, user);
     }
     return TRUE;
 }
@@ -1077,19 +1039,15 @@ BOOL symt_get_info(struct module* module, const struct symt* type,
         case DataIsParam:
             {
                 struct location loc = ((const struct symt_data*)type)->u.var;
-                unsigned                i;
-                struct module_format*   modfmt;
+                struct module_format_vtable_iterator iter = { 0 };
 
                 if (loc.kind < loc_user) return FALSE;
-                for (i = 0; i < DFI_LAST; i++)
+                while ((module_format_vtable_iterator_next(module, &iter,
+                                                           MODULE_FORMAT_VTABLE_INDEX(loc_compute))))
                 {
-                    modfmt = module->format_info[i];
-                    if (modfmt && modfmt->loc_compute)
-                    {
-                        modfmt->loc_compute(module->process, modfmt,
-                                            (const struct symt_function*)((const struct symt_data*)type)->container, &loc);
-                        break;
-                    }
+                    iter.modfmt->vtable->loc_compute(iter.modfmt,
+                                                     (const struct symt_function*)((const struct symt_data*)type)->container, &loc);
+                    break;
                 }
                 if (loc.kind != loc_absolute) return FALSE;
                 V_VT(&X(VARIANT)) = VT_UI4; /* FIXME */

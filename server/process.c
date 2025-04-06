@@ -1546,6 +1546,7 @@ DECL_HANDLER(get_process_info)
         reply->ppid             = process->parent_id;
         reply->exit_code        = process->exit_code;
         reply->priority         = process->priority;
+        reply->base_priority    = priority_from_class_and_level( process->priority, THREAD_PRIORITY_NORMAL );
         reply->affinity         = process->affinity;
         reply->peb              = process->peb;
         reply->start_time       = process->start_time;
@@ -1675,7 +1676,7 @@ void set_process_priority( struct process *process, int priority )
 
     LIST_FOR_EACH_ENTRY( thread, &process->thread_list, struct thread, proc_entry )
     {
-        set_thread_priority( thread, priority, thread->priority );
+        set_thread_base_priority( thread, thread->base_priority );
     }
 }
 
@@ -2047,8 +2048,8 @@ DECL_HANDLER(list_processes)
 
             thread_info->start_time = thread->creation_time;
             thread_info->tid = thread->id;
-            thread_info->base_priority = thread->priority;
-            thread_info->current_priority = thread->priority; /* FIXME */
+            thread_info->base_priority = thread->base_priority;
+            thread_info->current_priority = thread->priority;
             thread_info->unix_tid = thread->unix_tid;
             thread_info->entry_point = thread->entry_point;
             thread_info->teb = thread->teb;
