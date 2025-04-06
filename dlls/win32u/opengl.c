@@ -23,6 +23,7 @@
 
 #include "config.h"
 
+#include <assert.h>
 #include <pthread.h>
 #include <dlfcn.h>
 
@@ -37,6 +38,50 @@
 #include "dibdrv/dibdrv.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wgl);
+
+static struct opengl_funcs *get_dc_funcs( HDC hdc, void *null_funcs );
+
+static BOOL has_extension( const char *list, const char *ext )
+{
+    size_t len = strlen( ext );
+    const char *cur = list;
+
+    while (cur && (cur = strstr( cur, ext )))
+    {
+        if ((!cur[len] || cur[len] == ' ') && (cur == list || cur[-1] == ' ')) return TRUE;
+        cur = strchr( cur, ' ' );
+    }
+
+    return FALSE;
+}
+
+static void dump_extensions( const char *list )
+{
+    const char *start, *end, *ptr;
+
+    for (start = end = ptr = list; ptr; ptr = strchr( ptr + 1, ' ' ))
+    {
+        if (ptr - start <= 128) end = ptr;
+        else
+        {
+            TRACE( "%.*s\n", (int)(end - start), start );
+            start = end + 1;
+        }
+    }
+
+    TRACE( "%s\n", start );
+}
+
+static void register_extension( char *list, size_t size, const char *name )
+{
+    if (!has_extension( list, name ))
+    {
+        size_t len = strlen( list );
+        assert( size - len >= strlen( name ) + 1 );
+        if (*list) strcat( list + len, " " );
+        strcat( list + len, name );
+    }
+}
 
 #ifdef SONAME_LIBOSMESA
 
@@ -239,26 +284,14 @@ static BOOL osmesa_wglDeleteContext( struct wgl_context *context )
     return osmesa_delete_context( context );
 }
 
-static int osmesa_wglGetPixelFormat( HDC hdc )
-{
-    DC *dc = get_dc_ptr( hdc );
-    int ret = 0;
-
-    if (dc)
-    {
-        ret = dc->pixel_format;
-        release_dc_ptr( dc );
-    }
-    return ret;
-}
-
 static struct wgl_context *osmesa_wglCreateContext( HDC hdc )
 {
     PIXELFORMATDESCRIPTOR descr;
-    int format = osmesa_wglGetPixelFormat( hdc );
+    struct opengl_funcs *funcs;
+    int format;
 
-    if (!format) format = 1;
-    if (format <= 0 || format > ARRAY_SIZE( pixel_formats )) return NULL;
+    if (!(funcs = get_dc_funcs( hdc, NULL ))) return NULL;
+    if (!(format = funcs->p_wglGetPixelFormat( hdc ))) format = 1;
     describe_pixel_format( format, &descr );
 
     return osmesa_create_context( hdc, &descr );
@@ -301,12 +334,6 @@ static BOOL osmesa_wglMakeCurrent( HDC hdc, struct wgl_context *context )
     return ret;
 }
 
-static BOOL osmesa_wglSetPixelFormat( HDC hdc, int fmt, const PIXELFORMATDESCRIPTOR *descr )
-{
-    if (fmt <= 0 || fmt > ARRAY_SIZE( pixel_formats )) return FALSE;
-    return NtGdiSetPixelFormat( hdc, fmt );
-}
-
 static BOOL osmesa_wglShareLists( struct wgl_context *org, struct wgl_context *dest )
 {
     FIXME( "not supported yet\n" );
@@ -334,10 +361,8 @@ static struct opengl_funcs osmesa_opengl_funcs =
     .p_wglCopyContext = osmesa_wglCopyContext,
     .p_wglCreateContext = osmesa_wglCreateContext,
     .p_wglDeleteContext = osmesa_wglDeleteContext,
-    .p_wglGetPixelFormat = osmesa_wglGetPixelFormat,
     .p_wglGetProcAddress = osmesa_wglGetProcAddress,
     .p_wglMakeCurrent = osmesa_wglMakeCurrent,
-    .p_wglSetPixelFormat = osmesa_wglSetPixelFormat,
     .p_wglShareLists = osmesa_wglShareLists,
     .p_wglSwapBuffers = osmesa_wglSwapBuffers,
     .p_get_pixel_formats = osmesa_get_pixel_formats,
@@ -352,17 +377,151 @@ static struct opengl_funcs *osmesa_get_wgl_driver(void)
 
 #endif  /* SONAME_LIBOSMESA */
 
+static const char *nulldrv_init_wgl_extensions(void)
+{
+    return "";
+}
+
+static BOOL nulldrv_set_pixel_format( HWND hwnd, int old_format, int new_format, BOOL internal )
+{
+    return TRUE;
+}
+
+static const struct opengl_driver_funcs nulldrv_funcs =
+{
+    .p_init_wgl_extensions = nulldrv_init_wgl_extensions,
+    .p_set_pixel_format = nulldrv_set_pixel_format,
+};
+static const struct opengl_driver_funcs *driver_funcs = &nulldrv_funcs;
+
+static char wgl_extensions[4096];
+
+static const char *win32u_wglGetExtensionsStringARB( HDC hdc )
+{
+    if (TRACE_ON(wgl)) dump_extensions( wgl_extensions );
+    return wgl_extensions;
+}
+
+static const char *win32u_wglGetExtensionsStringEXT(void)
+{
+    if (TRACE_ON(wgl)) dump_extensions( wgl_extensions );
+    return wgl_extensions;
+}
+
 static struct opengl_funcs *display_funcs;
 static struct opengl_funcs *memory_funcs;
+
+static int win32u_wglGetPixelFormat( HDC hdc )
+{
+    int ret = 0;
+    HWND hwnd;
+    DC *dc;
+
+    if ((hwnd = NtUserWindowFromDC( hdc )))
+        ret = get_window_pixel_format( hwnd );
+    else if ((dc = get_dc_ptr( hdc )))
+    {
+        BOOL is_display = dc->is_display;
+        UINT total, onscreen;
+        ret = dc->pixel_format;
+        release_dc_ptr( dc );
+
+        if (is_display && ret >= 0)
+        {
+            /* Offscreen formats can't be used with traditional WGL calls. As has been
+             * verified on Windows GetPixelFormat doesn't fail but returns 1.
+             */
+            display_funcs->p_get_pixel_formats( NULL, 0, &total, &onscreen );
+            if (ret > onscreen) ret = 1;
+        }
+    }
+
+    TRACE( "%p/%p -> %d\n", hdc, hwnd, ret );
+    return ret;
+}
+
+static BOOL set_dc_pixel_format( HDC hdc, int new_format, BOOL internal )
+{
+    struct opengl_funcs *funcs;
+    UINT total, onscreen;
+    HWND hwnd;
+
+    if (!(funcs = get_dc_funcs( hdc, NULL ))) return FALSE;
+    funcs->p_get_pixel_formats( NULL, 0, &total, &onscreen );
+    if (new_format <= 0 || new_format > total) return FALSE;
+
+    if ((hwnd = NtUserWindowFromDC( hdc )))
+    {
+        int old_format;
+
+        if (new_format > onscreen)
+        {
+            WARN( "Invalid format %d for %p/%p\n", new_format, hdc, hwnd );
+            return FALSE;
+        }
+
+        TRACE( "%p/%p format %d, internal %u\n", hdc, hwnd, new_format, internal );
+
+        if ((old_format = get_window_pixel_format( hwnd )) && !internal) return old_format == new_format;
+        if (!driver_funcs->p_set_pixel_format( hwnd, old_format, new_format, internal )) return FALSE;
+        return set_window_pixel_format( hwnd, new_format, internal );
+    }
+
+    TRACE( "%p/%p format %d, internal %u\n", hdc, hwnd, new_format, internal );
+    return NtGdiSetPixelFormat( hdc, new_format );
+}
+
+static BOOL win32u_wglSetPixelFormat( HDC hdc, int format, const PIXELFORMATDESCRIPTOR *pfd )
+{
+    return set_dc_pixel_format( hdc, format, FALSE );
+}
+
+static BOOL win32u_wglSetPixelFormatWINE( HDC hdc, int format )
+{
+    return set_dc_pixel_format( hdc, format, TRUE );
+}
 
 static void memory_funcs_init(void)
 {
     memory_funcs = osmesa_get_wgl_driver();
+    if (!memory_funcs) return;
+
+    memory_funcs->p_wglGetPixelFormat = win32u_wglGetPixelFormat;
+    memory_funcs->p_wglSetPixelFormat = win32u_wglSetPixelFormat;
 }
 
 static void display_funcs_init(void)
 {
-    display_funcs = user_driver->pwine_get_wgl_driver( WINE_OPENGL_DRIVER_VERSION );
+    UINT status;
+
+    if ((status = user_driver->pOpenGLInit( WINE_OPENGL_DRIVER_VERSION, &display_funcs, &driver_funcs )) &&
+        status != STATUS_NOT_IMPLEMENTED)
+    {
+        ERR( "Failed to initialize the driver opengl functions, status %#x\n", status );
+        return;
+    }
+    if (!display_funcs) return;
+
+    strcpy( wgl_extensions, driver_funcs->p_init_wgl_extensions() );
+    display_funcs->p_wglGetPixelFormat = win32u_wglGetPixelFormat;
+    display_funcs->p_wglSetPixelFormat = win32u_wglSetPixelFormat;
+
+    register_extension( wgl_extensions, ARRAY_SIZE(wgl_extensions), "WGL_ARB_extensions_string" );
+    display_funcs->p_wglGetExtensionsStringARB = win32u_wglGetExtensionsStringARB;
+
+    register_extension( wgl_extensions, ARRAY_SIZE(wgl_extensions), "WGL_EXT_extensions_string" );
+    display_funcs->p_wglGetExtensionsStringEXT = win32u_wglGetExtensionsStringEXT;
+
+    /* In WineD3D we need the ability to set the pixel format more than once (e.g. after a device reset).
+     * The default wglSetPixelFormat doesn't allow this, so add our own which allows it.
+     */
+    register_extension( wgl_extensions, ARRAY_SIZE(wgl_extensions), "WGL_WINE_pixel_format_passthrough" );
+    display_funcs->p_wglSetPixelFormatWINE = win32u_wglSetPixelFormatWINE;
+
+    register_extension( wgl_extensions, ARRAY_SIZE(wgl_extensions), "WGL_ARB_pixel_format" );
+    display_funcs->p_wglChoosePixelFormatARB      = (void *)1; /* never called */
+    display_funcs->p_wglGetPixelFormatAttribfvARB = (void *)1; /* never called */
+    display_funcs->p_wglGetPixelFormatAttribivARB = (void *)1; /* never called */
 }
 
 static struct opengl_funcs *get_dc_funcs( HDC hdc, void *null_funcs )

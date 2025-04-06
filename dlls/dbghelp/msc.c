@@ -37,7 +37,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <stdarg.h>
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
@@ -62,7 +61,7 @@ enum pdb_kind {PDB_JG, PDB_DS};
 struct pdb_file_info
 {
     enum pdb_kind               kind;
-    HANDLE                      hMap;
+    struct pdb_reader          *pdb_reader; /* new pdb reader */
     const char*                 image;
     struct pdb_stream_name*     stream_dict;
     unsigned                    fpoext_stream;
@@ -96,6 +95,18 @@ struct cv_module_snarf
     unsigned                                    dbgsubsect_size;
     const PDB_STRING_TABLE*                     strimage;
 };
+
+BOOL pdb_hack_get_main_info(struct module_format *modfmt, struct pdb_reader **pdb, unsigned *fpoext_stream)
+{
+    struct pdb_module_info*     pdb_info;
+
+    if (!modfmt) return FALSE;
+    pdb_info = modfmt->u.pdb_info;
+    *pdb = pdb_info->pdb_files[0].pdb_reader;
+    if (fpoext_stream)
+        *fpoext_stream = pdb_info->pdb_files[0].fpoext_stream;
+    return TRUE;
+}
 
 /*========================================================================
  * Debug file access helper routines
@@ -2855,8 +2866,7 @@ static BOOL codeview_is_inside(const struct cv_local_info* locinfo, const struct
     return TRUE;
 }
 
-static void pdb_location_compute(struct process* pcs,
-                                 const struct module_format* modfmt,
+static void pdb_location_compute(const struct module_format* modfmt,
                                  const struct symt_function* func,
                                  struct location* loc)
 {
@@ -2869,7 +2879,7 @@ static void pdb_location_compute(struct process* pcs,
              locinfo->kind != 0;
              locinfo = (const struct cv_local_info*)((const char*)(locinfo + 1) + locinfo->ngaps * sizeof(locinfo->gaps[0])))
         {
-            if (!codeview_is_inside(locinfo, func, pcs->localscope_pc)) continue;
+            if (!codeview_is_inside(locinfo, func, modfmt->module->process->localscope_pc)) continue;
             switch (locinfo->kind)
             {
             case S_DEFRANGE:
@@ -3162,7 +3172,7 @@ static void pdb_free(void* buffer)
     HeapFree(GetProcessHeap(), 0, buffer);
 }
 
-static void pdb_free_file(struct pdb_file_info* pdb_file)
+static void pdb_free_file(struct pdb_file_info* pdb_file, BOOL unmap)
 {
     switch (pdb_file->kind)
     {
@@ -3176,6 +3186,12 @@ static void pdb_free_file(struct pdb_file_info* pdb_file)
         break;
     }
     HeapFree(GetProcessHeap(), 0, pdb_file->stream_dict);
+    pdb_file->stream_dict = NULL;
+    if (unmap)
+    {
+        UnmapViewOfFile(pdb_file->image);
+        pdb_file->image = NULL;
+    }
 }
 
 static struct pdb_stream_name* pdb_load_stream_name_table(const char* str, unsigned cb)
@@ -3249,17 +3265,17 @@ static const char* pdb_get_string_table_entry(const PDB_STRING_TABLE* table, uns
     return (!table || offset >= table->length) ? NULL : (const char*)(table + 1) + offset;
 }
 
-static void pdb_module_remove(struct process* pcsn, struct module_format* modfmt)
+static void pdb_module_remove(struct module_format* modfmt)
 {
     unsigned    i;
 
     for (i = 0; i < modfmt->u.pdb_info->used_subfiles; i++)
     {
-        pdb_free_file(&modfmt->u.pdb_info->pdb_files[i]);
+        pdb_free_file(&modfmt->u.pdb_info->pdb_files[i], TRUE);
         if (modfmt->u.pdb_info->pdb_files[i].image)
             UnmapViewOfFile(modfmt->u.pdb_info->pdb_files[i].image);
-        if (modfmt->u.pdb_info->pdb_files[i].hMap)
-            CloseHandle(modfmt->u.pdb_info->pdb_files[i].hMap);
+        if (modfmt->u.pdb_info->pdb_files[i].pdb_reader)
+            pdb_reader_dispose(modfmt->u.pdb_info->pdb_files[i].pdb_reader);
     }
     HeapFree(GetProcessHeap(), 0, modfmt);
 }
@@ -3785,15 +3801,27 @@ static BOOL pdb_process_internal(const struct process *pcs,
         CloseHandle(hFile);
         return FALSE;
     }
-    CloseHandle(hFile);
+
+    CloseHandle(hMap);
+    /* old pdb reader */
     if (!pdb_init(pdb_file, image))
     {
-        CloseHandle(hMap);
+        CloseHandle(hFile);
+        UnmapViewOfFile(image);
+        return FALSE;
+    }
+    if (getenv("WINE_DBGHELP_OLD_PDB")) /* keep using old pdb reader */
+    {
+        pdb_file->pdb_reader = NULL;
+        CloseHandle(hFile);
+    }
+    else if (!(pdb_file->pdb_reader = pdb_hack_reader_init(msc_dbg->module, hFile, msc_dbg->sectp, msc_dbg->nsect)))
+    {
+        CloseHandle(hFile);
         UnmapViewOfFile(image);
         return FALSE;
     }
 
-    pdb_file->hMap = hMap;
     pdb_file->image = image;
     symbols_image = pdb_read_stream(pdb_file, 3);
     if (symbols_image)
@@ -3878,25 +3906,25 @@ static BOOL pdb_process_internal(const struct process *pcs,
                     files_image};
                 codeview_snarf(msc_dbg, modimage, sizeof(DWORD), sfile.symbol_size, &cvmod, file_name);
 
-                if (SymGetOptions() & SYMOPT_LOAD_LINES)
+                if (sfile.lineno_size && sfile.lineno2_size)
+                    FIXME("Both line info present... preferring second\n");
+                if (sfile.lineno2_size)
                 {
-                    if (sfile.lineno_size && sfile.lineno2_size)
-                        FIXME("Both line info present... only supporting second\n");
-                    else if (sfile.lineno_size)
-                    {
-                        if (codeview_snarf_linetab(msc_dbg,
-                                                   modimage + sfile.symbol_size,
-                                                   sfile.lineno_size,
-                                                   pdb_file->kind == PDB_JG))
-                            *has_linenumber_info = TRUE;
-                    }
-                    else if (sfile.lineno2_size)
-                    {
-                        if (codeview_snarf_linetab2(msc_dbg, &cvmod))
-                            *has_linenumber_info = TRUE;
-                    }
+                    if (pdb_file->pdb_reader ||
+                        ((SymGetOptions() & SYMOPT_LOAD_LINES) && codeview_snarf_linetab2(msc_dbg, &cvmod)))
+                        *has_linenumber_info = TRUE;
                 }
-
+                else if (sfile.lineno_size)
+                {
+                    if (pdb_file->pdb_reader)
+                        FIXME("New PDB reader doesn't support old line format\n");
+                    else if ((SymGetOptions() & SYMOPT_LOAD_LINES) &&
+                             codeview_snarf_linetab(msc_dbg,
+                                                    modimage + sfile.symbol_size,
+                                                    sfile.lineno_size,
+                                                    pdb_file->kind == PDB_JG))
+                        *has_linenumber_info = TRUE;
+                }
                 pdb_free(modimage);
             }
             file_name += strlen(file_name) + 1;
@@ -3938,8 +3966,16 @@ static BOOL pdb_process_internal(const struct process *pcs,
     pdb_free(symbols_image);
     pdb_free(files_image);
 
+    pdb_free_file(pdb_file, pdb_file->pdb_reader != NULL);
+
     return TRUE;
 }
+
+static const struct module_format_vtable old_pdb_module_format_vtable =
+{
+    pdb_module_remove,
+    pdb_location_compute,
+};
 
 static BOOL pdb_process_file(const struct process *pcs,
                              const struct msc_debug_info *msc_dbg,
@@ -3960,8 +3996,7 @@ static BOOL pdb_process_file(const struct process *pcs,
         pdb_module_info = (void*)(modfmt + 1);
         msc_dbg->module->format_info[DFI_PDB] = modfmt;
         modfmt->module      = msc_dbg->module;
-        modfmt->remove      = pdb_module_remove;
-        modfmt->loc_compute = pdb_location_compute;
+        modfmt->vtable      = &old_pdb_module_format_vtable;
         modfmt->u.pdb_info  = pdb_module_info;
 
         memset(cv_zmodules, 0, sizeof(cv_zmodules));
@@ -3998,356 +4033,6 @@ static BOOL pdb_process_file(const struct process *pcs,
     msc_dbg->module->module.PdbSig = 0;
     msc_dbg->module->module.PdbAge = age;
     return FALSE;
-}
-
-/*========================================================================
- * FPO unwinding code
- */
-
-/* Stack unwinding is based on postfixed operations.
- * Let's define our Postfix EValuator
- */
-#define PEV_MAX_LEN      32
-struct pevaluator
-{
-    struct cpu_stack_walk*  csw;
-    struct pool             pool;
-    struct vector           stack;
-    unsigned                stk_index;
-    struct hash_table       values;
-    char                    error[64];
-};
-
-struct zvalue
-{
-    DWORD_PTR                   value;
-    struct hash_table_elt       elt;
-};
-
-static void pev_set_error(struct pevaluator* pev, const char* msg, ...) __WINE_PRINTF_ATTR(2,3);
-static void pev_set_error(struct pevaluator* pev, const char* msg, ...)
-{
-    va_list args;
-
-    va_start(args, msg);
-    vsnprintf(pev->error, sizeof(pev->error), msg, args);
-    va_end(args);
-}
-
-#if 0
-static void pev_dump_stack(struct pevaluator* pev)
-{
-    unsigned i;
-    struct hash_table_iter      hti;
-
-    FIXME("stack #%d\n", pev->stk_index);
-    for (i = 0; i < pev->stk_index; i++)
-    {
-        FIXME("\t%d) %s\n", i, *(char**)vector_at(&pev->stack, i));
-    }
-    hash_table_iter_init(&pev->values, &hti, str);
-    FIXME("hash\n");
-    while ((ptr = hash_table_iter_up(&hti)))
-    {
-        struct zvalue* zval = CONTAINING_RECORD(ptr, struct zvalue, elt);
-        FIXME("\t%s: Ix\n", zval->elt.name, zval->value);
-    }
-
-}
-#endif
-
-/* get the value out of an operand (variable or literal) */
-static BOOL  pev_get_val(struct pevaluator* pev, const char* str, DWORD_PTR* val)
-{
-    char*                       n;
-    struct hash_table_iter      hti;
-    void*                       ptr;
-
-    switch (str[0])
-    {
-    case '$':
-    case '.':
-        hash_table_iter_init(&pev->values, &hti, str);
-        while ((ptr = hash_table_iter_up(&hti)))
-        {
-            if (!strcmp(CONTAINING_RECORD(ptr, struct zvalue, elt)->elt.name, str))
-            {
-                *val = CONTAINING_RECORD(ptr, struct zvalue, elt)->value;
-                return TRUE;
-            }
-        }
-        pev_set_error(pev, "get_zvalue: no value found (%s)", str);
-        return FALSE;
-    default:
-        *val = strtol(str, &n, 10);
-        if (n != str && *n == '\0') return TRUE;
-        pev_set_error(pev, "get_val: not a literal (%s)", str);
-        return FALSE;
-    }
-}
-
-/* push an operand onto the stack */
-static BOOL  pev_push(struct pevaluator* pev, const char* elt)
-{
-    char**      at;
-    if (pev->stk_index < vector_length(&pev->stack))
-        at = vector_at(&pev->stack, pev->stk_index);
-    else
-        at = vector_add(&pev->stack, &pev->pool);
-    if (!at)
-    {
-        pev_set_error(pev, "push: out of memory");
-        return FALSE;
-    }
-    *at = pool_strdup(&pev->pool, elt);
-    pev->stk_index++;
-    return TRUE;
-}
-
-/* pop an operand from the stack */
-static BOOL  pev_pop(struct pevaluator* pev, char* elt)
-{
-    char**      at = vector_at(&pev->stack, --pev->stk_index);
-    if (!at)
-    {
-        pev_set_error(pev, "pop: stack empty");
-        return FALSE;
-    }
-    strcpy(elt, *at);
-    return TRUE;
-}
-
-/* pop an operand from the stack, and gets its value */
-static BOOL  pev_pop_val(struct pevaluator* pev, DWORD_PTR* val)
-{
-    char        p[PEV_MAX_LEN];
-
-    return pev_pop(pev, p) && pev_get_val(pev, p, val);
-}
-
-/* set var 'name' a new value (creates the var if it doesn't exist) */
-static BOOL  pev_set_value(struct pevaluator* pev, const char* name, DWORD_PTR val)
-{
-    struct hash_table_iter      hti;
-    void*                       ptr;
-
-    hash_table_iter_init(&pev->values, &hti, name);
-    while ((ptr = hash_table_iter_up(&hti)))
-    {
-        if (!strcmp(CONTAINING_RECORD(ptr, struct zvalue, elt)->elt.name, name))
-        {
-            CONTAINING_RECORD(ptr, struct zvalue, elt)->value = val;
-            break;
-        }
-    }
-    if (!ptr)
-    {
-        struct zvalue* zv = pool_alloc(&pev->pool, sizeof(*zv));
-        if (!zv)
-        {
-            pev_set_error(pev, "set_value: out of memory");
-            return FALSE;
-        }
-        zv->value = val;
-
-        zv->elt.name = pool_strdup(&pev->pool, name);
-        hash_table_add(&pev->values, &zv->elt);
-    }
-    return TRUE;
-}
-
-/* execute a binary operand from the two top most values on the stack.
- * puts result on top of the stack */
-static BOOL  pev_binop(struct pevaluator* pev, char op)
-{
-    char        res[PEV_MAX_LEN];
-    DWORD_PTR   v1, v2, c;
-
-    if (!pev_pop_val(pev, &v1) || !pev_pop_val(pev, &v2)) return FALSE;
-    if ((op == '/' || op == '%') && v2 == 0)
-    {
-        pev_set_error(pev, "binop: division by zero");
-        return FALSE;
-    }
-    switch (op)
-    {
-    case '+': c = v1 + v2; break;
-    case '-': c = v1 - v2; break;
-    case '*': c = v1 * v2; break;
-    case '/': c = v1 / v2; break;
-    case '%': c = v1 % v2; break;
-    default:
-        pev_set_error(pev, "binop: unknown op (%c)", op);
-        return FALSE;
-    }
-    snprintf(res, sizeof(res), "%Id", c);
-    pev_push(pev, res);
-    return TRUE;
-}
-
-/* pops top most operand, dereference it, on pushes the result on top of the stack */
-static BOOL  pev_deref(struct pevaluator* pev)
-{
-    char        res[PEV_MAX_LEN];
-    DWORD_PTR   v1, v2 = 0;
-
-    if (!pev_pop_val(pev, &v1)) return FALSE;
-    if (!sw_read_mem(pev->csw, v1, &v2, pev->csw->cpu->word_size))
-    {
-        pev_set_error(pev, "deref: cannot read mem at %Ix", v1);
-        return FALSE;
-    }
-    snprintf(res, sizeof(res), "%Id", v2);
-    pev_push(pev, res);
-    return TRUE;
-}
-
-/* assign value to variable (from two top most operands) */
-static BOOL  pev_assign(struct pevaluator* pev)
-{
-    char                p2[PEV_MAX_LEN];
-    DWORD_PTR           v1;
-
-    if (!pev_pop_val(pev, &v1) || !pev_pop(pev, p2)) return FALSE;
-    if (p2[0] != '$')
-    {
-        pev_set_error(pev, "assign: %s isn't a variable", p2);
-        return FALSE;
-    }
-    pev_set_value(pev, p2, v1);
-
-    return TRUE;
-}
-
-/* initializes the postfix evaluator */
-static void  pev_init(struct pevaluator* pev, struct cpu_stack_walk* csw,
-                      const PDB_FPO_DATA* fpoext, struct pdb_cmd_pair* cpair)
-{
-    pev->csw = csw;
-    pool_init(&pev->pool, 512);
-    vector_init(&pev->stack, sizeof(char*), 0);
-    pev->stk_index = 0;
-    hash_table_init(&pev->pool, &pev->values, 8);
-    pev->error[0] = '\0';
-    for (; cpair->name; cpair++)
-        pev_set_value(pev, cpair->name, *cpair->pvalue);
-    pev_set_value(pev, ".raSearchStart", fpoext->start);
-    pev_set_value(pev, ".cbLocals",      fpoext->locals_size);
-    pev_set_value(pev, ".cbParams",      fpoext->params_size);
-    pev_set_value(pev, ".cbSavedRegs",   fpoext->savedregs_size);
-}
-
-static BOOL  pev_free(struct pevaluator* pev, struct pdb_cmd_pair* cpair)
-{
-    DWORD_PTR   val;
-
-    if (cpair) for (; cpair->name; cpair++)
-    {
-        if (pev_get_val(pev, cpair->name, &val))
-            *cpair->pvalue = val;
-    }
-    pool_destroy(&pev->pool);
-    return TRUE;
-}
-
-static BOOL  pdb_parse_cmd_string(struct cpu_stack_walk* csw, PDB_FPO_DATA* fpoext,
-                                  const char* cmd, struct pdb_cmd_pair* cpair)
-{
-    char                token[PEV_MAX_LEN];
-    char*               ptok = token;
-    const char*         ptr;
-    BOOL                over = FALSE;
-    struct pevaluator   pev;
-
-    if (!cmd) return FALSE;
-    pev_init(&pev, csw, fpoext, cpair);
-    for (ptr = cmd; !over; ptr++)
-    {
-        if (*ptr == ' ' || (over = *ptr == '\0'))
-        {
-            *ptok = '\0';
-
-            if (!strcmp(token, "+") || !strcmp(token, "-") || !strcmp(token, "*") ||
-                !strcmp(token, "/") || !strcmp(token, "%"))
-            {
-                if (!pev_binop(&pev, token[0])) goto done;
-            }
-            else if (!strcmp(token, "^"))
-            {
-                if (!pev_deref(&pev)) goto done;
-            }
-            else if (!strcmp(token, "="))
-            {
-                if (!pev_assign(&pev)) goto done;
-            }
-            else
-            {
-                if (!pev_push(&pev, token)) goto done;
-            }
-            ptok = token;
-        }
-        else
-        {
-            if (ptok - token >= PEV_MAX_LEN - 1)
-            {
-                pev_set_error(&pev, "parse: token too long (%s)", ptr - (ptok - token));
-                goto done;
-            }
-            *ptok++ = *ptr;
-        }
-    }
-    pev_free(&pev, cpair);
-    return TRUE;
-done:
-    FIXME("Couldn't evaluate %s => %s\n", debugstr_a(cmd), pev.error);
-    pev_free(&pev, NULL);
-    return FALSE;
-}
-
-BOOL pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
-    union ctx *context, struct pdb_cmd_pair *cpair)
-{
-    struct module_pair          pair;
-    struct pdb_module_info*     pdb_info;
-    PDB_FPO_DATA*               fpoext;
-    unsigned                    i, size;
-    PDB_STRING_TABLE*           strbase;
-    BOOL                        ret = TRUE;
-
-    if (!module_init_pair(&pair, csw->hProcess, ip)) return FALSE;
-    if (!pair.effective->format_info[DFI_PDB]) return FALSE;
-    pdb_info = pair.effective->format_info[DFI_PDB]->u.pdb_info;
-    TRACE("searching %Ix => %Ix\n", ip, ip - (DWORD_PTR)pair.effective->module.BaseOfImage);
-    ip -= (DWORD_PTR)pair.effective->module.BaseOfImage;
-
-    strbase = pdb_read_strings(&pdb_info->pdb_files[0]);
-    if (!strbase) return FALSE;
-    fpoext = pdb_read_stream(&pdb_info->pdb_files[0], pdb_info->pdb_files[0].fpoext_stream);
-    size = pdb_get_stream_size(&pdb_info->pdb_files[0], pdb_info->pdb_files[0].fpoext_stream);
-    if (fpoext && (size % sizeof(*fpoext)) == 0)
-    {
-        size /= sizeof(*fpoext);
-        for (i = 0; i < size; i++)
-        {
-            if (fpoext[i].start <= ip && ip < fpoext[i].start + fpoext[i].func_size)
-            {
-                TRACE("\t%08x %08x %8x %8x %4x %4x %4x %08x %s\n",
-                      fpoext[i].start, fpoext[i].func_size, fpoext[i].locals_size,
-                      fpoext[i].params_size, fpoext[i].maxstack_size, fpoext[i].prolog_size,
-                      fpoext[i].savedregs_size, fpoext[i].flags,
-                      debugstr_a(pdb_get_string_table_entry(strbase, fpoext[i].str_offset)));
-                ret = pdb_parse_cmd_string(csw, &fpoext[i],
-                                           pdb_get_string_table_entry(strbase, fpoext[i].str_offset),
-                                           cpair);
-                break;
-            }
-        }
-    }
-    else ret = FALSE;
-    pdb_free(fpoext);
-    pdb_free(strbase);
-
-    return ret;
 }
 
 /*========================================================================
@@ -4674,4 +4359,50 @@ DWORD dbg_get_file_indexinfo(void* image, DWORD size, SYMSRV_INDEX_INFOW* info)
     num_directories = header->DebugDirectorySize / sizeof(IMAGE_DEBUG_DIRECTORY);
 
     return msc_get_file_indexinfo(image, dbg, num_directories, info);
+}
+
+BOOL pdb_old_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
+                            union ctx *context, struct pdb_cmd_pair *cpair)
+{
+    struct module_pair          pair;
+    struct pdb_module_info*     pdb_info;
+    PDB_FPO_DATA*               fpoext;
+    unsigned                    i, size;
+    PDB_STRING_TABLE*           strbase;
+    BOOL                        ret = TRUE;
+
+    if (!module_init_pair(&pair, csw->hProcess, ip)) return FALSE;
+    if (!pair.effective->format_info[DFI_PDB]) return FALSE;
+    pdb_info = pair.effective->format_info[DFI_PDB]->u.pdb_info;
+    TRACE("searching %Ix => %Ix\n", ip, ip - (DWORD_PTR)pair.effective->module.BaseOfImage);
+    ip -= (DWORD_PTR)pair.effective->module.BaseOfImage;
+
+    strbase = pdb_read_strings(&pdb_info->pdb_files[0]);
+    if (!strbase) return FALSE;
+    fpoext = pdb_read_stream(&pdb_info->pdb_files[0], pdb_info->pdb_files[0].fpoext_stream);
+    size = pdb_get_stream_size(&pdb_info->pdb_files[0], pdb_info->pdb_files[0].fpoext_stream);
+    if (fpoext && (size % sizeof(*fpoext)) == 0)
+    {
+        size /= sizeof(*fpoext);
+        for (i = 0; i < size; i++)
+        {
+            if (fpoext[i].start <= ip && ip < fpoext[i].start + fpoext[i].func_size)
+            {
+                TRACE("\t%08x %08x %8x %8x %4x %4x %4x %08x %s\n",
+                      fpoext[i].start, fpoext[i].func_size, fpoext[i].locals_size,
+                      fpoext[i].params_size, fpoext[i].maxstack_size, fpoext[i].prolog_size,
+                      fpoext[i].savedregs_size, fpoext[i].flags,
+                      debugstr_a(pdb_get_string_table_entry(strbase, fpoext[i].str_offset)));
+                ret = pdb_fpo_unwind_parse_cmd_string(csw, &fpoext[i],
+                                                      pdb_get_string_table_entry(strbase, fpoext[i].str_offset),
+                                                      cpair);
+                break;
+            }
+        }
+    }
+    else ret = FALSE;
+    pdb_free(fpoext);
+    pdb_free(strbase);
+
+    return ret;
 }

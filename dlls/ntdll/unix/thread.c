@@ -2061,7 +2061,7 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
                 info.ClientId.UniqueThread  = ULongToHandle(reply->tid);
                 info.AffinityMask           = reply->affinity & affinity_mask;
                 info.Priority               = reply->priority;
-                info.BasePriority           = reply->priority;  /* FIXME */
+                info.BasePriority           = reply->base_priority;
             }
         }
         SERVER_END_REQ;
@@ -2153,7 +2153,7 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
             status = wine_server_call( req );
             if (status == STATUS_SUCCESS)
             {
-                ULONG last = reply->last;
+                ULONG last = !!(reply->flags & GET_THREAD_INFO_FLAG_LAST);
                 if (data) memcpy( data, &last, sizeof(last) );
                 if (ret_len) *ret_len = sizeof(last);
             }
@@ -2371,6 +2371,21 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
         return status;
     }
 
+    case ThreadPriority:
+    {
+        const DWORD *priority = data;
+        if (length != sizeof(DWORD)) return STATUS_INVALID_PARAMETER;
+        SERVER_START_REQ( set_thread_info )
+        {
+            req->handle    = wine_server_obj_handle( handle );
+            req->priority  = *priority;
+            req->mask      = SET_THREAD_INFO_PRIORITY;
+            status = wine_server_call( req );
+        }
+        SERVER_END_REQ;
+        return status;
+    }
+
     case ThreadBasePriority:
     {
         const DWORD *base_priority = data;
@@ -2548,7 +2563,6 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
 
     case ThreadBasicInformation:
     case ThreadTimes:
-    case ThreadPriority:
     case ThreadDescriptorTableEntry:
     case ThreadEventPair_Reusable:
     case ThreadPerformanceCount:

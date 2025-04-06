@@ -1916,12 +1916,6 @@ static bool copy_propagation_replace_with_deref(struct hlsl_ctx *ctx,
     if (!nonconst_index_from_deref(ctx, deref, &nonconst_i, &base, &scale, &count))
         return false;
 
-    if (hlsl_version_lt(ctx, 4, 0))
-    {
-        TRACE("Non-constant index propagation is not yet supported for SM1.\n");
-        return false;
-    }
-
     VKD3D_ASSERT(count);
 
     hlsl_block_init(&block);
@@ -1949,6 +1943,12 @@ static bool copy_propagation_replace_with_deref(struct hlsl_ctx *ctx,
             x = idx->src.var;
         else if (x != idx->src.var)
             goto done;
+
+        if (hlsl_version_lt(ctx, 4, 0) && x->is_uniform && ctx->profile->type != VKD3D_SHADER_TYPE_VERTEX)
+        {
+            TRACE("Skipping propagating non-constant deref to SM1 uniform %s.\n", var->name);
+            goto done;
+        }
 
         if (i == 0)
         {
@@ -2183,6 +2183,9 @@ static bool copy_propagation_transform_object_load(struct hlsl_ctx *ctx,
     if (!(value = copy_propagation_get_value(state, deref->var, start, time)))
         return false;
     VKD3D_ASSERT(value->component == 0);
+
+    /* A uniform object should have never been written to. */
+    VKD3D_ASSERT(!deref->var->is_uniform);
 
     /* Only HLSL_IR_LOAD can produce an object. */
     load = hlsl_ir_load(value->node);
@@ -2487,6 +2490,554 @@ enum validation_result
     DEREF_VALIDATION_OUT_OF_BOUNDS,
     DEREF_VALIDATION_NOT_CONSTANT,
 };
+
+struct vectorize_exprs_state
+{
+    struct vectorizable_exprs_group
+    {
+        struct hlsl_block *block;
+        struct hlsl_ir_expr *exprs[4];
+        uint8_t expr_count, component_count;
+    } *groups;
+    size_t count, capacity;
+};
+
+static bool is_same_vectorizable_source(struct hlsl_ir_node *a, struct hlsl_ir_node *b)
+{
+    /* TODO: We can also vectorize different constants. */
+
+    if (a->type == HLSL_IR_SWIZZLE)
+        a = hlsl_ir_swizzle(a)->val.node;
+    if (b->type == HLSL_IR_SWIZZLE)
+        b = hlsl_ir_swizzle(b)->val.node;
+
+    return a == b;
+}
+
+static bool is_same_vectorizable_expr(struct hlsl_ir_expr *a, struct hlsl_ir_expr *b)
+{
+    if (a->op != b->op)
+        return false;
+
+    for (size_t j = 0; j < HLSL_MAX_OPERANDS; ++j)
+    {
+        if (!a->operands[j].node)
+            break;
+        if (!is_same_vectorizable_source(a->operands[j].node, b->operands[j].node))
+            return false;
+    }
+
+    return true;
+}
+
+static void record_vectorizable_expr(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct hlsl_ir_expr *expr, struct vectorize_exprs_state *state)
+{
+    if (expr->node.data_type->class > HLSL_CLASS_VECTOR)
+        return;
+
+    /* These are the only current ops that are not per-component. */
+    if (expr->op == HLSL_OP1_COS_REDUCED || expr->op == HLSL_OP1_SIN_REDUCED
+            || expr->op == HLSL_OP2_DOT || expr->op == HLSL_OP3_DP2ADD)
+        return;
+
+    for (size_t i = 0; i < state->count; ++i)
+    {
+        struct vectorizable_exprs_group *group = &state->groups[i];
+        struct hlsl_ir_expr *other = group->exprs[0];
+
+        /* These are SSA instructions, which means they have the same value
+         * regardless of what block they're in. However, being in different
+         * blocks may mean that one expression or the other is not always
+         * executed. */
+
+        if (expr->node.data_type->e.numeric.dimx + group->component_count <= 4
+                && group->block == block
+                && is_same_vectorizable_expr(expr, other))
+        {
+            group->exprs[group->expr_count++] = expr;
+            group->component_count += expr->node.data_type->e.numeric.dimx;
+            return;
+        }
+    }
+
+    if (!hlsl_array_reserve(ctx, (void **)&state->groups,
+            &state->capacity, state->count + 1, sizeof(*state->groups)))
+        return;
+    state->groups[state->count].block = block;
+    state->groups[state->count].exprs[0] = expr;
+    state->groups[state->count].expr_count = 1;
+    state->groups[state->count].component_count = expr->node.data_type->e.numeric.dimx;
+    ++state->count;
+}
+
+static void find_vectorizable_expr_groups(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct vectorize_exprs_state *state)
+{
+    struct hlsl_ir_node *instr;
+
+    LIST_FOR_EACH_ENTRY(instr, &block->instrs, struct hlsl_ir_node, entry)
+    {
+        if (instr->type == HLSL_IR_EXPR)
+        {
+            record_vectorizable_expr(ctx, block, hlsl_ir_expr(instr), state);
+        }
+        else if (instr->type == HLSL_IR_IF)
+        {
+            struct hlsl_ir_if *iff = hlsl_ir_if(instr);
+
+            find_vectorizable_expr_groups(ctx, &iff->then_block, state);
+            find_vectorizable_expr_groups(ctx, &iff->else_block, state);
+        }
+        else if (instr->type == HLSL_IR_LOOP)
+        {
+            find_vectorizable_expr_groups(ctx, &hlsl_ir_loop(instr)->body, state);
+        }
+        else if (instr->type == HLSL_IR_SWITCH)
+        {
+            struct hlsl_ir_switch *s = hlsl_ir_switch(instr);
+            struct hlsl_ir_switch_case *c;
+
+            LIST_FOR_EACH_ENTRY(c, &s->cases, struct hlsl_ir_switch_case, entry)
+                find_vectorizable_expr_groups(ctx, &c->body, state);
+        }
+    }
+}
+
+/* Combine sequences like
+ *
+ * 3: @1.x
+ * 4: @2.x
+ * 5: @3 * @4
+ * 6: @1.y
+ * 7: @2.x
+ * 8: @6 * @7
+ *
+ * into
+ *
+ * 5_1: @1.xy
+ * 5_2: @2.xx
+ * 5_3: @5_1 * @5_2
+ * 5:   @5_3.x
+ * 8:   @5_3.y
+ *
+ * Each operand to an expression needs to refer to the same ultimate source
+ * (in this case @1 and @2 respectively), but can be a swizzle thereof.
+ *
+ * In practice the swizzles @5 and @8 can generally then be vectorized again,
+ * either as part of another expression, or as part of a store.
+ */
+static bool vectorize_exprs(struct hlsl_ctx *ctx, struct hlsl_block *block)
+{
+    struct vectorize_exprs_state state = {0};
+    bool progress = false;
+
+    find_vectorizable_expr_groups(ctx, block, &state);
+
+    for (unsigned int i = 0; i < state.count; ++i)
+    {
+        struct vectorizable_exprs_group *group = &state.groups[i];
+        struct hlsl_ir_node *args[HLSL_MAX_OPERANDS] = {0};
+        uint32_t swizzles[HLSL_MAX_OPERANDS] = {0};
+        struct hlsl_ir_node *arg, *combined;
+        unsigned int component_count = 0;
+        struct hlsl_type *combined_type;
+        struct hlsl_block new_block;
+        struct hlsl_ir_expr *expr;
+
+        if (group->expr_count == 1)
+            continue;
+
+        hlsl_block_init(&new_block);
+
+        for (unsigned int j = 0; j < group->expr_count; ++j)
+        {
+            expr = group->exprs[j];
+
+            for (unsigned int a = 0; a < HLSL_MAX_OPERANDS; ++a)
+            {
+                uint32_t arg_swizzle;
+
+                if (!(arg = expr->operands[a].node))
+                    break;
+
+                if (arg->type == HLSL_IR_SWIZZLE)
+                    arg_swizzle = hlsl_ir_swizzle(arg)->u.vector;
+                else
+                    arg_swizzle = HLSL_SWIZZLE(X, Y, Z, W);
+
+                /* Mask out the invalid components. */
+                arg_swizzle &= (1u << VKD3D_SHADER_SWIZZLE_SHIFT(arg->data_type->e.numeric.dimx)) - 1;
+                swizzles[a] |= arg_swizzle << VKD3D_SHADER_SWIZZLE_SHIFT(component_count);
+            }
+
+            component_count += expr->node.data_type->e.numeric.dimx;
+        }
+
+        expr = group->exprs[0];
+        for (unsigned int a = 0; a < HLSL_MAX_OPERANDS; ++a)
+        {
+            if (!(arg = expr->operands[a].node))
+                break;
+            if (arg->type == HLSL_IR_SWIZZLE)
+                arg = hlsl_ir_swizzle(arg)->val.node;
+            args[a] = hlsl_block_add_swizzle(ctx, &new_block, swizzles[a], component_count, arg, &arg->loc);
+        }
+
+        combined_type = hlsl_get_vector_type(ctx, expr->node.data_type->e.numeric.type, component_count);
+        combined = hlsl_block_add_expr(ctx, &new_block, expr->op, args, combined_type, &expr->node.loc);
+
+        list_move_before(&expr->node.entry, &new_block.instrs);
+
+        TRACE("Combining %u %s instructions into %p.\n", group->expr_count,
+                debug_hlsl_expr_op(group->exprs[0]->op), combined);
+
+        component_count = 0;
+        for (unsigned int j = 0; j < group->expr_count; ++j)
+        {
+            struct hlsl_ir_node *replacement;
+
+            expr = group->exprs[j];
+
+            if (!(replacement = hlsl_new_swizzle(ctx,
+                    HLSL_SWIZZLE(X, Y, Z, W) >> VKD3D_SHADER_SWIZZLE_SHIFT(component_count),
+                    expr->node.data_type->e.numeric.dimx, combined, &expr->node.loc)))
+                goto out;
+            component_count += expr->node.data_type->e.numeric.dimx;
+            list_add_before(&expr->node.entry, &replacement->entry);
+            hlsl_replace_node(&expr->node, replacement);
+        }
+
+        progress = true;
+    }
+
+out:
+    vkd3d_free(state.groups);
+    return progress;
+}
+
+struct vectorize_stores_state
+{
+    struct vectorizable_stores_group
+    {
+        struct hlsl_block *block;
+        /* We handle overlapping stores, because it's not really easier not to.
+         * In theory, then, we could collect an arbitrary number of stores here.
+         *
+         * In practice, overlapping stores are unlikely, and of course at most
+         * 4 stores can appear without overlap. Therefore, for simplicity, we
+         * just use a fixed array of 4.
+         *
+         * Since computing the writemask requires traversing the deref, and we
+         * need to do that anyway, we store it here for convenience. */
+        struct hlsl_ir_store *stores[4];
+        unsigned int path_len;
+        uint8_t writemasks[4];
+        uint8_t store_count;
+        bool dirty;
+    } *groups;
+    size_t count, capacity;
+};
+
+/* This must be a store to a subsection of a vector.
+ * In theory we can also vectorize stores to packed struct fields,
+ * but this requires target-specific knowledge and is probably best left
+ * to a VSIR pass. */
+static bool can_vectorize_store(struct hlsl_ctx *ctx, struct hlsl_ir_store *store,
+        unsigned int *path_len, uint8_t *writemask)
+{
+    struct hlsl_type *type = store->lhs.var->data_type;
+    unsigned int i;
+
+    if (store->rhs.node->data_type->class > HLSL_CLASS_VECTOR)
+        return false;
+
+    if (type->class == HLSL_CLASS_SCALAR)
+        return false;
+
+    for (i = 0; type->class != HLSL_CLASS_VECTOR && i < store->lhs.path_len; ++i)
+        type = hlsl_get_element_type_from_path_index(ctx, type, store->lhs.path[i].node);
+
+    if (type->class != HLSL_CLASS_VECTOR)
+        return false;
+
+    *path_len = i;
+
+    if (i < store->lhs.path_len)
+    {
+        struct hlsl_ir_constant *c;
+
+        /* This is a store to a scalar component of a vector, achieved via
+         * indexing. */
+
+        if (store->lhs.path[i].node->type != HLSL_IR_CONSTANT)
+            return false;
+        c = hlsl_ir_constant(store->lhs.path[i].node);
+        *writemask = (1u << c->value.u[0].u);
+    }
+    else
+    {
+        *writemask = store->writemask;
+    }
+
+    return true;
+}
+
+static bool derefs_are_same_vector(struct hlsl_ctx *ctx, const struct hlsl_deref *a, const struct hlsl_deref *b)
+{
+    struct hlsl_type *type = a->var->data_type;
+
+    if (a->var != b->var)
+        return false;
+
+    for (unsigned int i = 0; type->class != HLSL_CLASS_VECTOR && i < a->path_len && i < b->path_len; ++i)
+    {
+        if (a->path[i].node != b->path[i].node)
+            return false;
+        type = hlsl_get_element_type_from_path_index(ctx, type, a->path[i].node);
+    }
+
+    return true;
+}
+
+static void record_vectorizable_store(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct hlsl_ir_store *store, struct vectorize_stores_state *state)
+{
+    unsigned int path_len;
+    uint8_t writemask;
+
+    if (!can_vectorize_store(ctx, store, &path_len, &writemask))
+    {
+        /* In the case of a dynamically indexed vector, we must invalidate
+         * any groups that statically index the same vector.
+         * For the sake of expediency, we go one step further and invalidate
+         * any groups that store to the same variable.
+         * (We also don't check that that was the reason why this store isn't
+         * vectorizable.)
+         * We could be more granular, but we'll defer that until it comes
+         * up in practice. */
+        for (size_t i = 0; i < state->count; ++i)
+        {
+            if (state->groups[i].stores[0]->lhs.var == store->lhs.var)
+                state->groups[i].dirty = true;
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < state->count; ++i)
+    {
+        struct vectorizable_stores_group *group = &state->groups[i];
+        struct hlsl_ir_store *other = group->stores[0];
+
+        if (group->dirty)
+            continue;
+
+        if (derefs_are_same_vector(ctx, &store->lhs, &other->lhs))
+        {
+            /* Stores must be in the same CFG block. If they're not,
+             * they're not executed in exactly the same flow, and
+             * therefore can't be vectorized. */
+            if (group->block == block
+                    && is_same_vectorizable_source(store->rhs.node, other->rhs.node))
+            {
+                if (group->store_count < ARRAY_SIZE(group->stores))
+                {
+                    group->stores[group->store_count] = store;
+                    group->writemasks[group->store_count] = writemask;
+                    ++group->store_count;
+                    return;
+                }
+            }
+            else
+            {
+                /* A store to the same vector with a different source, or in
+                 * a different CFG block, invalidates any earlier store.
+                 *
+                 * A store to a component which *contains* the vector in
+                 * question would also invalidate, but we should have split all
+                 * of those by the time we get here. */
+                group->dirty = true;
+
+                /* Note that we do exit this loop early if we find a store A we
+                 * can vectorize with, but that's fine. If there was a store B
+                 * also in the state that we can't vectorize with, it would
+                 * already have invalidated A. */
+            }
+        }
+        else
+        {
+            /* This could still be a store to the same vector, if e.g. the
+             * vector is part of a dynamically indexed array, or the path has
+             * two equivalent instructions which refer to the same component.
+             * [CSE may help with the latter, but we don't have it yet,
+             * and we shouldn't depend on it anyway.]
+             * For the sake of expediency, we just invalidate it if it refers
+             * to the same variable at all.
+             * As above, we could be more granular, but we'll defer that until
+             * it comes up in practice. */
+            if (store->lhs.var == other->lhs.var)
+                group->dirty = true;
+
+            /* As above, we don't need to worry about exiting the loop early. */
+        }
+    }
+
+    if (!hlsl_array_reserve(ctx, (void **)&state->groups,
+            &state->capacity, state->count + 1, sizeof(*state->groups)))
+        return;
+    state->groups[state->count].block = block;
+    state->groups[state->count].stores[0] = store;
+    state->groups[state->count].path_len = path_len;
+    state->groups[state->count].writemasks[0] = writemask;
+    state->groups[state->count].store_count = 1;
+    state->groups[state->count].dirty = false;
+    ++state->count;
+}
+
+static void find_vectorizable_store_groups(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct vectorize_stores_state *state)
+{
+    struct hlsl_ir_node *instr;
+
+    LIST_FOR_EACH_ENTRY(instr, &block->instrs, struct hlsl_ir_node, entry)
+    {
+        if (instr->type == HLSL_IR_STORE)
+        {
+            record_vectorizable_store(ctx, block, hlsl_ir_store(instr), state);
+        }
+        else if (instr->type == HLSL_IR_LOAD)
+        {
+            struct hlsl_ir_var *var = hlsl_ir_load(instr)->src.var;
+
+            /* By vectorizing store A with store B, we are effectively moving
+             * store A down to happen at the same time as store B.
+             * If there was a load of the same variable between the two, this
+             * would be incorrect.
+             * Therefore invalidate all stores to this variable. As above, we
+             * could be more granular if necessary. */
+
+            for (unsigned int i = 0; i < state->count; ++i)
+            {
+                if (state->groups[i].stores[0]->lhs.var == var)
+                    state->groups[i].dirty = true;
+            }
+        }
+        else if (instr->type == HLSL_IR_IF)
+        {
+            struct hlsl_ir_if *iff = hlsl_ir_if(instr);
+
+            find_vectorizable_store_groups(ctx, &iff->then_block, state);
+            find_vectorizable_store_groups(ctx, &iff->else_block, state);
+        }
+        else if (instr->type == HLSL_IR_LOOP)
+        {
+            find_vectorizable_store_groups(ctx, &hlsl_ir_loop(instr)->body, state);
+        }
+        else if (instr->type == HLSL_IR_SWITCH)
+        {
+            struct hlsl_ir_switch *s = hlsl_ir_switch(instr);
+            struct hlsl_ir_switch_case *c;
+
+            LIST_FOR_EACH_ENTRY(c, &s->cases, struct hlsl_ir_switch_case, entry)
+                find_vectorizable_store_groups(ctx, &c->body, state);
+        }
+    }
+}
+
+/* Combine sequences like
+ *
+ * 2: @1.yw
+ * 3: @1.zy
+ * 4: var.xy = @2
+ * 5: var.yw = @3
+ *
+ * to
+ *
+ * 2: @1.yzy
+ * 5: var.xyw = @2
+ *
+ * There are a lot of gotchas here. We need to make sure the two stores are to
+ * the same vector (which may be embedded in a complex variable), that they're
+ * always executed in the same control flow, and that there aren't any other
+ * stores or loads on the same vector in the middle. */
+static bool vectorize_stores(struct hlsl_ctx *ctx, struct hlsl_block *block)
+{
+    struct vectorize_stores_state state = {0};
+    bool progress = false;
+
+    find_vectorizable_store_groups(ctx, block, &state);
+
+    for (unsigned int i = 0; i < state.count; ++i)
+    {
+        struct vectorizable_stores_group *group = &state.groups[i];
+        uint32_t new_swizzle = 0, new_writemask = 0;
+        struct hlsl_ir_node *new_rhs, *value;
+        uint32_t swizzle_components[4];
+        unsigned int component_count;
+        struct hlsl_ir_store *store;
+        struct hlsl_block new_block;
+
+        if (group->store_count == 1)
+            continue;
+
+        hlsl_block_init(&new_block);
+
+        /* Compute the swizzle components. */
+        for (unsigned int j = 0; j < group->store_count; ++j)
+        {
+            unsigned int writemask = group->writemasks[j];
+            uint32_t rhs_swizzle;
+
+            store = group->stores[j];
+
+            if (store->rhs.node->type == HLSL_IR_SWIZZLE)
+                rhs_swizzle = hlsl_ir_swizzle(store->rhs.node)->u.vector;
+            else
+                rhs_swizzle = HLSL_SWIZZLE(X, Y, Z, W);
+
+            component_count = 0;
+            for (unsigned int k = 0; k < 4; ++k)
+            {
+                if (writemask & (1u << k))
+                    swizzle_components[k] = hlsl_swizzle_get_component(rhs_swizzle, component_count++);
+            }
+
+            new_writemask |= writemask;
+        }
+
+        /* Construct the new swizzle. */
+        component_count = 0;
+        for (unsigned int k = 0; k < 4; ++k)
+        {
+            if (new_writemask & (1u << k))
+                hlsl_swizzle_set_component(&new_swizzle, component_count++, swizzle_components[k]);
+        }
+
+        store = group->stores[0];
+        value = store->rhs.node;
+        if (value->type == HLSL_IR_SWIZZLE)
+            value = hlsl_ir_swizzle(value)->val.node;
+
+        new_rhs = hlsl_block_add_swizzle(ctx, &new_block, new_swizzle, component_count, value, &value->loc);
+        hlsl_block_add_store_parent(ctx, &new_block, &store->lhs,
+                group->path_len, new_rhs, new_writemask, &store->node.loc);
+
+        TRACE("Combining %u stores to %s.\n", group->store_count, store->lhs.var->name);
+
+        list_move_before(&group->stores[group->store_count - 1]->node.entry, &new_block.instrs);
+
+        for (unsigned int j = 0; j < group->store_count; ++j)
+        {
+            list_remove(&group->stores[j]->node.entry);
+            hlsl_free_instr(&group->stores[j]->node);
+        }
+
+        progress = true;
+    }
+
+    vkd3d_free(state.groups);
+    return progress;
+}
 
 static enum validation_result validate_component_index_range_from_deref(struct hlsl_ctx *ctx,
         const struct hlsl_deref *deref)
@@ -3123,6 +3674,11 @@ static bool validate_nonconstant_vector_store_derefs(struct hlsl_ctx *ctx, struc
     return false;
 }
 
+static bool deref_supports_sm1_indirect_addressing(struct hlsl_ctx *ctx, const struct hlsl_deref *deref)
+{
+    return ctx->profile->type == VKD3D_SHADER_TYPE_VERTEX && deref->var->is_uniform;
+}
+
 /* This pass flattens array (and row_major matrix) loads that include the indexing of a non-constant
  * index into multiple constant loads, where the value of only one of them ends up in the resulting
  * node.
@@ -3147,6 +3703,9 @@ static bool lower_nonconstant_array_loads(struct hlsl_ctx *ctx, struct hlsl_ir_n
     deref = &load->src;
 
     if (deref->path_len == 0)
+        return false;
+
+    if (deref_supports_sm1_indirect_addressing(ctx, deref))
         return false;
 
     for (i = deref->path_len - 1; ; --i)
@@ -7839,7 +8398,8 @@ static bool sm4_generate_vsir_init_src_param_from_deref(struct hlsl_ctx *ctx, st
 
     if (!sm4_generate_vsir_reg_from_deref(ctx, program, &src_param->reg, &writemask, deref))
         return false;
-    src_param->swizzle = generate_vsir_get_src_swizzle(writemask, dst_writemask);
+    if (src_param->reg.dimension != VSIR_DIMENSION_NONE)
+        src_param->swizzle = generate_vsir_get_src_swizzle(writemask, dst_writemask);
     return true;
 }
 
@@ -7869,7 +8429,6 @@ static void sm1_generate_vsir_instr_constant(struct hlsl_ctx *ctx,
         struct vsir_program *program, struct hlsl_ir_constant *constant)
 {
     struct hlsl_ir_node *instr = &constant->node;
-    struct vkd3d_shader_dst_param *dst_param;
     struct vkd3d_shader_src_param *src_param;
     struct vkd3d_shader_instruction *ins;
 
@@ -7881,13 +8440,11 @@ static void sm1_generate_vsir_instr_constant(struct hlsl_ctx *ctx,
 
     src_param = &ins->src[0];
     vsir_register_init(&src_param->reg, VKD3DSPR_CONST, VKD3D_DATA_FLOAT, 1);
+    src_param->reg.dimension = VSIR_DIMENSION_VEC4;
     src_param->reg.idx[0].offset = constant->reg.id;
     src_param->swizzle = generate_vsir_get_src_swizzle(constant->reg.writemask, instr->reg.writemask);
 
-    dst_param = &ins->dst[0];
-    vsir_register_init(&dst_param->reg, VKD3DSPR_TEMP, VKD3D_DATA_FLOAT, 1);
-    dst_param->reg.idx[0].offset = instr->reg.id;
-    dst_param->write_mask = instr->reg.writemask;
+    vsir_dst_from_hlsl_node(&ins->dst[0], ctx, instr);
 }
 
 static void sm4_generate_vsir_rasterizer_sample_count(struct hlsl_ctx *ctx,
@@ -7974,11 +8531,13 @@ static void sm1_generate_vsir_instr_expr_per_component_instr_op(struct hlsl_ctx 
             dst_param = &ins->dst[0];
             vsir_register_init(&dst_param->reg, VKD3DSPR_TEMP, VKD3D_DATA_FLOAT, 1);
             dst_param->reg.idx[0].offset = instr->reg.id;
+            dst_param->reg.dimension = VSIR_DIMENSION_VEC4;
             dst_param->write_mask = 1u << i;
 
             src_param = &ins->src[0];
             vsir_register_init(&src_param->reg, VKD3DSPR_TEMP, VKD3D_DATA_FLOAT, 1);
             src_param->reg.idx[0].offset = operand->reg.id;
+            src_param->reg.dimension = VSIR_DIMENSION_VEC4;
             c = vsir_swizzle_get_component(src_swizzle, i);
             src_param->swizzle = vsir_swizzle_from_writemask(1u << c);
         }
@@ -7990,7 +8549,6 @@ static void sm1_generate_vsir_instr_expr_sincos(struct hlsl_ctx *ctx, struct vsi
 {
     struct hlsl_ir_node *operand = expr->operands[0].node;
     struct hlsl_ir_node *instr = &expr->node;
-    struct vkd3d_shader_dst_param *dst_param;
     struct vkd3d_shader_src_param *src_param;
     struct vkd3d_shader_instruction *ins;
     unsigned int src_count = 0;
@@ -8001,25 +8559,20 @@ static void sm1_generate_vsir_instr_expr_sincos(struct hlsl_ctx *ctx, struct vsi
     if (!(ins = generate_vsir_add_program_instruction(ctx, program, &instr->loc, VKD3DSIH_SINCOS, 1, src_count)))
         return;
 
-    dst_param = &ins->dst[0];
-    vsir_register_init(&dst_param->reg, VKD3DSPR_TEMP, VKD3D_DATA_FLOAT, 1);
-    dst_param->reg.idx[0].offset = instr->reg.id;
-    dst_param->write_mask = instr->reg.writemask;
-
-    src_param = &ins->src[0];
-    vsir_register_init(&src_param->reg, VKD3DSPR_TEMP, VKD3D_DATA_FLOAT, 1);
-    src_param->reg.idx[0].offset = operand->reg.id;
-    src_param->swizzle = generate_vsir_get_src_swizzle(operand->reg.writemask, VKD3DSP_WRITEMASK_ALL);
+    vsir_dst_from_hlsl_node(&ins->dst[0], ctx, instr);
+    vsir_src_from_hlsl_node(&ins->src[0], ctx, operand, VKD3DSP_WRITEMASK_ALL);
 
     if (ctx->profile->major_version < 3)
     {
         src_param = &ins->src[1];
         vsir_register_init(&src_param->reg, VKD3DSPR_CONST, VKD3D_DATA_FLOAT, 1);
+        src_param->reg.dimension = VSIR_DIMENSION_VEC4;
         src_param->reg.idx[0].offset = ctx->d3dsincosconst1.id;
         src_param->swizzle = VKD3D_SHADER_NO_SWIZZLE;
 
         src_param = &ins->src[2];
         vsir_register_init(&src_param->reg, VKD3DSPR_CONST, VKD3D_DATA_FLOAT, 1);
+        src_param->reg.dimension = VSIR_DIMENSION_VEC4;
         src_param->reg.idx[0].offset = ctx->d3dsincosconst2.id;
         src_param->swizzle = VKD3D_SHADER_NO_SWIZZLE;
     }
@@ -8341,19 +8894,68 @@ static void sm1_generate_vsir_init_dst_param_from_deref(struct hlsl_ctx *ctx,
     else
         VKD3D_ASSERT(reg.allocated);
 
-    vsir_register_init(&dst_param->reg, type, VKD3D_DATA_FLOAT, 1);
+    if (type == VKD3DSPR_DEPTHOUT)
+    {
+        vsir_register_init(&dst_param->reg, type, VKD3D_DATA_FLOAT, 0);
+        dst_param->reg.dimension = VSIR_DIMENSION_SCALAR;
+    }
+    else
+    {
+        vsir_register_init(&dst_param->reg, type, VKD3D_DATA_FLOAT, 1);
+        dst_param->reg.idx[0].offset = register_index;
+        dst_param->reg.dimension = VSIR_DIMENSION_VEC4;
+    }
     dst_param->write_mask = writemask;
-    dst_param->reg.idx[0].offset = register_index;
 
     if (deref->rel_offset.node)
         hlsl_fixme(ctx, loc, "Translate relative addressing on dst register for vsir.");
 }
 
+static void sm1_generate_vsir_instr_mova(struct hlsl_ctx *ctx,
+        struct vsir_program *program, struct hlsl_ir_node *instr)
+{
+    enum vkd3d_shader_opcode opcode = hlsl_version_ge(ctx, 2, 0) ? VKD3DSIH_MOVA : VKD3DSIH_MOV;
+    struct vkd3d_shader_dst_param *dst_param;
+    struct vkd3d_shader_instruction *ins;
+
+    VKD3D_ASSERT(instr->reg.allocated);
+
+    if (!(ins = generate_vsir_add_program_instruction(ctx, program, &instr->loc, opcode, 1, 1)))
+        return;
+
+    dst_param = &ins->dst[0];
+    vsir_register_init(&dst_param->reg, VKD3DSPR_ADDR, VKD3D_DATA_FLOAT, 0);
+    dst_param->write_mask = VKD3DSP_WRITEMASK_0;
+
+    VKD3D_ASSERT(instr->data_type->class <= HLSL_CLASS_VECTOR);
+    VKD3D_ASSERT(instr->data_type->e.numeric.dimx == 1);
+    vsir_src_from_hlsl_node(&ins->src[0], ctx, instr, VKD3DSP_WRITEMASK_ALL);
+}
+
+static struct vkd3d_shader_src_param *sm1_generate_vsir_new_address_src(struct hlsl_ctx *ctx,
+        struct vsir_program *program)
+{
+    struct vkd3d_shader_src_param *idx_src;
+
+    if (!(idx_src = vsir_program_get_src_params(program, 1)))
+    {
+        ctx->result = VKD3D_ERROR_OUT_OF_MEMORY;
+        return NULL;
+    }
+
+    memset(idx_src, 0, sizeof(*idx_src));
+    vsir_register_init(&idx_src->reg, VKD3DSPR_ADDR, VKD3D_DATA_FLOAT, 0);
+    idx_src->reg.dimension = VSIR_DIMENSION_VEC4;
+    idx_src->swizzle = VKD3D_SHADER_SWIZZLE(X, X, X, X);
+    return idx_src;
+}
+
 static void sm1_generate_vsir_init_src_param_from_deref(struct hlsl_ctx *ctx,
-        struct vkd3d_shader_src_param *src_param, struct hlsl_deref *deref,
-        unsigned int dst_writemask, const struct vkd3d_shader_location *loc)
+        struct vsir_program *program, struct vkd3d_shader_src_param *src_param,
+        struct hlsl_deref *deref, uint32_t dst_writemask, const struct vkd3d_shader_location *loc)
 {
     enum vkd3d_shader_register_type type = VKD3DSPR_TEMP;
+    struct vkd3d_shader_src_param *src_rel_addr = NULL;
     struct vkd3d_shader_version version;
     uint32_t register_index;
     unsigned int writemask;
@@ -8371,12 +8973,26 @@ static void sm1_generate_vsir_init_src_param_from_deref(struct hlsl_ctx *ctx,
     }
     else if (deref->var->is_uniform)
     {
-        type = VKD3DSPR_CONST;
+        unsigned int offset = deref->const_offset;
 
-        reg = hlsl_reg_from_deref(ctx, deref);
-        register_index = reg.id;
-        writemask = reg.writemask;
-        VKD3D_ASSERT(reg.allocated);
+        type = VKD3DSPR_CONST;
+        register_index = deref->var->regs[HLSL_REGSET_NUMERIC].id + offset / 4;
+
+        writemask = 0xf & (0xf << (offset % 4));
+        if (deref->var->regs[HLSL_REGSET_NUMERIC].writemask)
+            writemask = hlsl_combine_writemasks(deref->var->regs[HLSL_REGSET_NUMERIC].writemask, writemask);
+
+        if (deref->rel_offset.node)
+        {
+            VKD3D_ASSERT(deref_supports_sm1_indirect_addressing(ctx, deref));
+
+            if (!(src_rel_addr = sm1_generate_vsir_new_address_src(ctx, program)))
+            {
+                ctx->result = VKD3D_ERROR_OUT_OF_MEMORY;
+                return;
+            }
+        }
+        VKD3D_ASSERT(deref->var->regs[HLSL_REGSET_NUMERIC].allocated);
     }
     else if (deref->var->is_input_semantic)
     {
@@ -8408,32 +9024,30 @@ static void sm1_generate_vsir_init_src_param_from_deref(struct hlsl_ctx *ctx,
     }
 
     vsir_register_init(&src_param->reg, type, VKD3D_DATA_FLOAT, 1);
+    src_param->reg.dimension = VSIR_DIMENSION_VEC4;
     src_param->reg.idx[0].offset = register_index;
+    src_param->reg.idx[0].rel_addr = src_rel_addr;
     src_param->swizzle = generate_vsir_get_src_swizzle(writemask, dst_writemask);
-
-    if (deref->rel_offset.node)
-        hlsl_fixme(ctx, loc, "Translate relative addressing on src register for vsir.");
 }
 
 static void sm1_generate_vsir_instr_load(struct hlsl_ctx *ctx, struct vsir_program *program,
         struct hlsl_ir_load *load)
 {
     struct hlsl_ir_node *instr = &load->node;
-    struct vkd3d_shader_dst_param *dst_param;
     struct vkd3d_shader_instruction *ins;
 
     VKD3D_ASSERT(instr->reg.allocated);
 
+    if (load->src.rel_offset.node)
+        sm1_generate_vsir_instr_mova(ctx, program, load->src.rel_offset.node);
+
     if (!(ins = generate_vsir_add_program_instruction(ctx, program, &instr->loc, VKD3DSIH_MOV, 1, 1)))
         return;
 
-    dst_param = &ins->dst[0];
-    vsir_register_init(&dst_param->reg, VKD3DSPR_TEMP, VKD3D_DATA_FLOAT, 1);
-    dst_param->reg.idx[0].offset = instr->reg.id;
-    dst_param->write_mask = instr->reg.writemask;
+    vsir_dst_from_hlsl_node(&ins->dst[0], ctx, instr);
 
-    sm1_generate_vsir_init_src_param_from_deref(ctx, &ins->src[0], &load->src, dst_param->write_mask,
-            &ins->location);
+    sm1_generate_vsir_init_src_param_from_deref(ctx, program, &ins->src[0],
+            &load->src, ins->dst[0].write_mask, &ins->location);
 }
 
 static void sm1_generate_vsir_instr_resource_load(struct hlsl_ctx *ctx,
@@ -8443,7 +9057,6 @@ static void sm1_generate_vsir_instr_resource_load(struct hlsl_ctx *ctx,
     struct hlsl_ir_node *ddx = load->ddx.node;
     struct hlsl_ir_node *ddy = load->ddy.node;
     struct hlsl_ir_node *instr = &load->node;
-    struct vkd3d_shader_dst_param *dst_param;
     struct vkd3d_shader_src_param *src_param;
     struct vkd3d_shader_instruction *ins;
     enum vkd3d_shader_opcode opcode;
@@ -8482,15 +9095,12 @@ static void sm1_generate_vsir_instr_resource_load(struct hlsl_ctx *ctx,
         return;
     ins->flags = flags;
 
-    dst_param = &ins->dst[0];
-    vsir_register_init(&dst_param->reg, VKD3DSPR_TEMP, VKD3D_DATA_FLOAT, 1);
-    dst_param->reg.idx[0].offset = instr->reg.id;
-    dst_param->write_mask = instr->reg.writemask;
+    vsir_dst_from_hlsl_node(&ins->dst[0], ctx, instr);
 
     src_param = &ins->src[0];
     vsir_src_from_hlsl_node(src_param, ctx, coords, VKD3DSP_WRITEMASK_ALL);
 
-    sm1_generate_vsir_init_src_param_from_deref(ctx, &ins->src[1], &load->resource,
+    sm1_generate_vsir_init_src_param_from_deref(ctx, program, &ins->src[1], &load->resource,
             VKD3DSP_WRITEMASK_ALL, &ins->location);
 
     if (load->load_type == HLSL_RESOURCE_SAMPLE_GRAD)
@@ -8507,7 +9117,6 @@ static void generate_vsir_instr_swizzle(struct hlsl_ctx *ctx,
         struct vsir_program *program, struct hlsl_ir_swizzle *swizzle_instr)
 {
     struct hlsl_ir_node *instr = &swizzle_instr->node, *val = swizzle_instr->val.node;
-    struct vkd3d_shader_dst_param *dst_param;
     struct vkd3d_shader_src_param *src_param;
     struct vkd3d_shader_instruction *ins;
     uint32_t swizzle;
@@ -8517,11 +9126,7 @@ static void generate_vsir_instr_swizzle(struct hlsl_ctx *ctx,
     if (!(ins = generate_vsir_add_program_instruction(ctx, program, &instr->loc, VKD3DSIH_MOV, 1, 1)))
         return;
 
-    dst_param = &ins->dst[0];
-    vsir_register_init(&dst_param->reg, VKD3DSPR_TEMP, vsir_data_type_from_hlsl_instruction(ctx, instr), 1);
-    dst_param->reg.idx[0].offset = instr->reg.id;
-    dst_param->reg.dimension = VSIR_DIMENSION_VEC4;
-    dst_param->write_mask = instr->reg.writemask;
+    vsir_dst_from_hlsl_node(&ins->dst[0], ctx, instr);
 
     swizzle = hlsl_swizzle_from_writemask(val->reg.writemask);
     swizzle = hlsl_combine_swizzles(swizzle, swizzle_instr->u.vector, instr->data_type->e.numeric.dimx);
@@ -8557,7 +9162,6 @@ static void sm1_generate_vsir_instr_jump(struct hlsl_ctx *ctx,
 {
     struct hlsl_ir_node *condition = jump->condition.node;
     struct hlsl_ir_node *instr = &jump->node;
-    struct vkd3d_shader_dst_param *dst_param;
     struct vkd3d_shader_instruction *ins;
 
     if (jump->type == HLSL_IR_JUMP_DISCARD_NEG)
@@ -8565,10 +9169,7 @@ static void sm1_generate_vsir_instr_jump(struct hlsl_ctx *ctx,
         if (!(ins = generate_vsir_add_program_instruction(ctx, program, &instr->loc, VKD3DSIH_TEXKILL, 1, 0)))
             return;
 
-        dst_param = &ins->dst[0];
-        vsir_register_init(&dst_param->reg, VKD3DSPR_TEMP, VKD3D_DATA_FLOAT, 1);
-        dst_param->reg.idx[0].offset = condition->reg.id;
-        dst_param->write_mask = condition->reg.writemask;
+        vsir_dst_from_hlsl_node(&ins->dst[0], ctx, condition);
     }
     else
     {
@@ -8688,6 +9289,10 @@ static void sm1_generate_vsir(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl
         ctx->result = VKD3D_ERROR_OUT_OF_MEMORY;
         return;
     }
+
+    program->temp_count = allocate_temp_registers(ctx, entry_func);
+    if (ctx->result)
+        return;
 
     generate_vsir_signature(ctx, program, entry_func);
 
@@ -12532,6 +13137,7 @@ static void process_entry_function(struct hlsl_ctx *ctx,
     struct recursive_call_ctx recursive_call_ctx;
     struct hlsl_ir_var *var;
     unsigned int i;
+    bool progress;
 
     ctx->is_patch_constant_func = entry_func == ctx->patch_constant_func;
 
@@ -12709,6 +13315,9 @@ static void process_entry_function(struct hlsl_ctx *ctx,
         hlsl_transform_ir(ctx, lower_resource_load_bias, body, NULL);
     }
 
+    compute_liveness(ctx, entry_func);
+    transform_derefs(ctx, divert_written_uniform_derefs_to_temp, &entry_func->body);
+
     loop_unrolling_execute(ctx, body);
     hlsl_run_const_passes(ctx, body);
 
@@ -12719,13 +13328,21 @@ static void process_entry_function(struct hlsl_ctx *ctx,
     lower_ir(ctx, lower_casts_to_bool, body);
     lower_ir(ctx, lower_int_dot, body);
 
-    compute_liveness(ctx, entry_func);
-    transform_derefs(ctx, divert_written_uniform_derefs_to_temp, &entry_func->body);
-
     if (hlsl_version_lt(ctx, 4, 0))
         hlsl_transform_ir(ctx, lower_separate_samples, body, NULL);
 
     hlsl_transform_ir(ctx, validate_dereferences, body, NULL);
+
+    do
+    {
+        progress = vectorize_exprs(ctx, body);
+        compute_liveness(ctx, entry_func);
+        progress |= hlsl_transform_ir(ctx, dce, body, NULL);
+        progress |= hlsl_transform_ir(ctx, fold_swizzle_chains, body, NULL);
+        progress |= hlsl_transform_ir(ctx, remove_trivial_swizzles, body, NULL);
+        progress |= vectorize_stores(ctx, body);
+    } while (progress);
+
     hlsl_transform_ir(ctx, track_object_components_sampler_dim, body, NULL);
 
     if (hlsl_version_ge(ctx, 4, 0))
@@ -12847,7 +13464,6 @@ int hlsl_emit_bytecode(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry
     if (profile->major_version < 4)
     {
         mark_indexable_vars(ctx, entry_func);
-        allocate_temp_registers(ctx, entry_func);
         allocate_const_registers(ctx, entry_func);
         sort_uniforms_by_bind_count(ctx, HLSL_REGSET_SAMPLERS);
         allocate_objects(ctx, entry_func, HLSL_REGSET_SAMPLERS);

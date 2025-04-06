@@ -33,6 +33,10 @@
 #include <wsnwlink.h>
 #include <mswsock.h>
 #include <mstcpip.h>
+#include <bthsdpdef.h>
+#include <bluetoothapis.h>
+#include <bthdef.h>
+#include <ws2bth.h>
 #include <stdio.h>
 #include "wine/test.h"
 
@@ -3380,8 +3384,7 @@ static void test_WSASocket(void)
     {
         SetLastError( 0xdeadbeef );
         sock = WSASocketA( tests[i].family, tests[i].type, tests[i].protocol, NULL, 0, 0 );
-        todo_wine_if (i == 7)
-            ok(WSAGetLastError() == tests[i].error, "Test %u: got wrong error %u\n", i, WSAGetLastError());
+        ok(WSAGetLastError() == tests[i].error, "Test %u: got wrong error %u\n", i, WSAGetLastError());
         if (tests[i].error)
         {
             ok(sock == INVALID_SOCKET, "Test %u: expected failure\n", i);
@@ -3712,6 +3715,51 @@ static void test_WSASocket(void)
 
           closesocket(sock);
         }
+    }
+
+    /* Bluetooth RFCOMM socket tests */
+    SetLastError(0xdeadbeef);
+    sock = WSASocketA(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM, NULL, 0, 0);
+    if (sock == INVALID_SOCKET)
+    {
+        err = WSAGetLastError();
+        ok(err == WSAEAFNOSUPPORT || err == WSAEPROTONOSUPPORT, "got error %d\n", err);
+        skip("Bluetooth is not supported\n");
+    }
+    else
+    {
+        WSAPROTOCOL_INFOA info;
+        closesocket(sock);
+
+        sock = WSASocketA(0, SOCK_STREAM, BTHPROTO_RFCOMM, NULL, 0, 0 );
+        ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n", WSAGetLastError());
+
+        size = sizeof(socktype);
+        socktype = 0xdead;
+        err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+        ok(!err,"getsockopt failed with %d\n", WSAGetLastError());
+        ok(socktype == SOCK_STREAM, "Wrong socket type, expected %d received %d\n",
+           SOCK_STREAM, socktype);
+
+        size = sizeof(WSAPROTOCOL_INFOA);
+        err = getsockopt(sock, SOL_SOCKET, SO_PROTOCOL_INFOA, (char *) &info, &size);
+        ok(!err,"getsockopt failed with %d\n", WSAGetLastError());
+        ok(info.iProtocol == BTHPROTO_RFCOMM, "expected protocol %d, received %d\n",
+           BTHPROTO_RFCOMM, info.iProtocol);
+        ok(info.iAddressFamily == AF_BTH, "expected family %d, received %d\n",
+           AF_IPX, info.iProtocol);
+        ok(info.iSocketType == SOCK_STREAM, "expected type %d, received %d\n",
+           SOCK_DGRAM, info.iSocketType);
+        closesocket(sock);
+
+        /* SOCK_DGRAM is not supported by Bluetooth */
+        SetLastError(0xdeadbeef);
+        ok(WSASocketA(AF_BTH, SOCK_DGRAM, BTHPROTO_RFCOMM, NULL, 0, 0) == INVALID_SOCKET,
+           "WSASocketA should have failed\n");
+        err = WSAGetLastError();
+        ok(err == WSAEAFNOSUPPORT, "Expected 10047, received %d\n", err);
+
+        closesocket(sock);
     }
 }
 
@@ -12760,6 +12808,45 @@ static void test_bind(void)
     free(adapters);
 }
 
+static void test_bind_bluetooth(void)
+{
+    SOCKADDR_BTH addr = {0};
+    SOCKET sock, sock2;
+    INT err, ret;
+
+    sock = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
+    err = WSAGetLastError();
+    if (sock == INVALID_SOCKET)
+    {
+        ok(err == WSAEAFNOSUPPORT, "got error %d\n", err);
+        skip("Bluetooth is not supported\n");
+        return;
+    }
+
+    addr.addressFamily = AF_BTH;
+    addr.btAddr = 0;
+    addr.port = 200;
+    ret = bind(sock, (struct sockaddr *)&addr, sizeof(addr));
+    err = WSAGetLastError();
+    ok(ret == -1, "expected bind to fail\n");
+    ok(err == WSAEADDRNOTAVAIL || err == WSAENETDOWN, "got error %d\n", err);
+
+    addr.port = 20;
+    ret = bind(sock, (struct sockaddr *)&addr, sizeof(addr));
+    err = WSAGetLastError();
+    ok(!ret || err == WSAENETDOWN, "got error %d\n", err);
+
+    sock2 = socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
+    ok(sock2 != INVALID_SOCKET, "got error %d\n", WSAGetLastError());
+    addr.port = BT_PORT_ANY;
+    ret = bind(sock2, (struct sockaddr *)&addr, sizeof(addr));
+    err = WSAGetLastError();
+    ok(!ret || err == WSAENETDOWN, "got error %d\n", err);
+
+    closesocket(sock);
+    closesocket(sock2);
+}
+
 /* Test calling methods on a socket which is currently connecting. */
 static void test_connecting_socket(void)
 {
@@ -14739,6 +14826,7 @@ START_TEST( sock )
     test_connect_completion_port();
     test_shutdown_completion_port();
     test_bind();
+    test_bind_bluetooth();
     test_connecting_socket();
     test_WSAGetOverlappedResult();
     test_nonblocking_async_recv();

@@ -142,6 +142,7 @@ static const char* app_loader_template =
 static const char *output_file_name;
 static const char *output_debug_file;
 static const char *output_implib;
+static const char *output;
 static int keep_generated = 0;
 static int verbose;
 const char *temp_dir = NULL;
@@ -167,6 +168,7 @@ static enum processor { proc_cc, proc_cxx, proc_cpp } processor = proc_cc;
 enum file_type { file_na, file_other, file_obj, file_res, file_rc, file_arh, file_dll, file_so, file_spec };
 
 static bool is_pe;
+static bool is_static;
 static bool is_shared;
 static bool is_gui_app;
 static bool is_unicode_app;
@@ -185,6 +187,8 @@ static bool large_address_aware;
 static bool wine_builtin;
 static bool unwind_tables;
 static bool strip;
+static bool compile_only;
+static bool skip_link;
 static bool no_default_config;
 static int force_pointer_size;
 
@@ -194,6 +198,7 @@ static const char *file_align;
 static const char *subsystem;
 static const char *entry_point;
 static const char *native_arch;
+static struct strarray file_args;
 static struct strarray linker_args;
 static struct strarray compiler_args;
 static struct strarray winebuild_args;
@@ -510,6 +515,8 @@ static struct strarray get_link_args( const char *output_name )
             strarray_add( &flags, "-image_base" );
             strarray_add( &flags, image_base );
         }
+        /* On Mac, change -s into -Wl,-x. ld's -s switch is deprecated,
+         * and it doesn't work on Tiger with MH_BUNDLEs anyway */
         if (strip) strarray_add( &flags, "-Wl,-x" );
         strarray_addall( &link_args, flags );
         return link_args;
@@ -552,6 +559,9 @@ static struct strarray get_link_args( const char *output_name )
         if (large_address_aware && target.cpu == CPU_i386)
             strarray_add( &flags, "-Wl,--large-address-aware" );
 
+        if (entry_point)
+            strarray_add( &flags, strmake( "-Wl,--entry,%s%s", target.cpu == CPU_i386 ? "_" : "", entry_point ));
+
         if (output_debug_file && strendswith(output_debug_file, ".pdb"))
             strarray_add(&link_args, strmake("-Wl,--pdb=%s", output_debug_file));
 
@@ -560,6 +570,8 @@ static struct strarray get_link_args( const char *output_name )
 
         if (output_implib)
             strarray_add(&link_args, strmake("-Wl,--out-implib,%s", output_implib));
+
+        if (strip) strarray_add( &link_args, "-s" );
 
         if (!try_link( link_args, "-Wl,--file-alignment,0x1000" ))
             strarray_add( &link_args, strmake( "-Wl,--file-alignment,%s", file_align ));
@@ -573,7 +585,7 @@ static struct strarray get_link_args( const char *output_name )
 
     case PLATFORM_WINDOWS:
         strarray_add( &link_args, "-nodefaultlibs" );
-        strarray_add( &link_args, "-nostartfiles" );
+        strarray_add( &link_args, "-nostdlib" );
 
         if (is_shared || is_win16_app)
         {
@@ -583,6 +595,8 @@ static struct strarray get_link_args( const char *output_name )
         if (is_unicode_app) strarray_add( &flags, "-municode" );
         if (nostartfiles) strarray_add( &flags, "-nostartfiles" );
         if (image_base) strarray_add( &flags, strmake("-Wl,-base:%s", image_base ));
+        if (entry_point) strarray_add( &flags, strmake( "-Wl,-entry:%s", entry_point ));
+
         if (subsystem)
             strarray_add( &flags, strmake("-Wl,-subsystem:%s", subsystem ));
         else
@@ -593,7 +607,9 @@ static struct strarray get_link_args( const char *output_name )
             strarray_add(&link_args, "-Wl,-debug");
             strarray_add(&link_args, strmake("-Wl,-pdb:%s", output_debug_file));
         }
-        else if (!strip)
+        else if (strip)
+            strarray_add( &link_args, "-s" );
+        else
             strarray_add(&link_args, "-Wl,-debug:dwarf");
 
         if (use_build_id)
@@ -625,6 +641,7 @@ static struct strarray get_link_args( const char *output_name )
 
     /* generic Unix shared library flags */
 
+    if (strip) strarray_add( &link_args, "-s" );
     strarray_add( &link_args, "-shared" );
     strarray_add( &link_args, "-Wl,-Bsymbolic" );
     if (!noshortwchar && target.cpu == CPU_ARM)
@@ -833,7 +850,7 @@ static struct strarray get_compat_defines( int gcc_defs )
     return args;
 }
 
-static void compile( struct strarray files, const char* lang, const char *output_name, int compile_only )
+static void compile( struct strarray files, const char *output_name, int compile_only )
 {
     struct strarray comp_args = get_translator();
     unsigned int i, j;
@@ -877,18 +894,20 @@ static void compile( struct strarray files, const char* lang, const char *output
 	strarray_add(&comp_args, output_name);
     }
 
+    if (verbose > 1) strarray_add( &comp_args, "-v" );
+
     /* the rest of the pass-through parameters */
     strarray_addall(&comp_args, compiler_args);
-
-    /* the language option, if any */
-    if (lang && strcmp(lang, "-xnone"))
-	strarray_add(&comp_args, lang);
 
     /* last, but not least, the files */
     for ( j = 0; j < files.count; j++ )
     {
-	if (files.str[j][0] != '-' || !files.str[j][1]) /* not an option or bare '-' (i.e. stdin) */
-	    strarray_add(&comp_args, files.str[j]);
+        if (files.str[j][0] == '-')
+        {
+            /* keep -x and bare '-' (i.e. stdin) options */
+            if (files.str[j][1] && files.str[j][1] != 'x') continue;
+        }
+	strarray_add(&comp_args, files.str[j]);
     }
 
     /* standard includes come last in the include search path */
@@ -932,8 +951,9 @@ static const char* compile_to_object(const char* file, const char* lang)
     char *output_name = make_temp_file(get_basename_noext(file), ".o");
     struct strarray files = empty_strarray;
 
+    if (lang) strarray_add(&files, lang);
     strarray_add(&files, file);
-    compile(files, lang, output_name, 1);
+    compile(files, output_name, 1);
     return output_name;
 }
 
@@ -988,20 +1008,20 @@ static char *find_static_lib( const char *dll )
     return NULL;
 }
 
-static const char *find_libgcc(struct strarray link_tool)
+static const char *find_libgcc(void)
 {
     const char *out = make_temp_file( "find_libgcc", ".out" );
     const char *err = make_temp_file( "find_libgcc", ".err" );
-    struct strarray link = empty_strarray;
+    struct strarray link = get_translator();
     int sout = -1, serr = -1, i;
     char *libgcc, *p;
     struct stat st;
     size_t cnt;
     int ret;
 
-    for (i = 0; i < link_tool.count; i++)
-	if (strcmp(link_tool.str[i], "--no-default-config" ))
-            strarray_add( &link, link_tool.str[i] );
+    for (i = 0; i < linker_args.count; i++)
+	if (strcmp(linker_args.str[i], "--no-default-config" ))
+            strarray_add( &link, linker_args.str[i] );
 
     strarray_add( &link, "-print-libgcc-file-name" );
 
@@ -1215,6 +1235,8 @@ static void build(struct strarray input_files, const char *output)
 	return;
     }
 
+    if (is_static) error("Static linking is not supported\n");
+
     /* generate app loader only for .exe */
     if (is_shared || is_pe || strendswith(output_file, ".so"))
 	generate_app_loader = 0;
@@ -1356,6 +1378,9 @@ static void build(struct strarray input_files, const char *output)
 
     if (fake_module) return;  /* nothing else to do */
 
+    if (is_pe && !entry_point && (is_shared || is_win16_app))
+        entry_point = target.cpu == CPU_i386 ? "DllMainCRTStartup@12" : "DllMainCRTStartup";
+
     /* link everything together now */
     link_args = get_link_args( output_name );
 
@@ -1363,7 +1388,7 @@ static void build(struct strarray input_files, const char *output)
     {
     case PLATFORM_MINGW:
     case PLATFORM_CYGWIN:
-        libgcc = find_libgcc( link_args );
+        libgcc = find_libgcc();
         if (!libgcc) libgcc = "-lgcc";
         break;
     default:
@@ -1375,19 +1400,6 @@ static void build(struct strarray input_files, const char *output)
 
     for ( j = 0; j < lib_dirs.count; j++ )
 	strarray_add(&link_args, strmake("-L%s", lib_dirs.str[j]));
-
-    if (is_pe && !entry_point && (is_shared || is_win16_app))
-        entry_point = target.cpu == CPU_i386 ? "DllMainCRTStartup@12" : "DllMainCRTStartup";
-
-    if (is_pe && entry_point)
-    {
-        if (target.platform == PLATFORM_WINDOWS)
-            strarray_add(&link_args, strmake("-Wl,-entry:%s", entry_point));
-        else
-            strarray_add(&link_args, strmake("-Wl,--entry,%s%s",
-                                            is_pe && target.cpu == CPU_i386 ? "_" : "",
-                                            entry_point));
-    }
 
     strarray_addall( &link_args, spec_objs );
 
@@ -1549,12 +1561,6 @@ static int is_linker_arg(const char* arg)
     return 0;
 }
 
-static void parse_target_option( const char *name )
-{
-    target_alias = xstrdup( name );
-    if (!parse_target( name, &target )) error( "Invalid target specification '%s'\n", name );
-}
-
 static int is_option( struct strarray args, int i, const char *option, const char **option_arg )
 {
     if (!strcmp( args.str[i], option ))
@@ -1571,16 +1577,54 @@ static int is_option( struct strarray args, int i, const char *option, const cha
     return 0;
 }
 
+static struct strarray read_args_from_file( const char *name )
+{
+    struct strarray args = empty_strarray;
+    char *input_buffer = NULL, *iter, *end, *opt, *out;
+    struct stat st;
+    int fd;
+
+    if ((fd = open( name, O_RDONLY | O_BINARY )) == -1) error( "Cannot open %s\n", name );
+    fstat( fd, &st );
+    if (st.st_size)
+    {
+        input_buffer = xmalloc( st.st_size + 1 );
+        if (read( fd, input_buffer, st.st_size ) != st.st_size) error( "Cannot read %s\n", name );
+    }
+    close( fd );
+    end = input_buffer + st.st_size;
+    for (iter = input_buffer; iter < end; iter++)
+    {
+        char quote = 0;
+        while (iter < end && isspace(*iter)) iter++;
+        if (iter == end) break;
+        opt = out = iter;
+        while (iter < end && (quote || !isspace(*iter)))
+        {
+            if (*iter == quote)
+            {
+                iter++;
+                quote = 0;
+            }
+            else if (*iter == '\'' || *iter == '"') quote = *iter++;
+            else
+            {
+                if (*iter == '\\' && iter + 1 < end) iter++;
+                *out++ = *iter++;
+            }
+        }
+        *out = 0;
+        strarray_add( &args, opt );
+    }
+    return args;
+}
+
 int main(int argc, char **argv)
 {
-    int i, c, next_is_arg = 0, linking = 1;
+    int i, c, next_is_arg = 0;
     int raw_compiler_arg, raw_linker_arg, raw_winebuild_arg;
-    int compile_only = 0;
     struct strarray args = empty_strarray;
-    struct strarray files = empty_strarray;
-    const char *output_name = NULL;
     const char* option_arg;
-    char* lang = 0;
     char* str;
 
     init_signals( exit_on_signal );
@@ -1598,47 +1642,10 @@ int main(int argc, char **argv)
     else if (strendswith(argv[0], "++")) processor = proc_cxx;
 
     for (i = 1; i < argc; i++)
-    {
-        char *input_buffer = NULL, *iter, *opt, *out;
-        struct stat st;
-        int fd;
-
-        if (argv[i][0] != '@' || (fd = open( argv[i] + 1, O_RDONLY | O_BINARY )) == -1)
-        {
+        if (argv[i][0] == '@')
+            strarray_addall( &args, read_args_from_file( argv[i] + 1 ));
+        else
             strarray_add( &args, argv[i] );
-            continue;
-        }
-        if ((fstat( fd, &st ) == -1)) error( "Cannot stat %s\n", argv[i] + 1 );
-        if (st.st_size)
-        {
-            input_buffer = xmalloc( st.st_size + 1 );
-            if (read( fd, input_buffer, st.st_size ) != st.st_size) error( "Cannot read %s\n", argv[i] + 1 );
-        }
-        close( fd );
-        for (iter = input_buffer; iter < input_buffer + st.st_size; iter++)
-        {
-            char quote = 0;
-            while (iter < input_buffer + st.st_size && isspace(*iter)) iter++;
-            if (iter == input_buffer + st.st_size) break;
-            opt = out = iter;
-            while (iter < input_buffer + st.st_size && (quote || !isspace(*iter)))
-            {
-                if (*iter == quote)
-                {
-                    iter++;
-                    quote = 0;
-                }
-                else if (*iter == '\'' || *iter == '"') quote = *iter++;
-                else
-                {
-                    if (*iter == '\\' && iter + 1 < input_buffer + st.st_size) iter++;
-                    *out++ = *iter++;
-                }
-            }
-            *out = 0;
-            strarray_add( &args, opt );
-        }
-    }
 
     /* parse options */
     for (i = 0; i < args.count; i++)
@@ -1715,7 +1722,7 @@ int main(int argc, char **argv)
                     raw_linker_arg = 1;
 		    break;
                 case 'b':
-                    parse_target_option( option_arg );
+                    target_alias = option_arg;
                     raw_compiler_arg = 0;
                     break;
                 case 'V':
@@ -1724,11 +1731,11 @@ int main(int argc, char **argv)
                     break;
                 case 'c':        /* compile or assemble */
                     raw_compiler_arg = 0;
-		    if (args.str[i][2] == 0) compile_only = 1;
-		    /* fall through */
+		    if (args.str[i][2] == 0) compile_only = true;
+                    break;
                 case 'S':        /* generate assembler code */
                 case 'E':        /* preprocess only */
-                    if (args.str[i][2] == 0) linking = 0;
+                    if (args.str[i][2] == 0) skip_link = true;
                     break;
 		case 'f':
 		    if (strcmp("-fno-short-wchar", args.str[i]) == 0)
@@ -1748,7 +1755,7 @@ int main(int argc, char **argv)
                     if (!strcmp( "-isysroot", args.str[i] )) isysroot = args.str[i + 1];
                     break;
 		case 'l':
-		    strarray_add(&files, strmake("-l%s", option_arg));
+		    strarray_add(&file_args, strmake("-l%s", option_arg));
                     raw_compiler_arg = 0;
 		    break;
 		case 'L':
@@ -1756,7 +1763,7 @@ int main(int argc, char **argv)
                     raw_compiler_arg = 0;
 		    break;
                 case 'M':        /* map file generation */
-                    linking = 0;
+                    skip_link = true;
                     break;
 		case 'm':
 		    if (strcmp("-mno-cygwin", args.str[i]) == 0)
@@ -1830,7 +1837,7 @@ int main(int argc, char **argv)
                         nostartfiles = true;
                     break;
 		case 'o':
-		    output_name = option_arg;
+		    output = option_arg;
                     raw_compiler_arg = 0;
 		    break;
                 case 'p':
@@ -1842,7 +1849,7 @@ int main(int argc, char **argv)
                     break;
                 case 's':
                     if (strcmp("-static", args.str[i]) == 0)
-			linking = -1;
+			is_static = true;
 		    else if(strcmp("-save-temps", args.str[i]) == 0)
 			keep_generated = 1;
                     else if (strncmp("-specs=", args.str[i], 7) == 0)
@@ -1852,12 +1859,8 @@ int main(int argc, char **argv)
 			is_shared = true;
                         raw_compiler_arg = raw_linker_arg = 0;
 		    }
-                    else if (strcmp("-s", args.str[i]) == 0 && target.platform == PLATFORM_APPLE)
+                    else if (strcmp("-s", args.str[i]) == 0)
                     {
-                        /* On Mac, change -s into -Wl,-x. ld's -s switch
-                         * is deprecated, and it doesn't work on Tiger with
-                         * MH_BUNDLEs anyway
-                         */
                         strip = true;
                         raw_linker_arg = 0;
                     }
@@ -1865,12 +1868,16 @@ int main(int argc, char **argv)
                 case 't':
                     if (is_option( args, i, "-target", &option_arg ))
                     {
-                        parse_target_option( option_arg );
+                        target_alias = option_arg;
                         raw_compiler_arg = raw_linker_arg = 0;
                     }
                     break;
                 case 'v':
-                    if (args.str[i][2] == 0) verbose++;
+                    if (args.str[i][2] == 0)
+                    {
+                        verbose++;
+                        raw_compiler_arg = raw_linker_arg = 0;
+                    }
                     break;
                 case 'W':
                     if (strncmp("-Wl,", args.str[i], 4) == 0)
@@ -1929,7 +1936,7 @@ int main(int argc, char **argv)
                                 !strcmp(Wl.str[j], "--start-group") ||
                                 !strcmp(Wl.str[j], "--end-group"))
                             {
-                                strarray_add( &files, strmake( "-Wl,%s", Wl.str[j] ));
+                                strarray_add( &file_args, strmake( "-Wl,%s", Wl.str[j] ));
                                 continue;
                             }
                             if (!strcmp(Wl.str[j], "--out-implib"))
@@ -1942,7 +1949,7 @@ int main(int argc, char **argv)
                                 use_build_id = true;
                                 continue;
                             }
-                            if (!strcmp(Wl.str[j], "-static")) linking = -1;
+                            if (!strcmp(Wl.str[j], "-static")) is_static = true;
                             strarray_add(&linker_args, strmake("-Wl,%s",Wl.str[j]));
                         }
                         raw_compiler_arg = raw_linker_arg = 0;
@@ -1961,14 +1968,13 @@ int main(int argc, char **argv)
 		    }
                     break;
 		case 'x':
-		    lang = strmake("-x%s", option_arg);
-		    strarray_add(&files, lang);
+		    strarray_add(&file_args, args.str[i]);
 		    /* we'll pass these flags ourselves, explicitly */
                     raw_compiler_arg = raw_linker_arg = 0;
 		    break;
                 case '-':
                     if (strcmp("-static", args.str[i]+1) == 0)
-                        linking = -1;
+                        is_static = true;
                     else if (!strcmp( "-no-default-config", args.str[i] + 1 ))
                     {
                         no_default_config = true;
@@ -1981,7 +1987,7 @@ int main(int argc, char **argv)
                     }
                     else if (is_option( args, i, "--target", &option_arg ))
                     {
-                        parse_target_option( option_arg );
+                        target_alias = option_arg;
                         raw_compiler_arg = raw_linker_arg = 0;
                     }
                     else if (is_option( args, i, "--wine-objdir", &option_arg ))
@@ -2027,17 +2033,19 @@ int main(int argc, char **argv)
         }
 	else
 	{
-	    strarray_add( &files, args.str[i] );
+	    strarray_add( &file_args, args.str[i] );
 	}
     }
 
+    if (target_alias && !parse_target( target_alias, &target ))
+        error( "Invalid target specification '%s'\n", target_alias );
     if (force_pointer_size) set_target_ptr_size( &target, force_pointer_size );
-    if (processor == proc_cpp) linking = 0;
-    if (linking == -1) error("Static linking is not supported\n");
+
+    if (processor == proc_cpp) skip_link = true;
 
     is_pe = is_pe_target( target );
     if (is_pe) use_msvcrt = true;
-    if (strendswith( output_name, ".fake" )) fake_module = true;
+    if (output && strendswith( output, ".fake" )) fake_module = true;
 
     if (!section_align) section_align = "0x1000";
     if (!file_align) file_align = section_align;
@@ -2051,9 +2059,9 @@ int main(int argc, char **argv)
             else winebuild = "winebuild";
         }
     }
-    if (files.count == 0 && !fake_module) forward();
-    else if (linking) build(files, output_name);
-    else compile(files, lang, output_name, compile_only);
+    if (file_args.count == 0 && !fake_module) forward();
+    else if (!skip_link && !compile_only) build(file_args, output);
+    else compile(file_args, output, compile_only);
 
     output_file_name = NULL;
     output_debug_file = NULL;

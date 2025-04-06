@@ -1444,6 +1444,9 @@ struct vkd3d_shader_scan_descriptor_info1
     unsigned int descriptor_count;
 };
 
+const struct vkd3d_shader_descriptor_info1 *vkd3d_shader_find_descriptor(
+    const struct vkd3d_shader_scan_descriptor_info1 *info,
+    enum vkd3d_shader_descriptor_type type, unsigned int register_id);
 void vkd3d_shader_free_scan_descriptor_info1(struct vkd3d_shader_scan_descriptor_info1 *scan_descriptor_info);
 
 struct vsir_program
@@ -1456,6 +1459,7 @@ struct vsir_program
     struct shader_signature patch_constant_signature;
 
     struct vkd3d_shader_scan_descriptor_info1 descriptors;
+    bool has_descriptor_info;
 
     unsigned int parameter_count;
     const struct vkd3d_shader_parameter1 *parameters;

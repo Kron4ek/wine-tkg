@@ -1916,8 +1916,6 @@ static HWND set_focus_window( HWND hwnd )
     }
     if (is_window(hwnd))
     {
-        user_driver->pSetFocus(hwnd);
-
         ime_hwnd = get_default_ime_window( hwnd );
         if (ime_hwnd)
             send_message( ime_hwnd, WM_IME_INTERNAL, IME_INTERNAL_ACTIVATE,
@@ -2033,13 +2031,7 @@ BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus, DWORD new
 
         if (NtUserGetAncestor( hwnd, GA_PARENT ) == get_desktop_window())
             NtUserPostMessage( get_desktop_window(), WM_PARENTNOTIFY, WM_NCACTIVATE, (LPARAM)hwnd );
-
-        if (hwnd == NtUserGetForegroundWindow() && !is_iconic( hwnd ))
-            NtUserSetActiveWindow( hwnd );
-
     }
-
-    user_driver->pSetActiveWindow( hwnd );
 
     /* now change focus if necessary */
     if (focus)
@@ -2060,7 +2052,11 @@ clear_flags:
     win_set_flags(hwnd, 0, WIN_IS_IN_ACTIVATION);
 
 done:
-    if (hwnd) clip_fullscreen_window( hwnd, FALSE );
+    if (hwnd)
+    {
+        if (hwnd == NtUserGetForegroundWindow()) user_driver->pActivateWindow( hwnd, previous );
+        clip_fullscreen_window( hwnd, FALSE );
+    }
 
     return ret;
 }
@@ -2076,7 +2072,7 @@ HWND WINAPI NtUserSetActiveWindow( HWND hwnd )
 
     if (hwnd)
     {
-        LONG style;
+        DWORD style;
 
         hwnd = get_full_window_handle( hwnd );
         if (!is_window( hwnd ))
@@ -2117,7 +2113,7 @@ HWND WINAPI NtUserSetFocus( HWND hwnd )
         for (;;)
         {
             HWND parent;
-            LONG style = get_window_long( hwndTop, GWL_STYLE );
+            DWORD style = get_window_long( hwndTop, GWL_STYLE );
             if (style & (WS_MINIMIZE | WS_DISABLED)) return 0;
             if (!(style & WS_CHILD)) break;
             parent = NtUserGetAncestor( hwndTop, GA_PARENT );

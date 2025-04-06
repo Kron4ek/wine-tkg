@@ -137,7 +137,7 @@ extern void macdrv_CleanupIcons(HWND hwnd);
 extern LRESULT macdrv_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 extern void macdrv_DestroyWindow(HWND hwnd);
 extern void macdrv_SetDesktopWindow(HWND hwnd);
-extern void macdrv_SetFocus(HWND hwnd);
+extern void macdrv_ActivateWindow(HWND hwnd, HWND previous);
 extern void macdrv_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha,
                                               DWORD flags);
 extern void macdrv_SetParent(HWND hwnd, HWND parent, HWND old_parent);
@@ -242,7 +242,7 @@ extern void macdrv_UpdateClipboard(void);
 extern BOOL query_pasteboard_data(HWND hwnd, CFStringRef type);
 extern void macdrv_lost_pasteboard_ownership(HWND hwnd);
 
-extern struct opengl_funcs *macdrv_wine_get_wgl_driver(UINT version);
+extern UINT macdrv_OpenGLInit(UINT version, struct opengl_funcs **opengl_funcs, const struct opengl_driver_funcs **driver_funcs);
 extern UINT macdrv_VulkanInit(UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs);
 extern void sync_gl_view(struct macdrv_win_data* data, const struct window_rects *old_rects);
 

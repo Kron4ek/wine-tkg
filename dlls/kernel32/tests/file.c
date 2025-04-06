@@ -3337,6 +3337,8 @@ static void test_async_file_errors(void)
     HANDLE hFile;
     LPVOID lpBuffer = HeapAlloc(GetProcessHeap(), 0, 4096);
     OVERLAPPED ovl;
+    BOOL res;
+
     ovl.Offset = 0;
     ovl.OffsetHigh = 0;
     ovl.hEvent = hSem;
@@ -3352,7 +3354,6 @@ static void test_async_file_errors(void)
     ok(hFile != INVALID_HANDLE_VALUE, "CreateFileA(%s ...) failed\n", szFile);
     while (TRUE)
     {
-        BOOL res;
         DWORD count;
         while (WaitForSingleObjectEx(hSem, INFINITE, TRUE) == WAIT_IO_COMPLETION)
             ;
@@ -3372,8 +3373,10 @@ static void test_async_file_errors(void)
     /*printf("Error = %ld\n", GetLastError());*/
 
     SleepEx(0, TRUE); /* Flush pending APCs */
-    ok(CloseHandle(hFile), "CloseHandle: error %ld\n", GetLastError());
-    ok(CloseHandle(hSem), "CloseHandle: error %ld\n", GetLastError());
+    res = CloseHandle(hFile);
+    ok(res, "CloseHandle: error %ld\n", GetLastError());
+    res = CloseHandle(hSem);
+    ok(res, "CloseHandle: error %ld\n", GetLastError());
     HeapFree(GetProcessHeap(), 0, lpBuffer);
 }
 

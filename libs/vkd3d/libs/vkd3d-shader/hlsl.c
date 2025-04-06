@@ -1588,6 +1588,43 @@ void hlsl_block_add_simple_store(struct hlsl_ctx *ctx, struct hlsl_block *block,
     hlsl_block_add_store_index(ctx, block, &lhs_deref, NULL, rhs, 0, &rhs->loc);
 }
 
+static struct hlsl_ir_node *hlsl_new_store_parent(struct hlsl_ctx *ctx,
+        const struct hlsl_deref *lhs, unsigned int path_len, struct hlsl_ir_node *rhs,
+        unsigned int writemask, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_store *store;
+
+    VKD3D_ASSERT(!hlsl_deref_is_lowered(lhs));
+    VKD3D_ASSERT(lhs->path_len >= path_len);
+
+    if (!(store = hlsl_alloc(ctx, sizeof(*store))))
+        return NULL;
+    init_node(&store->node, HLSL_IR_STORE, NULL, loc);
+
+    if (!hlsl_init_deref(ctx, &store->lhs, lhs->var, path_len))
+    {
+        vkd3d_free(store);
+        return NULL;
+    }
+    for (unsigned int i = 0; i < path_len; ++i)
+        hlsl_src_from_node(&store->lhs.path[i], lhs->path[i].node);
+
+    hlsl_src_from_node(&store->rhs, rhs);
+
+    if (!writemask && type_is_single_reg(rhs->data_type))
+        writemask = (1 << rhs->data_type->e.numeric.dimx) - 1;
+    store->writemask = writemask;
+
+    return &store->node;
+}
+
+void hlsl_block_add_store_parent(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        const struct hlsl_deref *lhs, unsigned int path_len, struct hlsl_ir_node *rhs,
+        unsigned int writemask, const struct vkd3d_shader_location *loc)
+{
+    append_new_instr(ctx, block, hlsl_new_store_parent(ctx, lhs, path_len, rhs, writemask, loc));
+}
+
 void hlsl_block_add_store_component(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_deref *lhs, unsigned int comp, struct hlsl_ir_node *rhs)
 {
@@ -4957,6 +4994,7 @@ int hlsl_compile_shader(const struct vkd3d_shader_code *hlsl, const struct vkd3d
 
     if (target_type == VKD3D_SHADER_TARGET_SPIRV_BINARY
             || target_type == VKD3D_SHADER_TARGET_SPIRV_TEXT
+            || target_type == VKD3D_SHADER_TARGET_GLSL
             || target_type == VKD3D_SHADER_TARGET_D3D_ASM)
     {
         uint64_t config_flags = vkd3d_shader_init_config_flags();
