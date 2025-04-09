@@ -7783,12 +7783,6 @@ then :
   printf "%s\n" "#define HAVE_LINUX_PARAM_H 1" >>confdefs.h
 
 fi
-ac_fn_c_check_header_compile "$LINENO" "linux/seccomp.h" "ac_cv_header_linux_seccomp_h" "$ac_includes_default"
-if test "x$ac_cv_header_linux_seccomp_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_LINUX_SECCOMP_H 1" >>confdefs.h
-
-fi
 ac_fn_c_check_header_compile "$LINENO" "linux/serial.h" "ac_cv_header_linux_serial_h" "$ac_includes_default"
 if test "x$ac_cv_header_linux_serial_h" = xyes
 then :

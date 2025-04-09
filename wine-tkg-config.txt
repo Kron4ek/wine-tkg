@@ -1,4 +1,4 @@
-# Last wine-tkg-staging-ntsync-git configuration - Sun Apr  6 12:13:16 PM UTC 2025 :
+# Last wine-tkg-staging-ntsync-git configuration - Wed Apr  9 01:51:19 PM UTC 2025 :
 
 Local cfg files used
 
@@ -13,10 +13,10 @@ Done applying reverting hotfixes (if any) - list available in prepare.log
 
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: 
+Staging overrides, if any: -W ntdll-Syscall_Emulation
 
 
-LAA-unix-staging.patch -- ( Applied large address aware override support (legacy) )
+enable_dynamic_wow64_def.patch -- ( Enable WINEARCH=wow64 by default )
 
 ntsync-config.h.in-alt.patch -- ( Using alternative config.h.in patchset for ntsync5 )
 ntsync5-staging.patch -- ( Using ntsync patchset )

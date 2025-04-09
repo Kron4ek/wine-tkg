@@ -550,7 +550,7 @@ static void init_paths(void)
 char *get_alternate_wineloader( WORD machine )
 {
     const char *arch;
-    BOOL force_wow64 = (arch = getenv( "WINEARCH" )) && !strcmp( arch, "wow64" );
+    BOOL force_wow64 = !(arch = getenv( "WINEARCH" )) || !strcmp( arch, "wow64" );
     char *ret = NULL;
 
     if (is_win64)
@@ -1047,7 +1047,6 @@ static const unixlib_entry_t unix_call_funcs[] =
     load_so_dll,
     unwind_builtin_dll,
     unixcall_wine_dbg_write,
-    unixcall_wine_needs_override_large_address_aware,
     unixcall_wine_server_call,
     unixcall_wine_server_fd_to_handle,
     unixcall_wine_server_handle_to_fd,
