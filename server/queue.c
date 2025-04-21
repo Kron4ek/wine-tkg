@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <poll.h>
+#include <limits.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -132,10 +133,10 @@ struct msg_queue
     struct hook_table     *hooks;           /* hook table */
     timeout_t              last_get_msg;    /* time of last get message call */
     int                    keystate_lock;   /* owns an input keystate lock */
+    int                    inproc_sync;     /* in-process synchronization object */
+    int                    in_inproc_wait;  /* are we in a client-side wait? */
     const queue_shm_t     *shared;          /* queue in session shared memory */
     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
-    struct inproc_sync    *inproc_sync;     /* in-process synchronization object */
-    int                    in_inproc_wait;  /* are we in a client-side wait? */
 };
 
 struct hotkey
@@ -153,7 +154,7 @@ static int msg_queue_add_queue( struct object *obj, struct wait_queue_entry *ent
 static void msg_queue_remove_queue( struct object *obj, struct wait_queue_entry *entry );
 static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry );
 static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *entry );
-static struct inproc_sync *msg_queue_get_inproc_sync( struct object *obj );
+static int msg_queue_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void msg_queue_destroy( struct object *obj );
 static void msg_queue_poll_event( struct fd *fd, int event );
 static void thread_input_dump( struct object *obj, int verbose );
@@ -319,7 +320,7 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
         queue->last_get_msg    = current_time;
         queue->keystate_lock   = 0;
         queue->ignore_post_msg = 0;
-        queue->inproc_sync     = NULL;
+        queue->inproc_sync     = create_inproc_event( TRUE, FALSE );
         queue->in_inproc_wait  = 0;
         list_init( &queue->send_result );
         list_init( &queue->callback_result );
@@ -846,11 +847,16 @@ static struct message *find_mouse_message( struct thread_input *input, const str
 static int merge_mousewheel( struct thread_input *input, const struct message *msg )
 {
     struct message *prev;
+    int delta;
 
     if (!(prev = find_mouse_message( input, msg ))) return 0;
     if (prev->x != msg->x || prev->y != msg->y) return 0; /* don't merge if cursor has moved */
 
-    prev->wparam += msg->wparam; /* accumulate wheel delta */
+    /* accumulate wheel delta */
+    delta = GET_WHEEL_DELTA_WPARAM(prev->wparam) + GET_WHEEL_DELTA_WPARAM(msg->wparam);
+    if (delta < SHRT_MIN || delta > SHRT_MAX) return 0;
+
+    prev->wparam  = MAKEWPARAM(GET_KEYSTATE_WPARAM(msg->wparam), delta);
     prev->lparam  = msg->lparam;
     prev->x       = msg->x;
     prev->y       = msg->y;
@@ -1355,17 +1361,14 @@ static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *en
         shared->changed_mask = 0;
     }
     SHARED_WRITE_END;
-
     reset_inproc_event( queue->inproc_sync );
 }
 
-static struct inproc_sync *msg_queue_get_inproc_sync( struct object *obj )
+static int msg_queue_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct msg_queue *queue = (struct msg_queue *)obj;
 
-    if (!queue->inproc_sync)
-        queue->inproc_sync = create_inproc_event( INPROC_SYNC_QUEUE, is_signaled( queue ) );
-    if (queue->inproc_sync) grab_object( queue->inproc_sync );
+    *type = INPROC_SYNC_QUEUE;
     return queue->inproc_sync;
 }
 
@@ -1412,7 +1415,7 @@ static void msg_queue_destroy( struct object *obj )
     if (queue->hooks) release_object( queue->hooks );
     if (queue->fd) release_object( queue->fd );
     if (queue->shared) free_shared_object( queue->shared );
-    if (queue->inproc_sync) release_object( queue->inproc_sync );
+    if (use_inproc_sync()) close( queue->inproc_sync );
 }
 
 static void msg_queue_poll_event( struct fd *fd, int event )

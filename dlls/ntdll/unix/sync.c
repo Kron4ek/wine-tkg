@@ -50,7 +50,6 @@
 #endif
 #include <string.h>
 #include <stdarg.h>
-#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -318,38 +317,32 @@ static int get_linux_sync_device(void)
 
     if (device == -2)
     {
-        HANDLE handle;
-        int fd, needs_close;
+        obj_handle_t handle;
+        sigset_t sigset;
         NTSTATUS ret;
+        int fd = -1;
 
-        SERVER_START_REQ( get_linux_sync_device )
-        {
-            if (!(ret = wine_server_call( req ))) handle = wine_server_ptr_handle( reply->handle );
-        }
-        SERVER_END_REQ;
+        /* We need to use fd_cache_mutex here to protect against races with
+         * other threads trying to receive fds for the fd cache,
+         * and we need to use an uninterrupted section to prevent reentrancy. */
+        server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
 
-        if (!ret)
+        if (device == -2)
         {
-            if (!server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL ))
+            SERVER_START_REQ( get_linux_sync_device )
             {
-                if (InterlockedCompareExchange( &device, fd, -2 ) != -2)
+                if (!(ret = wine_server_call( req )))
                 {
-                    /* someone beat us to it */
-                    if (needs_close) close( fd );
-                    NtClose( handle );
+                    fd = wine_server_receive_fd( &handle );
+                    assert( !handle );
                 }
-                /* otherwise don't close the device */
             }
-            else
-            {
-                InterlockedCompareExchange( &device, -1, -2 );
-                NtClose( handle );
-            }
+            SERVER_END_REQ;
+
+            device = fd;
         }
-        else
-        {
-            InterlockedCompareExchange( &device, -1, -2 );
-        }
+
+        server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
     }
     return device;
 }
@@ -366,7 +359,7 @@ static int get_linux_sync_device(void)
  *
  * We also need this for signal-and-wait. The signal and wait operations aren't
  * atomic, but we can't perform the signal and then return STATUS_INVALID_HANDLE
- * for the wait—we need to either do both operations or neither. That means we
+ * for the waitwe need to either do both operations or neither. That means we
  * need to grab references to both objects, and prevent them from being
  * destroyed before we're done with them.
  *
@@ -391,58 +384,24 @@ static int get_linux_sync_device(void)
 struct inproc_sync_cache_entry
 {
     LONG refcount;
-    uint8_t type; /* enum inproc_sync_type, stored as uint8_t to save space */
-    bool closed;
+    int fd;
     unsigned int access;
-    /* handle to the underlying in-process sync object, stored as obj_handle_t
-     * to save space */
-    obj_handle_t handle;
+    unsigned short type; /* enum inproc_sync_type, stored as short to save space */
+    unsigned short closed;
 };
 
 
-/* Convenience structure describing an in-process sync object, filled by
- * get_inproc_sync_obj(). That function will return a pointer to a cache entry;
- * if the object could not be cached, it will point to the stack_cache member
- * instead. */
-struct inproc_sync_obj
+static void release_inproc_sync_obj( struct inproc_sync_cache_entry *cache )
 {
-    struct inproc_sync_cache_entry *cache;
-    struct inproc_sync_cache_entry stack_cache;
-    int fd, needs_close;
-};
-
-static void release_cached_inproc_sync_obj( struct inproc_sync_cache_entry *cache )
-{
-    /* save the handle and fd now; as soon as the refcount hits 0 we cannot
+    /* save the fd now; as soon as the refcount hits 0 we cannot
      * access the cache anymore */
-    HANDLE handle = wine_server_ptr_handle( cache->handle );
+    int fd = cache->fd;
     LONG refcount = InterlockedDecrement( &cache->refcount );
 
     assert( refcount >= 0 );
 
     if (!refcount)
-    {
-        NTSTATUS ret;
-        int fd;
-
-        /* we can't call NtClose here as we may be inside fd_cache_mutex */
-        fd = remove_fd_from_cache( handle );
-        if (fd >= 0) close( fd );
-        SERVER_START_REQ( close_handle )
-        {
-            req->handle = wine_server_obj_handle( handle );
-            ret = wine_server_call( req );
-        }
-        SERVER_END_REQ;
-
-        assert( !ret );
-    }
-}
-
-static void release_inproc_sync_obj( struct inproc_sync_obj *obj )
-{
-    if (obj->needs_close) close( obj->fd );
-    release_cached_inproc_sync_obj( obj->cache );
+        close( fd );
 }
 
 
@@ -460,12 +419,11 @@ static inline unsigned int inproc_sync_handle_to_index( HANDLE handle, unsigned 
 }
 
 
-static struct inproc_sync_cache_entry *cache_inproc_sync_obj( HANDLE handle, obj_handle_t inproc_sync,
+static struct inproc_sync_cache_entry *cache_inproc_sync_obj( HANDLE handle, obj_handle_t inproc_sync, int fd,
                                                               enum inproc_sync_type type, unsigned int access )
 {
     unsigned int entry, idx = inproc_sync_handle_to_index( handle, &entry );
     struct inproc_sync_cache_entry *cache;
-    sigset_t sigset;
     int refcount;
 
     /* don't cache pseudo-handles; waiting on them is pointless anyway */
@@ -493,33 +451,24 @@ static struct inproc_sync_cache_entry *cache_inproc_sync_obj( HANDLE handle, obj
 
     cache = &inproc_sync_cache[entry][idx];
 
-    /* Hold fd_cache_mutex instead of a separate mutex, to prevent the same
-     * race between this function and NtClose. That is, prevent the object from
-     * being cached again between close_inproc_sync_obj() and close_handle. */
-    server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
-
     if (InterlockedCompareExchange( &cache->refcount, 0, 0 ))
     {
-        /* We lost the race with another thread trying to cache this object, or
-         * the handle is currently being used for another object (i.e. it was
-         * closed and then reused). We have no way of knowing which, and in the
-         * latter case we can't cache this object until the old one is
-         * completely destroyed, so always return failure. */
-        server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
+        /* The handle is currently being used for another object (i.e. it was
+         * closed and then reused, but some thread is waiting on the old handle
+         * or otherwise simultaneously using the old object). We can't cache
+         * this object until the old one is completely destroyed. */
         return NULL;
     }
 
-    cache->handle = inproc_sync;
+    cache->fd = fd;
     cache->type = type;
     cache->access = access;
-    cache->closed = false;
+    cache->closed = FALSE;
     /* Make sure we set the other members before the refcount; this store needs
      * release semantics [paired with the load in get_cached_inproc_sync_obj()].
      * Set the refcount to 2 (one for the handle, one for the caller). */
     refcount = InterlockedExchange( &cache->refcount, 2 );
     assert( !refcount );
-
-    server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
 
     return cache;
 }
@@ -559,7 +508,7 @@ static struct inproc_sync_cache_entry *get_cached_inproc_sync_obj( HANDLE handle
          * handle value might have been reused for another object in the
          * meantime, in which case we have to report that valid object, so
          * force the caller to check the server. */
-        release_cached_inproc_sync_obj( cache );
+        release_inproc_sync_obj( cache );
         return NULL;
     }
 
@@ -576,63 +525,94 @@ static BOOL inproc_sync_types_match( enum inproc_sync_type a, enum inproc_sync_t
 }
 
 
+/* returns a pointer to a cache entry; if the object could not be cached,
+ * returns "stack_cache" instead, which should be allocated on stack */
 static NTSTATUS get_inproc_sync_obj( HANDLE handle, enum inproc_sync_type desired_type,
-                                     ACCESS_MASK desired_access, struct inproc_sync_obj *obj )
+                                     ACCESS_MASK desired_access,
+                                     struct inproc_sync_cache_entry *stack_cache,
+                                     struct inproc_sync_cache_entry **ret_cache )
 {
     struct inproc_sync_cache_entry *cache;
     obj_handle_t inproc_sync_handle;
     enum inproc_sync_type type;
     unsigned int access;
+    sigset_t sigset;
     NTSTATUS ret;
+    int fd;
 
     /* We don't need the device right now, but if we can't access it, that
      * means ntsync isn't available. Fail fast in that case. */
     if (get_linux_sync_device() < 0)
         return STATUS_NOT_IMPLEMENTED;
 
-    if (!(cache = get_cached_inproc_sync_obj( handle )))
+    /* try to find it in the cache already */
+    if ((cache = get_cached_inproc_sync_obj( handle )))
     {
-        /* try to retrieve it from the server */
-        SERVER_START_REQ( get_linux_sync_obj )
-        {
-            req->handle = wine_server_obj_handle( handle );
-            if (!(ret = wine_server_call( req )))
-            {
-                inproc_sync_handle = reply->handle;
-                access = reply->access;
-                type = reply->type;
-            }
-        }
-        SERVER_END_REQ;
-
-        if (ret) return ret;
-
-        if (!(cache = cache_inproc_sync_obj( handle, inproc_sync_handle, type, access )))
-        {
-            cache = &obj->stack_cache;
-            cache->handle = inproc_sync_handle;
-            cache->type = type;
-            cache->access = access;
-            cache->closed = false;
-            cache->refcount = 1;
-        }
+        *ret_cache = cache;
+        return STATUS_SUCCESS;
     }
 
-    obj->cache = cache;
+    /* We need to use fd_cache_mutex here to protect against races with
+     * other threads trying to receive fds for the fd cache,
+     * and we need to use an uninterrupted section to prevent reentrancy.
+     * We also need fd_cache_mutex to protect against the same race with
+     * NtClose, that is, to prevent the object from being cached again between
+     * close_inproc_sync_obj() and close_handle. */
+    server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
 
-    if ((ret = server_get_unix_fd( wine_server_ptr_handle( cache->handle ),
-                                   0, &obj->fd, &obj->needs_close, NULL, NULL )))
-        return ret;
-
-    if (desired_type != INPROC_SYNC_UNKNOWN && !inproc_sync_types_match( cache->type, desired_type ))
+    if ((cache = get_cached_inproc_sync_obj( handle )))
     {
-        release_inproc_sync_obj( obj );
+        server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
+        *ret_cache = cache;
+        return STATUS_SUCCESS;
+    }
+
+    /* try to retrieve it from the server */
+    SERVER_START_REQ( get_linux_sync_obj )
+    {
+        req->handle = wine_server_obj_handle( handle );
+        if (!(ret = wine_server_call( req )))
+        {
+            obj_handle_t fd_handle;
+            fd = wine_server_receive_fd( &fd_handle );
+            assert( wine_server_ptr_handle(fd_handle) == handle );
+            access = reply->access;
+            type = reply->type;
+        }
+    }
+    SERVER_END_REQ;
+
+    if (ret)
+    {
+        server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
+        return ret;
+    }
+
+    cache = cache_inproc_sync_obj( handle, inproc_sync_handle, fd, type, access );
+
+    server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
+
+    if (!cache)
+    {
+        cache = stack_cache;
+        cache->fd = fd;
+        cache->type = type;
+        cache->access = access;
+        cache->closed = FALSE;
+        cache->refcount = 1;
+    }
+
+    *ret_cache = cache;
+
+    if (desired_type && !inproc_sync_types_match( cache->type, desired_type ))
+    {
+        release_inproc_sync_obj( cache );
         return STATUS_OBJECT_TYPE_MISMATCH;
     }
 
     if ((cache->access & desired_access) != desired_access)
     {
-        release_inproc_sync_obj( obj );
+        release_inproc_sync_obj( cache );
         return STATUS_ACCESS_DENIED;
     }
 
@@ -647,21 +627,25 @@ void close_inproc_sync_obj( HANDLE handle )
 
     if (cache)
     {
-        cache->closed = true;
+        cache->closed = TRUE;
         /* once for the reference we just grabbed, and once for the handle */
-        release_cached_inproc_sync_obj( cache );
-        release_cached_inproc_sync_obj( cache );
+        release_inproc_sync_obj( cache );
+        release_inproc_sync_obj( cache );
     }
 }
 
 
 static NTSTATUS linux_release_semaphore_obj( int obj, ULONG count, ULONG *prev_count )
 {
-    if (ioctl( obj, NTSYNC_IOC_SEM_RELEASE, &count ) < 0)
+    NTSTATUS ret;
+
+    ret = ioctl( obj, NTSYNC_IOC_SEM_RELEASE, &count );
+    if (ret < 0)
     {
         if (errno == EOVERFLOW)
             return STATUS_SEMAPHORE_LIMIT_EXCEEDED;
-        return errno_to_status( errno );
+        else
+            return errno_to_status( errno );
     }
     if (prev_count) *prev_count = count;
     return STATUS_SUCCESS;
@@ -670,15 +654,16 @@ static NTSTATUS linux_release_semaphore_obj( int obj, ULONG count, ULONG *prev_c
 
 static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *prev_count )
 {
-    struct inproc_sync_obj obj;
+    struct inproc_sync_cache_entry stack_cache, *cache;
     NTSTATUS ret;
 
-    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_SEMAPHORE, SEMAPHORE_MODIFY_STATE, &obj )))
+    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_SEMAPHORE,
+                                    SEMAPHORE_MODIFY_STATE, &stack_cache, &cache )))
         return ret;
 
-    ret = linux_release_semaphore_obj( obj.fd, count, prev_count );
+    ret = linux_release_semaphore_obj( cache->fd, count, prev_count );
 
-    release_inproc_sync_obj( &obj );
+    release_inproc_sync_obj( cache );
     return ret;
 }
 
@@ -686,8 +671,10 @@ static NTSTATUS inproc_release_semaphore( HANDLE handle, ULONG count, ULONG *pre
 static NTSTATUS linux_query_semaphore_obj( int obj, SEMAPHORE_BASIC_INFORMATION *info )
 {
     struct ntsync_sem_args args = {0};
+    NTSTATUS ret;
 
-    if (ioctl( obj, NTSYNC_IOC_SEM_READ, &args ) < 0)
+    ret = ioctl( obj, NTSYNC_IOC_SEM_READ, &args );
+    if (ret < 0)
         return errno_to_status( errno );
     info->CurrentCount = args.count;
     info->MaximumCount = args.max;
@@ -697,24 +684,27 @@ static NTSTATUS linux_query_semaphore_obj( int obj, SEMAPHORE_BASIC_INFORMATION 
 
 static NTSTATUS inproc_query_semaphore( HANDLE handle, SEMAPHORE_BASIC_INFORMATION *info )
 {
-    struct inproc_sync_obj obj;
+    struct inproc_sync_cache_entry stack_cache, *cache;
     NTSTATUS ret;
 
-    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_SEMAPHORE, SEMAPHORE_QUERY_STATE, &obj )))
+    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_SEMAPHORE,
+                                    SEMAPHORE_QUERY_STATE, &stack_cache, &cache )))
         return ret;
 
-    ret = linux_query_semaphore_obj( obj.fd, info );
+    ret = linux_query_semaphore_obj( cache->fd, info );
 
-    release_inproc_sync_obj( &obj );
+    release_inproc_sync_obj( cache );
     return ret;
 }
 
 
 static NTSTATUS linux_set_event_obj( int obj, LONG *prev_state )
 {
+    NTSTATUS ret;
     __u32 prev;
 
-    if (ioctl( obj, NTSYNC_IOC_EVENT_SET, &prev ) < 0)
+    ret = ioctl( obj, NTSYNC_IOC_EVENT_SET, &prev );
+    if (ret < 0)
         return errno_to_status( errno );
     if (prev_state) *prev_state = prev;
     return STATUS_SUCCESS;
@@ -723,24 +713,27 @@ static NTSTATUS linux_set_event_obj( int obj, LONG *prev_state )
 
 static NTSTATUS inproc_set_event( HANDLE handle, LONG *prev_state )
 {
-    struct inproc_sync_obj obj;
+    struct inproc_sync_cache_entry stack_cache, *cache;
     NTSTATUS ret;
 
-    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT, EVENT_MODIFY_STATE, &obj )))
+    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT,
+                                    EVENT_MODIFY_STATE, &stack_cache, &cache )))
         return ret;
 
-    ret = linux_set_event_obj( obj.fd, prev_state );
+    ret = linux_set_event_obj( cache->fd, prev_state );
 
-    release_inproc_sync_obj( &obj );
+    release_inproc_sync_obj( cache );
     return ret;
 }
 
 
 static NTSTATUS linux_reset_event_obj( int obj, LONG *prev_state )
 {
+    NTSTATUS ret;
     __u32 prev;
 
-    if (ioctl( obj, NTSYNC_IOC_EVENT_RESET, &prev ) < 0)
+    ret = ioctl( obj, NTSYNC_IOC_EVENT_RESET, &prev );
+    if (ret < 0)
         return errno_to_status( errno );
     if (prev_state) *prev_state = prev;
     return STATUS_SUCCESS;
@@ -749,24 +742,27 @@ static NTSTATUS linux_reset_event_obj( int obj, LONG *prev_state )
 
 static NTSTATUS inproc_reset_event( HANDLE handle, LONG *prev_state )
 {
-    struct inproc_sync_obj obj;
+    struct inproc_sync_cache_entry stack_cache, *cache;
     NTSTATUS ret;
 
-    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT, EVENT_MODIFY_STATE, &obj )))
+    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT,
+                                    EVENT_MODIFY_STATE, &stack_cache, &cache )))
         return ret;
 
-    ret = linux_reset_event_obj( obj.fd, prev_state );
+    ret = linux_reset_event_obj( cache->fd, prev_state );
 
-    release_inproc_sync_obj( &obj );
+    release_inproc_sync_obj( cache );
     return ret;
 }
 
 
 static NTSTATUS linux_pulse_event_obj( int obj, LONG *prev_state )
 {
+    NTSTATUS ret;
     __u32 prev;
 
-    if (ioctl( obj, NTSYNC_IOC_EVENT_PULSE, &prev ) < 0)
+    ret = ioctl( obj, NTSYNC_IOC_EVENT_PULSE, &prev );
+    if (ret < 0)
         return errno_to_status( errno );
     if (prev_state) *prev_state = prev;
     return STATUS_SUCCESS;
@@ -775,15 +771,16 @@ static NTSTATUS linux_pulse_event_obj( int obj, LONG *prev_state )
 
 static NTSTATUS inproc_pulse_event( HANDLE handle, LONG *prev_state )
 {
-    struct inproc_sync_obj obj;
+    struct inproc_sync_cache_entry stack_cache, *cache;
     NTSTATUS ret;
 
-    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT, EVENT_MODIFY_STATE, &obj )))
+    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT,
+                                    EVENT_MODIFY_STATE, &stack_cache, &cache )))
         return ret;
 
-    ret = linux_pulse_event_obj( obj.fd, prev_state );
+    ret = linux_pulse_event_obj( cache->fd, prev_state );
 
-    release_inproc_sync_obj( &obj );
+    release_inproc_sync_obj( cache );
     return ret;
 }
 
@@ -791,8 +788,10 @@ static NTSTATUS inproc_pulse_event( HANDLE handle, LONG *prev_state )
 static NTSTATUS linux_query_event_obj( int obj, enum inproc_sync_type type, EVENT_BASIC_INFORMATION *info )
 {
     struct ntsync_event_args args = {0};
+    NTSTATUS ret;
 
-    if (ioctl( obj, NTSYNC_IOC_EVENT_READ, &args ) < 0)
+    ret = ioctl( obj, NTSYNC_IOC_EVENT_READ, &args );
+    if (ret < 0)
         return errno_to_status( errno );
     info->EventType = (type == INPROC_SYNC_AUTO_EVENT) ? SynchronizationEvent : NotificationEvent;
     info->EventState = args.signaled;
@@ -802,15 +801,16 @@ static NTSTATUS linux_query_event_obj( int obj, enum inproc_sync_type type, EVEN
 
 static NTSTATUS inproc_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info )
 {
-    struct inproc_sync_obj obj;
+    struct inproc_sync_cache_entry stack_cache, *cache;
     NTSTATUS ret;
 
-    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT, EVENT_QUERY_STATE, &obj )))
+    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_AUTO_EVENT,
+                                    EVENT_QUERY_STATE, &stack_cache, &cache )))
         return ret;
 
-    ret = linux_query_event_obj( obj.fd, obj.cache->type, info );
+    ret = linux_query_event_obj( cache->fd, cache->type, info );
 
-    release_inproc_sync_obj( &obj );
+    release_inproc_sync_obj( cache );
     return ret;
 }
 
@@ -818,15 +818,19 @@ static NTSTATUS inproc_query_event( HANDLE handle, EVENT_BASIC_INFORMATION *info
 static NTSTATUS linux_release_mutex_obj( int obj, LONG *prev_count )
 {
     struct ntsync_mutex_args args = {0};
+    NTSTATUS ret;
 
     args.owner = GetCurrentThreadId();
-    if (ioctl( obj, NTSYNC_IOC_MUTEX_UNLOCK, &args ) < 0)
+    ret = ioctl( obj, NTSYNC_IOC_MUTEX_UNLOCK, &args );
+
+    if (ret < 0)
     {
         if (errno == EOVERFLOW)
             return STATUS_MUTANT_LIMIT_EXCEEDED;
-        if (errno == EPERM)
+        else if (errno == EPERM)
             return STATUS_MUTANT_NOT_OWNED;
-        return errno_to_status( errno );
+        else
+            return errno_to_status( errno );
     }
     if (prev_count) *prev_count = 1 - args.count;
     return STATUS_SUCCESS;
@@ -835,15 +839,15 @@ static NTSTATUS linux_release_mutex_obj( int obj, LONG *prev_count )
 
 static NTSTATUS inproc_release_mutex( HANDLE handle, LONG *prev_count )
 {
-    struct inproc_sync_obj obj;
+    struct inproc_sync_cache_entry stack_cache, *cache;
     NTSTATUS ret;
 
-    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_MUTEX, 0, &obj )))
+    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_MUTEX, 0, &stack_cache, &cache )))
         return ret;
 
-    ret = linux_release_mutex_obj( obj.fd, prev_count );
+    ret = linux_release_mutex_obj( cache->fd, prev_count );
 
-    release_inproc_sync_obj( &obj );
+    release_inproc_sync_obj( cache );
     return ret;
 }
 
@@ -851,8 +855,11 @@ static NTSTATUS inproc_release_mutex( HANDLE handle, LONG *prev_count )
 static NTSTATUS linux_query_mutex_obj( int obj, MUTANT_BASIC_INFORMATION *info )
 {
     struct ntsync_mutex_args args = {0};
+    NTSTATUS ret;
 
-    if (ioctl( obj, NTSYNC_IOC_MUTEX_READ, &args ) < 0)
+    ret = ioctl( obj, NTSYNC_IOC_MUTEX_READ, &args );
+
+    if (ret < 0)
     {
         if (errno == EOWNERDEAD)
         {
@@ -861,7 +868,8 @@ static NTSTATUS linux_query_mutex_obj( int obj, MUTANT_BASIC_INFORMATION *info )
             info->CurrentCount = 1;
             return STATUS_SUCCESS;
         }
-        return errno_to_status( errno );
+        else
+            return errno_to_status( errno );
     }
     info->AbandonedState = FALSE;
     info->OwnedByCaller = (args.owner == GetCurrentThreadId());
@@ -872,15 +880,16 @@ static NTSTATUS linux_query_mutex_obj( int obj, MUTANT_BASIC_INFORMATION *info )
 
 static NTSTATUS inproc_query_mutex( HANDLE handle, MUTANT_BASIC_INFORMATION *info )
 {
-    struct inproc_sync_obj obj;
+    struct inproc_sync_cache_entry stack_cache, *cache;
     NTSTATUS ret;
 
-    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_MUTEX, MUTANT_QUERY_STATE, &obj )))
+    if ((ret = get_inproc_sync_obj( handle, INPROC_SYNC_MUTEX, MUTANT_QUERY_STATE,
+                                    &stack_cache, &cache )))
         return ret;
 
-    ret = linux_query_mutex_obj( obj.fd, info );
+    ret = linux_query_mutex_obj( cache->fd, info );
 
-    release_inproc_sync_obj( &obj );
+    release_inproc_sync_obj( cache );
     return ret;
 }
 
@@ -906,7 +915,7 @@ static void unselect_queue( BOOL signaled )
 static int get_inproc_alert_obj(void)
 {
     struct ntdll_thread_data *data = ntdll_get_thread_data();
-    struct inproc_sync_obj obj;
+    struct inproc_sync_cache_entry stack_cache, *cache;
     HANDLE alert_handle;
     unsigned int ret;
 
@@ -920,10 +929,15 @@ static int get_inproc_alert_obj(void)
         }
         SERVER_END_REQ;
 
-        if ((ret = get_inproc_sync_obj( alert_handle, INPROC_SYNC_UNKNOWN, SYNCHRONIZE, &obj )))
+        if ((ret = get_inproc_sync_obj( alert_handle, 0, SYNCHRONIZE, &stack_cache, &cache )))
             ERR( "failed to get inproc alert obj, status %#x\n", ret );
-        data->linux_alert_obj = obj.fd;
-        /* Don't close the server handle (or the fd). */
+        data->linux_alert_obj = cache->fd;
+        /* Set the fd to -1 so release_inproc_sync_obj() won't close it.
+         * Manhandling the cache entry here is fine since we're the only thread
+         * that can access our own alert event. */
+        cache->fd = -1;
+        release_inproc_sync_obj( cache );
+        NtClose( alert_handle );
     }
 
     return data->linux_alert_obj;
@@ -983,18 +997,19 @@ static NTSTATUS linux_wait_objs( int device, const DWORD count, const int *objs,
 
         return wait_any ? args.index : 0;
     }
-    if (errno == EOWNERDEAD)
+    else if (errno == EOWNERDEAD)
         return STATUS_ABANDONED + (wait_any ? args.index : 0);
-    if (errno == ETIMEDOUT)
+    else if (errno == ETIMEDOUT)
         return STATUS_TIMEOUT;
-    return errno_to_status( errno );
+    else
+        return errno_to_status( errno );
 }
 
 static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_any,
                              BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
-    struct inproc_sync_obj objs[64];
-    int device, fds[64];
+    struct inproc_sync_cache_entry stack_cache[64], *cache[64];
+    int device, objs[64];
     HANDLE queue = NULL;
     NTSTATUS ret;
     DWORD i, j;
@@ -1004,16 +1019,16 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
 
     for (i = 0; i < count; ++i)
     {
-        if ((ret = get_inproc_sync_obj( handles[i], INPROC_SYNC_UNKNOWN, SYNCHRONIZE, &objs[i] )))
+        if ((ret = get_inproc_sync_obj( handles[i], 0, SYNCHRONIZE, &stack_cache[i], &cache[i] )))
         {
             for (j = 0; j < i; ++j)
-                release_inproc_sync_obj( &objs[j] );
+                release_inproc_sync_obj( cache[j] );
             return ret;
         }
-        if (objs[i].cache->type == INPROC_SYNC_QUEUE)
+        if (cache[i]->type == INPROC_SYNC_QUEUE)
             queue = handles[i];
 
-        fds[i] = objs[i].fd;
+        objs[i] = cache[i]->fd;
     }
 
     /* It's common to wait on the message queue alone. Some applications wait
@@ -1023,18 +1038,18 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
      * to the server if we're only waiting on the message queue. */
     if (count == 1 && queue)
     {
-        release_inproc_sync_obj( &objs[0] );
+        release_inproc_sync_obj( cache[0] );
         return server_wait_for_object( handles[0], alertable, timeout );
     }
 
     if (queue) select_queue();
 
-    ret = linux_wait_objs( device, count, fds, wait_any, alertable, timeout );
+    ret = linux_wait_objs( device, count, objs, wait_any, alertable, timeout );
 
     if (queue) unselect_queue( handles[ret] == queue );
 
     for (i = 0; i < count; ++i)
-        release_inproc_sync_obj( &objs[i] );
+        release_inproc_sync_obj( cache[i] );
 
     return ret;
 }
@@ -1042,7 +1057,8 @@ static NTSTATUS inproc_wait( DWORD count, const HANDLE *handles, BOOLEAN wait_an
 static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
                                         BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
-    struct inproc_sync_obj signal_obj, wait_obj;
+    struct inproc_sync_cache_entry signal_stack_cache, *signal_cache;
+    struct inproc_sync_cache_entry wait_stack_cache, *wait_cache;
     HANDLE queue = NULL;
     NTSTATUS ret;
     int device;
@@ -1050,75 +1066,75 @@ static NTSTATUS inproc_signal_and_wait( HANDLE signal, HANDLE wait,
     if ((device = get_linux_sync_device()) < 0)
         return STATUS_NOT_IMPLEMENTED;
 
-    if ((ret = get_inproc_sync_obj( signal, INPROC_SYNC_UNKNOWN, 0, &signal_obj )))
+    if ((ret = get_inproc_sync_obj( signal, 0, 0, &signal_stack_cache, &signal_cache )))
         return ret;
 
-    switch (signal_obj.cache->type)
+    switch (signal_cache->type)
     {
-    case INPROC_SYNC_SEMAPHORE:
-        if (!(signal_obj.cache->access & SEMAPHORE_MODIFY_STATE))
-        {
-            release_inproc_sync_obj( &signal_obj );
-            return STATUS_ACCESS_DENIED;
-        }
-        break;
+        case INPROC_SYNC_SEMAPHORE:
+            if (!(signal_cache->access & SEMAPHORE_MODIFY_STATE))
+            {
+                release_inproc_sync_obj( signal_cache );
+                return STATUS_ACCESS_DENIED;
+            }
+            break;
 
-    case INPROC_SYNC_AUTO_EVENT:
-    case INPROC_SYNC_MANUAL_EVENT:
-        if (!(signal_obj.cache->access & EVENT_MODIFY_STATE))
-        {
-            release_inproc_sync_obj( &signal_obj );
-            return STATUS_ACCESS_DENIED;
-        }
-        break;
+        case INPROC_SYNC_AUTO_EVENT:
+        case INPROC_SYNC_MANUAL_EVENT:
+            if (!(signal_cache->access & EVENT_MODIFY_STATE))
+            {
+                release_inproc_sync_obj( signal_cache );
+                return STATUS_ACCESS_DENIED;
+            }
+            break;
 
-    case INPROC_SYNC_MUTEX:
-        break;
+        case INPROC_SYNC_MUTEX:
+            break;
 
-    default:
-        /* can't be signaled */
-        release_inproc_sync_obj( &signal_obj );
-        return STATUS_OBJECT_TYPE_MISMATCH;
+        default:
+            /* can't be signaled */
+            release_inproc_sync_obj( signal_cache );
+            return STATUS_OBJECT_TYPE_MISMATCH;
     }
 
-    if ((ret = get_inproc_sync_obj( wait, INPROC_SYNC_UNKNOWN, SYNCHRONIZE, &wait_obj )))
+    if ((ret = get_inproc_sync_obj( wait, 0, SYNCHRONIZE, &wait_stack_cache, &wait_cache )))
     {
-        release_inproc_sync_obj( &signal_obj );
+        release_inproc_sync_obj( signal_cache );
         return ret;
     }
 
-    if (wait_obj.cache->type == INPROC_SYNC_QUEUE)
+    if (wait_cache->type == INPROC_SYNC_QUEUE)
         queue = wait;
 
-    switch (signal_obj.cache->type)
+    switch (signal_cache->type)
     {
-    case INPROC_SYNC_SEMAPHORE:
-        ret = linux_release_semaphore_obj( signal_obj.fd, 1, NULL );
-        break;
+        case INPROC_SYNC_SEMAPHORE:
+            ret = linux_release_semaphore_obj( signal_cache->fd, 1, NULL );
+            break;
 
-    case INPROC_SYNC_AUTO_EVENT:
-    case INPROC_SYNC_MANUAL_EVENT:
-        ret = linux_set_event_obj( signal_obj.fd, NULL );
-        break;
+        case INPROC_SYNC_AUTO_EVENT:
+        case INPROC_SYNC_MANUAL_EVENT:
+            ret = linux_set_event_obj( signal_cache->fd, NULL );
+            break;
 
-    case INPROC_SYNC_MUTEX:
-        ret = linux_release_mutex_obj( signal_obj.fd, NULL );
-        break;
+        case INPROC_SYNC_MUTEX:
+            ret = linux_release_mutex_obj( signal_cache->fd, NULL );
+            break;
 
-    default:
-        assert( 0 );
-        break;
+        default:
+            assert( 0 );
+            break;
     }
 
     if (!ret)
     {
         if (queue) select_queue();
-        ret = linux_wait_objs( device, 1, &wait_obj.fd, TRUE, alertable, timeout );
+        ret = linux_wait_objs( device, 1, &wait_cache->fd, TRUE, alertable, timeout );
         if (queue) unselect_queue( !ret );
     }
 
-    release_inproc_sync_obj( &signal_obj );
-    release_inproc_sync_obj( &wait_obj );
+    release_inproc_sync_obj( signal_cache );
+    release_inproc_sync_obj( wait_cache );
     return ret;
 }
 
@@ -3213,6 +3229,18 @@ NTSTATUS WINAPI NtCreateSection( HANDLE *handle, ACCESS_MASK access, const OBJEC
 
     free( objattr );
     return ret;
+}
+
+
+/***********************************************************************
+ *             NtCreateSectionEx (NTDLL.@)
+ */
+NTSTATUS WINAPI NtCreateSectionEx( HANDLE *handle, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr,
+                                   const LARGE_INTEGER *size, ULONG protect, ULONG sec_flags,
+                                   HANDLE file, MEM_EXTENDED_PARAMETER *parameters, ULONG count )
+{
+    if (count) FIXME( "extended params not supported\n" );
+    return NtCreateSection( handle, access, attr, size, protect, sec_flags, file );
 }
 
 

@@ -997,8 +997,22 @@ static void free_parse_variable_def(struct parse_variable_def *v)
     vkd3d_free(v->arrays.sizes);
     vkd3d_free(v->name);
     hlsl_cleanup_semantic(&v->semantic);
-    VKD3D_ASSERT(!v->state_blocks);
+    if (v->state_block_count)
+    {
+        for (unsigned int i = 0; i < v->state_block_count; ++i)
+            hlsl_free_state_block(v->state_blocks[i]);
+        vkd3d_free(v->state_blocks);
+    }
     vkd3d_free(v);
+}
+
+static void destroy_parse_variable_defs(struct list *defs)
+{
+    struct parse_variable_def *v, *v_next;
+
+    LIST_FOR_EACH_ENTRY_SAFE(v, v_next, defs, struct parse_variable_def, entry)
+        free_parse_variable_def(v);
+    vkd3d_free(defs);
 }
 
 static bool gen_struct_fields(struct hlsl_ctx *ctx, struct parse_fields *fields,
@@ -2618,11 +2632,7 @@ static struct hlsl_block *initialize_vars(struct hlsl_ctx *ctx, struct list *var
 
     if (!(initializers = make_empty_block(ctx)))
     {
-        LIST_FOR_EACH_ENTRY_SAFE(v, v_next, var_list, struct parse_variable_def, entry)
-        {
-            free_parse_variable_def(v);
-        }
-        vkd3d_free(var_list);
+        destroy_parse_variable_defs(var_list);
         return NULL;
     }
 
@@ -6322,6 +6332,66 @@ static bool add_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block, stru
     }
 }
 
+static bool add_object_property_access(struct hlsl_ctx *ctx,
+        struct hlsl_block *block, struct hlsl_ir_node *object, const char *name,
+        const struct vkd3d_shader_location *loc)
+{
+    const struct hlsl_type *object_type = object->data_type;
+    struct hlsl_resource_load_params load_params;
+    struct hlsl_ir_node *zero;
+    unsigned int sampler_dim;
+
+    if (!strcmp(name, "Length"))
+    {
+        if (object_type->class != HLSL_CLASS_TEXTURE && object_type->class != HLSL_CLASS_UAV)
+            return false;
+
+        sampler_dim = hlsl_sampler_dim_count(object_type->sampler_dim);
+
+        switch (object_type->sampler_dim)
+        {
+            case HLSL_SAMPLER_DIM_1D:
+            case HLSL_SAMPLER_DIM_2D:
+            case HLSL_SAMPLER_DIM_3D:
+            case HLSL_SAMPLER_DIM_1DARRAY:
+            case HLSL_SAMPLER_DIM_2DARRAY:
+            case HLSL_SAMPLER_DIM_2DMS:
+            case HLSL_SAMPLER_DIM_2DMSARRAY:
+                break;
+
+            case HLSL_SAMPLER_DIM_BUFFER:
+            case HLSL_SAMPLER_DIM_STRUCTURED_BUFFER:
+                hlsl_fixme(ctx, loc, "'Length' property for buffers.");
+                block->value = ctx->error_instr;
+                return true;
+
+            default:
+                return false;
+        }
+
+        if (hlsl_version_lt(ctx, 4, 0))
+        {
+            hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INCOMPATIBLE_PROFILE,
+                    "'Length' property can only be used on profiles 4.0 or higher.");
+            block->value = ctx->error_instr;
+            return true;
+        }
+
+        zero = hlsl_block_add_uint_constant(ctx, block, 0, loc);
+
+        memset(&load_params, 0, sizeof(load_params));
+        load_params.type = HLSL_RESOURCE_RESINFO;
+        load_params.resource = object;
+        load_params.lod = zero;
+        load_params.format = hlsl_get_vector_type(ctx, HLSL_TYPE_UINT, sampler_dim);
+        hlsl_block_add_resource_load(ctx, block, &load_params, loc);
+
+        return true;
+    }
+
+    return false;
+}
+
 static void validate_texture_format_type(struct hlsl_ctx *ctx, struct hlsl_type *format,
         const struct vkd3d_shader_location *loc)
 {
@@ -6491,7 +6561,6 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
     bool boolval;
     char *name;
     uint32_t modifiers;
-    struct hlsl_ir_node *instr;
     struct hlsl_block *block;
     struct list *list;
     struct parse_fields fields;
@@ -6663,6 +6732,8 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %type <list> variables_def
 %type <list> variables_def_typed
 %type <list> switch_cases
+%destructor { destroy_parse_variable_defs($$); } type_specs variables_def variables_def_typed;
+%destructor { destroy_switch_cases($$); } switch_cases;
 
 %token <name> VAR_IDENTIFIER
 %token <name> NEW_IDENTIFIER
@@ -6706,9 +6777,9 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %type <block> selection_statement
 %type <block> statement
 %type <block> statement_list
-%type <block> struct_declaration_without_vars
 %type <block> switch_statement
 %type <block> unary_expr
+%destructor { destroy_block($$); } <block>
 
 %type <boolval> boolean
 
@@ -6759,6 +6830,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %type <state_block_index> state_block_index_opt
 
 %type <switch_case> switch_case
+%destructor { hlsl_free_ir_switch_case($$); } <switch_case>
 
 %type <type> base_optional
 %type <type> field_type
@@ -6775,6 +6847,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %type <variable_def> variable_decl
 %type <variable_def> variable_def
 %type <variable_def> variable_def_typed
+%destructor { free_parse_variable_def($$); } <variable_def>
 
 %%
 
@@ -6928,6 +7001,9 @@ buffer_type:
 declaration_statement_list:
       %empty
     | declaration_statement_list declaration_statement
+        {
+            destroy_block($2);
+        }
 
 preproc_directive:
       PRE_LINE STRING
@@ -6961,9 +7037,6 @@ struct_declaration_without_vars:
             if ($1)
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
                         "Modifiers are not allowed on struct type declarations.");
-
-            if (!($$ = make_empty_block(ctx)))
-                YYABORT;
         }
 
 struct_spec:
@@ -8084,6 +8157,10 @@ type:
 declaration_statement:
       declaration
     | struct_declaration_without_vars
+        {
+            if (!($$ = make_empty_block(ctx)))
+                YYABORT;
+        }
     | typedef
         {
             if (!($$ = make_empty_block(ctx)))
@@ -8097,15 +8174,12 @@ typedef_type:
 typedef:
       KW_TYPEDEF var_modifiers typedef_type type_specs ';'
         {
-            struct parse_variable_def *v, *v_next;
             uint32_t modifiers = $2;
             struct hlsl_type *type;
 
             if (!(type = apply_type_modifiers(ctx, $3, &modifiers, false, &@2)))
             {
-                LIST_FOR_EACH_ENTRY_SAFE(v, v_next, $4, struct parse_variable_def, entry)
-                    free_parse_variable_def(v);
-                vkd3d_free($4);
+                destroy_parse_variable_defs($4);
                 YYABORT;
             }
 
@@ -9121,6 +9195,9 @@ postfix_expr:
                     hlsl_error(ctx, &@3, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Invalid swizzle \"%s\".", $3);
                     $1->value = ctx->error_instr;
                 }
+            }
+            else if (add_object_property_access(ctx, $1, node, $3, &@2))
+            {
             }
             else if (node->data_type->class != HLSL_CLASS_ERROR)
             {

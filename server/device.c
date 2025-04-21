@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <unistd.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -93,12 +94,12 @@ struct device_manager
     struct list            requests;       /* list of pending irps across all devices */
     struct irp_call       *current_call;   /* call currently executed on client side */
     struct wine_rb_tree    kernel_objects; /* map of objects that have client side pointer associated */
-    struct inproc_sync    *inproc_sync;    /* in-process synchronization object */
+    int                    inproc_sync;    /* in-process synchronization object */
 };
 
 static void device_manager_dump( struct object *obj, int verbose );
 static int device_manager_signaled( struct object *obj, struct wait_queue_entry *entry );
-static struct inproc_sync *device_manager_get_inproc_sync( struct object *obj );
+static int device_manager_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void device_manager_destroy( struct object *obj );
 
 static const struct object_ops device_manager_ops =
@@ -797,13 +798,11 @@ static int device_manager_signaled( struct object *obj, struct wait_queue_entry 
     return !list_empty( &manager->requests );
 }
 
-static struct inproc_sync *device_manager_get_inproc_sync( struct object *obj )
+static int device_manager_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct device_manager *manager = (struct device_manager *)obj;
 
-    if (!manager->inproc_sync)
-        manager->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, !list_empty( &manager->requests ) );
-    if (manager->inproc_sync) grab_object( manager->inproc_sync );
+    *type = INPROC_SYNC_MANUAL_SERVER;
     return manager->inproc_sync;
 }
 
@@ -842,7 +841,7 @@ static void device_manager_destroy( struct object *obj )
         release_object( irp );
     }
 
-    if (manager->inproc_sync) release_object( manager->inproc_sync );
+    if (use_inproc_sync()) close( manager->inproc_sync );
 }
 
 static struct device_manager *create_device_manager(void)
@@ -852,7 +851,7 @@ static struct device_manager *create_device_manager(void)
     if ((manager = alloc_object( &device_manager_ops )))
     {
         manager->current_call = NULL;
-        manager->inproc_sync = NULL;
+        manager->inproc_sync = create_inproc_event( TRUE, FALSE );
         list_init( &manager->devices );
         list_init( &manager->requests );
         wine_rb_init( &manager->kernel_objects, compare_kernel_object );

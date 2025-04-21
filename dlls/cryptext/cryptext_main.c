@@ -27,22 +27,20 @@
 #include "winuser.h"
 #include "cryptuiapi.h"
 
-#include "wine/heap.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(cryptext);
 
-static WCHAR *heap_strdupAtoW(const char *str)
+static inline WCHAR *strdupAW(const char *src)
 {
-    WCHAR *ret;
-    INT len;
-
-    if (!str) return NULL;
-    len = MultiByteToWideChar(CP_ACP, 0, str, -1, NULL, 0);
-    ret = heap_alloc(len * sizeof(WCHAR));
-    if (ret)
-        MultiByteToWideChar(CP_ACP, 0, str, -1, ret, len);
-    return ret;
+    WCHAR *dst = NULL;
+    if (src)
+    {
+        int len = MultiByteToWideChar(CP_ACP, 0, src, -1, NULL, 0);
+        dst = malloc(len * sizeof(WCHAR));
+        if (dst) MultiByteToWideChar(CP_ACP, 0, src, -1, dst, len);
+    }
+    return dst;
 }
 
 /***********************************************************************
@@ -78,13 +76,13 @@ HRESULT WINAPI CryptExtOpenCERW(HWND hwnd, HINSTANCE hinst, LPCWSTR filename, DW
                           (const void **)&ctx))
     {
         /* FIXME: move to the resources */
-        static const WCHAR msg[] = {'T','h','i','s',' ','i','s',' ','n','o','t',' ','a',' ','v','a','l','i','d',' ','c','e','r','t','i','f','i','c','a','t','e',0};
-        MessageBoxW(NULL, msg, filename, MB_OK | MB_ICONERROR);
+        MessageBoxW(NULL, L"This is not a valid certificate", filename, MB_OK | MB_ICONERROR);
         return S_OK; /* according to the tests */
     }
 
     memset(&info, 0, sizeof(info));
     info.dwSize = sizeof(info);
+    info.hwndParent = hwnd;
     info.pCertContext = ctx;
     CryptUIDlgViewCertificateW(&info, NULL);
     CertFreeCertificateContext(ctx);
@@ -102,8 +100,8 @@ HRESULT WINAPI CryptExtOpenCER(HWND hwnd, HINSTANCE hinst, LPCSTR filename, DWOR
 
     TRACE("(%p, %p, %s, %lu)\n", hwnd, hinst, debugstr_a(filename), showcmd);
 
-    filenameW = heap_strdupAtoW(filename);
+    filenameW = strdupAW(filename);
     hr = CryptExtOpenCERW(hwnd, hinst, filenameW, showcmd);
-    heap_free(filenameW);
+    free(filenameW);
     return hr;
 }

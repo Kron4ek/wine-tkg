@@ -189,7 +189,7 @@ static int thread_signaled( struct object *obj, struct wait_queue_entry *entry )
 static unsigned int thread_map_access( struct object *obj, unsigned int access );
 static void thread_poll_event( struct fd *fd, int event );
 static struct list *thread_get_kernel_obj_list( struct object *obj );
-static struct inproc_sync *thread_get_inproc_sync( struct object *obj );
+static int thread_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void destroy_thread( struct object *obj );
 
 static const struct object_ops thread_ops =
@@ -255,6 +255,8 @@ void init_threading(void)
 static void apply_thread_priority( struct thread *thread, int effective_priority )
 {
     int min = -nice_limit, max = nice_limit, range = max - min, niceness;
+
+    if (nice_limit >= 0) return;
 
     /* FIXME: handle realtime priorities using SCHED_RR if possible */
     if (effective_priority >= LOW_REALTIME_PRIORITY) effective_priority = LOW_REALTIME_PRIORITY - 1;
@@ -417,7 +419,8 @@ static inline void init_thread_structure( struct thread *thread )
     thread->token           = NULL;
     thread->desc            = NULL;
     thread->desc_len        = 0;
-    thread->inproc_sync     = NULL;
+    thread->exit_poll       = NULL;
+    thread->inproc_sync     = create_inproc_event( TRUE, FALSE );
     thread->inproc_alert_event = NULL;
 
     thread->creation_time = current_time;
@@ -570,13 +573,11 @@ static struct list *thread_get_kernel_obj_list( struct object *obj )
     return &thread->kernel_object;
 }
 
-static struct inproc_sync *thread_get_inproc_sync( struct object *obj )
+static int thread_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct thread *thread = (struct thread *)obj;
 
-    if (!thread->inproc_sync)
-        thread->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, thread->state == TERMINATED );
-    if (thread->inproc_sync) grab_object( thread->inproc_sync );
+    *type = INPROC_SYNC_MANUAL_SERVER;
     return thread->inproc_sync;
 }
 
@@ -633,9 +634,10 @@ static void destroy_thread( struct object *obj )
     list_remove( &thread->entry );
     cleanup_thread( thread );
     release_object( thread->process );
+    if (thread->exit_poll) remove_timeout_user( thread->exit_poll );
     if (thread->id) free_ptid( thread->id );
     if (thread->token) release_object( thread->token );
-    if (thread->inproc_sync) release_object( thread->inproc_sync );
+    if (use_inproc_sync()) close( thread->inproc_sync );
     if (thread->inproc_alert_event) release_object( thread->inproc_alert_event );
 }
 
@@ -652,7 +654,7 @@ static void dump_thread( struct object *obj, int verbose )
 static int thread_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct thread *mythread = (struct thread *)obj;
-    return (mythread->state == TERMINATED);
+    return mythread->state == TERMINATED && !mythread->exit_poll;
 }
 
 static unsigned int thread_map_access( struct object *obj, unsigned int access )
@@ -1517,6 +1519,26 @@ int thread_get_inflight_fd( struct thread *thread, int client )
     return -1;
 }
 
+static void check_terminated( void *arg )
+{
+    struct thread *thread = arg;
+    assert( thread->obj.ops == &thread_ops );
+    assert( thread->state == TERMINATED );
+
+    /* don't wake up until the thread is really dead, to avoid race conditions */
+    if (thread->unix_tid != -1 && !kill( thread->unix_tid, 0 ))
+    {
+        thread->exit_poll = add_timeout_user( -TICKS_PER_SEC / 1000, check_terminated, thread );
+        return;
+    }
+
+    /* grab reference since object can be destroyed while trying to wake up */
+    grab_object( &thread->obj );
+    thread->exit_poll = NULL;
+    wake_up( &thread->obj, 0 );
+    release_object( &thread->obj );
+}
+
 /* kill a thread on the spot */
 void kill_thread( struct thread *thread, int violent_death )
 {
@@ -1536,9 +1558,13 @@ void kill_thread( struct thread *thread, int violent_death )
     }
     kill_console_processes( thread, 0 );
     abandon_mutexes( thread );
-    wake_up( &thread->obj, 0 );
     set_inproc_event( thread->inproc_sync );
-    if (violent_death) send_thread_signal( thread, SIGQUIT );
+    if (violent_death)
+    {
+        send_thread_signal( thread, SIGQUIT );
+        check_terminated( thread );
+    }
+    else wake_up( &thread->obj, 0 );
     cleanup_thread( thread );
     remove_process_thread( thread->process, thread );
     release_object( thread );

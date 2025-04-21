@@ -1577,6 +1577,13 @@ NTSTATUS WINAPI wow64_NtUserAttachThreadInput( UINT *args )
     return NtUserAttachThreadInput( from, to, attach );
 }
 
+NTSTATUS WINAPI wow64_NtUserBeginDeferWindowPos( UINT *args )
+{
+    INT count = get_ulong( &args );
+
+    return HandleToUlong( NtUserBeginDeferWindowPos( count ));
+}
+
 NTSTATUS WINAPI wow64_NtUserBeginPaint( UINT *args )
 {
     HWND hwnd = get_handle( &args );
@@ -2852,6 +2859,13 @@ NTSTATUS WINAPI wow64_NtUserGetPriorityClipboardFormat( UINT *args )
     return NtUserGetPriorityClipboardFormat( list, count );
 }
 
+NTSTATUS WINAPI wow64_NtUserGetProcessDefaultLayout( UINT *args )
+{
+    ULONG *layout = get_ptr( &args );
+
+    return NtUserGetProcessDefaultLayout( layout );
+}
+
 NTSTATUS WINAPI wow64_NtUserGetProcessDpiAwarenessContext( UINT *args )
 {
     HANDLE process = get_handle( &args );
@@ -3312,6 +3326,14 @@ NTSTATUS WINAPI wow64_NtUserIsMouseInPointerEnabled( UINT *args )
     return NtUserIsMouseInPointerEnabled();
 }
 
+NTSTATUS WINAPI wow64_NtUserKillSystemTimer( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    UINT_PTR id = get_ulong( &args );
+
+    return NtUserKillSystemTimer( hwnd, id );
+}
+
 NTSTATUS WINAPI wow64_NtUserKillTimer( UINT *args )
 {
     HWND hwnd = get_handle( &args );
@@ -3687,12 +3709,14 @@ NTSTATUS WINAPI wow64_NtUserMessageCall( UINT *args )
                 ULONG himc;
                 ULONG state;
                 ULONG compstr;
+                ULONG key_consumed;
             } *params32 = result_info;
             struct ime_driver_call_params params;
             if (msg == WINE_IME_POST_UPDATE) ERR( "Unexpected WINE_IME_POST_UPDATE message\n" );
             params.himc = UlongToPtr( params32->himc );
             params.state = UlongToPtr( params32->state );
             params.compstr = UlongToPtr( params32->compstr );
+            params.key_consumed = UlongToPtr( params32->key_consumed );
             return NtUserMessageCall( hwnd, msg, wparam, lparam, &params, type, ansi );
         }
 
@@ -4348,6 +4372,13 @@ NTSTATUS WINAPI wow64_NtUserSetFocus( UINT *args )
     HWND hwnd = get_handle( &args );
 
     return HandleToUlong( NtUserSetFocus( hwnd ));
+}
+
+NTSTATUS WINAPI wow64_NtUserSetForegroundWindow( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+
+    return NtUserSetForegroundWindow( hwnd );
 }
 
 NTSTATUS WINAPI wow64_NtUserSetInternalWindowPos( UINT *args )

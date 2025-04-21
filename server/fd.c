@@ -159,7 +159,7 @@ struct fd
     struct completion   *completion;  /* completion object attached to this fd */
     apc_param_t          comp_key;    /* completion key to set in completion events */
     unsigned int         comp_flags;  /* completion flags */
-    struct inproc_sync  *inproc_sync; /* in-process synchronization object */
+    int                  inproc_sync; /* in-process synchronization object */
 };
 
 static void fd_dump( struct object *obj, int verbose );
@@ -311,7 +311,7 @@ static const struct object_ops file_lock_ops =
     NULL,                       /* unlink_name */
     no_open_file,               /* open_file */
     no_kernel_obj_list,         /* get_kernel_obj_list */
-    no_get_inproc_sync,       /* get_inproc_sync */
+    no_get_inproc_sync,         /* get_inproc_sync */
     no_close_handle,            /* close_handle */
     no_destroy                  /* destroy */
 };
@@ -1669,7 +1669,7 @@ static void fd_destroy( struct object *obj )
         if (fd->unix_fd != -1) close( fd->unix_fd );
         free( fd->unix_name );
     }
-    if (fd->inproc_sync) release_object( fd->inproc_sync );
+    if (use_inproc_sync()) close( fd->inproc_sync );
 }
 
 /* check if the desired access is possible without violating */
@@ -1788,7 +1788,7 @@ static struct fd *alloc_fd_object(void)
     fd->poll_index = -1;
     fd->completion = NULL;
     fd->comp_flags = 0;
-    fd->inproc_sync = NULL;
+    fd->inproc_sync = create_inproc_event( TRUE, fd->signaled );
     init_async_queue( &fd->read_q );
     init_async_queue( &fd->write_q );
     init_async_queue( &fd->wait_q );
@@ -1829,7 +1829,7 @@ struct fd *alloc_pseudo_fd( const struct fd_ops *fd_user_ops, struct object *use
     fd->poll_index = -1;
     fd->completion = NULL;
     fd->comp_flags = 0;
-    fd->inproc_sync = NULL;
+    fd->inproc_sync = create_inproc_event( TRUE, fd->signaled );
     fd->no_fd_status = STATUS_BAD_DEVICE_TYPE;
     init_async_queue( &fd->read_q );
     init_async_queue( &fd->write_q );
@@ -2344,16 +2344,14 @@ int default_fd_signaled( struct object *obj, struct wait_queue_entry *entry )
     return ret;
 }
 
-struct inproc_sync *default_fd_get_inproc_sync( struct object *obj )
+int default_fd_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct fd *fd = get_obj_fd( obj );
-    struct inproc_sync *ret;
+    int ret;
 
-    if (!fd->inproc_sync)
-        fd->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, fd->signaled );
+    *type = INPROC_SYNC_MANUAL_SERVER;
     ret = fd->inproc_sync;
     release_object( fd );
-    if (ret) grab_object( ret );
     return ret;
 }
 

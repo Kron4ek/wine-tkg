@@ -782,6 +782,11 @@ BOOL SYSCALL_API NtGdiLineTo( HDC hdc, INT x, INT y )
     SYSCALL_FUNC( NtGdiLineTo );
 }
 
+ULONG SYSCALL_API NtGdiMakeFontDir( DWORD embed, BYTE *buffer, UINT size, const WCHAR *path, UINT len )
+{
+    SYSCALL_FUNC( NtGdiMakeFontDir );
+}
+
 BOOL SYSCALL_API NtGdiMaskBlt( HDC hdcDest, INT nXDest, INT nYDest, INT nWidth, INT nHeight,
                                HDC hdcSrc, INT nXSrc, INT nYSrc, HBITMAP hbmMask,
                                INT xMask, INT yMask, DWORD dwRop, DWORD bk_color )
@@ -1120,6 +1125,11 @@ UINT SYSCALL_API NtUserAssociateInputContext( HWND hwnd, HIMC ctx, ULONG flags )
 BOOL SYSCALL_API NtUserAttachThreadInput( DWORD from, DWORD to, BOOL attach )
 {
     SYSCALL_FUNC( NtUserAttachThreadInput );
+}
+
+HDWP SYSCALL_API NtUserBeginDeferWindowPos( INT count )
+{
+    SYSCALL_FUNC( NtUserBeginDeferWindowPos );
 }
 
 HDC SYSCALL_API NtUserBeginPaint( HWND hwnd, PAINTSTRUCT *ps )
@@ -1674,6 +1684,11 @@ INT SYSCALL_API NtUserGetPriorityClipboardFormat( UINT *list, INT count )
     SYSCALL_FUNC( NtUserGetPriorityClipboardFormat );
 }
 
+BOOL SYSCALL_API NtUserGetProcessDefaultLayout( ULONG *layout )
+{
+    SYSCALL_FUNC( NtUserGetProcessDefaultLayout );
+}
+
 ULONG SYSCALL_API NtUserGetProcessDpiAwarenessContext( HANDLE process )
 {
     SYSCALL_FUNC( NtUserGetProcessDpiAwarenessContext );
@@ -1834,6 +1849,11 @@ BOOL SYSCALL_API NtUserIsClipboardFormatAvailable( UINT format )
 BOOL SYSCALL_API NtUserIsMouseInPointerEnabled(void)
 {
     SYSCALL_FUNC( NtUserIsMouseInPointerEnabled );
+}
+
+BOOL SYSCALL_API NtUserKillSystemTimer( HWND hwnd, UINT_PTR id )
+{
+    SYSCALL_FUNC( NtUserKillSystemTimer );
 }
 
 BOOL SYSCALL_API NtUserKillTimer( HWND hwnd, UINT_PTR id )
@@ -2119,6 +2139,11 @@ BOOL SYSCALL_API NtUserSetCursorPos( INT x, INT y )
 HWND SYSCALL_API NtUserSetFocus( HWND hwnd )
 {
     SYSCALL_FUNC( NtUserSetFocus );
+}
+
+BOOL SYSCALL_API NtUserSetForegroundWindow( HWND hwnd )
+{
+    SYSCALL_FUNC( NtUserSetForegroundWindow );
 }
 
 void SYSCALL_API NtUserSetInternalWindowPos( HWND hwnd, UINT cmd, RECT *rect, POINT *pt )
@@ -2428,12 +2453,6 @@ HWND SYSCALL_API NtUserWindowFromDC( HDC hdc )
 HWND SYSCALL_API NtUserWindowFromPoint( LONG x, LONG y )
 {
     SYSCALL_FUNC( NtUserWindowFromPoint );
-}
-
-BOOL SYSCALL_API __wine_get_file_outline_text_metric( const WCHAR *path, TEXTMETRICW *otm,
-                                                      UINT *em_square, WCHAR *face_name )
-{
-    SYSCALL_FUNC( __wine_get_file_outline_text_metric );
 }
 
 BOOL SYSCALL_API __wine_get_icm_profile( HDC hdc, BOOL allow_default, DWORD *size, WCHAR *filename )

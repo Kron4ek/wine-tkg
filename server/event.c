@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -55,8 +56,11 @@ struct event
     struct object  obj;             /* object header */
     struct list    kernel_object;   /* list of kernel object pointers */
     int            manual_reset;    /* is it a manual reset event? */
-    int            signaled;        /* event has been signaled */
-    struct inproc_sync *inproc_sync;/* in-process synchronization object */
+    union
+    {
+        int        signaled;        /* event has been signaled */
+        int        inproc_sync;     /* in-process synchronization object */
+    } u;
 };
 
 static void event_dump( struct object *obj, int verbose );
@@ -64,7 +68,7 @@ static int event_signaled( struct object *obj, struct wait_queue_entry *entry );
 static void event_satisfied( struct object *obj, struct wait_queue_entry *entry );
 static int event_signal( struct object *obj, unsigned int access);
 static struct list *event_get_kernel_obj_list( struct object *obj );
-static struct inproc_sync *event_get_inproc_sync( struct object *obj );
+static int event_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void event_destroy( struct object *obj );
 
 static const struct object_ops event_ops =
@@ -110,12 +114,12 @@ struct type_descr keyed_event_type =
 struct keyed_event
 {
     struct object  obj;             /* object header */
-    struct inproc_sync *inproc_sync;/* in-process synchronization object */
+    int inproc_sync;                /* in-process synchronization object */
 };
 
 static void keyed_event_dump( struct object *obj, int verbose );
 static int keyed_event_signaled( struct object *obj, struct wait_queue_entry *entry );
-static struct inproc_sync *keyed_event_get_inproc_sync( struct object *obj );
+static int keyed_event_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void keyed_event_destroy( struct object *obj );
 
 static const struct object_ops keyed_event_ops =
@@ -157,8 +161,10 @@ struct event *create_event( struct object *root, const struct unicode_str *name,
             /* initialize it if it didn't already exist */
             list_init( &event->kernel_object );
             event->manual_reset = manual_reset;
-            event->signaled     = initial_state;
-            event->inproc_sync  = NULL;
+            if (use_inproc_sync())
+                event->u.inproc_sync = create_inproc_event( event->manual_reset, initial_state );
+            else
+                event->u.signaled = initial_state;
         }
     }
     return event;
@@ -171,24 +177,32 @@ struct event *get_event_obj( struct process *process, obj_handle_t handle, unsig
 
 static void pulse_event( struct event *event )
 {
-    event->signaled = 1;
+    event->u.signaled = 1;
     /* wake up all waiters if manual reset, a single one otherwise */
     wake_up( &event->obj, !event->manual_reset );
-    event->signaled = 0;
+    event->u.signaled = 0;
 }
 
 void set_event( struct event *event )
 {
-    event->signaled = 1;
-    /* wake up all waiters if manual reset, a single one otherwise */
-    wake_up( &event->obj, !event->manual_reset );
-    set_inproc_event( event->inproc_sync );
+    if (use_inproc_sync())
+    {
+        set_inproc_event( event->u.inproc_sync );
+    }
+    else
+    {
+        event->u.signaled = 1;
+        /* wake up all waiters if manual reset, a single one otherwise */
+        wake_up( &event->obj, !event->manual_reset );
+    }
 }
 
 void reset_event( struct event *event )
 {
-    event->signaled = 0;
-    reset_inproc_event( event->inproc_sync );
+    if (use_inproc_sync())
+        reset_inproc_event( event->u.inproc_sync );
+    else
+        event->u.signaled = 0;
 }
 
 static void event_dump( struct object *obj, int verbose )
@@ -196,14 +210,14 @@ static void event_dump( struct object *obj, int verbose )
     struct event *event = (struct event *)obj;
     assert( obj->ops == &event_ops );
     fprintf( stderr, "Event manual=%d signaled=%d\n",
-             event->manual_reset, event->signaled );
+             event->manual_reset, event->u.signaled );
 }
 
 static int event_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct event *event = (struct event *)obj;
     assert( obj->ops == &event_ops );
-    return event->signaled;
+    return event->u.signaled;
 }
 
 static void event_satisfied( struct object *obj, struct wait_queue_entry *entry )
@@ -211,7 +225,7 @@ static void event_satisfied( struct object *obj, struct wait_queue_entry *entry 
     struct event *event = (struct event *)obj;
     assert( obj->ops == &event_ops );
     /* Reset if it's an auto-reset event */
-    if (!event->manual_reset) event->signaled = 0;
+    if (!event->manual_reset) event->u.signaled = 0;
 }
 
 static int event_signal( struct object *obj, unsigned int access )
@@ -234,28 +248,19 @@ static struct list *event_get_kernel_obj_list( struct object *obj )
     return &event->kernel_object;
 }
 
-static struct inproc_sync *event_get_inproc_sync( struct object *obj )
+static int event_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct event *event = (struct event *)obj;
 
-    /* This state will always be the state that the event was created with.
-     * We could create the inproc_sync at creation time to make this clearer,
-     * but some broken programs create hundreds of thousands of handles which
-     * they never use, and we want to avoid wasting memory or fds in that case. */
-    if (!event->inproc_sync)
-    {
-        enum inproc_sync_type type = event->manual_reset ? INPROC_SYNC_MANUAL_EVENT : INPROC_SYNC_AUTO_EVENT;
-        event->inproc_sync = create_inproc_event( type, event->signaled );
-    }
-    if (event->inproc_sync) grab_object( event->inproc_sync );
-    return event->inproc_sync;
+    *type = event->manual_reset ? INPROC_SYNC_MANUAL_EVENT : INPROC_SYNC_AUTO_EVENT;
+    return event->u.inproc_sync;
 }
 
 static void event_destroy( struct object *obj )
 {
     struct event *event = (struct event *)obj;
 
-    if (event->inproc_sync) release_object( event->inproc_sync );
+    if (use_inproc_sync()) close( event->u.inproc_sync );
 }
 
 struct keyed_event *create_keyed_event( struct object *root, const struct unicode_str *name,
@@ -268,7 +273,7 @@ struct keyed_event *create_keyed_event( struct object *root, const struct unicod
         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
         {
             /* initialize it if it didn't already exist */
-            event->inproc_sync = NULL;
+            event->inproc_sync = create_inproc_event( TRUE, TRUE );
         }
     }
     return event;
@@ -312,13 +317,11 @@ static int keyed_event_signaled( struct object *obj, struct wait_queue_entry *en
     return 0;
 }
 
-static struct inproc_sync *keyed_event_get_inproc_sync( struct object *obj )
+static int keyed_event_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct keyed_event *event = (struct keyed_event *)obj;
 
-    if (!event->inproc_sync)
-        event->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, 1 );
-    if (event->inproc_sync) grab_object( event->inproc_sync );
+    *type = INPROC_SYNC_MANUAL_SERVER;
     return event->inproc_sync;
 }
 
@@ -326,7 +329,7 @@ static void keyed_event_destroy( struct object *obj )
 {
     struct keyed_event *event = (struct keyed_event *)obj;
 
-    if (event->inproc_sync) release_object( event->inproc_sync );
+    if (use_inproc_sync()) close( event->inproc_sync );
 }
 
 /* create an event */
@@ -369,7 +372,7 @@ DECL_HANDLER(event_op)
     struct event *event;
 
     if (!(event = get_event_obj( current->process, req->handle, EVENT_MODIFY_STATE ))) return;
-    reply->state = event->signaled;
+    reply->state = event->u.signaled;
     switch(req->op)
     {
     case PULSE_EVENT:
@@ -396,7 +399,7 @@ DECL_HANDLER(query_event)
     if (!(event = get_event_obj( current->process, req->handle, EVENT_QUERY_STATE ))) return;
 
     reply->manual_reset = event->manual_reset;
-    reply->state = event->signaled;
+    reply->state = event->u.signaled;
 
     release_object( event );
 }

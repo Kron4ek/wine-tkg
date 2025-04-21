@@ -94,7 +94,7 @@ static unsigned int process_map_access( struct object *obj, unsigned int access 
 static struct security_descriptor *process_get_sd( struct object *obj );
 static void process_poll_event( struct fd *fd, int event );
 static struct list *process_get_kernel_obj_list( struct object *obj );
-static struct inproc_sync *process_get_inproc_sync( struct object *obj );
+static int process_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void process_destroy( struct object *obj );
 static void terminate_process( struct process *process, struct thread *skip, int exit_code );
 
@@ -193,7 +193,7 @@ struct type_descr job_type =
 
 static void job_dump( struct object *obj, int verbose );
 static int job_signaled( struct object *obj, struct wait_queue_entry *entry );
-static struct inproc_sync *job_get_inproc_sync( struct object *obj );
+static int job_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static int job_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
 static void job_destroy( struct object *obj );
 
@@ -211,7 +211,7 @@ struct job
     struct job *parent;
     struct list parent_job_entry;  /* list entry for parent job */
     struct list child_job_list;    /* list of child jobs */
-    struct inproc_sync *inproc_sync; /* in-process synchronization object */
+    int inproc_sync;               /* in-process synchronization object */
 };
 
 static const struct object_ops job_ops =
@@ -259,7 +259,7 @@ static struct job *create_job_object( struct object *root, const struct unicode_
             job->completion_port = NULL;
             job->completion_key = 0;
             job->parent = NULL;
-            job->inproc_sync = NULL;
+            job->inproc_sync = create_inproc_event( TRUE, FALSE );
         }
     }
     return job;
@@ -419,13 +419,11 @@ static void terminate_job( struct job *job, int exit_code )
     set_inproc_event( job->inproc_sync );
 }
 
-static struct inproc_sync *job_get_inproc_sync( struct object *obj )
+static int job_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct job *job = (struct job *)obj;
 
-    if (!job->inproc_sync)
-        job->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, job->signaled );
-    if (job->inproc_sync) grab_object( job->inproc_sync );
+    *type = INPROC_SYNC_MANUAL_SERVER;
     return job->inproc_sync;
 }
 
@@ -458,7 +456,7 @@ static void job_destroy( struct object *obj )
         release_object( job->parent );
     }
 
-    if (job->inproc_sync) release_object( job->inproc_sync );
+    if (use_inproc_sync()) close( job->inproc_sync );
 }
 
 static void job_dump( struct object *obj, int verbose )
@@ -704,7 +702,7 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
     process->rawinput_device_count = 0;
     process->rawinput_mouse  = NULL;
     process->rawinput_kbd    = NULL;
-    process->inproc_sync     = NULL;
+    process->inproc_sync     = create_inproc_event( TRUE, FALSE );
     memset( &process->image_info, 0, sizeof(process->image_info) );
     list_init( &process->rawinput_entry );
     list_init( &process->kernel_object );
@@ -806,7 +804,7 @@ static void process_destroy( struct object *obj )
     free( process->dir_cache );
     free( process->image );
 
-    if (process->inproc_sync) release_object( process->inproc_sync );
+    if (use_inproc_sync()) close( process->inproc_sync );
 }
 
 /* dump a process on stdout for debugging purposes */
@@ -840,13 +838,11 @@ static struct list *process_get_kernel_obj_list( struct object *obj )
     return &process->kernel_object;
 }
 
-static struct inproc_sync *process_get_inproc_sync( struct object *obj )
+static int process_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct process *process = (struct process *)obj;
 
-    if (!process->inproc_sync)
-        process->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, !process->running_threads );
-    if (process->inproc_sync) grab_object( process->inproc_sync );
+    *type = INPROC_SYNC_MANUAL_SERVER;
     return process->inproc_sync;
 }
 

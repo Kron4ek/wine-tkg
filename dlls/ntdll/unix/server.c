@@ -967,7 +967,7 @@ void wine_server_send_fd( int fd )
  *
  * Receive a file descriptor passed from the server.
  */
-static int receive_fd( obj_handle_t *handle )
+int wine_server_receive_fd( obj_handle_t *handle )
 {
     struct iovec vec;
     struct msghdr msghdr;
@@ -1114,7 +1114,7 @@ static inline NTSTATUS get_cached_fd( HANDLE handle, int *fd, enum server_fd_typ
 /***********************************************************************
  *           remove_fd_from_cache
  */
-int remove_fd_from_cache( HANDLE handle )
+static int remove_fd_from_cache( HANDLE handle )
 {
     unsigned int entry, idx = handle_to_index( handle, &entry );
     int fd = -1;
@@ -1162,7 +1162,7 @@ int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
                 if (type) *type = reply->type;
                 if (options) *options = reply->options;
                 access = reply->access;
-                if ((fd = receive_fd( &fd_handle )) != -1)
+                if ((fd = wine_server_receive_fd( &fd_handle )) != -1)
                 {
                     assert( wine_server_ptr_handle(fd_handle) == handle );
                     *needs_close = (!reply->cacheable ||
@@ -1638,7 +1638,7 @@ size_t server_init_process(void)
     pthread_sigmask( SIG_BLOCK, &server_block_set, NULL );
 
     /* receive the first thread request fd on the main socket */
-    ntdll_get_thread_data()->request_fd = receive_fd( &version );
+    ntdll_get_thread_data()->request_fd = wine_server_receive_fd( &version );
 
 #ifdef SO_PASSCRED
     /* now that we hopefully received the server_pid, disable SO_PASSCRED */

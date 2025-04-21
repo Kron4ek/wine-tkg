@@ -391,6 +391,7 @@ AC_CHECK_HEADERS(\
 	linux/major.h \
 	linux/ntsync.h \
 	linux/param.h \
+	linux/seccomp.h \
 	linux/serial.h \
 	linux/types.h \
 	linux/ucdrom.h \
@@ -2000,7 +2001,7 @@ then
         *) AC_CACHE_CHECK([for working -mabi=ms], ac_cv_mabi_ms,
                [CFLAGS="$CFLAGS -mabi=ms"
                 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdarg.h>
-int a(int b, ...) { __builtin_ms_va_list list; __builtin_ms_va_start(list,b); }]])],
+void a(int b, ...) { __builtin_ms_va_list list; __builtin_ms_va_start(list,b); }]])],
                    [ac_cv_mabi_ms=yes],[ac_cv_mabi_ms=no])
                 CFLAGS=$saved_CFLAGS])
            AS_VAR_IF([ac_cv_mabi_ms],[yes],
@@ -2697,8 +2698,6 @@ WINE_CONFIG_MAKEFILE(dlls/dxdiagn)
 WINE_CONFIG_MAKEFILE(dlls/dxdiagn/tests)
 WINE_CONFIG_MAKEFILE(dlls/dxgi)
 WINE_CONFIG_MAKEFILE(dlls/dxgi/tests)
-WINE_CONFIG_MAKEFILE(dlls/dxgkrnl.sys)
-WINE_CONFIG_MAKEFILE(dlls/dxgmms1.sys)
 WINE_CONFIG_MAKEFILE(dlls/dxtrans)
 WINE_CONFIG_MAKEFILE(dlls/dxva2)
 WINE_CONFIG_MAKEFILE(dlls/dxva2/tests)
@@ -3252,7 +3251,6 @@ WINE_CONFIG_MAKEFILE(dlls/wevtsvc)
 WINE_CONFIG_MAKEFILE(dlls/wiaservc)
 WINE_CONFIG_MAKEFILE(dlls/wiaservc/tests)
 WINE_CONFIG_MAKEFILE(dlls/wimgapi)
-WINE_CONFIG_MAKEFILE(dlls/win32k.sys)
 WINE_CONFIG_MAKEFILE(dlls/win32s16.dll16)
 WINE_CONFIG_MAKEFILE(dlls/win32u)
 WINE_CONFIG_MAKEFILE(dlls/win32u/tests)
@@ -3720,7 +3718,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-10.5.r0.g835c92a2\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-10.6.r0.g81425de3\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

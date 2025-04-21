@@ -54,12 +54,14 @@ extern NTSTATUS bluez_adapter_set_prop( void *connection,
                                         struct bluetooth_adapter_set_prop_params *params );
 extern NTSTATUS bluez_adapter_start_discovery( void *connection, const char *adapter_path );
 extern NTSTATUS bluez_adapter_stop_discovery( void *connection, const char *adapter_path );
+extern NTSTATUS bluez_adapter_remove_device( void *connection, const char *adapter_path, const char *device_path);
 extern NTSTATUS bluez_auth_agent_request_default( void *connection );
 extern NTSTATUS bluez_auth_agent_start( void *connection, void **ctx );
 extern NTSTATUS bluez_auth_agent_stop( void *connection, void *ctx );
 extern NTSTATUS bluez_auth_agent_send_response( void *auth_agent, struct unix_name *device,
                                                 BLUETOOTH_AUTHENTICATION_METHOD method, UINT32 numeric_or_passkey,
                                                 BOOL negative, BOOL *authenticated );
+extern NTSTATUS bluez_device_disconnect( void *connection, const char *device_path );
 extern NTSTATUS bluez_watcher_init( void *connection, void **ctx );
 extern void bluez_watcher_close( void *connection, void *ctx );
 #endif /* __WINE_WINEBTH_UNIXLIB_PRIV_H */

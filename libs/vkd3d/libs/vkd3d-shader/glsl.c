@@ -787,7 +787,6 @@ static void shader_glsl_ld(struct vkd3d_glsl_generator *gen, const struct vkd3d_
     unsigned int resource_id, resource_idx, resource_space, sample_count;
     const struct glsl_resource_type_info *resource_type_info;
     const struct vkd3d_shader_descriptor_info1 *d;
-    enum vkd3d_shader_component_type sampled_type;
     enum vkd3d_shader_resource_type resource_type;
     struct vkd3d_string_buffer *fetch;
     enum vkd3d_data_type data_type;
@@ -810,8 +809,7 @@ static void shader_glsl_ld(struct vkd3d_glsl_generator *gen, const struct vkd3d_
         resource_type = d->resource_type;
         resource_space = d->register_space;
         sample_count = d->sample_count;
-        sampled_type = vkd3d_component_type_from_resource_data_type(d->resource_data_type);
-        data_type = vkd3d_data_type_from_component_type(sampled_type);
+        data_type = d->resource_data_type;
     }
     else
     {
@@ -903,7 +901,6 @@ static void shader_glsl_sample(struct vkd3d_glsl_generator *gen, const struct vk
     unsigned int resource_id, resource_idx, resource_space;
     unsigned int sampler_id, sampler_idx, sampler_space;
     const struct vkd3d_shader_descriptor_info1 *d;
-    enum vkd3d_shader_component_type sampled_type;
     enum vkd3d_shader_resource_type resource_type;
     unsigned int component_idx, coord_size;
     struct vkd3d_string_buffer *sample;
@@ -933,8 +930,7 @@ static void shader_glsl_sample(struct vkd3d_glsl_generator *gen, const struct vk
     {
         resource_type = d->resource_type;
         resource_space = d->register_space;
-        sampled_type = vkd3d_component_type_from_resource_data_type(d->resource_data_type);
-        data_type = vkd3d_data_type_from_component_type(sampled_type);
+        data_type = d->resource_data_type;
     }
     else
     {
@@ -1053,11 +1049,11 @@ static void shader_glsl_sample(struct vkd3d_glsl_generator *gen, const struct vk
 static void shader_glsl_load_uav_typed(struct vkd3d_glsl_generator *gen, const struct vkd3d_shader_instruction *ins)
 {
     const struct glsl_resource_type_info *resource_type_info;
-    enum vkd3d_shader_component_type component_type;
     const struct vkd3d_shader_descriptor_info1 *d;
     enum vkd3d_shader_resource_type resource_type;
     unsigned int uav_id, uav_idx, uav_space;
     struct vkd3d_string_buffer *load;
+    enum vkd3d_data_type data_type;
     struct glsl_src coord;
     struct glsl_dst dst;
     uint32_t coord_mask;
@@ -1072,7 +1068,7 @@ static void shader_glsl_load_uav_typed(struct vkd3d_glsl_generator *gen, const s
     {
         resource_type = d->resource_type;
         uav_space = d->register_space;
-        component_type = vkd3d_component_type_from_resource_data_type(d->resource_data_type);
+        data_type = d->resource_data_type;
     }
     else
     {
@@ -1080,7 +1076,7 @@ static void shader_glsl_load_uav_typed(struct vkd3d_glsl_generator *gen, const s
                 "Internal compiler error: Undeclared UAV descriptor %u.", uav_id);
         uav_space = 0;
         resource_type = VKD3D_SHADER_RESOURCE_TEXTURE_2D;
-        component_type = VKD3D_SHADER_COMPONENT_FLOAT;
+        data_type = VKD3D_DATA_FLOAT;
     }
 
     if ((resource_type_info = shader_glsl_get_resource_type_info(resource_type)))
@@ -1103,8 +1099,7 @@ static void shader_glsl_load_uav_typed(struct vkd3d_glsl_generator *gen, const s
     vkd3d_string_buffer_printf(load, ", %s)", coord.str->buffer);
     shader_glsl_print_swizzle(load, ins->src[1].swizzle, ins->dst[0].write_mask);
 
-    shader_glsl_print_assignment_ext(gen, &dst,
-            vkd3d_data_type_from_component_type(component_type), "%s", load->buffer);
+    shader_glsl_print_assignment_ext(gen, &dst, data_type, "%s", load->buffer);
 
     vkd3d_string_buffer_release(&gen->string_buffers, load);
     glsl_src_cleanup(&coord, &gen->string_buffers);
@@ -1114,11 +1109,11 @@ static void shader_glsl_load_uav_typed(struct vkd3d_glsl_generator *gen, const s
 static void shader_glsl_store_uav_typed(struct vkd3d_glsl_generator *gen, const struct vkd3d_shader_instruction *ins)
 {
     const struct glsl_resource_type_info *resource_type_info;
-    enum vkd3d_shader_component_type component_type;
     const struct vkd3d_shader_descriptor_info1 *d;
     enum vkd3d_shader_resource_type resource_type;
     unsigned int uav_id, uav_idx, uav_space;
     struct vkd3d_string_buffer *image_data;
+    enum vkd3d_data_type data_type;
     struct glsl_src image_coord;
     uint32_t coord_mask;
 
@@ -1132,7 +1127,7 @@ static void shader_glsl_store_uav_typed(struct vkd3d_glsl_generator *gen, const 
     {
         resource_type = d->resource_type;
         uav_space = d->register_space;
-        component_type = vkd3d_component_type_from_resource_data_type(d->resource_data_type);
+        data_type = d->resource_data_type;
     }
     else
     {
@@ -1140,7 +1135,7 @@ static void shader_glsl_store_uav_typed(struct vkd3d_glsl_generator *gen, const 
                 "Internal compiler error: Undeclared UAV descriptor %u.", uav_id);
         uav_space = 0;
         resource_type = VKD3D_SHADER_RESOURCE_TEXTURE_2D;
-        component_type = VKD3D_SHADER_COMPONENT_FLOAT;
+        data_type = VKD3D_DATA_FLOAT;
     }
 
     if ((resource_type_info = shader_glsl_get_resource_type_info(resource_type)))
@@ -1159,25 +1154,26 @@ static void shader_glsl_store_uav_typed(struct vkd3d_glsl_generator *gen, const 
 
     if (ins->src[1].reg.dimension == VSIR_DIMENSION_SCALAR)
     {
-        switch (component_type)
+        switch (data_type)
         {
-            case VKD3D_SHADER_COMPONENT_UINT:
+            case VKD3D_DATA_UINT:
                 vkd3d_string_buffer_printf(image_data, "uvec4(");
                 break;
-            case VKD3D_SHADER_COMPONENT_INT:
+            case VKD3D_DATA_INT:
                 vkd3d_string_buffer_printf(image_data, "ivec4(");
                 break;
             default:
                 vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
-                        "Internal compiler error: Unhandled component type %#x.", component_type);
+                        "Internal compiler error: Unhandled data type %#x.", data_type);
                 /* fall through */
-            case VKD3D_SHADER_COMPONENT_FLOAT:
+            case VKD3D_DATA_FLOAT:
+            case VKD3D_DATA_UNORM:
+            case VKD3D_DATA_SNORM:
                 vkd3d_string_buffer_printf(image_data, "vec4(");
                 break;
         }
     }
-    shader_glsl_print_src(image_data, gen, &ins->src[1], VKD3DSP_WRITEMASK_ALL,
-            vkd3d_data_type_from_component_type(component_type));
+    shader_glsl_print_src(image_data, gen, &ins->src[1], VKD3DSP_WRITEMASK_ALL, data_type);
     if (ins->src[1].reg.dimension == VSIR_DIMENSION_SCALAR)
         vkd3d_string_buffer_printf(image_data, ", 0, 0, 0)");
 
@@ -1735,7 +1731,6 @@ static void shader_glsl_generate_uav_declaration(struct vkd3d_glsl_generator *ge
     const struct vkd3d_shader_descriptor_binding *binding;
     const struct vkd3d_shader_descriptor_offset *offset;
     struct vkd3d_string_buffer *buffer = gen->buffer;
-    enum vkd3d_shader_component_type component_type;
     unsigned int binding_idx;
 
     if (uav->count != 1)
@@ -1792,22 +1787,24 @@ static void shader_glsl_generate_uav_declaration(struct vkd3d_glsl_generator *ge
         image_type = "<unhandled image type>";
     }
 
-    switch ((component_type = vkd3d_component_type_from_resource_data_type(uav->resource_data_type)))
+    switch (uav->resource_data_type)
     {
-        case VKD3D_SHADER_COMPONENT_UINT:
+        case VKD3D_DATA_UINT:
             image_type_prefix = "u";
             read_format = "r32ui";
             break;
-        case VKD3D_SHADER_COMPONENT_INT:
+        case VKD3D_DATA_INT:
             image_type_prefix = "i";
             read_format = "r32i";
             break;
         default:
             vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
-                    "Internal compiler error: Unhandled component type %#x for UAV %u.",
-                    component_type, uav->register_id);
+                    "Internal compiler error: Unhandled data type %#x for UAV %u.",
+                    uav->resource_data_type, uav->register_id);
             /* fall through */
-        case VKD3D_SHADER_COMPONENT_FLOAT:
+        case VKD3D_DATA_FLOAT:
+        case VKD3D_DATA_UNORM:
+        case VKD3D_DATA_SNORM:
             image_type_prefix = "";
             read_format = "r32f";
             break;
@@ -1962,7 +1959,6 @@ static void shader_glsl_generate_sampler_declaration(struct vkd3d_glsl_generator
     const struct glsl_resource_type_info *resource_type_info;
     const struct vkd3d_shader_descriptor_binding *binding;
     struct vkd3d_string_buffer *buffer = gen->buffer;
-    enum vkd3d_shader_component_type component_type;
     const char *sampler_type, *sampler_type_prefix;
     enum vkd3d_shader_resource_type resource_type;
     unsigned int binding_idx;
@@ -2020,21 +2016,23 @@ static void shader_glsl_generate_sampler_declaration(struct vkd3d_glsl_generator
         sampler_type = "<unhandled sampler type>";
     }
 
-    switch ((component_type = vkd3d_component_type_from_resource_data_type(srv->resource_data_type)))
+    switch (srv->resource_data_type)
     {
-        case VKD3D_SHADER_COMPONENT_UINT:
+        case VKD3D_DATA_UINT:
             sampler_type_prefix = "u";
             break;
-        case VKD3D_SHADER_COMPONENT_INT:
+        case VKD3D_DATA_INT:
             sampler_type_prefix = "i";
             break;
-        case VKD3D_SHADER_COMPONENT_FLOAT:
+        case VKD3D_DATA_FLOAT:
+        case VKD3D_DATA_UNORM:
+        case VKD3D_DATA_SNORM:
             sampler_type_prefix = "";
             break;
         default:
             vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
-                    "Internal compiler error: Unhandled component type %#x for combined resource/sampler "
-                    "for resource %u, space %u and sampler %u, space %u.", component_type,
+                    "Internal compiler error: Unhandled data type %#x for combined resource/sampler "
+                    "for resource %u, space %u and sampler %u, space %u.", srv->resource_data_type,
                     crs->resource_index, crs->resource_space, crs->sampler_index, crs->sampler_space);
             sampler_type_prefix = "";
             break;

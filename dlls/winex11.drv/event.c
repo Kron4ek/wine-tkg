@@ -778,16 +778,8 @@ static void handle_wm_protocols( HWND hwnd, XClientMessageEvent *event )
 
         if (can_activate_window(hwnd))
         {
-            /* simulate a mouse click on the menu to find out
-             * whether the window wants to be activated */
-            LRESULT ma = send_message( hwnd, WM_MOUSEACTIVATE,
-                                       (WPARAM)NtUserGetAncestor( hwnd, GA_ROOT ),
-                                       MAKELONG( HTMENU, WM_LBUTTONDOWN ) );
-            if (ma != MA_NOACTIVATEANDEAT && ma != MA_NOACTIVATE)
-            {
-                set_focus( event->display, hwnd, event_time );
-                return;
-            }
+            set_focus( event->display, hwnd, event_time );
+            return;
         }
         else if (hwnd == NtUserGetDesktopWindow())
         {
@@ -984,7 +976,7 @@ static BOOL X11DRV_Expose( HWND hwnd, XEvent *xev )
     RECT rect, abs_rect;
     POINT pos;
     struct x11drv_win_data *data;
-    UINT flags = RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN;
+    UINT flags = RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN;
 
     TRACE( "win %p (%lx) %d,%d %dx%d\n",
            hwnd, event->window, event->x, event->y, event->width, event->height );

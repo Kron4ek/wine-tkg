@@ -104,8 +104,8 @@ struct object_ops
                                 unsigned int options);
     /* return list of kernel objects */
     struct list *(*get_kernel_obj_list)(struct object *);
-    /* get a client-waitable in-process synchronization handle to this object */
-    struct inproc_sync *(*get_inproc_sync)(struct object *);
+    /* get a client-waitable in-process synchronization fd for this object */
+    int (*get_inproc_sync)(struct object *, enum inproc_sync_type *type);
     /* close a handle to this object */
     int (*close_handle)(struct object *,struct process *,obj_handle_t);
     /* destroy on refcount == 0 */
@@ -236,14 +236,14 @@ extern void abandon_mutexes( struct thread *thread );
 
 /* in-process synchronization functions */
 
-extern struct inproc_sync *create_inproc_event( enum inproc_sync_type type, int signaled );
-extern struct inproc_sync *create_inproc_mutex( thread_id_t owner, unsigned int count );
-extern struct inproc_sync *create_inproc_semaphore( unsigned int count, unsigned int max );
-extern void set_inproc_event( struct inproc_sync *obj );
-extern void reset_inproc_event( struct inproc_sync *obj );
-extern void abandon_inproc_mutex( thread_id_t tid, struct inproc_sync *inproc_sync );
-
-extern struct inproc_sync *no_get_inproc_sync( struct object *obj );
+extern int use_inproc_sync(void);
+extern int create_inproc_event( int manual_reset, int signaled );
+extern int create_inproc_mutex( thread_id_t owner, unsigned int count );
+extern int create_inproc_semaphore( unsigned int count, unsigned int max );
+extern int no_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
+extern void set_inproc_event( int event );
+extern void reset_inproc_event( int event );
+extern void abandon_inproc_mutex( thread_id_t tid, int mutex );
 
 /* serial functions */
 

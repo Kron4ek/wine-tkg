@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-ntsync-git configuration - Wed Apr  9 01:51:19 PM UTC 2025 :
+# Last wine-tkg-staging-ntsync-git configuration - Mon Apr 21 08:35:29 PM UTC 2025 :
 
 Local cfg files used
 
-Wine (plain) version: 10.5.r0.gf3843ea16b8
-Using wine-staging patchset (version 10.5.r0.g835c92a2)
+Wine (plain) version: 10.6.r0.g040e1333b1f
+Using wine-staging patchset (version 10.6.r0.g81425de3)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -13,7 +13,7 @@ Done applying reverting hotfixes (if any) - list available in prepare.log
 
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W ntdll-Syscall_Emulation
+Staging overrides, if any: -W winedevice-Default_Drivers
 
 
 enable_dynamic_wow64_def.patch -- ( Enable WINEARCH=wow64 by default )
@@ -29,6 +29,7 @@ Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix a608ef1.mypatch
 Applied hotfix opencl-fixup.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
+Applied your own patch hags.mypatch
 Applied your own patch win32u-hdr.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )

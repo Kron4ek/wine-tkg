@@ -222,8 +222,8 @@ extern unsigned int server_queue_process_apc( HANDLE process, const union apc_ca
                                               union apc_result *result );
 extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
                                int *needs_close, enum server_fd_type *type, unsigned int *options );
-extern int remove_fd_from_cache( HANDLE handle );
 extern void wine_server_send_fd( int fd );
+extern int wine_server_receive_fd( obj_handle_t *handle );
 extern void process_exit_wrapper( int status ) DECLSPEC_NORETURN;
 extern size_t server_init_process(void);
 extern void server_init_process_done(void);
@@ -310,7 +310,6 @@ extern void virtual_fill_image_information( const struct pe_image_info *pe_info,
                                             SECTION_IMAGE_INFORMATION *info );
 extern void *get_builtin_so_handle( void *module );
 extern NTSTATUS load_builtin_unixlib( void *module, const char *name );
-extern NTSTATUS unwind_builtin_dll( void *args );
 
 extern NTSTATUS get_thread_ldt_entry( HANDLE handle, void *data, ULONG len, ULONG *ret_len );
 extern void *get_native_context( CONTEXT *context );

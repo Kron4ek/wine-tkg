@@ -641,10 +641,9 @@ struct fd *no_get_fd( struct object *obj )
     return NULL;
 }
 
-struct inproc_sync *no_get_inproc_sync( struct object *obj )
+int no_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
-    set_error( STATUS_OBJECT_TYPE_MISMATCH );
-    return NULL;
+    return -1;
 }
 
 unsigned int default_map_access( struct object *obj, unsigned int access )

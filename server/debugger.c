@@ -71,7 +71,7 @@ struct debug_obj
     struct object        obj;         /* object header */
     struct list          event_queue; /* pending events queue */
     unsigned int         flags;       /* debug flags */
-    struct inproc_sync  *inproc_sync; /* in-process synchronization object */
+    int                  inproc_sync; /* in-process synchronization object */
 };
 
 
@@ -106,7 +106,7 @@ static const struct object_ops debug_event_ops =
 
 static void debug_obj_dump( struct object *obj, int verbose );
 static int debug_obj_signaled( struct object *obj, struct wait_queue_entry *entry );
-static struct inproc_sync *debug_obj_get_inproc_sync( struct object *obj );
+static int debug_obj_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void debug_obj_destroy( struct object *obj );
 
 static const struct object_ops debug_obj_ops =
@@ -336,14 +336,11 @@ static int debug_obj_signaled( struct object *obj, struct wait_queue_entry *entr
     return find_event_to_send( debug_obj ) != NULL;
 }
 
-static struct inproc_sync *debug_obj_get_inproc_sync( struct object *obj )
+static int debug_obj_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct debug_obj *debug_obj = (struct debug_obj *)obj;
-    int signaled = find_event_to_send( debug_obj ) != NULL;
 
-    if (!debug_obj->inproc_sync)
-        debug_obj->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, signaled );
-    if (debug_obj->inproc_sync) grab_object( debug_obj->inproc_sync );
+    *type = INPROC_SYNC_MANUAL_SERVER;
     return debug_obj->inproc_sync;
 }
 
@@ -360,7 +357,7 @@ static void debug_obj_destroy( struct object *obj )
     while ((ptr = list_head( &debug_obj->event_queue )))
         unlink_event( debug_obj, LIST_ENTRY( ptr, struct debug_event, entry ));
 
-    if (debug_obj->inproc_sync) release_object( debug_obj->inproc_sync );
+    if (use_inproc_sync()) close( debug_obj->inproc_sync );
 }
 
 struct debug_obj *get_debug_obj( struct process *process, obj_handle_t handle, unsigned int access )
@@ -380,7 +377,7 @@ static struct debug_obj *create_debug_obj( struct object *root, const struct uni
         {
             debug_obj->flags = flags;
             list_init( &debug_obj->event_queue );
-            debug_obj->inproc_sync = NULL;
+            debug_obj->inproc_sync = create_inproc_event( TRUE, FALSE );
         }
     }
     return debug_obj;

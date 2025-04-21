@@ -25,6 +25,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -77,7 +78,7 @@ struct completion
     struct list    wait_queue;
     unsigned int   depth;
     int            closed;
-    struct inproc_sync *inproc_sync;
+    int            inproc_sync;
 };
 
 static void completion_wait_dump( struct object*, int );
@@ -157,8 +158,8 @@ static void completion_wait_satisfied( struct object *obj, struct wait_queue_ent
 
 static void completion_dump( struct object*, int );
 static int completion_signaled( struct object *obj, struct wait_queue_entry *entry );
-static struct inproc_sync *completion_get_inproc_sync( struct object *obj );
 static int completion_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
+static int completion_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void completion_destroy( struct object * );
 
 static const struct object_ops completion_ops =
@@ -195,7 +196,7 @@ static void completion_destroy( struct object *obj)
     {
         free( tmp );
     }
-    if (completion->inproc_sync) release_object( completion->inproc_sync );
+    if (use_inproc_sync()) close( completion->inproc_sync );
 }
 
 static void completion_dump( struct object *obj, int verbose )
@@ -267,13 +268,11 @@ static struct completion_wait *create_completion_wait( struct thread *thread )
     return wait;
 }
 
-static struct inproc_sync *completion_get_inproc_sync( struct object *obj )
+static int completion_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct completion *completion = (struct completion *)obj;
 
-    if (!completion->inproc_sync)
-        completion->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, !list_empty( &completion->queue ) );
-    if (completion->inproc_sync) grab_object( completion->inproc_sync );
+    *type = INPROC_SYNC_MANUAL_SERVER;
     return completion->inproc_sync;
 }
 
@@ -291,7 +290,7 @@ static struct completion *create_completion( struct object *root, const struct u
             list_init( &completion->wait_queue );
             completion->depth = 0;
             completion->closed = 0;
-            completion->inproc_sync = NULL;
+            completion->inproc_sync = create_inproc_event( TRUE, FALSE );
         }
     }
 

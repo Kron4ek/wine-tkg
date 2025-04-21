@@ -232,7 +232,7 @@
 @ stdcall AreDpiAwarenessContextsEqual(long long)
 @ stdcall ArrangeIconicWindows(long) NtUserArrangeIconicWindows
 @ stdcall AttachThreadInput(long long long) NtUserAttachThreadInput
-@ stdcall BeginDeferWindowPos(long)
+@ stdcall BeginDeferWindowPos(long) NtUserBeginDeferWindowPos
 @ stdcall BeginPaint(long ptr) NtUserBeginPaint
 @ stdcall BlockInput(long)
 @ stdcall BringWindowToTop(long)
@@ -810,7 +810,7 @@
 @ stdcall IsWindowVisible(long)
 # @ stub IsWow64Message
 @ stdcall IsZoomed(long)
-@ stdcall KillSystemTimer(long long)
+@ stdcall KillSystemTimer(long long) NtUserKillSystemTimer
 @ stdcall KillTimer(long long) NtUserKillTimer
 @ stdcall LoadAcceleratorsA(long str)
 @ stdcall LoadAcceleratorsW(long wstr)
@@ -1044,7 +1044,7 @@
 # @ stub SetFeatureReportResponse
 @ stdcall SetFocus(long) NtUserSetFocus
 # @ stub SetForegroundRedirectionForActivationObject
-@ stdcall SetForegroundWindow(long)
+@ stdcall SetForegroundWindow(long) NtUserSetForegroundWindow
 # @ stub SetFullscreenMagnifierOffsetsDWMUpdated
 @ stdcall SetGestureConfig(ptr long long ptr long)
 @ stdcall SetInternalWindowPos(long long ptr ptr) NtUserSetInternalWindowPos

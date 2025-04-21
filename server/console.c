@@ -54,6 +54,7 @@ struct console
 {
     struct object                obj;           /* object header */
     int                          signaled;      /* is console signaled */
+    int                          inproc_sync;   /* in-process synchronization object */
     struct thread               *renderer;      /* console renderer thread */
     struct screen_buffer        *active;        /* active screen buffer */
     struct console_server       *server;        /* console server object */
@@ -64,7 +65,6 @@ struct console
     struct list                  screen_buffers;/* attached screen buffers */
     struct list                  inputs;        /* attached console inputs */
     struct list                  outputs;       /* attached console outputs */
-    struct inproc_sync          *inproc_sync;   /* in-process synchronization object */
 };
 
 static void console_dump( struct object *obj, int verbose );
@@ -75,8 +75,8 @@ static struct object *console_lookup_name( struct object *obj, struct unicode_st
                                            unsigned int attr, struct object *root );
 static struct object *console_open_file( struct object *obj, unsigned int access,
                                          unsigned int sharing, unsigned int options );
+static int console_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static int console_add_queue( struct object *obj, struct wait_queue_entry *entry );
-static struct inproc_sync *console_get_inproc_sync( struct object *obj );
 
 static const struct object_ops console_ops =
 {
@@ -145,7 +145,7 @@ struct console_server
     unsigned int          once_input : 1; /* flag if input thread has already been requested */
     int                   term_fd;        /* UNIX terminal fd */
     struct termios        termios;        /* original termios */
-    struct inproc_sync   *inproc_sync;    /* in-process synchronization object */
+    int                   inproc_sync;    /* in-process synchronization object */
 };
 
 static void console_server_dump( struct object *obj, int verbose );
@@ -156,7 +156,7 @@ static struct object *console_server_lookup_name( struct object *obj, struct uni
                                                 unsigned int attr, struct object *root );
 static struct object *console_server_open_file( struct object *obj, unsigned int access,
                                                 unsigned int sharing, unsigned int options );
-static struct inproc_sync *console_server_get_inproc_sync( struct object *obj );
+static int console_server_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 
 static const struct object_ops console_server_ops =
 {
@@ -219,6 +219,7 @@ struct screen_buffer
     unsigned int          id;            /* buffer id */
     struct fd            *fd;            /* for bare console, attached output fd */
     struct async_queue    ioctl_q;       /* ioctl queue */
+    int                   inproc_sync;   /* in-process synchronization object */
 };
 
 static void screen_buffer_dump( struct object *obj, int verbose );
@@ -227,7 +228,7 @@ static int screen_buffer_signaled( struct object *obj, struct wait_queue_entry *
 static struct fd *screen_buffer_get_fd( struct object *obj );
 static struct object *screen_buffer_open_file( struct object *obj, unsigned int access,
                                                unsigned int sharing, unsigned int options );
-static struct inproc_sync *screen_buffer_get_inproc_sync( struct object *obj );
+static int screen_buffer_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 
 static const struct object_ops screen_buffer_ops =
 {
@@ -310,14 +311,15 @@ struct console_input
     struct fd            *fd;          /* pseudo-fd */
     struct list           entry;       /* entry in console->inputs */
     struct console       *console;     /* associated console at creation time */
+    int                   inproc_sync; /* in-process synchronization object */
 };
 
 static void console_input_dump( struct object *obj, int verbose );
 static int console_input_signaled( struct object *obj, struct wait_queue_entry *entry );
 static struct object *console_input_open_file( struct object *obj, unsigned int access,
                                                unsigned int sharing, unsigned int options );
+static int console_input_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static struct fd *console_input_get_fd( struct object *obj );
-static struct inproc_sync *console_input_get_inproc_sync( struct object *obj );
 static void console_input_destroy( struct object *obj );
 
 static const struct object_ops console_input_ops =
@@ -371,6 +373,7 @@ struct console_output
     struct fd            *fd;          /* pseudo-fd */
     struct list           entry;       /* entry in console->outputs */
     struct console       *console;     /* associated console at creation time */
+    int                   inproc_sync; /* in-process synchronization object */
 };
 
 static void console_output_dump( struct object *obj, int verbose );
@@ -378,7 +381,7 @@ static int console_output_signaled( struct object *obj, struct wait_queue_entry 
 static struct fd *console_output_get_fd( struct object *obj );
 static struct object *console_output_open_file( struct object *obj, unsigned int access,
                                                 unsigned int sharing, unsigned int options );
-static struct inproc_sync *console_output_get_inproc_sync( struct object *obj );
+static int console_output_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void console_output_destroy( struct object *obj );
 
 static const struct object_ops console_output_ops =
@@ -554,11 +557,11 @@ static struct object *create_console(void)
 
     console->renderer      = NULL;
     console->signaled      = 0;
+    console->inproc_sync   = create_inproc_event( TRUE, console->signaled );
     console->active        = NULL;
     console->server        = NULL;
     console->fd            = NULL;
     console->last_id       = 0;
-    console->inproc_sync   = NULL;
     list_init( &console->screen_buffers );
     list_init( &console->inputs );
     list_init( &console->outputs );
@@ -663,6 +666,7 @@ static struct object *create_screen_buffer( struct console *console )
 
     screen_buffer->id    = ++console->last_id;
     screen_buffer->input = console;
+    screen_buffer->inproc_sync = create_inproc_event( TRUE, console->signaled );
     init_async_queue( &screen_buffer->ioctl_q );
     list_add_head( &console->screen_buffers, &screen_buffer->entry );
 
@@ -783,20 +787,28 @@ static void console_destroy( struct object *obj )
     console->active = NULL;
 
     LIST_FOR_EACH_ENTRY( curr, &console->screen_buffers, struct screen_buffer, entry )
+    {
         curr->input = NULL;
+        reset_inproc_event( curr->inproc_sync );
+    }
 
     LIST_FOR_EACH_ENTRY( input, &console->inputs, struct console_input, entry )
+    {
         input->console = NULL;
+        reset_inproc_event( input->inproc_sync );
+    }
 
     LIST_FOR_EACH_ENTRY( output, &console->outputs, struct console_output, entry )
+    {
         output->console = NULL;
+        reset_inproc_event( output->inproc_sync );
+    }
 
     free_async_queue( &console->ioctl_q );
     free_async_queue( &console->read_q );
     if (console->fd)
         release_object( console->fd );
-
-    if (console->inproc_sync) release_object( console->inproc_sync );
+    if (use_inproc_sync()) close( console->inproc_sync );
 }
 
 static struct object *create_console_connection( struct console *console )
@@ -850,13 +862,19 @@ static struct object *console_open_file( struct object *obj, unsigned int access
     return grab_object( obj );
 }
 
-static struct inproc_sync *console_get_inproc_sync( struct object *obj )
+static int console_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct console *console = (struct console *)obj;
 
-    if (!console->inproc_sync)
-        console->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, console->signaled );
-    if (console->inproc_sync) grab_object( console->inproc_sync );
+    /* cf. console_add_queue() */
+    if (console->server && !console->server->once_input)
+    {
+        console->server->once_input = 1;
+        if (console->server->term_fd == -1)
+            queue_host_ioctl( console->server, IOCTL_CONDRV_PEEK, 0, NULL, NULL );
+    }
+
+    *type = INPROC_SYNC_MANUAL_SERVER;
     return console->inproc_sync;
 }
 
@@ -883,6 +901,7 @@ static void screen_buffer_destroy( struct object *obj )
     }
     if (screen_buffer->fd) release_object( screen_buffer->fd );
     free_async_queue( &screen_buffer->ioctl_q );
+    if (use_inproc_sync()) close( screen_buffer->inproc_sync );
 }
 
 static int screen_buffer_signaled( struct object *obj, struct wait_queue_entry *entry )
@@ -899,6 +918,14 @@ static struct object *screen_buffer_open_file( struct object *obj, unsigned int 
     return grab_object( obj );
 }
 
+static int screen_buffer_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
+{
+    struct screen_buffer *screen_buffer = (struct screen_buffer *)obj;
+
+    *type = INPROC_SYNC_MANUAL_SERVER;
+    return screen_buffer->inproc_sync;
+}
+
 static struct fd *screen_buffer_get_fd( struct object *obj )
 {
     struct screen_buffer *screen_buffer = (struct screen_buffer*)obj;
@@ -907,17 +934,6 @@ static struct fd *screen_buffer_get_fd( struct object *obj )
         return (struct fd*)grab_object( screen_buffer->fd );
     set_error( STATUS_OBJECT_TYPE_MISMATCH );
     return NULL;
-}
-
-static struct inproc_sync *screen_buffer_get_inproc_sync( struct object *obj )
-{
-    struct screen_buffer *screen_buffer = (struct screen_buffer *)obj;
-    if (!screen_buffer->input)
-    {
-        set_error( STATUS_ACCESS_DENIED );
-        return NULL;
-    }
-    return console_get_inproc_sync( &screen_buffer->input->obj );
 }
 
 static void console_server_dump( struct object *obj, int verbose )
@@ -932,7 +948,7 @@ static void console_server_destroy( struct object *obj )
     assert( obj->ops == &console_server_ops );
     disconnect_console_server( server );
     if (server->fd) release_object( server->fd );
-    if (server->inproc_sync) release_object( server->inproc_sync );
+    if (use_inproc_sync()) close( server->inproc_sync );
 }
 
 static struct object *console_server_lookup_name( struct object *obj, struct unicode_str *name,
@@ -993,14 +1009,11 @@ static struct object *console_server_open_file( struct object *obj, unsigned int
     return grab_object( obj );
 }
 
-static struct inproc_sync *console_server_get_inproc_sync( struct object *obj )
+static int console_server_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
     struct console_server *server = (struct console_server *)obj;
-    int signaled = !server->console || !list_empty( &server->queue );
 
-    if (!server->inproc_sync)
-        server->inproc_sync = create_inproc_event( INPROC_SYNC_MANUAL_SERVER, signaled );
-    if (server->inproc_sync) grab_object( server->inproc_sync );
+    *type = INPROC_SYNC_MANUAL_SERVER;
     return server->inproc_sync;
 }
 
@@ -1013,9 +1026,9 @@ static struct object *create_console_server( void )
     server->busy       = 0;
     server->once_input = 0;
     server->term_fd    = -1;
+    server->inproc_sync = create_inproc_event( TRUE, TRUE );
     list_init( &server->queue );
     list_init( &server->read_queue );
-    server->inproc_sync = NULL;
     server->fd = alloc_pseudo_fd( &console_server_fd_ops, &server->obj, FILE_SYNCHRONOUS_IO_NONALERT );
     if (!server->fd)
     {
@@ -1399,6 +1412,7 @@ static struct object *console_device_lookup_name( struct object *obj, struct uni
         }
         console_input->console = current->process->console;
         list_add_head( &current->process->console->inputs, &console_input->entry );
+        console_input->inproc_sync = create_inproc_event( TRUE, current->process->console->signaled );
         return &console_input->obj;
     }
 
@@ -1423,6 +1437,7 @@ static struct object *console_device_lookup_name( struct object *obj, struct uni
         }
         console_output->console = current->process->console;
         list_add_head( &current->process->console->outputs, &console_output->entry );
+        console_output->inproc_sync = create_inproc_event( TRUE, current->process->console->signaled );
         return &console_output->obj;
     }
 
@@ -1497,14 +1512,12 @@ static struct object *console_input_open_file( struct object *obj, unsigned int 
     return grab_object( obj );
 }
 
-static struct inproc_sync *console_input_get_inproc_sync( struct object *obj )
+static int console_input_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
-    if (!current->process->console)
-    {
-        set_error( STATUS_ACCESS_DENIED );
-        return NULL;
-    }
-    return console_get_inproc_sync( &current->process->console->obj );
+    struct console_input *console_input = (struct console_input *)obj;
+
+    *type = INPROC_SYNC_MANUAL_SERVER;
+    return console_input->inproc_sync;
 }
 
 static void console_input_destroy( struct object *obj )
@@ -1514,6 +1527,7 @@ static void console_input_destroy( struct object *obj )
     assert( obj->ops == &console_input_ops );
     if (console_input->fd) release_object( console_input->fd );
     if (console_input->console) list_remove( &console_input->entry );
+    if (use_inproc_sync()) close( console_input->inproc_sync );
 }
 
 static void console_input_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
@@ -1578,14 +1592,12 @@ static struct object *console_output_open_file( struct object *obj, unsigned int
     return grab_object( obj );
 }
 
-static struct inproc_sync *console_output_get_inproc_sync( struct object *obj )
+static int console_output_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
 {
-    if (!current->process->console || !current->process->console->active)
-    {
-        set_error( STATUS_ACCESS_DENIED );
-        return NULL;
-    }
-    return console_get_inproc_sync( &current->process->console->obj );
+    struct console_output *console_output = (struct console_output *)obj;
+
+    *type = INPROC_SYNC_MANUAL_SERVER;
+    return console_output->inproc_sync;
 }
 
 static void console_output_destroy( struct object *obj )
@@ -1595,6 +1607,7 @@ static void console_output_destroy( struct object *obj )
     assert( obj->ops == &console_output_ops );
     if (console_output->fd) release_object( console_output->fd );
     if (console_output->console) list_remove( &console_output->entry );
+    if (use_inproc_sync()) close( console_output->inproc_sync );
 }
 
 static void console_output_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
@@ -1653,6 +1666,12 @@ DECL_HANDLER(get_next_console_request)
     {
         server->console->signaled = 0;
         reset_inproc_event( server->console->inproc_sync );
+        LIST_FOR_EACH_ENTRY( screen_buffer, &server->console->screen_buffers, struct screen_buffer, entry )
+            reset_inproc_event( screen_buffer->inproc_sync );
+        LIST_FOR_EACH_ENTRY( input, &server->console->inputs, struct console_input, entry )
+            reset_inproc_event( input->inproc_sync );
+        LIST_FOR_EACH_ENTRY( output, &server->console->outputs, struct console_output, entry )
+            reset_inproc_event( output->inproc_sync );
     }
     else if (!server->console->signaled)
     {
@@ -1660,11 +1679,20 @@ DECL_HANDLER(get_next_console_request)
         wake_up( &server->console->obj, 0 );
         set_inproc_event( server->console->inproc_sync );
         LIST_FOR_EACH_ENTRY( screen_buffer, &server->console->screen_buffers, struct screen_buffer, entry )
+        {
             wake_up( &screen_buffer->obj, 0 );
+            set_inproc_event( screen_buffer->inproc_sync );
+        }
         LIST_FOR_EACH_ENTRY( input, &server->console->inputs, struct console_input, entry )
+        {
             wake_up( &input->obj, 0 );
+            set_inproc_event( input->inproc_sync );
+        }
         LIST_FOR_EACH_ENTRY( output, &server->console->outputs, struct console_output, entry )
+        {
             wake_up( &output->obj, 0 );
+            set_inproc_event( output->inproc_sync );
+        }
     }
 
     if (req->read)
@@ -1686,9 +1714,10 @@ DECL_HANDLER(get_next_console_request)
         /* set result of previous ioctl */
         ioctl = LIST_ENTRY( list_head( &server->queue ), struct console_host_ioctl, entry );
         list_remove( &ioctl->entry );
-        if (list_empty( &server->queue ))
-            reset_inproc_event( server->inproc_sync );
     }
+
+    if (list_empty( &server->queue ))
+        reset_inproc_event( server->inproc_sync );
 
     if (ioctl)
     {
