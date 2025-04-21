@@ -123,11 +123,13 @@ builtin_algorithms[] =
     {  BCRYPT_ECDSA_P384_ALGORITHM, BCRYPT_SIGNATURE_INTERFACE,             0,      0,    0 },
     {  BCRYPT_DSA_ALGORITHM,        BCRYPT_SIGNATURE_INTERFACE,             0,      0,    0 },
     {  BCRYPT_RNG_ALGORITHM,        BCRYPT_RNG_INTERFACE,                   0,      0,    0 },
+    {  BCRYPT_PBKDF2_ALGORITHM,     BCRYPT_KEY_DERIVATION_INTERFACE,      618,      0,    0 },
 };
 
 static inline BOOL is_symmetric_key( const struct key *key )
 {
-    return builtin_algorithms[key->alg_id].class == BCRYPT_CIPHER_INTERFACE;
+    return builtin_algorithms[key->alg_id].class == BCRYPT_CIPHER_INTERFACE
+        || builtin_algorithms[key->alg_id].class == BCRYPT_KEY_DERIVATION_INTERFACE;
 }
 
 static inline BOOL is_asymmetric_encryption_key( struct key *key )
@@ -156,6 +158,7 @@ static BOOL match_operation_type( ULONG type, ULONG class )
     case BCRYPT_SECRET_AGREEMENT_INTERFACE:      return type & BCRYPT_SECRET_AGREEMENT_OPERATION;
     case BCRYPT_SIGNATURE_INTERFACE:             return type & BCRYPT_SIGNATURE_OPERATION;
     case BCRYPT_RNG_INTERFACE:                   return type & BCRYPT_RNG_OPERATION;
+    case BCRYPT_KEY_DERIVATION_INTERFACE:        return type & BCRYPT_KEY_DERIVATION_OPERATION;
     default: break;
     }
     return FALSE;
@@ -168,7 +171,8 @@ NTSTATUS WINAPI BCryptEnumAlgorithms( ULONG type, ULONG *ret_count, BCRYPT_ALGOR
                                    BCRYPT_ASYMMETRIC_ENCRYPTION_OPERATION |\
                                    BCRYPT_SECRET_AGREEMENT_OPERATION |\
                                    BCRYPT_SIGNATURE_OPERATION |\
-                                   BCRYPT_RNG_OPERATION;
+                                   BCRYPT_RNG_OPERATION |\
+                                   BCRYPT_KEY_DERIVATION_OPERATION;
     BCRYPT_ALGORITHM_IDENTIFIER *list;
     ULONG i, j, count = 0;
 
@@ -635,6 +639,26 @@ static NTSTATUS get_dsa_property( enum chain_mode mode, const WCHAR *prop, UCHAR
     return STATUS_NOT_IMPLEMENTED;
 }
 
+static NTSTATUS get_pbkdf2_property( enum chain_mode mode, const WCHAR *prop, UCHAR *buf, ULONG size, ULONG *ret_size )
+{
+    if (!wcscmp( prop, BCRYPT_BLOCK_LENGTH )) return STATUS_NOT_SUPPORTED;
+    if (!wcscmp( prop, BCRYPT_KEY_LENGTHS ))
+    {
+        BCRYPT_KEY_LENGTHS_STRUCT *key_lengths = (void *)buf;
+        *ret_size = sizeof(*key_lengths);
+        if (key_lengths && size < *ret_size) return STATUS_BUFFER_TOO_SMALL;
+        if (key_lengths)
+        {
+            key_lengths->dwMinLength = 0;
+            key_lengths->dwMaxLength = 16384;
+            key_lengths->dwIncrement = 8;
+        }
+        return STATUS_SUCCESS;
+    }
+    FIXME( "unsupported property %s\n", debugstr_w(prop) );
+    return STATUS_NOT_IMPLEMENTED;
+}
+
 static NTSTATUS get_alg_property( const struct algorithm *alg, const WCHAR *prop, UCHAR *buf, ULONG size,
                                   ULONG *ret_size )
 {
@@ -660,6 +684,9 @@ static NTSTATUS get_alg_property( const struct algorithm *alg, const WCHAR *prop
 
     case ALG_ID_DSA:
         return get_dsa_property( alg->mode, prop, buf, size, ret_size );
+
+    case ALG_ID_PBKDF2:
+	return get_pbkdf2_property( alg->mode, prop, buf, size, ret_size );
 
     default:
         break;
@@ -1183,8 +1210,15 @@ static NTSTATUS key_symmetric_generate( struct algorithm *alg, BCRYPT_KEY_HANDLE
     struct key *key;
     NTSTATUS status;
 
-    if (!(block_size = get_block_size( alg ))) return STATUS_INVALID_PARAMETER;
-    if (!get_alg_property( alg, BCRYPT_KEY_LENGTHS, (UCHAR *)&key_lengths, sizeof(key_lengths), &size ))
+    if (alg->id == ALG_ID_PBKDF2 &&
+            !get_alg_property( alg, BCRYPT_KEY_LENGTHS, (UCHAR *)&key_lengths, sizeof(key_lengths), &size ))
+    {
+        if (secret_len > key_lengths.dwMaxLength / 8 || secret_len < key_lengths.dwMinLength / 8)
+            return STATUS_INVALID_PARAMETER;
+        block_size = secret_len;
+    }
+    else if (!(block_size = get_block_size( alg ))) return STATUS_INVALID_PARAMETER;
+    else if (!get_alg_property( alg, BCRYPT_KEY_LENGTHS, (UCHAR *)&key_lengths, sizeof(key_lengths), &size ))
     {
         if (secret_len > (size = key_lengths.dwMaxLength / 8))
         {
@@ -1322,10 +1356,10 @@ static NTSTATUS key_symmetric_decrypt( struct key *key, UCHAR *input, ULONG inpu
 }
 
 /* AES Key Wrap Algorithm (RFC3394) */
-static NTSTATUS aes_unwrap( const UCHAR *secret, ULONG secret_len, const UCHAR *cipher, UCHAR *plain )
+static NTSTATUS aes_unwrap( const UCHAR *secret, ULONG secret_len, const UCHAR *cipher, ULONG cipher_len, UCHAR *plain )
 {
     UCHAR a[8], *r, b[16];
-    ULONG len, t, i, n = secret_len / 8;
+    ULONG len, t, i, n = cipher_len / 8;
     int j;
     struct key *key;
 
@@ -1399,19 +1433,14 @@ static NTSTATUS key_import( struct algorithm *alg, struct key *decrypt_key, cons
     }
     else if (!wcscmp( type, BCRYPT_AES_WRAP_KEY_BLOB ))
     {
-        UCHAR output[BLOCK_LENGTH_AES];
+        UCHAR output[32];
 
         if (!decrypt_key || input_len < 8) return STATUS_INVALID_PARAMETER;
 
         len = input_len - 8;
         if (len < BLOCK_LENGTH_AES || len & (BLOCK_LENGTH_AES - 1)) return STATUS_INVALID_PARAMETER;
-        if (len > sizeof(output))
-        {
-            FIXME( "key length %lu not supported yet\n", len );
-            return STATUS_NOT_IMPLEMENTED;
-        }
 
-        if ((status = aes_unwrap( decrypt_key->u.s.secret, decrypt_key->u.s.secret_len, input, output )))
+        if ((status = aes_unwrap( decrypt_key->u.s.secret, decrypt_key->u.s.secret_len, input, len, output )))
             return status;
 
         return key_symmetric_generate( alg, key, output, len );
@@ -1521,10 +1550,10 @@ static NTSTATUS key_symmetric_encrypt( struct key *key,  UCHAR *input, ULONG inp
 }
 
 /* AES Key Wrap Algorithm (RFC3394) */
-static NTSTATUS aes_wrap( const UCHAR *secret, ULONG secret_len, const UCHAR *plain, UCHAR *cipher )
+static NTSTATUS aes_wrap( const UCHAR *secret, ULONG secret_len, const UCHAR *plain, ULONG plain_len, UCHAR *cipher )
 {
     UCHAR *a, *r, b[16];
-    ULONG len, t, i, j, n = secret_len / 8;
+    ULONG len, t, i, j, n = plain_len / 8;
     struct key *key;
 
     a = cipher;
@@ -1634,17 +1663,12 @@ static NTSTATUS key_export( struct key *key, struct key *encrypt_key, const WCHA
         ULONG req_size = key->u.s.secret_len + 8;
 
         if (!encrypt_key) return STATUS_INVALID_PARAMETER;
-        if (key->u.s.secret_len > BLOCK_LENGTH_AES)
-        {
-            FIXME( "key length %u not supported yet\n", key->u.s.secret_len );
-            return STATUS_NOT_IMPLEMENTED;
-        }
 
         *size = req_size;
         if (output)
         {
             if (output_len < req_size) return STATUS_BUFFER_TOO_SMALL;
-            if ((status = aes_wrap( encrypt_key->u.s.secret, encrypt_key->u.s.secret_len, key->u.s.secret, output )))
+            if ((status = aes_wrap( encrypt_key->u.s.secret, encrypt_key->u.s.secret_len, key->u.s.secret, key->u.s.secret_len, output )))
                 return status;
         }
         return STATUS_SUCCESS;
@@ -2430,7 +2454,7 @@ static NTSTATUS pbkdf2( struct hash *hash, UCHAR *pwd, ULONG pwd_len, UCHAR *sal
         if (j == 0)
         {
             /* use salt || INT(i) */
-            if (hash->desc->process( &hash->inner, salt, salt_len ))
+            if (salt_len && hash->desc->process( &hash->inner, salt, salt_len ))
             {
                 free( buf );
                 return STATUS_INVALID_PARAMETER;
@@ -2581,42 +2605,47 @@ static NTSTATUS derive_key_raw( struct secret *secret, UCHAR *output, ULONG outp
     return status;
 }
 
-static BCRYPT_ALG_HANDLE hash_handle_from_desc( BCryptBufferDesc *desc )
+static struct algorithm *get_hash_alg( BCryptBuffer *buf, BOOL hmac )
 {
-    ULONG i;
-    if (!desc) return BCRYPT_SHA1_ALG_HANDLE;
-    for (i = 0; i < desc->cBuffers; i++)
-    {
-        if (desc->pBuffers[i].BufferType == KDF_HASH_ALGORITHM)
-        {
-            const WCHAR *str = desc->pBuffers[i].pvBuffer;
-            if (!wcscmp( str, BCRYPT_SHA1_ALGORITHM )) return BCRYPT_SHA1_ALG_HANDLE;
-            else if (!wcscmp( str, BCRYPT_SHA256_ALGORITHM )) return BCRYPT_SHA256_ALG_HANDLE;
-            else if (!wcscmp( str, BCRYPT_SHA384_ALGORITHM )) return BCRYPT_SHA384_ALG_HANDLE;
-            else if (!wcscmp( str, BCRYPT_SHA512_ALGORITHM )) return BCRYPT_SHA512_ALG_HANDLE;
-            else
-            {
-                FIXME( "hash algorithm %s not supported\n", debugstr_w(str) );
-                return NULL;
-            }
-        }
-        else FIXME( "buffer type %lu not supported\n", desc->pBuffers[i].BufferType );
-    }
+    const WCHAR *str = buf->pvBuffer;
+    BCRYPT_ALG_HANDLE handle = NULL;
 
-    return BCRYPT_SHA1_ALG_HANDLE;
+    if (!wcscmp( str, BCRYPT_SHA1_ALGORITHM ))
+        handle = hmac ? BCRYPT_HMAC_SHA1_ALG_HANDLE : BCRYPT_SHA1_ALG_HANDLE;
+    else if (!wcscmp( str, BCRYPT_SHA256_ALGORITHM ))
+        handle = hmac ? BCRYPT_HMAC_SHA256_ALG_HANDLE : BCRYPT_SHA256_ALG_HANDLE;
+    else if (!wcscmp( str, BCRYPT_SHA384_ALGORITHM ))
+        handle = hmac ? BCRYPT_HMAC_SHA384_ALG_HANDLE : BCRYPT_SHA384_ALG_HANDLE;
+    else if (!wcscmp( str, BCRYPT_SHA512_ALGORITHM ))
+        handle = hmac ? BCRYPT_HMAC_SHA512_ALG_HANDLE : BCRYPT_SHA512_ALG_HANDLE;
+
+    if (handle) return get_alg_object( handle );
+    FIXME( "hash algorithm %s not supported\n", debugstr_w(str) );
+    return NULL;
 }
 
 static NTSTATUS derive_key_hash( struct secret *secret, BCryptBufferDesc *desc, UCHAR *output, ULONG output_len,
                                  ULONG *ret_len )
 {
     struct key_asymmetric_derive_key_params params;
-    struct algorithm *alg = get_alg_object( hash_handle_from_desc(desc) );
     ULONG hash_len, derived_key_len = secret->privkey->u.a.bitlen / 8;
     UCHAR hash_buf[MAX_HASH_OUTPUT_BYTES];
+    struct algorithm *alg = NULL;
     UCHAR *derived_key;
     NTSTATUS status;
+    ULONG i;
 
-    if (!alg) return STATUS_NOT_SUPPORTED;
+    for (i = 0; i < (desc ? desc->cBuffers : 0); i++)
+    {
+        if (desc->pBuffers[i].BufferType == KDF_HASH_ALGORITHM)
+        {
+            alg = get_hash_alg( desc->pBuffers + i, FALSE );
+            if (!alg) return STATUS_NOT_SUPPORTED;
+        }
+        else FIXME( "buffer type %lu not supported\n", desc->pBuffers[i].BufferType );
+    }
+    if (!alg) alg = get_alg_object( BCRYPT_SHA1_ALG_HANDLE );
+
     if (!(derived_key = malloc( derived_key_len ))) return STATUS_NO_MEMORY;
 
     params.privkey    = secret->privkey;
@@ -2668,6 +2697,53 @@ NTSTATUS WINAPI BCryptDeriveKey( BCRYPT_SECRET_HANDLE handle, const WCHAR *kdf, 
 
     FIXME( "kdf %s not supportedi\n", debugstr_w(kdf) );
     return STATUS_NOT_SUPPORTED;
+}
+
+NTSTATUS WINAPI BCryptKeyDerivation( BCRYPT_KEY_HANDLE handle, BCryptBufferDesc *desc,
+                                     UCHAR *output, ULONG output_size, ULONG *ret_len, ULONG flags )
+{
+    struct key *key = get_key_object( handle );
+    struct algorithm *alg = NULL;
+    ULONGLONG iter_count = 10000;
+    ULONG salt_size = 0;
+    UCHAR *salt = NULL;
+    NTSTATUS status;
+    ULONG i;
+
+    TRACE( "%p, %p, %p, %lu, %p, %#lx\n", key, desc, output, output_size, ret_len, flags );
+
+    if (!key || !desc || !ret_len) return STATUS_INVALID_PARAMETER;
+    if (key->alg_id != ALG_ID_PBKDF2)
+    {
+        FIXME( "unsupported key %d\n", key->alg_id );
+        return STATUS_NOT_IMPLEMENTED;
+    }
+
+    for (i = 0; i < desc->cBuffers; i++)
+    {
+        switch (desc->pBuffers[i].BufferType)
+        {
+        case KDF_HASH_ALGORITHM:
+            alg = get_hash_alg( desc->pBuffers + i, TRUE );
+            break;
+        case KDF_SALT:
+            salt = desc->pBuffers[i].pvBuffer;
+            salt_size = desc->pBuffers[i].cbBuffer;
+            break;
+        case KDF_ITERATION_COUNT:
+            if (desc->pBuffers[i].cbBuffer != sizeof(ULONGLONG)) return STATUS_INVALID_PARAMETER;
+            iter_count = *(ULONGLONG *)desc->pBuffers[i].pvBuffer;
+            break;
+        default:
+            FIXME( "buffer type %lu not supported\n", desc->pBuffers[i].BufferType );
+            break;
+        }
+    }
+
+    status = derive_key_pbkdf2( alg, key->u.s.secret, key->u.s.secret_len,
+            salt, salt_size, iter_count, output, output_size );
+    if (!status) *ret_len = output_size;
+    return status;
 }
 
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )

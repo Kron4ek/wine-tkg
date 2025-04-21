@@ -122,7 +122,6 @@ extern void track_keyboard_menu_bar( HWND hwnd, UINT wparam, WCHAR ch );
 extern void track_mouse_menu_bar( HWND hwnd, INT ht, int x, int y );
 
 /* message.c */
-extern BOOL kill_system_timer( HWND hwnd, UINT_PTR id );
 extern NTSTATUS send_hardware_message( HWND hwnd, UINT flags, const INPUT *input, LPARAM lparam );
 extern LRESULT send_internal_message_timeout( DWORD dest_pid, DWORD dest_tid, UINT msg, WPARAM wparam,
                                               LPARAM lparam, UINT flags, UINT timeout,
@@ -227,7 +226,6 @@ extern BOOL is_virtual_desktop(void);
 
 /* window.c */
 struct tagWND;
-extern HDWP begin_defer_window_pos( INT count );
 extern BOOL client_to_screen( HWND hwnd, POINT *pt );
 extern void destroy_thread_windows(void);
 extern LRESULT destroy_window( HWND hwnd );
@@ -251,7 +249,7 @@ extern BOOL is_window_unicode( HWND hwnd );
 extern BOOL is_window_visible( HWND hwnd );
 extern BOOL is_zoomed( HWND hwnd );
 extern BOOL set_window_pixel_format( HWND hwnd, int format, BOOL internal );
-extern int get_window_pixel_format( HWND hwnd );
+extern int get_window_pixel_format( HWND hwnd, BOOL internal );
 extern DWORD get_window_long( HWND hwnd, INT offset );
 extern ULONG_PTR get_window_long_ptr( HWND hwnd, INT offset, BOOL ansi );
 extern BOOL get_window_rect( HWND hwnd, RECT *rect, UINT dpi );

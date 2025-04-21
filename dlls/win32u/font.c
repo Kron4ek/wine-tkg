@@ -6215,30 +6215,69 @@ DWORD WINAPI NtGdiGetGlyphOutline( HDC hdc, UINT ch, UINT format, GLYPHMETRICS *
 
 
 /**********************************************************************
- *           __wine_get_file_outline_text_metric    (win32u.@)
+ *             NtGdiMakeFontDir   (win32u.@)
  */
-BOOL WINAPI __wine_get_file_outline_text_metric( const WCHAR *path, TEXTMETRICW *otm,
-                                                 UINT *em_square, WCHAR *face_name )
+ULONG WINAPI NtGdiMakeFontDir( DWORD embed, BYTE *buffer, UINT size, const WCHAR *path, UINT len )
 {
-    struct gdi_font *font = NULL;
+    UINT pos = 0;
+    struct gdi_font *font;
+    struct fontdir fontdir =
+    {
+        .num_of_resources = 1,
+        .dfVersion        = 0x200,
+        .dfSize           = offsetof( struct fontdir, szFaceName[LF_FACESIZE - 1] ),
+        .dfCopyright      = "Wine fontdir",
+        .dfType           = 0x4003 | (embed ? 0x80 : 0),
+        .dfVertRes        = 72,
+        .dfHorizRes       = 72,
+        .dfFace           = offsetof( struct fontdir, szFaceName ),
+    };
 
-    if (!path || !font_funcs) return FALSE;
+    if (size < sizeof(fontdir)) return 0;
+    if (len <= sizeof(WCHAR)) return 0;
+    if (path[len / sizeof(WCHAR) - 1]) return 0;
+    if (wcslen( path ) != len / sizeof(WCHAR) - 1) return 0;
 
-    if (!(font = alloc_gdi_font( path, NULL, 0 ))) goto done;
+    if (!(font = alloc_gdi_font( path, NULL, 0 ))) return 0;
     font->lf.lfHeight = 100;
     if (!font_funcs->load_font( font )) goto done;
     if (!font_funcs->set_outline_text_metrics( font )) goto done;
-    *otm = font->otm.otmTextMetrics;
-    *em_square = font->otm.otmEMSquare;
-    wcscpy( face_name, (const WCHAR *)font->otm.otmpFamilyName );
+    if (!(font->otm.otmTextMetrics.tmPitchAndFamily & TMPF_TRUETYPE)) goto done;
+
+    fontdir.dfPoints          = font->otm.otmEMSquare;
+    fontdir.dfAscent          = font->otm.otmTextMetrics.tmAscent;
+    fontdir.dfInternalLeading = font->otm.otmTextMetrics.tmInternalLeading;
+    fontdir.dfExternalLeading = font->otm.otmTextMetrics.tmExternalLeading;
+    fontdir.dfItalic          = font->otm.otmTextMetrics.tmItalic;
+    fontdir.dfUnderline       = font->otm.otmTextMetrics.tmUnderlined;
+    fontdir.dfStrikeOut       = font->otm.otmTextMetrics.tmStruckOut;
+    fontdir.dfWeight          = font->otm.otmTextMetrics.tmWeight;
+    fontdir.dfCharSet         = font->otm.otmTextMetrics.tmCharSet;
+    fontdir.dfPixHeight       = font->otm.otmTextMetrics.tmHeight;
+    fontdir.dfPitchAndFamily  = font->otm.otmTextMetrics.tmPitchAndFamily;
+    fontdir.dfAvgWidth        = font->otm.otmTextMetrics.tmAveCharWidth;
+    fontdir.dfMaxWidth        = font->otm.otmTextMetrics.tmMaxCharWidth;
+    fontdir.dfFirstChar       = font->otm.otmTextMetrics.tmFirstChar;
+    fontdir.dfLastChar        = font->otm.otmTextMetrics.tmLastChar;
+    fontdir.dfDefaultChar     = font->otm.otmTextMetrics.tmDefaultChar;
+    fontdir.dfBreakChar       = font->otm.otmTextMetrics.tmBreakChar;
+
+#define APPEND(name) \
+    pos += win32u_wctomb( &ansi_cp, fontdir.szFaceName + pos, LF_FACESIZE, (WCHAR *)(name), wcslen((WCHAR *)(name))+1 )
+    APPEND( font->otm.otmpFamilyName );
+    APPEND( font->otm.otmpFaceName );
+    APPEND( font->otm.otmpStyleName );
+#undef APPEND
+
+    memcpy( buffer, &fontdir, sizeof(fontdir) );
     free_gdi_font( font );
-    return TRUE;
+    return fontdir.dfFace + pos;
 
 done:
-    if (font) free_gdi_font( font );
-    RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
-    return FALSE;
+    free_gdi_font( font );
+    return 0;
 }
+
 
 /*************************************************************************
  *             NtGdiGetKerningPairs   (win32u.@)

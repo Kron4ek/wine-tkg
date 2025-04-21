@@ -1813,6 +1813,21 @@ static const struct reader_containers pngtime_containers[] = {
     { NULL } /* list terminator */
 };
 
+static const BYTE bKGD[] = "bKGD";
+
+static const struct metadata_pattern pngbkgd_metadata_pattern[] = {
+    { 4, 4, bKGD, mask_all, 4 },
+    { 0 }
+};
+
+static const struct reader_containers pngbkgd_containers[] = {
+    {
+        &GUID_ContainerFormatPng,
+        pngbkgd_metadata_pattern
+    },
+    { NULL } /* list terminator */
+};
+
 static const struct metadata_pattern lsd_metadata_patterns[] = {
     { 0, 6, gif87a_magic, mask_all, 0 },
     { 0, 6, gif89a_magic, mask_all, 0 },
@@ -1988,6 +2003,16 @@ static struct regsvr_metadatareader const metadatareader_list[] = {
         0, 0, 0,
         pngtime_containers
     },
+    {   &CLSID_WICPngBkgdMetadataReader,
+        "The Wine Project",
+        "Chunk bKGD Reader",
+        "1.0.0.0",
+        "1.0.0.0",
+        &GUID_VendorMicrosoft,
+        &GUID_MetadataFormatChunkbKGD,
+        0, 0, 0,
+        pngbkgd_containers
+    },
     {   &CLSID_WICLSDMetadataReader,
         "The Wine Project",
         "Logical Screen Descriptor Reader",
@@ -2087,6 +2112,24 @@ static struct regsvr_metadatawriter const metadatawriters_list[] =
         "1.0.0.0",
         &GUID_VendorMicrosoft,
         &GUID_MetadataFormatApp1,
+    },
+    {
+        &CLSID_WICPngBkgdMetadataWriter,
+        "The Wine Project",
+        "Png bKGD Metadata Writer",
+        "1.0.0.0",
+        "1.0.0.0",
+        &GUID_VendorMicrosoft,
+        &GUID_MetadataFormatChunkbKGD,
+    },
+    {
+        &CLSID_WICPngTimeMetadataWriter,
+        "The Wine Project",
+        "Png tIME Metadata Writer",
+        "1.0.0.0",
+        "1.0.0.0",
+        &GUID_VendorMicrosoft,
+        &GUID_MetadataFormatChunktIME,
     },
     { NULL } /* list terminator */
 };

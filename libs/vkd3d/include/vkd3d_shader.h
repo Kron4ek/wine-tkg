@@ -2076,6 +2076,11 @@ enum vkd3d_shader_resource_type
  */
 enum vkd3d_shader_resource_data_type
 {
+    /**
+     * The descriptor has no relevant data type. This value is returned for
+     * samplers. \since 1.16
+     */
+    VKD3D_SHADER_RESOURCE_DATA_NONE      = 0x0,
     /** Unsigned normalized integer. */
     VKD3D_SHADER_RESOURCE_DATA_UNORM     = 0x1,
     /** Signed normalized integer. */

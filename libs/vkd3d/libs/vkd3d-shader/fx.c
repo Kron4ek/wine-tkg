@@ -2420,6 +2420,23 @@ static inline enum hlsl_base_type hlsl_type_from_fx_type(enum state_property_com
      }
 }
 
+static inline bool hlsl_type_state_compatible(struct hlsl_type *lhs, enum hlsl_base_type rhs)
+{
+    if (!hlsl_is_numeric_type(lhs))
+        return false;
+    switch (lhs->e.numeric.type)
+    {
+        case HLSL_TYPE_INT:
+        case HLSL_TYPE_UINT:
+            return rhs == HLSL_TYPE_INT || rhs == HLSL_TYPE_UINT;
+
+        default:
+            return lhs->e.numeric.type == rhs;
+    }
+
+    vkd3d_unreachable();
+}
+
 static const struct rhs_named_value filter_values[] =
 {
     { "MIN_MAG_MIP_POINT", 0x00 },
@@ -2664,9 +2681,9 @@ static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl
     struct replace_state_context replace_context;
     const struct fx_4_state *state = NULL;
     struct hlsl_type *state_type = NULL;
-    struct hlsl_ir_node *node, *cast;
     struct hlsl_ctx *ctx = fx->ctx;
     enum hlsl_base_type base_type;
+    struct hlsl_ir_node *node;
     unsigned int i;
 
     if (type->class == HLSL_CLASS_BLEND_STATE && ctx->profile->major_version == 5)
@@ -2803,9 +2820,15 @@ static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl
     if (state_type)
     {
         node = entry->args->node;
-        if (!(cast = hlsl_new_cast(ctx, node, state_type, &var->loc)))
-            return;
-        list_add_after(&node->entry, &cast->entry);
+        if (state->type == FX_UINT8 || !hlsl_type_state_compatible(node->data_type, base_type))
+        {
+            struct hlsl_ir_node *cast;
+
+            if (!(cast = hlsl_new_cast(ctx, node, state_type, &var->loc)))
+                return;
+            list_add_after(&node->entry, &cast->entry);
+            node = cast;
+        }
 
         /* FX_UINT8 values are using 32-bits in the binary. Mask higher 24 bits for those. */
         if (state->type == FX_UINT8)
@@ -2814,15 +2837,18 @@ static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl
 
             if (!(mask = hlsl_new_uint_constant(ctx, 0xff, &var->loc)))
                 return;
-            list_add_after(&cast->entry, &mask->entry);
+            list_add_after(&node->entry, &mask->entry);
 
-            if (!(cast = hlsl_new_binary_expr(ctx, HLSL_OP2_BIT_AND, cast, mask)))
+            if (!(node = hlsl_new_binary_expr(ctx, HLSL_OP2_BIT_AND, node, mask)))
                 return;
-            list_add_after(&mask->entry, &cast->entry);
+            list_add_after(&mask->entry, &node->entry);
         }
 
-        hlsl_src_remove(entry->args);
-        hlsl_src_from_node(entry->args, cast);
+        if (node != entry->args->node)
+        {
+            hlsl_src_remove(entry->args);
+            hlsl_src_from_node(entry->args, node);
+        }
 
         hlsl_run_const_passes(ctx, entry->instrs);
     }

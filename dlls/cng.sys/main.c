@@ -1,7 +1,7 @@
 /*
- * win32k.sys driver
+ * CNG driver
  *
- * Copyright 2017 Michael Müller
+ * Copyright 2025 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -20,20 +20,13 @@
 
 #include <stdarg.h>
 
-#define NONAMELESSUNION
-
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
-#include "winbase.h"
 #include "winternl.h"
 #include "ddk/wdm.h"
-#include "wine/debug.h"
-
-WINE_DEFAULT_DEBUG_CHANNEL(win32k);
 
 NTSTATUS WINAPI DriverEntry( DRIVER_OBJECT *driver, UNICODE_STRING *path )
 {
-    TRACE( "(%p, %s)\n", driver, debugstr_w(path->Buffer) );
     return STATUS_SUCCESS;
 }

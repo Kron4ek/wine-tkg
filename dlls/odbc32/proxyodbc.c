@@ -2483,7 +2483,7 @@ static SQLRETURN get_data_win32( struct statement *stmt, SQLUSMALLINT column, SQ
     if (stmt->hdr.win32_funcs->SQLGetData)
     {
         struct environment *env = (struct environment *)find_object_type(SQL_HANDLE_ENV, stmt->hdr.parent);
-        if (env && env->attr_version == SQL_OV_ODBC2)
+        if (env && env->driver_ver == SQL_OV_ODBC2)
         {
             if (type == SQL_C_TYPE_TIME)
                 type = SQL_C_TIME;
@@ -3011,7 +3011,7 @@ static SQLRETURN get_info_win32_a( struct connection *con, SQLUSMALLINT type, SQ
         default: break;
         }
 
-        ret = SQLGetInfoW( con->hdr.win32_handle, type, buf, buflen, retlen );
+        ret = con->hdr.win32_funcs->SQLGetInfoW( con->hdr.win32_handle, type, buf, buflen, retlen );
         if (SUCCESS( ret ) && strW)
         {
             int len = WideCharToMultiByte( CP_ACP, 0, strW, -1, (char *)value, buflen, NULL, NULL );
@@ -6255,6 +6255,7 @@ static SQLRETURN col_attribute_win32_w( struct statement *stmt, SQLUSMALLINT col
                                         SQLPOINTER char_attr, SQLSMALLINT buflen, SQLSMALLINT *retlen,
                                         SQLLEN *num_attr )
 {
+    struct environment *env;
     SQLRETURN ret = SQL_ERROR;
 
     if (stmt->hdr.win32_funcs->SQLColAttributeW)
@@ -6318,9 +6319,9 @@ static SQLRETURN col_attribute_win32_w( struct statement *stmt, SQLUSMALLINT col
         ret = stmt->hdr.win32_funcs->SQLColAttributesW( stmt->hdr.win32_handle, col, field_id, char_attr, buflen,
                                                          retlen, num_attr );
         /* Convert back for ODBC2 drivers */
+        env = (struct environment *)find_object_type(SQL_HANDLE_ENV, stmt->hdr.parent);
         if (SQL_SUCCEEDED(ret) && num_attr && field_id == SQL_COLUMN_TYPE &&
-                ((struct environment*)(stmt->hdr.parent))->attr_version == SQL_OV_ODBC2 &&
-                ((struct environment*)(stmt->hdr.parent))->driver_ver == SQL_OV_ODBC2)
+                env && env->attr_version == SQL_OV_ODBC3 && env->driver_ver == SQL_OV_ODBC2)
         {
             if (*num_attr == SQL_TIME)
                 *num_attr = SQL_TYPE_TIME;

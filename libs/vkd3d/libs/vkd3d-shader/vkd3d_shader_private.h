@@ -61,6 +61,8 @@
 
 #define VKD3D_SHADER_COMPONENT_TYPE_COUNT (VKD3D_SHADER_COMPONENT_INT16 + 1)
 #define VKD3D_SHADER_MINIMUM_PRECISION_COUNT (VKD3D_SHADER_MINIMUM_PRECISION_UINT_16 + 1)
+#define VKD3D_SHADER_DESCRIPTOR_TYPE_COUNT (VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER + 1)
+#define VKD3D_SHADER_RESOURCE_TYPE_COUNT (VKD3D_SHADER_RESOURCE_TEXTURE_CUBEARRAY + 1)
 
 #define VKD3D_MAX_STREAM_COUNT 4
 
@@ -257,11 +259,15 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_VSIR_MISSING_SEMANTIC            = 9021,
     VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE           = 9022,
     VKD3D_SHADER_ERROR_VSIR_INVALID_RANGE               = 9023,
+    VKD3D_SHADER_ERROR_VSIR_INVALID_DESCRIPTOR_TYPE     = 9024,
+    VKD3D_SHADER_ERROR_VSIR_INVALID_RESOURCE_TYPE       = 9025,
+    VKD3D_SHADER_ERROR_VSIR_INVALID_DESCRIPTOR_COUNT    = 9026,
 
     VKD3D_SHADER_WARNING_VSIR_DYNAMIC_DESCRIPTOR_ARRAY  = 9300,
 
     VKD3D_SHADER_ERROR_MSL_INTERNAL                     = 10000,
     VKD3D_SHADER_ERROR_MSL_BINDING_NOT_FOUND            = 10001,
+    VKD3D_SHADER_ERROR_MSL_UNSUPPORTED                  = 10002,
 
     VKD3D_SHADER_ERROR_FX_NOT_IMPLEMENTED               = 11000,
     VKD3D_SHADER_ERROR_FX_INVALID_VERSION               = 11001,
@@ -1005,6 +1011,7 @@ void vsir_src_param_init(struct vkd3d_shader_src_param *param, enum vkd3d_shader
         enum vkd3d_data_type data_type, unsigned int idx_count);
 void vsir_dst_param_init(struct vkd3d_shader_dst_param *param, enum vkd3d_shader_register_type reg_type,
         enum vkd3d_data_type data_type, unsigned int idx_count);
+void vsir_dst_param_init_null(struct vkd3d_shader_dst_param *dst);
 void vsir_src_param_init_label(struct vkd3d_shader_src_param *param, unsigned int label_id);
 
 struct vkd3d_shader_index_range
@@ -1429,7 +1436,7 @@ struct vkd3d_shader_descriptor_info1
     unsigned int register_index;
     unsigned int register_id;
     enum vkd3d_shader_resource_type resource_type;
-    enum vkd3d_shader_resource_data_type resource_data_type;
+    enum vkd3d_data_type resource_data_type;
     unsigned int flags;
     unsigned int sample_count;
     unsigned int buffer_size;
@@ -1562,6 +1569,8 @@ enum vsir_asm_flags
     VSIR_ASM_FLAG_NONE = 0,
     VSIR_ASM_FLAG_DUMP_TYPES = 0x1,
     VSIR_ASM_FLAG_DUMP_ALL_INDICES = 0x2,
+    VSIR_ASM_FLAG_DUMP_SIGNATURES = 0x4,
+    VSIR_ASM_FLAG_DUMP_DESCRIPTORS = 0x8,
 };
 
 enum vkd3d_result d3d_asm_compile(const struct vsir_program *program,
@@ -1653,7 +1662,8 @@ void vkd3d_shader_trace_text_(const char *text, size_t size, const char *functio
         vkd3d_shader_trace_text_(text, size, __FUNCTION__)
 
 bool sm1_register_from_semantic_name(const struct vkd3d_shader_version *version, const char *semantic_name,
-        unsigned int semantic_index, bool output, enum vkd3d_shader_register_type *type, unsigned int *reg);
+        unsigned int semantic_index, bool output, enum vkd3d_shader_sysval_semantic *sysval,
+        enum vkd3d_shader_register_type *type, unsigned int *reg);
 bool sm1_usage_from_semantic_name(const char *semantic_name,
         uint32_t semantic_index, enum vkd3d_decl_usage *usage, uint32_t *usage_idx);
 bool sm4_register_from_semantic_name(const struct vkd3d_shader_version *version,
@@ -1761,30 +1771,6 @@ static inline enum vkd3d_data_type vkd3d_data_type_from_component_type(
         default:
             FIXME("Unhandled component type %#x.\n", component_type);
             return VKD3D_DATA_FLOAT;
-    }
-}
-
-static inline enum vkd3d_shader_component_type vkd3d_component_type_from_resource_data_type(
-        enum vkd3d_shader_resource_data_type data_type)
-{
-    switch (data_type)
-    {
-        case VKD3D_SHADER_RESOURCE_DATA_FLOAT:
-        case VKD3D_SHADER_RESOURCE_DATA_UNORM:
-        case VKD3D_SHADER_RESOURCE_DATA_SNORM:
-            return VKD3D_SHADER_COMPONENT_FLOAT;
-        case VKD3D_SHADER_RESOURCE_DATA_UINT:
-            return VKD3D_SHADER_COMPONENT_UINT;
-        case VKD3D_SHADER_RESOURCE_DATA_INT:
-            return VKD3D_SHADER_COMPONENT_INT;
-        case VKD3D_SHADER_RESOURCE_DATA_DOUBLE:
-        case VKD3D_SHADER_RESOURCE_DATA_CONTINUED:
-            return VKD3D_SHADER_COMPONENT_DOUBLE;
-        default:
-            FIXME("Unhandled data type %#x.\n", data_type);
-            /* fall-through */
-        case VKD3D_SHADER_RESOURCE_DATA_MIXED:
-            return VKD3D_SHADER_COMPONENT_UINT;
     }
 }
 

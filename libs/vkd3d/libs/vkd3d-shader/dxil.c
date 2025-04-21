@@ -4382,7 +4382,7 @@ static void sm6_parser_emit_binop(struct sm6_parser *sm6, const struct dxil_reco
         dst_param_init(&dst_params[0]);
         dst_param_init(&dst_params[1]);
         register_init_ssa_scalar(&dst_params[index].reg, a->type, dst, sm6);
-        vsir_register_init(&dst_params[index ^ 1].reg, VKD3DSPR_NULL, VKD3D_DATA_UNUSED, 0);
+        vsir_dst_param_init_null(&dst_params[index ^ 1]);
         dst->u.reg = dst_params[index].reg;
     }
     else
@@ -5942,7 +5942,7 @@ static void sm6_parser_emit_dx_sincos(struct sm6_parser *sm6, enum dx_intrinsic_
     dst_param_init(&dst_params[0]);
     dst_param_init(&dst_params[1]);
     register_init_ssa_scalar(&dst_params[index].reg, dst->type, dst, sm6);
-    vsir_register_init(&dst_params[index ^ 1].reg, VKD3DSPR_NULL, VKD3D_DATA_UNUSED, 0);
+    vsir_dst_param_init_null(&dst_params[index ^ 1]);
     dst->u.reg = dst_params[index].reg;
 }
 

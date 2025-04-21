@@ -192,6 +192,7 @@
 @ stdcall CreateFiberEx(long long long ptr ptr)
 @ stdcall CreateFile2(wstr long long long ptr)
 @ stdcall CreateFileA(str long long ptr long long long)
+@ stdcall CreateFileMapping2(long ptr long long long int64 wstr ptr long)
 @ stdcall CreateFileMappingFromApp(long ptr long int64 wstr)
 @ stdcall CreateFileMappingNumaW(long ptr long long long wstr long)
 @ stdcall CreateFileMappingW(long ptr long long long wstr)
@@ -1196,8 +1197,8 @@
 # @ stub PerfQueryInstance
 @ stdcall PerfSetCounterRefValue(long ptr long ptr)
 @ stdcall PerfSetCounterSetInfo(long ptr long)
-# @ stub PerfSetULongCounterValue
-# @ stub PerfSetULongLongCounterValue
+@ stdcall PerfSetULongCounterValue(long ptr long long)
+@ stdcall PerfSetULongLongCounterValue(long ptr long int64)
 @ stdcall PerfStartProvider(ptr ptr ptr)
 @ stdcall PerfStartProviderEx(ptr ptr ptr)
 @ stdcall PerfStopProvider(long)

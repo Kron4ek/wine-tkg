@@ -1942,7 +1942,7 @@ CascadeWindows (HWND hwndParent, UINT wFlags, const RECT *lpRect,
         work_rect = mi.rcWork;
     }
 
-    hDWP = BeginDeferWindowPos(info.wnd_count);
+    hDWP = NtUserBeginDeferWindowPos( info.wnd_count );
     if (hDWP == NULL)
         goto cleanup;
 
@@ -2011,7 +2011,7 @@ CascadeWindows (HWND hwndParent, UINT wFlags, const RECT *lpRect,
     EndDeferWindowPos(hDWP);
 
     if (prev)
-        SetForegroundWindow(prev);
+        NtUserSetForegroundWindow( prev );
 
 cleanup:
     heap_free(info.wnd_array);
@@ -2133,7 +2133,7 @@ TileWindows (HWND hwndParent, UINT wFlags, const RECT *lpRect,
         }
     }
 
-    hDWP = BeginDeferWindowPos(info.wnd_count);
+    hDWP = NtUserBeginDeferWindowPos( info.wnd_count );
     if (hDWP == NULL)
         goto cleanup;
 
@@ -2204,7 +2204,7 @@ TileWindows (HWND hwndParent, UINT wFlags, const RECT *lpRect,
     EndDeferWindowPos(hDWP);
 
     if (hwndPrev)
-        SetForegroundWindow(hwndPrev);
+        NtUserSetForegroundWindow( hwndPrev );
 
 cleanup:
     if (cKids == 0 || lpKids == NULL)

@@ -7124,7 +7124,7 @@ static void spirv_compiler_emit_resource_declaration(struct spirv_compiler *comp
         return;
     }
 
-    sampled_type = vkd3d_component_type_from_resource_data_type(descriptor->resource_data_type);
+    sampled_type = vkd3d_component_type_from_data_type(descriptor->resource_data_type);
 
     if (!is_uav && spirv_compiler_has_combined_sampler_for_resource(compiler, range))
     {

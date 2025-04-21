@@ -312,6 +312,13 @@ static void vsir_dst_param_init_io(struct vkd3d_shader_dst_param *dst, enum vkd3
     dst->write_mask = e->mask;
 }
 
+void vsir_dst_param_init_null(struct vkd3d_shader_dst_param *dst)
+{
+    vsir_dst_param_init(dst, VKD3DSPR_NULL, VKD3D_DATA_UNUSED, 0);
+    dst->reg.dimension = VSIR_DIMENSION_NONE;
+    dst->write_mask = 0;
+}
+
 static void dst_param_init_ssa_bool(struct vkd3d_shader_dst_param *dst, unsigned int idx)
 {
     vsir_dst_param_init(dst, VKD3DSPR_SSA, VKD3D_DATA_BOOL, 1);
@@ -763,7 +770,7 @@ static enum vkd3d_result vsir_program_lower_sm1_sincos(struct vsir_program *prog
     }
     else
     {
-        vsir_dst_param_init(&ins->dst[0], VKD3DSPR_NULL, VKD3D_DATA_UNUSED, 0);
+        vsir_dst_param_init_null(&ins->dst[0]);
     }
 
     if (sincos->dst->write_mask & VKD3DSP_WRITEMASK_0)
@@ -773,7 +780,7 @@ static enum vkd3d_result vsir_program_lower_sm1_sincos(struct vsir_program *prog
     }
     else
     {
-        vsir_dst_param_init(&ins->dst[1], VKD3DSPR_NULL, VKD3D_DATA_UNUSED, 0);
+        vsir_dst_param_init_null(&ins->dst[1]);
     }
 
     /* Make the original instruction no-op */
@@ -1299,7 +1306,7 @@ static void remove_unread_output_components(const struct shader_signature *signa
         if (ins->dst_count == 1)
             vkd3d_shader_instruction_make_nop(ins);
         else
-            vsir_dst_param_init(dst, VKD3DSPR_NULL, VKD3D_DATA_UNUSED, 0);
+            vsir_dst_param_init_null(dst);
     }
 }
 
@@ -8248,6 +8255,14 @@ static void vsir_validate_dst_param(struct validation_context *ctx,
     switch (dst->reg.type)
     {
         case VKD3DSPR_SSA:
+            if (dst->reg.dimension == VSIR_DIMENSION_VEC4
+                    && dst->write_mask != VKD3DSP_WRITEMASK_0
+                    && dst->write_mask != (VKD3DSP_WRITEMASK_0 | VKD3DSP_WRITEMASK_1)
+                    && dst->write_mask != (VKD3DSP_WRITEMASK_0 | VKD3DSP_WRITEMASK_1 | VKD3DSP_WRITEMASK_2)
+                    && dst->write_mask != VKD3DSP_WRITEMASK_ALL)
+                validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_WRITE_MASK,
+                        "SSA register has invalid write mask %#x.", dst->write_mask);
+
             if (dst->reg.idx[0].offset < ctx->program->ssa_count)
             {
                 struct validation_context_ssa_data *data = &ctx->ssas[dst->reg.idx[0].offset];
@@ -8342,8 +8357,11 @@ static void vsir_validate_src_param(struct validation_context *ctx,
             break;
 
         case VKD3DSPR_NULL:
+        case VKD3DSPR_DEPTHOUT:
+        case VKD3DSPR_DEPTHOUTGE:
+        case VKD3DSPR_DEPTHOUTLE:
             validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_REGISTER_TYPE,
-                    "Invalid NULL register used as source parameter.");
+                    "Invalid register of type %#x used as source parameter.", src->reg.type);
             break;
 
         case VKD3DSPR_INPUT:
@@ -8839,6 +8857,45 @@ static void vsir_validate_signature(struct validation_context *ctx, const struct
                 }
             }
         }
+    }
+}
+
+static void vsir_validate_descriptors(struct validation_context *ctx)
+{
+    const struct vkd3d_shader_scan_descriptor_info1 *descriptors = &ctx->program->descriptors;
+    unsigned int i;
+
+    for (i = 0; i < descriptors->descriptor_count; ++i)
+    {
+        const struct vkd3d_shader_descriptor_info1 *descriptor = &descriptors->descriptors[i];
+
+        if (descriptor->type >= VKD3D_SHADER_DESCRIPTOR_TYPE_COUNT)
+            validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_DESCRIPTOR_TYPE,
+                    "Descriptor %u has invalid type %#x.", i, descriptor->type);
+
+        if (descriptor->resource_type >= VKD3D_SHADER_RESOURCE_TYPE_COUNT)
+            validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_RESOURCE_TYPE,
+                    "Descriptor %u has invalid resource type %#x.", i, descriptor->resource_type);
+        else if ((descriptor->resource_type == VKD3D_SHADER_RESOURCE_NONE)
+                != (descriptor->type == VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER))
+            validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_RESOURCE_TYPE,
+                    "Descriptor %u has invalid resource type %#x for descriptor type %#x.",
+                    i, descriptor->resource_type, descriptor->type);
+
+        if (descriptor->resource_data_type >= VKD3D_DATA_COUNT)
+            validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_DATA_TYPE,
+                    "Descriptor %u has invalid resource data type %#x.", i, descriptor->resource_data_type);
+        else if ((descriptor->resource_data_type == VKD3D_DATA_UNUSED)
+                != (descriptor->type == VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER))
+            validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_DATA_TYPE,
+                    "Descriptor %u has invalid resource data type %#x for descriptor type %#x.",
+                    i, descriptor->resource_data_type, descriptor->type);
+
+        if (!descriptor->count || (descriptor->count > UINT_MAX - descriptor->register_index
+                && descriptor->count != UINT_MAX))
+            validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_DESCRIPTOR_COUNT,
+                    "Descriptor %u has invalid descriptor count %u starting at index %u.",
+                    i, descriptor->count, descriptor->register_index);
     }
 }
 
@@ -9807,6 +9864,8 @@ enum vkd3d_result vsir_program_validate(struct vsir_program *program, uint64_t c
                         "Invalid input/output declaration %u.", i);
         }
     }
+
+    vsir_validate_descriptors(&ctx);
 
     if (!(ctx.temps = vkd3d_calloc(ctx.program->temp_count, sizeof(*ctx.temps))))
         goto fail;
