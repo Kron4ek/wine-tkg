@@ -5451,8 +5451,6 @@ const char *debug_d3dstate(uint32_t state)
         return "STATE_VIEWPORT";
     if (STATE_IS_SCISSORRECT(state))
         return "STATE_SCISSORRECT";
-    if (STATE_IS_CLIPPLANE(state))
-        return wine_dbg_sprintf("STATE_CLIPPLANE(%#x)", state - STATE_CLIPPLANE(0));
     if (STATE_IS_RASTERIZER(state))
         return "STATE_RASTERIZER";
     if (STATE_IS_DEPTH_BOUNDS(state))
@@ -6362,11 +6360,11 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_state *state,
     for (; i < WINED3D_MAX_FFP_TEXTURES; ++i)
         memset(&settings->op[i], 0xff, sizeof(settings->op[i]));
 
-    if (!state->render_states[WINED3D_RS_FOGENABLE])
+    if (!state->extra_ps_args.fog_enable)
     {
         settings->fog = WINED3D_FFP_PS_FOG_OFF;
     }
-    else if (state->render_states[WINED3D_RS_FOGTABLEMODE] == WINED3D_FOG_NONE)
+    else if (state->extra_ps_args.fog_mode == WINED3D_FOG_NONE)
     {
         if (use_vs(state) || state->vertex_declaration->position_transformed)
         {
@@ -6391,7 +6389,7 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_state *state,
     }
     else
     {
-        switch (state->render_states[WINED3D_RS_FOGTABLEMODE])
+        switch (state->extra_ps_args.fog_mode)
         {
             case WINED3D_FOG_LINEAR:
                 settings->fog = WINED3D_FFP_PS_FOG_LINEAR;
@@ -6401,6 +6399,9 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_state *state,
                 break;
             case WINED3D_FOG_EXP2:
                 settings->fog = WINED3D_FFP_PS_FOG_EXP2;
+                break;
+            case WINED3D_FOG_NONE:
+                /* unreachable */
                 break;
         }
     }
@@ -6452,9 +6453,7 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_state *state,
     if (d3d_info->ffp_alpha_test)
         settings->alpha_test_func = WINED3D_CMP_ALWAYS - 1;
     else
-        settings->alpha_test_func = (state->render_states[WINED3D_RS_ALPHATESTENABLE]
-                ? wined3d_sanitize_cmp_func(state->render_states[WINED3D_RS_ALPHAFUNC])
-                : WINED3D_CMP_ALWAYS) - 1;
+        settings->alpha_test_func = state->extra_ps_args.alpha_func - 1;
 
     if (d3d_info->emulated_flatshading)
         settings->flatshading = state->extra_ps_args.flat_shading;

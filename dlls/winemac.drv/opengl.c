@@ -57,7 +57,7 @@ struct gl_info {
 static struct gl_info gl_info;
 
 
-struct wgl_context
+struct macdrv_context
 {
     struct list             entry;
     int                     format;
@@ -67,10 +67,12 @@ struct wgl_context
     HWND                    draw_hwnd;
     macdrv_view             draw_view;
     RECT                    draw_rect;
-    struct wgl_pbuffer     *draw_pbuffer;
+    CGLPBufferObj           draw_pbuffer;
+    GLenum                  draw_pbuffer_face;
+    GLint                   draw_pbuffer_level;
     macdrv_view             read_view;
     RECT                    read_rect;
-    struct wgl_pbuffer     *read_pbuffer;
+    CGLPBufferObj           read_pbuffer;
     BOOL                    has_been_current;
     BOOL                    sharing;
     LONG                    update_swap_interval;
@@ -81,17 +83,6 @@ struct wgl_context
 
 static struct list context_list = LIST_INIT(context_list);
 static pthread_mutex_t context_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-
-struct wgl_pbuffer
-{
-    CGLPBufferObj   pbuffer;
-    int             format;
-    BOOL            no_texture;
-    int             max_level;
-    GLint           level;
-    GLenum          face;
-};
 
 static CFMutableDictionaryRef dc_pbuffers;
 static pthread_mutex_t dc_pbuffers_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -1106,9 +1097,8 @@ static CFComparisonResult pixel_format_comparator(const void *val1, const void *
 }
 
 
-static BOOL init_pixel_formats(void)
+static UINT macdrv_init_pixel_formats(UINT *onscreen_count)
 {
-    BOOL ret = FALSE;
     CGLRendererInfoObj renderer_info;
     GLint rendererCount;
     CGLError err;
@@ -1123,7 +1113,7 @@ static BOOL init_pixel_formats(void)
     if (err)
     {
         WARN("CGLQueryRendererInfo failed (%d) %s\n", err, CGLErrorString(err));
-        return FALSE;
+        return 0;
     }
 
     pixel_format_set = CFSetCreateMutable(NULL, 0, &kCFTypeSetCallBacks);
@@ -1131,7 +1121,7 @@ static BOOL init_pixel_formats(void)
     {
         WARN("CFSetCreateMutable failed\n");
         CGLDestroyRendererInfo(renderer_info);
-        return FALSE;
+        return 0;
     }
 
     pixel_format_array = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
@@ -1140,7 +1130,7 @@ static BOOL init_pixel_formats(void)
         WARN("CFArrayCreateMutable failed\n");
         CFRelease(pixel_format_set);
         CGLDestroyRendererInfo(renderer_info);
-        return FALSE;
+        return 0;
     }
 
     for (i = 0; i < rendererCount; i++)
@@ -1180,16 +1170,20 @@ static BOOL init_pixel_formats(void)
 
             nb_formats = range.length;
             TRACE("Total number of unique pixel formats: %d\n", nb_formats);
-            ret = TRUE;
         }
         else
+        {
             WARN("failed to allocate pixel format list\n");
+            nb_formats = 0;
+        }
     }
     else
         WARN("got no pixel formats\n");
 
     CFRelease(pixel_format_array);
-    return ret;
+
+    *onscreen_count = nb_displayable_formats;
+    return nb_formats;
 }
 
 
@@ -1327,7 +1321,7 @@ static BOOL init_gl_info(void)
 /**********************************************************************
  *              create_context
  */
-static BOOL create_context(struct wgl_context *context, CGLContextObj share, unsigned int major)
+static BOOL create_context(struct macdrv_context *context, CGLContextObj share, unsigned int major)
 {
     const pixel_format *pf;
     CGLPixelFormatAttribute attribs[64];
@@ -1496,10 +1490,10 @@ static BOOL macdrv_set_pixel_format(HWND hwnd, int old_format, int new_format, B
  */
 static void mark_contexts_for_moved_view(macdrv_view view)
 {
-    struct wgl_context *context;
+    struct macdrv_context *context;
 
     pthread_mutex_lock(&context_mutex);
-    LIST_FOR_EACH_ENTRY(context, &context_list, struct wgl_context, entry)
+    LIST_FOR_EACH_ENTRY(context, &context_list, struct macdrv_context, entry)
     {
         if (context->draw_view == view)
             InterlockedExchange(&context->view_moved, TRUE);
@@ -1511,7 +1505,7 @@ static void mark_contexts_for_moved_view(macdrv_view view)
 /**********************************************************************
  *              sync_context_rect
  */
-static BOOL sync_context_rect(struct wgl_context *context)
+static BOOL sync_context_rect(struct macdrv_context *context)
 {
     BOOL ret = FALSE;
     if (InterlockedCompareExchange(&context->view_moved, FALSE, TRUE))
@@ -1537,11 +1531,11 @@ static BOOL sync_context_rect(struct wgl_context *context)
 /**********************************************************************
  *              make_context_current
  */
-static void make_context_current(struct wgl_context *context, BOOL read)
+static void make_context_current(struct macdrv_context *context, BOOL read)
 {
     macdrv_view view;
     RECT view_rect;
-    struct wgl_pbuffer *pbuffer;
+    CGLPBufferObj pbuffer;
 
     if (read)
     {
@@ -1566,8 +1560,7 @@ static void make_context_current(struct wgl_context *context, BOOL read)
 
         if (CGLIsEnabled(context->cglcontext, kCGLCESurfaceBackingSize, &enabled) == kCGLNoError && enabled)
             CGLDisable(context->cglcontext, kCGLCESurfaceBackingSize);
-        CGLSetPBuffer(context->cglcontext, pbuffer->pbuffer, pbuffer->face,
-                      pbuffer->level, 0);
+        CGLSetPBuffer(context->cglcontext, pbuffer, context->draw_pbuffer_face, context->draw_pbuffer_level, 0);
         CGLSetCurrentContext(context->cglcontext);
     }
 }
@@ -1576,7 +1569,7 @@ static void make_context_current(struct wgl_context *context, BOOL read)
 /**********************************************************************
  *              sync_context
  */
-static void sync_context(struct wgl_context *context)
+static void sync_context(struct macdrv_context *context)
 {
     if (sync_context_rect(context))
         make_context_current(context, FALSE);
@@ -1586,7 +1579,7 @@ static void sync_context(struct wgl_context *context)
 /**********************************************************************
  *              set_swap_interval
  */
-static BOOL set_swap_interval(struct wgl_context *context, long interval)
+static BOOL set_swap_interval(struct macdrv_context *context, long interval)
 {
     CGLError err;
 
@@ -1607,7 +1600,7 @@ static BOOL set_swap_interval(struct wgl_context *context, long interval)
 /**********************************************************************
  *              sync_swap_interval
  */
-static void sync_swap_interval(struct wgl_context *context)
+static void sync_swap_interval(struct macdrv_context *context)
 {
     if (InterlockedCompareExchange(&context->update_swap_interval, FALSE, TRUE))
     {
@@ -2059,7 +2052,7 @@ static BOOL query_renderer_integer(CGLRendererInfoObj renderer_info, GLint rende
 static void macdrv_glCopyColorTable(GLenum target, GLenum internalformat, GLint x, GLint y,
                                     GLsizei width)
 {
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
 
     if (context->read_view || context->read_pbuffer)
         make_context_current(context, TRUE);
@@ -2082,7 +2075,7 @@ static void macdrv_glCopyColorTable(GLenum target, GLenum internalformat, GLint 
  */
 static void macdrv_glCopyPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum type)
 {
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
 
     if (context->read_view || context->read_pbuffer)
         make_context_current(context, TRUE);
@@ -2099,7 +2092,7 @@ static void macdrv_glCopyPixels(GLint x, GLint y, GLsizei width, GLsizei height,
  */
 static void macdrv_glFinish(void)
 {
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
 
     sync_swap_interval(context);
     sync_context(context);
@@ -2112,7 +2105,7 @@ static void macdrv_glFinish(void)
  */
 static void macdrv_glFlush(void)
 {
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
 
     sync_swap_interval(context);
     sync_context(context);
@@ -2173,7 +2166,7 @@ static const GLubyte *macdrv_glGetString(GLenum name)
 static void macdrv_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height,
                                 GLenum format, GLenum type, void *pixels)
 {
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
 
     if (context->read_view || context->read_pbuffer)
         make_context_current(context, TRUE);
@@ -2194,7 +2187,7 @@ static void macdrv_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height,
  */
 static void macdrv_glViewport(GLint x, GLint y, GLsizei width, GLsizei height)
 {
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
 
     sync_context(context);
     macdrv_update_opengl_context(context->context);
@@ -2207,65 +2200,18 @@ static void macdrv_glViewport(GLint x, GLint y, GLsizei width, GLsizei height)
  *
  * WGL_ARB_render_texture: wglBindTexImageARB
  */
-static BOOL macdrv_wglBindTexImageARB(struct wgl_pbuffer *pbuffer, int iBuffer)
+static UINT macdrv_pbuffer_bind(HDC hdc, void *private, GLenum source)
 {
-    struct wgl_context *context = NtCurrentTeb()->glContext;
-    GLenum source;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
+    CGLPBufferObj pbuffer = private;
     CGLError err;
 
-    TRACE("pbuffer %p iBuffer 0x%x\n", pbuffer, iBuffer);
+    TRACE("hdc %p pbuffer %p source 0x%x\n", hdc, pbuffer, source);
 
-    if (pbuffer->no_texture)
-    {
-        RtlSetLastWin32Error(ERROR_INVALID_OPERATION);
-        return GL_FALSE;
-    }
-
-    if (!context->draw_view && context->draw_pbuffer == pbuffer)
+    if (!context->draw_view && context->draw_pbuffer == pbuffer && source != GL_NONE)
         opengl_funcs.p_glFlush();
 
-    switch (iBuffer)
-    {
-        case WGL_FRONT_LEFT_ARB:
-            if (pixel_formats[pbuffer->format - 1].stereo)
-                source = GL_FRONT_LEFT;
-            else
-                source = GL_FRONT;
-            break;
-        case WGL_FRONT_RIGHT_ARB:
-            source = GL_FRONT_RIGHT;
-            break;
-        case WGL_BACK_LEFT_ARB:
-            if (pixel_formats[pbuffer->format - 1].stereo)
-                source = GL_BACK_LEFT;
-            else
-                source = GL_BACK;
-            break;
-        case WGL_BACK_RIGHT_ARB:
-            source = GL_BACK_RIGHT;
-            break;
-        case WGL_AUX0_ARB: source = GL_AUX0; break;
-        case WGL_AUX1_ARB: source = GL_AUX1; break;
-        case WGL_AUX2_ARB: source = GL_AUX2; break;
-        case WGL_AUX3_ARB: source = GL_AUX3; break;
-
-        case WGL_AUX4_ARB:
-        case WGL_AUX5_ARB:
-        case WGL_AUX6_ARB:
-        case WGL_AUX7_ARB:
-        case WGL_AUX8_ARB:
-        case WGL_AUX9_ARB:
-            FIXME("unsupported source buffer 0x%x\n", iBuffer);
-            RtlSetLastWin32Error(ERROR_INVALID_DATA);
-            return GL_FALSE;
-
-        default:
-            WARN("unknown source buffer 0x%x\n", iBuffer);
-            RtlSetLastWin32Error(ERROR_INVALID_DATA);
-            return GL_FALSE;
-    }
-
-    err = CGLTexImagePBuffer(context->cglcontext, pbuffer->pbuffer, source);
+    err = CGLTexImagePBuffer(context->cglcontext, pbuffer, source);
     if (err != kCGLNoError)
     {
         WARN("CGLTexImagePBuffer failed with err %d %s\n", err, CGLErrorString(err));
@@ -2276,33 +2222,21 @@ static BOOL macdrv_wglBindTexImageARB(struct wgl_pbuffer *pbuffer, int iBuffer)
     return GL_TRUE;
 }
 
-
 /***********************************************************************
  *              macdrv_wglCreateContextAttribsARB
  *
  * WGL_ARB_create_context: wglCreateContextAttribsARB
  */
-static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
-                                                             struct wgl_context *share_context,
-                                                             const int *attrib_list)
+static BOOL macdrv_context_create(HDC hdc, int format, void *shared, const int *attrib_list, void **private)
 {
-    int format;
-    struct wgl_context *context;
+    struct macdrv_context *share_context = shared;
+    struct macdrv_context *context;
     const int *iptr;
     int major = 1, minor = 0, profile = WGL_CONTEXT_CORE_PROFILE_BIT_ARB, flags = 0;
     BOOL core = FALSE;
     GLint renderer_id = 0;
 
-    TRACE("hdc %p, share_context %p, attrib_list %p\n", hdc, share_context, attrib_list);
-
-    format = opengl_funcs.p_wglGetPixelFormat(hdc);
-
-    if (!is_valid_pixel_format(format))
-    {
-        ERR("Invalid pixel format %d, expect problems!\n", format);
-        RtlSetLastWin32Error(ERROR_INVALID_PIXEL_FORMAT);
-        return NULL;
-    }
+    TRACE("hdc %p, format %d, share_context %p, attrib_list %p\n", hdc, format, share_context, attrib_list);
 
     for (iptr = attrib_list; iptr && *iptr; iptr += 2)
     {
@@ -2338,7 +2272,7 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
                 {
                     WARN("WGL_CONTEXT_PROFILE_MASK_ARB bits %#x invalid\n", value);
                     RtlSetLastWin32Error(ERROR_INVALID_PROFILE_ARB);
-                    return NULL;
+                    return FALSE;
                 }
                 profile = value;
                 break;
@@ -2354,7 +2288,7 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
                 {
                     WARN("CGLQueryRendererInfo failed: %d %s\n", err, CGLErrorString(err));
                     RtlSetLastWin32Error(ERROR_GEN_FAILURE);
-                    return NULL;
+                    return FALSE;
                 }
 
                 value = map_renderer_index(renderer_info, renderer_count, value);
@@ -2364,7 +2298,7 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
                     WARN("WGL_RENDERER_ID_WINE renderer %d exceeds count (%d)\n", value, renderer_count);
                     CGLDestroyRendererInfo(renderer_info);
                     RtlSetLastWin32Error(ERROR_INVALID_PARAMETER);
-                    return NULL;
+                    return FALSE;
                 }
 
                 if (!get_renderer_property(renderer_info, value, kCGLRPRendererID, &temp))
@@ -2372,7 +2306,7 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
                     WARN("WGL_RENDERER_ID_WINE failed to get ID of renderer %d\n", value);
                     CGLDestroyRendererInfo(renderer_info);
                     RtlSetLastWin32Error(ERROR_GEN_FAILURE);
-                    return NULL;
+                    return FALSE;
                 }
 
                 CGLDestroyRendererInfo(renderer_info);
@@ -2381,7 +2315,7 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
                 {
                     WARN("WGL_RENDERER_ID_WINE requested two different renderers (0x%08x vs. 0x%08x)\n", renderer_id, temp);
                     RtlSetLastWin32Error(ERROR_INVALID_PARAMETER);
-                    return NULL;
+                    return FALSE;
                 }
                 renderer_id = temp;
                 break;
@@ -2390,7 +2324,7 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
             default:
                 WARN("Unknown attribute %s.\n", debugstr_attrib(attr, value));
                 RtlSetLastWin32Error(ERROR_INVALID_PARAMETER);
-                return NULL;
+                return FALSE;
         }
     }
 
@@ -2401,13 +2335,13 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
         {
             WARN("OS X only supports forward-compatible 3.2+ contexts\n");
             RtlSetLastWin32Error(ERROR_INVALID_VERSION_ARB);
-            return NULL;
+            return FALSE;
         }
         if (profile != WGL_CONTEXT_CORE_PROFILE_BIT_ARB)
         {
             WARN("Compatibility profiles for GL version >= 3.2 not supported\n");
             RtlSetLastWin32Error(ERROR_INVALID_PROFILE_ARB);
-            return NULL;
+            return FALSE;
         }
         if (major > gl_info.max_major ||
             (major == gl_info.max_major && minor > gl_info.max_minor))
@@ -2415,7 +2349,7 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
             WARN("This GL implementation does not support the requested GL version %u.%u\n",
                  major, minor);
             RtlSetLastWin32Error(ERROR_INVALID_PROFILE_ARB);
-            return NULL;
+            return FALSE;
         }
         core = TRUE;
     }
@@ -2423,224 +2357,80 @@ static struct wgl_context *macdrv_wglCreateContextAttribsARB(HDC hdc,
     {
         WARN("Profile version %u.%u not supported\n", major, minor);
         RtlSetLastWin32Error(ERROR_INVALID_VERSION_ARB);
-        return NULL;
+        return FALSE;
     }
     else if (major < 1 || (major == 1 && (minor < 0 || minor > 5)) ||
              (major == 2 && (minor < 0 || minor > 1)))
     {
         WARN("Invalid GL version requested\n");
         RtlSetLastWin32Error(ERROR_INVALID_VERSION_ARB);
-        return NULL;
+        return FALSE;
     }
     if (!core && flags & WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB)
     {
         WARN("Forward compatible context requested for GL version < 3\n");
         RtlSetLastWin32Error(ERROR_INVALID_VERSION_ARB);
-        return NULL;
+        return FALSE;
     }
 
-    if (!(context = calloc(1, sizeof(*context)))) return NULL;
+    if (!(context = calloc(1, sizeof(*context)))) return FALSE;
 
     context->format = format;
     context->renderer_id = renderer_id;
     if (!create_context(context, share_context ? share_context->cglcontext : NULL, major))
     {
         free(context);
-        return NULL;
+        return FALSE;
     }
 
     pthread_mutex_lock(&context_mutex);
     list_add_tail(&context_list, &context->entry);
     pthread_mutex_unlock(&context_mutex);
 
-    return context;
+    *private = context;
+    return TRUE;
 }
 
-
-/**********************************************************************
- *              macdrv_wglCreatePbufferARB
- *
- * WGL_ARB_pbuffer: wglCreatePbufferARB
- */
-static struct wgl_pbuffer *macdrv_wglCreatePbufferARB(HDC hdc, int iPixelFormat, int iWidth, int iHeight,
-                                                      const int *piAttribList)
+static BOOL macdrv_pbuffer_create(HDC hdc, int format, BOOL largest, GLenum texture_format, GLenum texture_target,
+                                  GLint max_level, GLsizei *width, GLsizei *height, void **private)
 {
-    struct wgl_pbuffer* pbuffer;
-    GLenum target = 0;
-    GLenum internalFormat = 0;
     CGLError err;
 
-    TRACE("hdc %p iPixelFormat %d iWidth %d iHeight %d piAttribList %p\n",
-          hdc, iPixelFormat, iWidth, iHeight, piAttribList);
+    TRACE("hdc %p, format %d, largest %u, texture_format %#x, texture_target %#x, max_level %#x, width %d, height %d, private %p\n",
+          hdc, format, largest, texture_format, texture_target, max_level, *width, *height, private);
 
-    if (!is_valid_pixel_format(iPixelFormat) || !pixel_formats[iPixelFormat - 1].pbuffer)
+    if (!texture_target || !texture_format)
     {
-        WARN("invalid pixel format %d\n", iPixelFormat);
-        RtlSetLastWin32Error(ERROR_INVALID_PIXEL_FORMAT);
-        return NULL;
-    }
-
-    pbuffer = calloc(1, sizeof(*pbuffer));
-    pbuffer->format = iPixelFormat;
-
-    for ( ; piAttribList && *piAttribList; piAttribList += 2)
-    {
-        int attr = piAttribList[0];
-        int value = piAttribList[1];
-
-        switch (attr)
-        {
-            case WGL_PBUFFER_LARGEST_ARB:
-                FIXME("WGL_PBUFFER_LARGEST_ARB: %d; ignoring\n", value);
-                break;
-
-            case WGL_TEXTURE_FORMAT_ARB:
-                switch (value)
-                {
-                    case WGL_TEXTURE_RGBA_ARB:
-                        TRACE("WGL_TEXTURE_FORMAT_ARB: WGL_TEXTURE_RGBA_ARB\n");
-                        internalFormat = GL_RGBA;
-                        break;
-                    case WGL_TEXTURE_RGB_ARB:
-                        TRACE("WGL_TEXTURE_FORMAT_ARB: WGL_TEXTURE_RGB_ARB\n");
-                        internalFormat = GL_RGB;
-                        break;
-                    case WGL_NO_TEXTURE_ARB:
-                        TRACE("WGL_TEXTURE_FORMAT_ARB: WGL_NO_TEXTURE_ARB\n");
-                        internalFormat = 0;
-                        break;
-                    default:
-                        WARN("unknown WGL_TEXTURE_FORMAT_ARB value 0x%x\n", value);
-                        RtlSetLastWin32Error(ERROR_INVALID_DATA);
-                        goto done;
-                }
-                break;
-
-            case WGL_TEXTURE_TARGET_ARB:
-                pbuffer->face = 0;
-                switch (value)
-                {
-                    case WGL_NO_TEXTURE_ARB:
-                        TRACE("WGL_TEXTURE_TARGET_ARB: WGL_NO_TEXTURE_ARB\n");
-                        target = 0;
-                        break;
-                    case WGL_TEXTURE_CUBE_MAP_ARB:
-                        TRACE("WGL_TEXTURE_TARGET_ARB: WGL_TEXTURE_CUBE_MAP_ARB\n");
-                        target = GL_TEXTURE_CUBE_MAP;
-                        pbuffer->face = GL_TEXTURE_CUBE_MAP_POSITIVE_X;
-                        break;
-                    case WGL_TEXTURE_1D_ARB:
-                        FIXME("WGL_TEXTURE_TARGET_ARB: WGL_TEXTURE_1D_ARB; not supported\n");
-                        RtlSetLastWin32Error(ERROR_NO_SYSTEM_RESOURCES);
-                        goto done;
-                    case WGL_TEXTURE_2D_ARB:
-                        TRACE("WGL_TEXTURE_TARGET_ARB: WGL_TEXTURE_2D_ARB\n");
-                        target = GL_TEXTURE_2D;
-                        break;
-                    case WGL_TEXTURE_RECTANGLE_NV:
-                        TRACE("WGL_TEXTURE_TARGET_ARB: WGL_TEXTURE_RECTANGLE_NV\n");
-                        target = GL_TEXTURE_RECTANGLE;
-                        break;
-                    default:
-                        WARN("unknown WGL_TEXTURE_TARGET_ARB value 0x%x\n", value);
-                        RtlSetLastWin32Error(ERROR_INVALID_DATA);
-                        goto done;
-                }
-                break;
-
-            case WGL_MIPMAP_TEXTURE_ARB:
-                TRACE("WGL_MIPMAP_TEXTURE_ARB: %d\n", value);
-                pbuffer->max_level = 0;
-                if (value)
-                {
-                    int size = min(iWidth, iHeight) / 2;
-                    while (size)
-                    {
-                        pbuffer->max_level++;
-                        size /= 2;
-                    }
-                }
-                break;
-
-            default:
-                WARN("unknown attribute 0x%x\n", attr);
-                RtlSetLastWin32Error(ERROR_INVALID_DATA);
-                goto done;
-        }
-    }
-
-    if (!target || !internalFormat)
-    {
-        pbuffer->no_texture = TRUE;
         /* no actual way to turn off ability to texture; use most permissive target */
-        target = GL_TEXTURE_RECTANGLE;
-        internalFormat = GL_RGB;
+        texture_target = GL_TEXTURE_RECTANGLE;
+        texture_format = GL_RGB;
     }
 
-    err = CGLCreatePBuffer(iWidth, iHeight, target, internalFormat, pbuffer->max_level, &pbuffer->pbuffer);
+    err = CGLCreatePBuffer(*width, *height, texture_target, texture_format, max_level, (CGLPBufferObj *)private);
     if (err != kCGLNoError)
     {
         WARN("CGLCreatePBuffer failed; err %d %s\n", err, CGLErrorString(err));
-        pbuffer->pbuffer = NULL;
-        if (err == kCGLBadAlloc)
-            RtlSetLastWin32Error(ERROR_NO_SYSTEM_RESOURCES);
-        else
-            RtlSetLastWin32Error(ERROR_INVALID_DATA);
+        return FALSE;
     }
-
-done:
-    if (!pbuffer->pbuffer)
-    {
-        free(pbuffer);
-        return NULL;
-    }
-
-    TRACE(" -> %p\n", pbuffer);
-    return pbuffer;
-}
-
-
-/**********************************************************************
- *              macdrv_wglDestroyPbufferARB
- *
- * WGL_ARB_pbuffer: wglDestroyPbufferARB
- */
-static BOOL macdrv_wglDestroyPbufferARB(struct wgl_pbuffer *pbuffer)
-{
-    TRACE("pbuffer %p\n", pbuffer);
-    if (pbuffer && pbuffer->pbuffer)
-        CGLReleasePBuffer(pbuffer->pbuffer);
-    free(pbuffer);
-    return GL_TRUE;
-}
-
-
-/**********************************************************************
- *              macdrv_wglGetPbufferDCARB
- *
- * WGL_ARB_pbuffer: wglGetPbufferDCARB
- */
-static HDC macdrv_wglGetPbufferDCARB(struct wgl_pbuffer *pbuffer)
-{
-    HDC hdc;
-    struct wgl_pbuffer *prev;
-
-    hdc = NtGdiOpenDCW(NULL, NULL, NULL, 0, TRUE, NULL, NULL, NULL);
-    if (!hdc) return 0;
 
     pthread_mutex_lock(&dc_pbuffers_mutex);
-    prev = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, hdc);
-    if (prev)
-    {
-        CGLReleasePBuffer(prev->pbuffer);
-        free(prev);
-    }
-    CFDictionarySetValue(dc_pbuffers, hdc, pbuffer);
+    CFDictionarySetValue(dc_pbuffers, hdc, private);
     pthread_mutex_unlock(&dc_pbuffers_mutex);
 
-    NtGdiSetPixelFormat(hdc, pbuffer->format);
-    TRACE("pbuffer %p -> hdc %p\n", pbuffer, hdc);
-    return hdc;
+    TRACE(" -> %p\n", *private);
+    return TRUE;
+}
+
+static BOOL macdrv_pbuffer_destroy(HDC hdc, void *private)
+{
+    TRACE("private %p\n", private);
+
+    pthread_mutex_lock(&dc_pbuffers_mutex);
+    CFDictionaryRemoveValue(dc_pbuffers, hdc);
+    pthread_mutex_unlock(&dc_pbuffers_mutex);
+
+    CGLReleasePBuffer(private);
+    return GL_TRUE;
 }
 
 
@@ -2651,7 +2441,7 @@ static HDC macdrv_wglGetPbufferDCARB(struct wgl_pbuffer *pbuffer)
  */
 static int macdrv_wglGetSwapIntervalEXT(void)
 {
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
     struct macdrv_win_data *data;
     long value;
     CGLError err;
@@ -2680,29 +2470,19 @@ static int macdrv_wglGetSwapIntervalEXT(void)
     return value;
 }
 
-
-/***********************************************************************
- *              macdrv_wglMakeContextCurrentARB
- *
- * WGL_ARB_make_current_read: wglMakeContextCurrentARB
- *
- * This is not supported directly by OpenGL on the Mac.  We emulate it
- * by hooking into glReadPixels, glCopyPixels, and glCopyColorTable to
- * temporarily swap the drawable.  This follows the technique used in
- * the implementation of Mesa GLX for Apple.
- */
-static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct wgl_context *context)
+static BOOL macdrv_context_make_current(HDC draw_hdc, HDC read_hdc, void *private)
 {
+    struct macdrv_context *context = private;
     struct macdrv_win_data *data;
     HWND hwnd;
 
     TRACE("draw_hdc %p read_hdc %p context %p/%p/%p\n", draw_hdc, read_hdc, context,
           (context ? context->context : NULL), (context ? context->cglcontext : NULL));
 
-    if (!context)
+    if (!private)
     {
         macdrv_make_context_current(NULL, NULL, CGRectNull);
-        NtCurrentTeb()->glContext = NULL;
+        NtCurrentTeb()->glReserved2 = NULL;
         return TRUE;
     }
 
@@ -2711,21 +2491,6 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
         if (!(data = get_win_data(hwnd)))
         {
             FIXME("draw DC for window %p of other process: not implemented\n", hwnd);
-            return FALSE;
-        }
-
-        if (!data->pixel_format)
-        {
-            WARN("no pixel format set\n");
-            release_win_data(data);
-            RtlSetLastWin32Error(ERROR_INVALID_HANDLE);
-            return FALSE;
-        }
-        if (context->format != data->pixel_format)
-        {
-            WARN("mismatched pixel format draw_hdc %p %u context %p %u\n", draw_hdc, data->pixel_format, context, context->format);
-            release_win_data(data);
-            RtlSetLastWin32Error(ERROR_INVALID_PIXEL_FORMAT);
             return FALSE;
         }
 
@@ -2741,20 +2506,12 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
     }
     else
     {
-        struct wgl_pbuffer *pbuffer;
+        CGLPBufferObj pbuffer;
 
         pthread_mutex_lock(&dc_pbuffers_mutex);
-        pbuffer = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, draw_hdc);
+        pbuffer = (CGLPBufferObj)CFDictionaryGetValue(dc_pbuffers, draw_hdc);
         if (pbuffer)
         {
-            if (context->format != pbuffer->format)
-            {
-                WARN("mismatched pixel format draw_hdc %p %u context %p %u\n", draw_hdc, pbuffer->format, context, context->format);
-                pthread_mutex_unlock(&dc_pbuffers_mutex);
-                RtlSetLastWin32Error(ERROR_INVALID_PIXEL_FORMAT);
-                return FALSE;
-            }
-
             if (InterlockedCompareExchange(&context->update_swap_interval, FALSE, TRUE) || pbuffer != context->draw_pbuffer)
                 set_swap_interval(context, 0);
         }
@@ -2792,7 +2549,7 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
         else
         {
             pthread_mutex_lock(&dc_pbuffers_mutex);
-            context->read_pbuffer = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, read_hdc);
+            context->read_pbuffer = (CGLPBufferObj)CFDictionaryGetValue(dc_pbuffers, read_hdc);
             pthread_mutex_unlock(&dc_pbuffers_mutex);
         }
     }
@@ -2803,7 +2560,7 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
 
     make_context_current(context, FALSE);
     context->has_been_current = TRUE;
-    NtCurrentTeb()->glContext = context;
+    NtCurrentTeb()->glReserved2 = context;
 
     return TRUE;
 }
@@ -2817,7 +2574,7 @@ static BOOL macdrv_wglMakeContextCurrentARB(HDC draw_hdc, HDC read_hdc, struct w
 static BOOL macdrv_wglQueryCurrentRendererIntegerWINE(GLenum attribute, GLuint *value)
 {
     BOOL ret = FALSE;
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
     CGLPixelFormatObj pixel_format;
     CGLError err;
     GLint virtual_screen;
@@ -2897,7 +2654,7 @@ static BOOL macdrv_wglQueryCurrentRendererIntegerWINE(GLenum attribute, GLuint *
 static const char *macdrv_wglQueryCurrentRendererStringWINE(GLenum attribute)
 {
     const char* ret = NULL;
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
 
     TRACE("context %p/%p/%p attribute 0x%04x\n", context, (context ? context->context : NULL),
           (context ? context->cglcontext : NULL), attribute);
@@ -2924,113 +2681,6 @@ static const char *macdrv_wglQueryCurrentRendererStringWINE(GLenum attribute)
     }
 
     return ret;
-}
-
-
-/**********************************************************************
- *              macdrv_wglQueryPbufferARB
- *
- * WGL_ARB_pbuffer: wglQueryPbufferARB
- */
-static BOOL macdrv_wglQueryPbufferARB(struct wgl_pbuffer *pbuffer, int iAttribute, int *piValue)
-{
-    CGLError err;
-    GLsizei width;
-    GLsizei height;
-    GLenum target;
-    GLenum internalFormat;
-    GLint mipmap;
-
-    TRACE("pbuffer %p iAttribute 0x%x piValue %p\n", pbuffer, iAttribute, piValue);
-
-    err = CGLDescribePBuffer(pbuffer->pbuffer, &width, &height, &target, &internalFormat, &mipmap);
-    if (err != kCGLNoError)
-    {
-        WARN("CGLDescribePBuffer failed; error %d %s\n", err, CGLErrorString(err));
-        RtlSetLastWin32Error(ERROR_INVALID_HANDLE);
-        return GL_FALSE;
-    }
-
-    switch (iAttribute)
-    {
-        case WGL_PBUFFER_WIDTH_ARB:
-            *piValue = width;
-            break;
-        case WGL_PBUFFER_HEIGHT_ARB:
-            *piValue = height;
-            break;
-        case WGL_PBUFFER_LOST_ARB:
-            /* Mac PBuffers can't be lost */
-            *piValue = GL_FALSE;
-            break;
-        case WGL_TEXTURE_FORMAT_ARB:
-            if (pbuffer->no_texture)
-                *piValue = WGL_NO_TEXTURE_ARB;
-            else switch (internalFormat)
-            {
-                case GL_RGBA:
-                    *piValue = WGL_TEXTURE_RGBA_ARB;
-                    break;
-                case GL_RGB:
-                default:
-                    *piValue = WGL_TEXTURE_RGB_ARB;
-                    break;
-            }
-            break;
-        case WGL_TEXTURE_TARGET_ARB:
-            if (pbuffer->no_texture)
-                *piValue = WGL_NO_TEXTURE_ARB;
-            else switch (target)
-            {
-                case GL_TEXTURE_CUBE_MAP:
-                    *piValue = WGL_TEXTURE_CUBE_MAP_ARB;
-                    break;
-                case GL_TEXTURE_2D:
-                    *piValue = WGL_TEXTURE_2D_ARB;
-                    break;
-                case GL_TEXTURE_RECTANGLE:
-                default:
-                    *piValue = WGL_TEXTURE_RECTANGLE_NV;
-                    break;
-            }
-            break;
-        case WGL_MIPMAP_TEXTURE_ARB:
-            *piValue = (pbuffer->max_level > 0);
-            break;
-        case WGL_MIPMAP_LEVEL_ARB:
-            *piValue = pbuffer->level;
-            break;
-        case WGL_CUBE_MAP_FACE_ARB:
-            switch (pbuffer->face)
-            {
-                case GL_TEXTURE_CUBE_MAP_POSITIVE_X:
-                default:
-                    *piValue = WGL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB;
-                    break;
-                case GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
-                    *piValue = WGL_TEXTURE_CUBE_MAP_NEGATIVE_X_ARB;
-                    break;
-                case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
-                    *piValue = WGL_TEXTURE_CUBE_MAP_POSITIVE_Y_ARB;
-                    break;
-                case GL_TEXTURE_CUBE_MAP_NEGATIVE_Y:
-                    *piValue = WGL_TEXTURE_CUBE_MAP_NEGATIVE_Y_ARB;
-                    break;
-                case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
-                    *piValue = WGL_TEXTURE_CUBE_MAP_POSITIVE_Z_ARB;
-                    break;
-                case GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
-                    *piValue = WGL_TEXTURE_CUBE_MAP_NEGATIVE_Z_ARB;
-                    break;
-            }
-            break;
-        default:
-            WARN("invalid attribute 0x%x\n", iAttribute);
-            RtlSetLastWin32Error(ERROR_INVALID_DATA);
-            return GL_FALSE;
-    }
-
-    return GL_TRUE;
 }
 
 
@@ -3127,129 +2777,19 @@ done:
 }
 
 
-/**********************************************************************
- *              macdrv_wglReleasePbufferDCARB
- *
- * WGL_ARB_pbuffer: wglReleasePbufferDCARB
- */
-static int macdrv_wglReleasePbufferDCARB(struct wgl_pbuffer *pbuffer, HDC hdc)
+static BOOL macdrv_pbuffer_updated(HDC hdc, void *private, GLenum cube_face, GLint mipmap_level)
 {
-    struct wgl_pbuffer *prev;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
+    CGLPBufferObj pbuffer = private;
 
-    TRACE("pbuffer %p hdc %p\n", pbuffer, hdc);
-
-    pthread_mutex_lock(&dc_pbuffers_mutex);
-
-    prev = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, hdc);
-    if (prev)
-    {
-        if (prev != pbuffer)
-            FIXME("hdc %p isn't associated with pbuffer %p\n", hdc, pbuffer);
-        CGLReleasePBuffer(prev->pbuffer);
-        free(prev);
-        CFDictionaryRemoveValue(dc_pbuffers, hdc);
-    }
-    else hdc = 0;
-
-    pthread_mutex_unlock(&dc_pbuffers_mutex);
-
-    return hdc && NtGdiDeleteObjectApp(hdc);
-}
-
-
-/**********************************************************************
- *              macdrv_wglReleaseTexImageARB
- *
- * WGL_ARB_render_texture: wglReleaseTexImageARB
- */
-static BOOL macdrv_wglReleaseTexImageARB(struct wgl_pbuffer *pbuffer, int iBuffer)
-{
-    struct wgl_context *context = NtCurrentTeb()->glContext;
-    CGLError err;
-
-    TRACE("pbuffer %p iBuffer 0x%x; stub!\n", pbuffer, iBuffer);
-
-    if (pbuffer->no_texture)
-    {
-        RtlSetLastWin32Error(ERROR_INVALID_OPERATION);
-        return GL_FALSE;
-    }
-
-    err = CGLTexImagePBuffer(context->cglcontext, pbuffer->pbuffer, GL_NONE);
-    if (err != kCGLNoError)
-    {
-        WARN("CGLTexImagePBuffer failed with err %d %s\n", err, CGLErrorString(err));
-        RtlSetLastWin32Error(ERROR_INVALID_OPERATION);
-        return GL_FALSE;
-    }
-
-    return GL_TRUE;
-}
-
-
-/**********************************************************************
- *              macdrv_wglSetPbufferAttribARB
- *
- * WGL_ARB_render_texture: wglSetPbufferAttribARB
- */
-static BOOL macdrv_wglSetPbufferAttribARB(struct wgl_pbuffer *pbuffer, const int *piAttribList)
-{
-    struct wgl_context *context = NtCurrentTeb()->glContext;
-
-    TRACE("pbuffer %p piAttribList %p\n", pbuffer, piAttribList);
-
-    for ( ; piAttribList && *piAttribList; piAttribList += 2)
-    {
-        int attr = piAttribList[0];
-        int value = piAttribList[1];
-        switch (attr)
-        {
-            case WGL_MIPMAP_LEVEL_ARB:
-                TRACE("WGL_MIPMAP_LEVEL_ARB: %d\n", value);
-                pbuffer->level = value;
-                break;
-            case WGL_CUBE_MAP_FACE_ARB:
-                switch (value)
-                {
-                    case WGL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB:
-                        TRACE("WGL_CUBE_MAP_FACE_ARB: WGL_TEXTURE_CUBE_MAP_POSITIVE_X_ARB\n");
-                        pbuffer->face = GL_TEXTURE_CUBE_MAP_POSITIVE_X;
-                        break;
-                    case WGL_TEXTURE_CUBE_MAP_NEGATIVE_X_ARB:
-                        TRACE("WGL_CUBE_MAP_FACE_ARB: WGL_TEXTURE_CUBE_MAP_NEGATIVE_X_ARB\n");
-                        pbuffer->face = GL_TEXTURE_CUBE_MAP_NEGATIVE_X;
-                        break;
-                    case WGL_TEXTURE_CUBE_MAP_POSITIVE_Y_ARB:
-                        TRACE("WGL_CUBE_MAP_FACE_ARB: WGL_TEXTURE_CUBE_MAP_POSITIVE_Y_ARB\n");
-                        pbuffer->face = GL_TEXTURE_CUBE_MAP_POSITIVE_Y;
-                        break;
-                    case WGL_TEXTURE_CUBE_MAP_NEGATIVE_Y_ARB:
-                        TRACE("WGL_CUBE_MAP_FACE_ARB: WGL_TEXTURE_CUBE_MAP_NEGATIVE_Y_ARB\n");
-                        pbuffer->face = GL_TEXTURE_CUBE_MAP_NEGATIVE_Y;
-                        break;
-                    case WGL_TEXTURE_CUBE_MAP_POSITIVE_Z_ARB:
-                        TRACE("WGL_CUBE_MAP_FACE_ARB: WGL_TEXTURE_CUBE_MAP_POSITIVE_Z_ARB\n");
-                        pbuffer->face = GL_TEXTURE_CUBE_MAP_POSITIVE_Z;
-                        break;
-                    case WGL_TEXTURE_CUBE_MAP_NEGATIVE_Z_ARB:
-                        TRACE("WGL_CUBE_MAP_FACE_ARB: WGL_TEXTURE_CUBE_MAP_NEGATIVE_Z_ARB\n");
-                        pbuffer->face = GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
-                        break;
-                    default:
-                        WARN("unknown WGL_CUBE_MAP_FACE_ARB value 0x%x\n", value);
-                        RtlSetLastWin32Error(ERROR_INVALID_DATA);
-                        return GL_FALSE;
-                }
-                break;
-            default:
-                WARN("invalid attribute 0x%x\n", attr);
-                RtlSetLastWin32Error(ERROR_INVALID_DATA);
-                return GL_FALSE;
-        }
-    }
+    TRACE("hdc %p pbuffer %p cube_face %#x mipmap_level %d\n", hdc, pbuffer, cube_face, mipmap_level);
 
     if (context && context->draw_pbuffer == pbuffer)
+    {
+        context->draw_pbuffer_face = cube_face;
+        context->draw_pbuffer_level = mipmap_level;
         make_context_current(context, FALSE);
+    }
 
     return GL_TRUE;
 }
@@ -3262,7 +2802,7 @@ static BOOL macdrv_wglSetPbufferAttribARB(struct wgl_pbuffer *pbuffer, const int
  */
 static BOOL macdrv_wglSwapIntervalEXT(int interval)
 {
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
     BOOL changed = FALSE;
 
     TRACE("interval %d\n", interval);
@@ -3301,10 +2841,10 @@ static BOOL macdrv_wglSwapIntervalEXT(int interval)
 
     if (changed)
     {
-        struct wgl_context *ctx;
+        struct macdrv_context *ctx;
 
         pthread_mutex_lock(&context_mutex);
-        LIST_FOR_EACH_ENTRY(ctx, &context_list, struct wgl_context, entry)
+        LIST_FOR_EACH_ENTRY(ctx, &context_list, struct macdrv_context, entry)
         {
             if (ctx != context && ctx->draw_hwnd == context->draw_hwnd)
                 InterlockedExchange(&context->update_swap_interval, TRUE);
@@ -3330,9 +2870,6 @@ static const char *macdrv_init_wgl_extensions(void)
     /*
      * ARB Extensions
      */
-    register_extension("WGL_ARB_make_current_read");
-    opengl_funcs.p_wglGetCurrentReadDCARB   = (void *)1;  /* never called */
-    opengl_funcs.p_wglMakeContextCurrentARB = macdrv_wglMakeContextCurrentARB;
 
     if (gluCheckExtension((GLubyte*)"GL_ARB_color_buffer_float", (GLubyte*)gl_info.glExtensions))
     {
@@ -3348,26 +2885,10 @@ static const char *macdrv_init_wgl_extensions(void)
 
     if (gluCheckExtension((GLubyte*)"GL_APPLE_pixel_buffer", (GLubyte*)gl_info.glExtensions))
     {
-        register_extension("WGL_ARB_pbuffer");
-        opengl_funcs.p_wglCreatePbufferARB    = macdrv_wglCreatePbufferARB;
-        opengl_funcs.p_wglDestroyPbufferARB   = macdrv_wglDestroyPbufferARB;
-        opengl_funcs.p_wglGetPbufferDCARB     = macdrv_wglGetPbufferDCARB;
-        opengl_funcs.p_wglQueryPbufferARB     = macdrv_wglQueryPbufferARB;
-        opengl_funcs.p_wglReleasePbufferDCARB = macdrv_wglReleasePbufferDCARB;
-
-        register_extension("WGL_ARB_render_texture");
-        opengl_funcs.p_wglBindTexImageARB       = macdrv_wglBindTexImageARB;
-        opengl_funcs.p_wglReleaseTexImageARB    = macdrv_wglReleaseTexImageARB;
-        opengl_funcs.p_wglSetPbufferAttribARB   = macdrv_wglSetPbufferAttribARB;
-
         if (gluCheckExtension((GLubyte*)"GL_ARB_texture_rectangle", (GLubyte*)gl_info.glExtensions) ||
             gluCheckExtension((GLubyte*)"GL_EXT_texture_rectangle", (GLubyte*)gl_info.glExtensions))
             register_extension("WGL_NV_render_texture_rectangle");
     }
-
-    register_extension("WGL_ARB_create_context");
-    register_extension("WGL_ARB_create_context_profile");
-    opengl_funcs.p_wglCreateContextAttribsARB = macdrv_wglCreateContextAttribsARB;
 
     /*
      * EXT Extensions
@@ -3462,9 +2983,6 @@ UINT macdrv_OpenGLInit(UINT version, struct opengl_funcs **funcs, const struct o
     if (gluCheckExtension((GLubyte*)"GL_APPLE_flush_render", (GLubyte*)gl_info.glExtensions))
         pglFlushRenderAPPLE = dlsym(opengl_handle, "glFlushRenderAPPLE");
 
-    if (!init_pixel_formats())
-        goto failed;
-
     *funcs = &opengl_funcs;
     *driver_funcs = &macdrv_driver_funcs;
     return STATUS_SUCCESS;
@@ -3499,9 +3017,12 @@ void sync_gl_view(struct macdrv_win_data* data, const struct window_rects *old_r
 }
 
 
-static void describe_pixel_format(const pixel_format *pf, struct wgl_pixel_format *descr)
+static BOOL macdrv_describe_pixel_format(int format, struct wgl_pixel_format *descr)
 {
+    const pixel_format *pf = pixel_formats + format - 1;
     const struct color_mode *mode;
+
+    if (format <= 0 || format > nb_formats) return FALSE;
 
     memset(descr, 0, sizeof(*descr));
     descr->pfd.nSize        = sizeof(*descr);
@@ -3582,13 +3103,13 @@ static void describe_pixel_format(const pixel_format *pf, struct wgl_pixel_forma
     descr->max_pbuffer_width = gl_info.max_viewport_dims[0];
     descr->max_pbuffer_height = gl_info.max_viewport_dims[1];
     descr->max_pbuffer_pixels = gl_info.max_viewport_dims[0] * gl_info.max_viewport_dims[1];
+
+    return TRUE;
 }
 
-/***********************************************************************
- *              macdrv_wglCopyContext
- */
-static BOOL macdrv_wglCopyContext(struct wgl_context *src, struct wgl_context *dst, UINT mask)
+static BOOL macdrv_context_copy(void *src_private, void *dst_private, UINT mask)
 {
+    struct macdrv_context *src = src_private, *dst = dst_private;
     CGLError err;
 
     TRACE("src %p dst %p mask %x\n", src, dst, mask);
@@ -3599,25 +3120,10 @@ static BOOL macdrv_wglCopyContext(struct wgl_context *src, struct wgl_context *d
     return (err == kCGLNoError);
 }
 
-/***********************************************************************
- *              macdrv_wglCreateContext
- */
-static struct wgl_context *macdrv_wglCreateContext(HDC hdc)
+static BOOL macdrv_context_destroy(void *private)
 {
-    struct wgl_context *context;
+    struct macdrv_context *context = private;
 
-    TRACE("hdc %p\n", hdc);
-
-    context = macdrv_wglCreateContextAttribsARB(hdc, NULL, NULL);
-
-    return context;
-}
-
-/***********************************************************************
- *              macdrv_wglDeleteContext
- */
-static BOOL macdrv_wglDeleteContext(struct wgl_context *context)
-{
     TRACE("deleting context %p/%p/%p\n", context, context->context, context->cglcontext);
 
     pthread_mutex_lock(&context_mutex);
@@ -3629,47 +3135,9 @@ static BOOL macdrv_wglDeleteContext(struct wgl_context *context)
     return TRUE;
 }
 
-/***********************************************************************
- *              macdrv_wglGetProcAddress
- */
-static PROC macdrv_wglGetProcAddress(const char *proc)
+static BOOL macdrv_context_share(void *src_private, void *dst_private)
 {
-    void *ret;
-
-    if (!strncmp(proc, "wgl", 3)) return NULL;
-    ret = dlsym(opengl_handle, proc);
-    if (ret)
-    {
-        if (TRACE_ON(wgl))
-        {
-            Dl_info info;
-            if (dladdr(ret, &info))
-                TRACE("%s -> %s from %s\n", proc, info.dli_sname, info.dli_fname);
-            else
-                TRACE("%s -> %p (no library info)\n", proc, ret);
-        }
-    }
-    else
-        WARN("failed to find proc %s\n", debugstr_a(proc));
-    return ret;
-}
-
-/***********************************************************************
- *              macdrv_wglMakeCurrent
- */
-static BOOL macdrv_wglMakeCurrent(HDC hdc, struct wgl_context *context)
-{
-    TRACE("hdc %p context %p/%p/%p\n", hdc, context, (context ? context->context : NULL),
-          (context ? context->cglcontext : NULL));
-
-    return macdrv_wglMakeContextCurrentARB(hdc, hdc, context);
-}
-
-/***********************************************************************
- *              macdrv_wglShareLists
- */
-static BOOL macdrv_wglShareLists(struct wgl_context *org, struct wgl_context *dest)
-{
+    struct macdrv_context *org = src_private, *dest = dst_private;
     macdrv_opengl_context saved_context;
     CGLContextObj saved_cglcontext;
 
@@ -3718,12 +3186,37 @@ static BOOL macdrv_wglShareLists(struct wgl_context *org, struct wgl_context *de
     return TRUE;
 }
 
+/***********************************************************************
+ *              macdrv_wglGetProcAddress
+ */
+static PROC macdrv_wglGetProcAddress(const char *proc)
+{
+    void *ret;
+
+    if (!strncmp(proc, "wgl", 3)) return NULL;
+    ret = dlsym(opengl_handle, proc);
+    if (ret)
+    {
+        if (TRACE_ON(wgl))
+        {
+            Dl_info info;
+            if (dladdr(ret, &info))
+                TRACE("%s -> %s from %s\n", proc, info.dli_sname, info.dli_fname);
+            else
+                TRACE("%s -> %p (no library info)\n", proc, ret);
+        }
+    }
+    else
+        WARN("failed to find proc %s\n", debugstr_a(proc));
+    return ret;
+}
+
 /**********************************************************************
  *              macdrv_wglSwapBuffers
  */
 static BOOL macdrv_wglSwapBuffers(HDC hdc)
 {
-    struct wgl_context *context = NtCurrentTeb()->glContext;
+    struct macdrv_context *context = NtCurrentTeb()->glReserved2;
     BOOL match = FALSE;
     HWND hwnd;
 
@@ -3753,10 +3246,10 @@ static BOOL macdrv_wglSwapBuffers(HDC hdc)
     }
     else
     {
-        struct wgl_pbuffer *pbuffer;
+        CGLPBufferObj pbuffer;
 
         pthread_mutex_lock(&dc_pbuffers_mutex);
-        pbuffer = (struct wgl_pbuffer*)CFDictionaryGetValue(dc_pbuffers, hdc);
+        pbuffer = (CGLPBufferObj)CFDictionaryGetValue(dc_pbuffers, hdc);
         pthread_mutex_unlock(&dc_pbuffers_mutex);
 
         if (!pbuffer)
@@ -3785,38 +3278,25 @@ static BOOL macdrv_wglSwapBuffers(HDC hdc)
     return TRUE;
 }
 
-/**********************************************************************
- *              macdrv_get_pixel_formats
- */
-static void macdrv_get_pixel_formats(struct wgl_pixel_format *formats,
-                                     UINT max_formats, UINT *num_formats,
-                                     UINT *num_onscreen_formats)
-{
-    UINT i;
-
-    if (formats)
-    {
-        for (i = 0; i < min(max_formats, nb_formats); ++i)
-            describe_pixel_format(&pixel_formats[i], &formats[i]);
-    }
-    *num_formats = nb_formats;
-    *num_onscreen_formats = nb_displayable_formats;
-}
-
 static const struct opengl_driver_funcs macdrv_driver_funcs =
 {
+    .p_init_pixel_formats = macdrv_init_pixel_formats,
+    .p_describe_pixel_format = macdrv_describe_pixel_format,
     .p_init_wgl_extensions = macdrv_init_wgl_extensions,
     .p_set_pixel_format = macdrv_set_pixel_format,
+    .p_pbuffer_create = macdrv_pbuffer_create,
+    .p_pbuffer_destroy = macdrv_pbuffer_destroy,
+    .p_pbuffer_updated = macdrv_pbuffer_updated,
+    .p_pbuffer_bind = macdrv_pbuffer_bind,
+    .p_context_create = macdrv_context_create,
+    .p_context_destroy = macdrv_context_destroy,
+    .p_context_copy = macdrv_context_copy,
+    .p_context_share = macdrv_context_share,
+    .p_context_make_current = macdrv_context_make_current,
 };
 
 static struct opengl_funcs opengl_funcs =
 {
-    .p_wglCopyContext = macdrv_wglCopyContext,
-    .p_wglCreateContext = macdrv_wglCreateContext,
-    .p_wglDeleteContext = macdrv_wglDeleteContext,
     .p_wglGetProcAddress = macdrv_wglGetProcAddress,
-    .p_wglMakeCurrent = macdrv_wglMakeCurrent,
-    .p_wglShareLists = macdrv_wglShareLists,
     .p_wglSwapBuffers = macdrv_wglSwapBuffers,
-    .p_get_pixel_formats = macdrv_get_pixel_formats,
 };

@@ -1670,7 +1670,6 @@ void CDECL wined3d_stateblock_set_render_state(struct wined3d_stateblock *stateb
         case WINED3D_RS_COLORVERTEX:
         case WINED3D_RS_DIFFUSEMATERIALSOURCE:
         case WINED3D_RS_EMISSIVEMATERIALSOURCE:
-        case WINED3D_RS_FOGENABLE:
         case WINED3D_RS_LIGHTING:
         case WINED3D_RS_LOCALVIEWER:
         case WINED3D_RS_NORMALIZENORMALS:
@@ -1704,14 +1703,26 @@ void CDECL wined3d_stateblock_set_render_state(struct wined3d_stateblock *stateb
             stateblock->changed.fog_constants = 1;
             break;
 
-        case WINED3D_RS_FOGTABLEMODE:
         case WINED3D_RS_FOGVERTEXMODE:
             stateblock->changed.ffp_vs_settings = 1;
             stateblock->changed.fog_constants = 1;
             break;
 
+        case WINED3D_RS_ALPHAFUNC:
+        case WINED3D_RS_ALPHATESTENABLE:
         case WINED3D_RS_POINTSPRITEENABLE:
         case WINED3D_RS_SHADEMODE:
+            stateblock->changed.extra_ps_args = 1;
+            break;
+
+        case WINED3D_RS_FOGENABLE:
+            stateblock->changed.ffp_vs_settings = 1;
+            stateblock->changed.extra_ps_args = 1;
+            break;
+
+        case WINED3D_RS_FOGTABLEMODE:
+            stateblock->changed.ffp_vs_settings = 1;
+            stateblock->changed.fog_constants = 1;
             stateblock->changed.extra_ps_args = 1;
             break;
 
@@ -1770,6 +1781,7 @@ void CDECL wined3d_stateblock_set_texture_stage_state(struct wined3d_stateblock 
         case WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS:
             stateblock->changed.texture_matrices = 1;
             stateblock->changed.ffp_ps_settings = 1;
+            stateblock->changed.extra_ps_args = 1;
             break;
 
         case WINED3D_TSS_ALPHA_ARG0:
@@ -2715,24 +2727,6 @@ static void wined3d_device_set_light_enable(struct wined3d_device *device, unsig
         wined3d_device_context_emit_set_light_enable(&device->cs->c, light_idx, enable);
 }
 
-static void wined3d_device_set_clip_plane(struct wined3d_device *device,
-        unsigned int plane_idx, const struct wined3d_vec4 *plane)
-{
-    struct wined3d_vec4 *clip_planes = device->cs->c.state->clip_planes;
-
-    TRACE("device %p, plane_idx %u, plane %p.\n", device, plane_idx, plane);
-
-    if (!memcmp(&clip_planes[plane_idx], plane, sizeof(*plane)))
-    {
-        TRACE("Application is setting old values over, nothing to do.\n");
-        return;
-    }
-
-    clip_planes[plane_idx] = *plane;
-
-    wined3d_device_context_emit_set_clip_plane(&device->cs->c, plane_idx, plane);
-}
-
 static void resolve_depth_buffer(struct wined3d_device *device)
 {
     const struct wined3d_state *state = device->cs->c.state;
@@ -3208,6 +3202,8 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                 case WINED3D_RS_FOGEND:
                 case WINED3D_RS_FOGSTART:
                 case WINED3D_RS_POINTSPRITEENABLE:
+                case WINED3D_RS_ALPHAFUNC:
+                case WINED3D_RS_ALPHATESTENABLE:
                     break;
 
                 case WINED3D_RS_ANTIALIAS:
@@ -3721,6 +3717,8 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
     map = changed->clipplane;
     while (map)
     {
+        struct wined3d_vec4 plane;
+
         i = wined3d_bit_scan(&map);
 
         /* In Direct3D, clipping is done based on the position as transformed
@@ -3743,17 +3741,19 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
         if (!state->vs)
         {
             struct wined3d_matrix matrix;
-            struct wined3d_vec4 plane;
 
             invert_matrix(&matrix, &state->transforms[WINED3D_TS_VIEW]);
             transpose_matrix(&matrix, &matrix);
             wined3d_vec4_transform(&plane, &state->clip_planes[i], &matrix);
-            wined3d_device_set_clip_plane(device, i, &plane);
         }
         else
         {
-            wined3d_device_set_clip_plane(device, i, &state->clip_planes[i]);
+            plane = state->clip_planes[i];
         }
+
+        wined3d_device_context_push_constants(context,
+                WINED3D_PUSH_CONSTANTS_VS_FFP, WINED3D_SHADER_CONST_VS_CLIP_PLANES,
+                offsetof(struct wined3d_ffp_vs_constants, clip_planes[i]), sizeof(plane), &plane);
     }
 
     if (changed->material)
@@ -3954,6 +3954,14 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
 
         args.point_sprite = state->rs[WINED3D_RS_POINTSPRITEENABLE];
         args.flat_shading = state->rs[WINED3D_RS_SHADEMODE] == WINED3D_SHADE_FLAT;
+        args.fog_enable = state->rs[WINED3D_RS_FOGENABLE];
+        args.fog_mode = state->rs[WINED3D_RS_FOGTABLEMODE];
+        args.alpha_func = state->rs[WINED3D_RS_ALPHATESTENABLE] ? state->rs[WINED3D_RS_ALPHAFUNC] : WINED3D_CMP_ALWAYS;
+        for (unsigned int i = 0; i < 4; ++i)
+        {
+            args.texture_transform_flags[i] = state->texture_states[i][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS];
+            args.texcoord_index[i] = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
+        }
         wined3d_device_context_emit_set_extra_ps_args(context, &args);
     }
 
@@ -3980,7 +3988,7 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
             float start = int_to_float(state->rs[WINED3D_RS_FOGSTART]);
             float end = int_to_float(state->rs[WINED3D_RS_FOGEND]);
 
-            if (start == end)
+            if (start == end && state->rs[WINED3D_RS_FOGTABLEMODE] == WINED3D_FOG_NONE)
             {
                 /* With vertex fog, everything is fogged.
                  * With pixel fog, coordinates < start are unfogged,

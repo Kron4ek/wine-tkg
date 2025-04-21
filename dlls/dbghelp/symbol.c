@@ -70,15 +70,15 @@ int __cdecl symt_cmp_addr(const void* p1, const void* p2)
  *     which is exposed to the caller and index is the index of the symbol in
  *     this array
  */
-DWORD             symt_ptr2index(struct module* module, const struct symt* sym)
+DWORD             symt_symref_to_index(struct module* module, symref_t symref)
 {
     struct vector* vector;
     DWORD offset;
-    const struct symt** c;
+    symref_t *c;
     int len, i;
 
-    if (!sym) return 0;
-    if (sym->tag == SymTagCustom)
+    if (!symref) return 0;
+    if (symt_is_symref_ptr(symref) && ((struct symt*)symref)->tag == SymTagCustom)
     {
         vector = &module->vcustom_symt;
         offset = BASE_CUSTOM_SYMT;
@@ -89,23 +89,23 @@ DWORD             symt_ptr2index(struct module* module, const struct symt* sym)
         vector = &module->vsymt;
         offset = 1;
 #else
-        return (DWORD)sym;
+        return (DWORD)symref;
 #endif
     }
     len = vector_length(vector);
     /* FIXME: this is inefficient */
     for (i = 0; i < len; i++)
     {
-        if (*(struct symt**)vector_at(vector, i) == sym)
+        if (*(symref_t*)vector_at(vector, i) == symref)
             return i + offset;
     }
     /* not found */
     c = vector_add(vector, &module->pool);
-    if (c) *c = sym;
+    if (c) *c = symref;
     return len + offset;
 }
 
-struct symt*      symt_index2ptr(struct module* module, DWORD id)
+symref_t      symt_index_to_symref(struct module* module, DWORD id)
 {
     struct vector* vector;
     if (id >= BASE_CUSTOM_SYMT)
@@ -116,13 +116,13 @@ struct symt*      symt_index2ptr(struct module* module, DWORD id)
     else
     {
 #ifdef _WIN64
-        if (!id--) return NULL;
+        if (!id--) return 0;
         vector = &module->vsymt;
 #else
-        return (struct symt*)id;
+        return (symref_t)id;
 #endif
     }
-    return (id >= vector_length(vector)) ? NULL : *(struct symt**)vector_at(vector, id);
+    return (id >= vector_length(vector)) ? 0 : *(symref_t *)vector_at(vector, id);
 }
 
 static BOOL symt_grow_sorttab(struct module* module, unsigned sz)
@@ -288,13 +288,13 @@ struct symt_data* symt_new_global_variable(struct module* module,
                                            struct symt_compiland* compiland, 
                                            const char* name, unsigned is_static,
                                            struct location loc, ULONG_PTR size,
-                                           struct symt* type)
+                                           symref_t type)
 {
     struct symt_data*   sym;
     struct symt**       p;
     DWORD64             tsz;
 
-    TRACE_(dbghelp_symt)("Adding global symbol %s:%s %d@%Ix %p\n",
+    TRACE_(dbghelp_symt)("Adding global symbol %s:%s %d@%Ix %Ix\n",
                          debugstr_w(module->modulename), debugstr_a(name), loc.kind, loc.offset, type);
     if ((sym = pool_alloc(&module->pool, sizeof(*sym))))
     {
@@ -304,7 +304,7 @@ struct symt_data* symt_new_global_variable(struct module* module,
         sym->container     = compiland ? &compiland->symt : &module->top->symt;
         sym->type          = type;
         sym->u.var         = loc;
-        if (type && size && symt_get_info(module, type, TI_GET_LENGTH, &tsz))
+        if (type && size && symt_get_info_from_symref(module, type, TI_GET_LENGTH, &tsz))
         {
             if (tsz != size)
                 FIXME("Size mismatch for %s.%s between type (%I64u) and src (%Iu)\n",
@@ -321,12 +321,11 @@ static struct symt_function* init_function_or_inlinesite(struct module* module,
                                                          DWORD tag,
                                                          struct symt* container,
                                                          const char* name,
-                                                         struct symt* sig_type,
+                                                         symref_t sig_type,
                                                          unsigned num_ranges)
 {
     struct symt_function* sym;
 
-    assert(!sig_type || sig_type->tag == SymTagFunctionType);
     if ((sym = pool_alloc(&module->pool, offsetof(struct symt_function, ranges[num_ranges]))))
     {
         sym->symt.tag  = tag;
@@ -344,7 +343,7 @@ struct symt_function* symt_new_function(struct module* module,
                                         struct symt_compiland* compiland,
                                         const char* name,
                                         ULONG_PTR addr, ULONG_PTR size,
-                                        struct symt* sig_type)
+                                        symref_t sig_type)
 {
     struct symt_function* sym;
 
@@ -370,7 +369,7 @@ struct symt_function* symt_new_inlinesite(struct module* module,
                                           struct symt_function* func,
                                           struct symt* container,
                                           const char* name,
-                                          struct symt* sig_type,
+                                          symref_t sig_type,
                                           unsigned num_ranges)
 {
     struct symt_function* sym;
@@ -461,17 +460,17 @@ void symt_add_func_line(struct module* module, struct symt_function* func,
  * Otherwise, the variable is stored on the stack:
  *      - offset is then the offset from the frame register
  */
-struct symt_data* symt_add_func_local(struct module* module, 
-                                      struct symt_function* func, 
+struct symt_data* symt_add_func_local(struct module* module,
+                                      struct symt_function* func,
                                       enum DataKind dt,
                                       const struct location* loc,
-                                      struct symt_block* block, 
-                                      struct symt* type, const char* name)
+                                      struct symt_block* block,
+                                      symref_t type, const char* name)
 {
     struct symt_data*   locsym;
     struct symt**       p;
 
-    TRACE_(dbghelp_symt)("Adding local symbol (%s:%s): %s %p\n",
+    TRACE_(dbghelp_symt)("Adding local symbol (%s:%s): %s %Ix\n",
                          debugstr_w(module->modulename), debugstr_a(func->hash_elt.name),
                          debugstr_a(name), type);
 
@@ -504,13 +503,13 @@ struct symt_data* symt_add_func_local(struct module* module,
 struct symt_data* symt_add_func_constant(struct module* module,
                                          struct symt_function* func,
                                          struct symt_block* block,
-                                         struct symt* type, const char* name,
+                                         symref_t type, const char* name,
                                          VARIANT* v)
 {
     struct symt_data*   locsym;
     struct symt**       p;
 
-    TRACE_(dbghelp_symt)("Adding local constant (%s:%s): %s %p\n",
+    TRACE_(dbghelp_symt)("Adding local constant (%s:%s): %s %Ix\n",
                          debugstr_w(module->modulename), debugstr_a(func->hash_elt.name),
                          debugstr_a(name), type);
 
@@ -620,7 +619,7 @@ struct symt_thunk* symt_new_thunk(struct module* module,
 
 struct symt_data* symt_new_constant(struct module* module,
                                     struct symt_compiland* compiland,
-                                    const char* name, struct symt* type,
+                                    const char* name, symref_t type,
                                     const VARIANT* v)
 {
     struct symt_data*  sym;
@@ -694,7 +693,7 @@ struct symt_custom* symt_new_custom(struct module* module, const char* name,
 }
 
 /* expect sym_info->MaxNameLen to be set before being called */
-static void symt_fill_sym_info(struct module_pair* pair,
+static BOOL symt_fill_sym_info(struct module_pair* pair,
                                const struct symt_function* func,
                                const struct symt* sym, SYMBOL_INFO* sym_info)
 {
@@ -704,17 +703,18 @@ static void symt_fill_sym_info(struct module_pair* pair,
 
     if (!symt_get_info(pair->effective, sym, TI_GET_TYPE, &sym_info->TypeIndex))
         sym_info->TypeIndex = 0;
-    sym_info->Index = symt_ptr2index(pair->effective, sym);
+    sym_info->Index = symt_ptr_to_index(pair->effective, sym);
     sym_info->Reserved[0] = sym_info->Reserved[1] = 0;
     if (!symt_get_info(pair->effective, sym, TI_GET_LENGTH, &size) &&
         (!sym_info->TypeIndex ||
-         !symt_get_info(pair->effective, symt_index2ptr(pair->effective, sym_info->TypeIndex),
-                         TI_GET_LENGTH, &size)))
+         !symt_get_info_from_index(pair->effective, sym_info->TypeIndex, TI_GET_LENGTH, &size)))
         size = 0;
     sym_info->Size = (DWORD)size;
     sym_info->ModBase = pair->requested->module.BaseOfImage;
     sym_info->Flags = 0;
     sym_info->Value = 0;
+    sym_info->Address = 0;
+    sym_info->Register = 0;
 
     switch (sym->tag)
     {
@@ -745,12 +745,16 @@ static void symt_fill_sym_info(struct module_pair* pair,
                     switch (loc.kind)
                     {
                     case loc_error:
+                        if (loc.reg == loc_err_out_of_scope)
+                        {
+                            sym_info->Flags |= SYMFLAG_NULL;
+                            break;
+                        }
                         /* for now we report error cases as a negative register number */
                         /* fall through */
                     case loc_register:
                         sym_info->Flags |= SYMFLAG_REGISTER;
                         sym_info->Register = loc.reg;
-                        sym_info->Address = 0;
                         break;
                     case loc_regrel:
                         sym_info->Flags |= SYMFLAG_REGREL;
@@ -779,7 +783,6 @@ static void symt_fill_sym_info(struct module_pair* pair,
                     /* fall through */
                 case loc_absolute:
                     symt_get_address(sym, &sym_info->Address);
-                    sym_info->Register = 0;
                     break;
                 default:
                     FIXME("Shouldn't happen (kind=%d), debug reader backend is broken\n", data->u.var.kind);
@@ -839,7 +842,6 @@ static void symt_fill_sym_info(struct module_pair* pair,
         break;
     default:
         symt_get_address(sym, &sym_info->Address);
-        sym_info->Register = 0;
         break;
     }
     sym_info->Scope = 0; /* FIXME */
@@ -857,6 +859,7 @@ static void symt_fill_sym_info(struct module_pair* pair,
 
     TRACE_(dbghelp_symt)("%p => %s %lu %I64x\n",
                          sym, debugstr_a(sym_info->Name), sym_info->Size, sym_info->Address);
+    return TRUE;
 }
 
 struct sym_enum
@@ -873,7 +876,7 @@ struct sym_enum
 static BOOL send_symbol(const struct sym_enum* se, struct module_pair* pair,
                         const struct symt_function* func, const struct symt* sym)
 {
-    symt_fill_sym_info(pair, func, sym, se->sym_info);
+    if (!symt_fill_sym_info(pair, func, sym, se->sym_info)) return FALSE;
     if (se->index && se->sym_info->Index != se->index) return FALSE;
     if (se->tag && se->sym_info->Tag != se->tag) return FALSE;
     if (se->addr && !(se->addr >= se->sym_info->Address && se->addr < se->sym_info->Address + se->sym_info->Size)) return FALSE;
@@ -990,7 +993,7 @@ static void symt_get_length(struct module* module, const struct symt* symt, ULON
         return;
 
     if (symt_get_info(module, symt, TI_GET_TYPE, &type_index) &&
-        symt_get_info(module, symt_index2ptr(module, type_index), TI_GET_LENGTH, size)) return;
+        symt_get_info_from_index(module, type_index, TI_GET_LENGTH, size)) return;
     *size = 1; /* no size info */
 }
 
@@ -2645,14 +2648,15 @@ BOOL WINAPI SymGetLineFromNameW64(HANDLE hProcess, PCWSTR ModuleName, PCWSTR Fil
 BOOL WINAPI SymFromIndex(HANDLE hProcess, ULONG64 BaseOfDll, DWORD index, PSYMBOL_INFO symbol)
 {
     struct module_pair  pair;
-    struct symt*        sym;
+    symref_t            symref;
 
     TRACE("hProcess = %p, BaseOfDll = %I64x, index = %ld, symbol = %p\n",
           hProcess, BaseOfDll, index, symbol);
 
     if (!module_init_pair(&pair, hProcess, BaseOfDll)) return FALSE;
-    if ((sym = symt_index2ptr(pair.effective, index)) == NULL) return FALSE;
-    symt_fill_sym_info(&pair, NULL, sym, symbol);
+    if ((symref = symt_index_to_symref(pair.effective, index)) == 0) return FALSE;
+    if (!symt_is_symref_ptr(symref)) return FALSE;
+    symt_fill_sym_info(&pair, NULL, (struct symt*)symref, symbol);
     return TRUE;
 }
 

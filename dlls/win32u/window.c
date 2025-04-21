@@ -1476,7 +1476,7 @@ BOOL set_window_pixel_format( HWND hwnd, int format, BOOL internal )
     return TRUE;
 }
 
-int get_window_pixel_format( HWND hwnd )
+int get_window_pixel_format( HWND hwnd, BOOL internal )
 {
     WND *win = get_win_ptr( hwnd );
     int ret;
@@ -1487,7 +1487,7 @@ int get_window_pixel_format( HWND hwnd )
         return 0;
     }
 
-    ret = win->pixel_format;
+    ret = internal && win->internal_pixel_format ? win->internal_pixel_format : win->pixel_format;
     release_win_ptr( win );
 
     return ret;
@@ -2677,11 +2677,11 @@ HWND WINAPI NtUserRealChildWindowFromPoint( HWND parent, LONG x, LONG y )
 }
 
 /*******************************************************************
- *           get_work_rect
+ *           get_maximized_rect
  *
- * Get the work area that a maximized window can cover, depending on style.
+ * Get the area that a maximized window can cover, depending on style.
  */
-static BOOL get_work_rect( HWND hwnd, RECT *rect )
+static BOOL get_maximized_rect( HWND hwnd, RECT *rect )
 {
     MONITORINFO mon_info;
     DWORD style;
@@ -2690,24 +2690,9 @@ static BOOL get_work_rect( HWND hwnd, RECT *rect )
     *rect = mon_info.rcMonitor;
 
     style = get_window_long( hwnd, GWL_STYLE );
-    if (style & WS_MAXIMIZEBOX)
-    {
-        if ((style & WS_CAPTION) == WS_CAPTION || !(style & (WS_CHILD | WS_POPUP)))
-            *rect = mon_info.rcWork;
-    }
+    if (style & WS_MAXIMIZEBOX && (style & WS_CAPTION) == WS_CAPTION && !(style & WS_CHILD))
+        *rect = mon_info.rcWork;
     return TRUE;
-}
-
-static RECT get_maximized_work_rect( HWND hwnd )
-{
-    RECT work_rect = { 0 };
-
-    if ((get_window_long( hwnd, GWL_STYLE ) & (WS_MINIMIZE | WS_MAXIMIZE)) == WS_MAXIMIZE)
-    {
-        if (!get_work_rect( hwnd, &work_rect ))
-            work_rect = get_primary_monitor_rect( get_thread_dpi() );
-    }
-    return work_rect;
 }
 
 /*******************************************************************
@@ -2722,15 +2707,24 @@ static RECT get_maximized_work_rect( HWND hwnd )
  *
  * Some applications (e.g. Imperiums: Greek Wars) depend on this.
  */
-static void update_maximized_pos( WND *wnd, RECT *work_rect )
+static void update_maximized_pos( WND *wnd )
 {
+    RECT work_rect = { 0 };
+    MONITORINFO mon_info;
+
     if (wnd->parent && wnd->parent != get_desktop_window())
         return;
 
     if (wnd->dwStyle & WS_MAXIMIZE)
     {
-        if (wnd->rects.window.left  <= work_rect->left  && wnd->rects.window.top    <= work_rect->top &&
-            wnd->rects.window.right >= work_rect->right && wnd->rects.window.bottom >= work_rect->bottom)
+        if (!(wnd->dwStyle & WS_MINIMIZE))
+        {
+            mon_info = monitor_info_from_window( wnd->obj.handle, MONITOR_DEFAULTTOPRIMARY );
+            work_rect = mon_info.rcWork;
+        }
+
+        if (wnd->rects.window.left  <= work_rect.left  && wnd->rects.window.top    <= work_rect.top &&
+            wnd->rects.window.right >= work_rect.right && wnd->rects.window.bottom >= work_rect.bottom)
             wnd->max_pos.x = wnd->max_pos.y = -1;
     }
     else
@@ -2747,7 +2741,6 @@ static BOOL empty_point( POINT pt )
  */
 BOOL WINAPI NtUserGetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *placement )
 {
-    RECT work_rect = get_maximized_work_rect( hwnd );
     WND *win = get_win_ptr( hwnd );
     UINT win_dpi;
 
@@ -2806,7 +2799,7 @@ BOOL WINAPI NtUserGetWindowPlacement( HWND hwnd, WINDOWPLACEMENT *placement )
     {
         win->normal_rect = win->rects.window;
     }
-    update_maximized_pos( win, &work_rect );
+    update_maximized_pos( win );
 
     placement->length  = sizeof(*placement);
     if (win->dwStyle & WS_MINIMIZE)
@@ -2887,7 +2880,6 @@ static void make_point_onscreen( POINT *pt )
 
 static BOOL set_window_placement( HWND hwnd, const WINDOWPLACEMENT *wndpl, UINT flags )
 {
-    RECT work_rect = get_maximized_work_rect( hwnd );
     WND *win = get_win_ptr( hwnd );
     WINDOWPLACEMENT wp = *wndpl;
     DWORD style;
@@ -2910,7 +2902,7 @@ static BOOL set_window_placement( HWND hwnd, const WINDOWPLACEMENT *wndpl, UINT 
     if (flags & PLACE_MAX)
     {
         win->max_pos = point_thread_to_win_dpi( hwnd, wp.ptMaxPosition );
-        update_maximized_pos( win, &work_rect );
+        update_maximized_pos( win );
     }
     if (flags & PLACE_RECT) win->normal_rect = rect_thread_to_win_dpi( hwnd, wp.rcNormalPosition );
 
@@ -3931,8 +3923,10 @@ typedef struct
     WINDOWPOS *winpos;
 } DWP;
 
-/* see BeginDeferWindowPos */
-HDWP begin_defer_window_pos( INT count )
+/***********************************************************************
+ *           NtUserBeginDeferWindowPos (win32u.@)
+ */
+HDWP WINAPI NtUserBeginDeferWindowPos( INT count )
 {
     HDWP handle = 0;
     DWP *dwp;
@@ -4211,7 +4205,7 @@ MINMAXINFO get_min_max_info( HWND hwnd )
     DWORD style = get_window_long( hwnd, GWL_STYLE );
     DWORD exstyle = get_window_long( hwnd, GWL_EXSTYLE );
     UINT context;
-    RECT rc_work, rc_primary;
+    RECT rc_max, rc_primary;
     DWORD adjusted_style;
     MINMAXINFO minmax;
     INT xinc, yinc;
@@ -4264,19 +4258,19 @@ MINMAXINFO get_min_max_info( HWND hwnd )
 
     /* if the app didn't change the values, adapt them for the current monitor */
 
-    if (get_work_rect( hwnd, &rc_work ))
+    if (get_maximized_rect( hwnd, &rc_max ))
     {
         rc_primary = get_primary_monitor_rect( get_thread_dpi() );
         if (minmax.ptMaxSize.x == (rc_primary.right - rc_primary.left) + 2 * xinc &&
             minmax.ptMaxSize.y == (rc_primary.bottom - rc_primary.top) + 2 * yinc)
         {
-            minmax.ptMaxSize.x = (rc_work.right - rc_work.left) + 2 * xinc;
-            minmax.ptMaxSize.y = (rc_work.bottom - rc_work.top) + 2 * yinc;
+            minmax.ptMaxSize.x = (rc_max.right - rc_max.left) + 2 * xinc;
+            minmax.ptMaxSize.y = (rc_max.bottom - rc_max.top) + 2 * yinc;
         }
         if (minmax.ptMaxPosition.x == -xinc && minmax.ptMaxPosition.y == -yinc)
         {
-            minmax.ptMaxPosition.x = rc_work.left - xinc;
-            minmax.ptMaxPosition.y = rc_work.top - yinc;
+            minmax.ptMaxPosition.x = rc_max.left - xinc;
+            minmax.ptMaxPosition.y = rc_max.top - yinc;
         }
     }
 
@@ -5877,9 +5871,6 @@ ULONG_PTR WINAPI NtUserCallHwnd( HWND hwnd, DWORD code )
     case NtUserCallHwnd_IsWindowVisible:
         return is_window_visible( hwnd );
 
-    case NtUserCallHwnd_SetForegroundWindow:
-        return set_foreground_window( hwnd, FALSE );
-
     /* temporary exports */
     case NtUserGetFullWindowHandle:
         return HandleToUlong( get_full_window_handle( hwnd ));
@@ -5963,9 +5954,6 @@ ULONG_PTR WINAPI NtUserCallHwndParam( HWND hwnd, DWORD_PTR param, DWORD code )
 
     case NtUserCallHwndParam_IsChild:
         return is_child( hwnd, UlongToHandle(param) );
-
-    case NtUserCallHwndParam_KillSystemTimer:
-        return kill_system_timer( hwnd, param );
 
     case NtUserCallHwndParam_MapWindowPoints:
         {

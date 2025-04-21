@@ -173,6 +173,7 @@ static bool is_shared;
 static bool is_gui_app;
 static bool is_unicode_app;
 static bool is_win16_app;
+static bool is_arm64x;
 static bool use_msvcrt;
 static bool use_pic = true;
 static bool use_build_id;
@@ -197,7 +198,6 @@ static const char *section_align;
 static const char *file_align;
 static const char *subsystem;
 static const char *entry_point;
-static const char *native_arch;
 static struct strarray file_args;
 static struct strarray linker_args;
 static struct strarray compiler_args;
@@ -573,13 +573,15 @@ static struct strarray get_link_args( const char *output_name )
 
         if (strip) strarray_add( &link_args, "-s" );
 
-        if (!try_link( link_args, "-Wl,--file-alignment,0x1000" ))
-            strarray_add( &link_args, strmake( "-Wl,--file-alignment,%s", file_align ));
-        else if (!try_link( link_args, "-Wl,-Xlink=-filealign:0x1000" ))
+        if (!try_link( link_args, "-Wl,-Xlink=-filealign:0x1000,-Xlink=-align:0x1000,-Xlink=-driver" ))
             /* lld from llvm 10 does not support mingw style --file-alignment,
-             * but it's possible to use msvc syntax */
-            strarray_add( &link_args, strmake( "-Wl,-Xlink=-filealign:%s", file_align ));
-
+             * but it's possible to use msvc syntax
+             * the -driver option is needed to silence a warning about using -align */
+            strarray_add( &link_args, strmake( "-Wl,-Xlink=-filealign:%s,-Xlink=-align:%s,-Xlink=-driver",
+                                               file_align, section_align ));
+        else if (!try_link( link_args, "-Wl,--file-alignment,0x1000,--section-alignment,0x1000" ))
+            strarray_add( &link_args, strmake( "-Wl,--file-alignment,%s,--section-alignment,%s",
+                                               file_align, section_align ));
         strarray_addall( &link_args, flags );
         return link_args;
 
@@ -620,7 +622,7 @@ static struct strarray get_link_args( const char *output_name )
         else
             strarray_add(&link_args, strmake("-Wl,-implib:%s", make_temp_file( output_name, ".lib" )));
 
-        strarray_add( &link_args, strmake( "-Wl,-filealign:%s", file_align ));
+        strarray_add( &link_args, strmake( "-Wl,-filealign:%s,-align:%s,-driver", file_align, section_align ));
 
         strarray_addall( &link_args, flags );
         return link_args;
@@ -1368,11 +1370,11 @@ static void build(struct strarray input_files, const char *output)
 	if (files.str[i][1] == 'r') strarray_add( &resources, files.str[i] );
 
     build_spec_obj( spec_file, output_file, target_alias, files, resources, &spec_objs );
-    if (native_arch)
+    if (is_arm64x)
     {
         const char *suffix = strchr( target_alias, '-' );
         if (!suffix) suffix = "";
-        build_spec_obj( spec_file, output_file, strmake( "%s%s", native_arch, suffix ),
+        build_spec_obj( spec_file, output_file, strmake( "aarch64%s", suffix ),
                         files, empty_strarray, &spec_objs );
     }
 
@@ -1818,8 +1820,8 @@ int main(int argc, char **argv)
                     }
                     else if (!strcmp("-marm64x", args.str[i] ))
                     {
+                        is_arm64x = true;
                         raw_linker_arg = 1;
-                        native_arch = "aarch64";
                     }
                     else if (!strncmp("-mcpu=", args.str[i], 6) ||
                              !strncmp("-mfpu=", args.str[i], 6) ||
@@ -2047,7 +2049,9 @@ int main(int argc, char **argv)
     if (is_pe) use_msvcrt = true;
     if (output && strendswith( output, ".fake" )) fake_module = true;
 
-    if (!section_align) section_align = "0x1000";
+    if (!section_align)
+        section_align = (target.cpu == CPU_ARM64 || target.cpu == CPU_ARM64EC) ? "0x10000" : "0x1000";
+
     if (!file_align) file_align = section_align;
 
     if (!winebuild)

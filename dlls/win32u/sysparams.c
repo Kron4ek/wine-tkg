@@ -1881,6 +1881,52 @@ static UINT monitor_get_dpi( struct monitor *monitor, MONITOR_DPI_TYPE type, UIN
 }
 
 /* display_lock must be held */
+static RECT map_monitor_rect( struct monitor *monitor, RECT rect, UINT dpi_from, MONITOR_DPI_TYPE type_from,
+                              UINT dpi_to, MONITOR_DPI_TYPE type_to )
+{
+    UINT x, y;
+
+    assert( type_from != type_to );
+
+    if (monitor->source)
+    {
+        DEVMODEW current_mode = {.dmSize = sizeof(DEVMODEW)}, *mode_from, *mode_to;
+        UINT num, den, dpi;
+
+        source_get_current_settings( monitor->source, &current_mode );
+
+        dpi = monitor_get_dpi( monitor, MDT_DEFAULT, &x, &y );
+        if (!dpi_from) dpi_from = dpi;
+        if (!dpi_to) dpi_to = dpi;
+
+        if (type_from == MDT_RAW_DPI)
+        {
+            monitor_virt_to_raw_ratio( monitor, &den, &num );
+            mode_from = &monitor->source->physical;
+            mode_to = &current_mode;
+        }
+        else
+        {
+            monitor_virt_to_raw_ratio( monitor, &num, &den );
+            mode_from = &current_mode;
+            mode_to = &monitor->source->physical;
+        }
+
+        rect = map_dpi_rect( rect, dpi_from, dpi * 2 );
+        OffsetRect( &rect, -mode_from->dmPosition.x * 2 - mode_from->dmPelsWidth,
+                    -mode_from->dmPosition.y * 2 - mode_from->dmPelsHeight );
+        rect = map_dpi_rect( rect, den, num );
+        OffsetRect( &rect, mode_to->dmPosition.x * 2 + mode_to->dmPelsWidth,
+                    mode_to->dmPosition.y * 2 + mode_to->dmPelsHeight );
+        return map_dpi_rect( rect, dpi * 2, dpi_to );
+    }
+
+    if (!dpi_from) dpi_from = monitor_get_dpi( monitor, type_from, &x, &y );
+    if (!dpi_to) dpi_to = monitor_get_dpi( monitor, type_to, &x, &y );
+    return map_dpi_rect( rect, dpi_from, dpi_to );
+}
+
+/* display_lock must be held */
 static RECT monitor_get_rect( struct monitor *monitor, UINT dpi, MONITOR_DPI_TYPE type )
 {
     DEVMODEW current_mode = {.dmSize = sizeof(DEVMODEW)};
@@ -1908,10 +1954,8 @@ static RECT monitor_get_rect( struct monitor *monitor, UINT dpi, MONITOR_DPI_TYP
 /* display_lock must be held */
 static void monitor_get_info( struct monitor *monitor, MONITORINFO *info, UINT dpi )
 {
-    UINT x, y;
-
     info->rcMonitor = monitor_get_rect( monitor, dpi, MDT_DEFAULT );
-    info->rcWork = map_dpi_rect( monitor->rc_work, monitor_get_dpi( monitor, MDT_DEFAULT, &x, &y ), dpi );
+    info->rcWork = map_monitor_rect( monitor, monitor->rc_work, 0, MDT_RAW_DPI, dpi, MDT_DEFAULT );
     info->dwFlags = is_monitor_primary( monitor ) ? MONITORINFOF_PRIMARY : 0;
 
     if (info->cbSize >= sizeof(MONITORINFOEXW))
@@ -2526,51 +2570,6 @@ static RECT monitors_get_union_rect( UINT dpi, MONITOR_DPI_TYPE type )
     return rect;
 }
 
-static RECT map_monitor_rect( struct monitor *monitor, RECT rect, UINT dpi_from, MONITOR_DPI_TYPE type_from,
-                              UINT dpi_to, MONITOR_DPI_TYPE type_to )
-{
-    UINT x, y;
-
-    assert( type_from != type_to );
-
-    if (monitor->source)
-    {
-        DEVMODEW current_mode = {.dmSize = sizeof(DEVMODEW)}, *mode_from, *mode_to;
-        UINT num, den, dpi;
-
-        source_get_current_settings( monitor->source, &current_mode );
-
-        dpi = monitor_get_dpi( monitor, MDT_DEFAULT, &x, &y );
-        if (!dpi_from) dpi_from = dpi;
-        if (!dpi_to) dpi_to = dpi;
-
-        if (type_from == MDT_RAW_DPI)
-        {
-            monitor_virt_to_raw_ratio( monitor, &den, &num );
-            mode_from = &monitor->source->physical;
-            mode_to = &current_mode;
-        }
-        else
-        {
-            monitor_virt_to_raw_ratio( monitor, &num, &den );
-            mode_from = &current_mode;
-            mode_to = &monitor->source->physical;
-        }
-
-        rect = map_dpi_rect( rect, dpi_from, dpi * 2 );
-        OffsetRect( &rect, -mode_from->dmPosition.x * 2 - mode_from->dmPelsWidth,
-                    -mode_from->dmPosition.y * 2 - mode_from->dmPelsHeight );
-        rect = map_dpi_rect( rect, den, num );
-        OffsetRect( &rect, mode_to->dmPosition.x * 2 + mode_to->dmPelsWidth,
-                    mode_to->dmPosition.y * 2 + mode_to->dmPelsHeight );
-        return map_dpi_rect( rect, dpi * 2, dpi_to );
-    }
-
-    if (!dpi_from) dpi_from = monitor_get_dpi( monitor, type_from, &x, &y );
-    if (!dpi_to) dpi_to = monitor_get_dpi( monitor, type_to, &x, &y );
-    return map_dpi_rect( rect, dpi_from, dpi_to );
-}
-
 /* map a monitor rect from MDT_RAW_DPI to MDT_DEFAULT coordinates */
 RECT map_rect_raw_to_virt( RECT rect, UINT dpi_to )
 {
@@ -2602,22 +2601,29 @@ RECT map_rect_virt_to_raw( RECT rect, UINT dpi_from )
 /* map (absolute) window rects from MDT_DEFAULT to MDT_RAW_DPI coordinates */
 struct window_rects map_window_rects_virt_to_raw( struct window_rects rects, UINT dpi_from )
 {
+    RECT rect, monitor_rect, virt_visible_rect = rects.visible;
     struct monitor *monitor;
-    RECT rect, monitor_rect;
     BOOL is_fullscreen;
 
     if (!lock_display_devices( FALSE )) return rects;
     if ((monitor = get_monitor_from_rect( rects.window, MONITOR_DEFAULTTONEAREST, dpi_from, MDT_DEFAULT )))
     {
-        /* if the visible rect is fullscreen, make it cover the full raw monitor, regardless of aspect ratio */
-        monitor_rect = monitor_get_rect( monitor, dpi_from, MDT_DEFAULT );
-
-        is_fullscreen = intersect_rect( &rect, &monitor_rect, &rects.visible ) && EqualRect( &rect, &monitor_rect );
-        if (is_fullscreen) rects.visible = monitor_get_rect( monitor, 0, MDT_RAW_DPI );
-        else rects.visible = map_monitor_rect( monitor, rects.visible, dpi_from, MDT_DEFAULT, 0, MDT_RAW_DPI );
-
+        rects.visible = map_monitor_rect( monitor, rects.visible, dpi_from, MDT_DEFAULT, 0, MDT_RAW_DPI );
         rects.window = map_monitor_rect( monitor, rects.window, dpi_from, MDT_DEFAULT, 0, MDT_RAW_DPI );
         rects.client = map_monitor_rect( monitor, rects.client, dpi_from, MDT_DEFAULT, 0, MDT_RAW_DPI );
+    }
+    /* if the visible rect is fullscreen, make it cover the full raw monitor, regardless of aspect ratio */
+    LIST_FOR_EACH_ENTRY(monitor, &monitors, struct monitor, entry)
+    {
+        if (!is_monitor_active( monitor ) || monitor->is_clone) continue;
+
+        monitor_rect = monitor_get_rect( monitor, dpi_from, MDT_DEFAULT );
+        is_fullscreen = intersect_rect( &rect, &monitor_rect, &virt_visible_rect ) && EqualRect( &rect, &monitor_rect );
+        if (is_fullscreen)
+        {
+            rect = monitor_get_rect( monitor, 0, MDT_RAW_DPI );
+            union_rect( &rects.visible, &rects.visible, &rect );
+        }
     }
     unlock_display_devices();
 
@@ -6951,6 +6957,20 @@ ULONG WINAPI NtUserGetProcessDpiAwarenessContext( HANDLE process )
 }
 
 /***********************************************************************
+ *	     NtUserGetProcessDefaultLayout    (win32u.@)
+ */
+BOOL WINAPI NtUserGetProcessDefaultLayout( ULONG *layout )
+{
+    if (!layout)
+    {
+        RtlSetLastWin32Error( ERROR_NOACCESS );
+        return FALSE;
+    }
+    *layout = process_layout;
+    return TRUE;
+}
+
+/***********************************************************************
  *	     NtUserSetProcessDefaultLayout    (win32u.@)
  */
 BOOL WINAPI NtUserSetProcessDefaultLayout( ULONG layout )
@@ -7031,9 +7051,6 @@ ULONG_PTR WINAPI NtUserCallNoParam( ULONG code )
     case NtUserCallNoParam_GetLastInputTime:
         return get_last_input_time();
 
-    case NtUserCallNoParam_GetProcessDefaultLayout:
-        return process_layout;
-
     case NtUserCallNoParam_GetProgmanWindow:
         return HandleToUlong( get_progman_window() );
 
@@ -7069,9 +7086,6 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
 {
     switch(code)
     {
-    case NtUserCallOneParam_BeginDeferWindowPos:
-        return HandleToUlong( begin_defer_window_pos( arg ));
-
     case NtUserCallOneParam_CreateCursorIcon:
         return HandleToUlong( alloc_cursoricon_handle( arg ));
 

@@ -3116,8 +3116,12 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
         {"sv_domainlocation",           false, VKD3D_SHADER_TYPE_DOMAIN,    ~0u},
         {"sv_position",                 false, VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_NONE},
         {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_DOMAIN,    ~0u},
+        {"sv_rendertargetarrayindex",   false, VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_NONE},
+        {"sv_viewportarrayindex",       false, VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_NONE},
 
         {"sv_position",                 true,  VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_POSITION},
+        {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
+        {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
 
         {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_PRIMITIVE_ID},
         {"sv_gsinstanceid",             false, VKD3D_SHADER_TYPE_GEOMETRY,  ~0u},
@@ -3131,6 +3135,8 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
         {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_HULL,      ~0u},
 
         {"sv_position",                 true,  VKD3D_SHADER_TYPE_HULL,      VKD3D_SHADER_SV_POSITION},
+        {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_HULL,      VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
+        {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_HULL,      VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
 
         {"position",                    false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_POSITION},
         {"sv_position",                 false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_POSITION},
@@ -3164,6 +3170,10 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
         if (!ascii_strcasecmp(semantic_name, "sv_position")
                 || (semantic_compat_mapping && !ascii_strcasecmp(semantic_name, "position")))
             *sysval_semantic = VKD3D_SHADER_SV_POSITION;
+        else if (!ascii_strcasecmp(semantic_name, "sv_rendertargetarrayindex"))
+            *sysval_semantic = VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX;
+        else if (!ascii_strcasecmp(semantic_name, "sv_viewportarrayindex"))
+            *sysval_semantic = VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX;
         else if (has_sv_prefix)
             return false;
         else
@@ -3179,11 +3189,6 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
                 return get_tessfactor_sysval_semantic(sysval_semantic, domain, semantic_idx);
             if (!ascii_strcasecmp(semantic_name, "sv_insidetessfactor"))
                 return get_insidetessfactor_sysval_semantic(sysval_semantic, domain, semantic_idx);
-            if (!ascii_strcasecmp(semantic_name, "sv_position"))
-            {
-                *sysval_semantic = VKD3D_SHADER_SV_NONE;
-                return true;
-            }
         }
         else
         {
@@ -3214,7 +3219,10 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
                 && (semantic_compat_mapping || has_sv_prefix)
                 && version->type == semantics[i].shader_type)
         {
-            *sysval_semantic = semantics[i].semantic;
+            if (is_patch_constant_func && output && semantics[i].semantic != ~0u)
+                *sysval_semantic = VKD3D_SHADER_SV_NONE;
+            else
+                *sysval_semantic = semantics[i].semantic;
             return true;
         }
     }
