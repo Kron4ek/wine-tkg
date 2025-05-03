@@ -659,7 +659,8 @@ struct sm6_function_data
 struct sm6_handle_data
 {
     const struct sm6_descriptor_info *d;
-    struct vkd3d_shader_register reg;
+    const struct sm6_value *index;
+    bool non_uniform;
 };
 
 struct sm6_value
@@ -2517,6 +2518,25 @@ static void register_index_address_init(struct vkd3d_shader_register_index *idx,
         idx->offset = 0;
         idx->rel_addr = rel_addr;
     }
+}
+
+static void sm6_register_from_handle(struct sm6_parser *sm6,
+        const struct sm6_handle_data *handle, struct vkd3d_shader_register *reg)
+{
+    vsir_register_init(reg, handle->d->reg_type, handle->d->reg_data_type, 2);
+    reg->dimension = VSIR_DIMENSION_VEC4;
+    reg->idx[0].offset = handle->d->id;
+    register_index_address_init(&reg->idx[1], handle->index, sm6);
+    reg->non_uniform = handle->non_uniform;
+}
+
+static void src_param_init_vector_from_handle(struct sm6_parser *sm6,
+        struct vkd3d_shader_src_param *param, const struct sm6_handle_data *handle)
+{
+    struct vkd3d_shader_register reg;
+
+    sm6_register_from_handle(sm6, handle, &reg);
+    src_param_init_vector_from_reg(param, &reg);
 }
 
 static bool instruction_dst_param_init_ssa_scalar(struct vkd3d_shader_instruction *ins, struct sm6_parser *sm6)
@@ -4788,7 +4808,7 @@ static void sm6_parser_emit_dx_atomic_binop(struct sm6_parser *sm6, enum dx_intr
     dst_param_init(&dst_params[0]);
     register_init_ssa_scalar(&dst_params[0].reg, dst->type, dst, sm6);
     dst_param_init(&dst_params[1]);
-    dst_params[1].reg = resource->u.handle.reg;
+    sm6_register_from_handle(sm6, &resource->u.handle, &dst_params[1].reg);
 
     dst->u.reg = dst_params[0].reg;
 }
@@ -4846,7 +4866,7 @@ static void sm6_parser_emit_dx_buffer_update_counter(struct sm6_parser *sm6, enu
     vsir_instruction_init(ins, &sm6->p.location, (inc < 0) ? VKD3DSIH_IMM_ATOMIC_CONSUME : VKD3DSIH_IMM_ATOMIC_ALLOC);
     if (!(src_params = instruction_src_params_alloc(ins, 1, sm6)))
         return;
-    src_param_init_vector_from_reg(&src_params[0], &resource->u.handle.reg);
+    src_param_init_vector_from_handle(sm6, &src_params[0], &resource->u.handle);
 
     instruction_dst_param_init_ssa_scalar(ins, sm6);
 }
@@ -4878,9 +4898,9 @@ static void sm6_parser_emit_dx_calculate_lod(struct sm6_parser *sm6, enum dx_int
     if (!(src_params = instruction_src_params_alloc(ins, 3, sm6)))
         return;
     src_param_init_vector_from_reg(&src_params[0], &coord);
-    src_params[1].reg = resource->u.handle.reg;
+    sm6_register_from_handle(sm6, &resource->u.handle, &src_params[1].reg);
     src_param_init_scalar(&src_params[1], !clamp);
-    src_param_init_vector_from_reg(&src_params[2], &sampler->u.handle.reg);
+    src_param_init_vector_from_handle(sm6, &src_params[2], &sampler->u.handle);
 
     instruction_dst_param_init_ssa_scalar(ins, sm6);
 }
@@ -4902,7 +4922,7 @@ static void sm6_parser_emit_dx_cbuffer_load(struct sm6_parser *sm6, enum dx_intr
 
     if (!(src_param = instruction_src_params_alloc(ins, 1, sm6)))
         return;
-    src_param_init_vector_from_reg(src_param, &buffer->u.handle.reg);
+    src_param_init_vector_from_handle(sm6, src_param, &buffer->u.handle);
     /* Differently from other descriptors, constant buffers require an
      * additional index, used to index within the constant buffer itself. */
     src_param->reg.idx_count = 3;
@@ -4986,7 +5006,6 @@ static void sm6_parser_emit_dx_create_handle(struct sm6_parser *sm6, enum dx_int
     struct vkd3d_shader_instruction *ins = state->ins;
     enum vkd3d_shader_descriptor_type type;
     const struct sm6_descriptor_info *d;
-    struct vkd3d_shader_register *reg;
     struct sm6_value *dst;
     unsigned int id;
 
@@ -5003,13 +5022,8 @@ static void sm6_parser_emit_dx_create_handle(struct sm6_parser *sm6, enum dx_int
     dst = sm6_parser_get_current_value(sm6);
     dst->value_type = VALUE_TYPE_HANDLE;
     dst->u.handle.d = d;
-
-    reg = &dst->u.handle.reg;
-    vsir_register_init(reg, d->reg_type, d->reg_data_type, 2);
-    reg->dimension = VSIR_DIMENSION_VEC4;
-    reg->idx[0].offset = id;
-    register_index_address_init(&reg->idx[1], operands[2], sm6);
-    reg->non_uniform = !!sm6_value_get_constant_uint(operands[3]);
+    dst->u.handle.index = operands[2];
+    dst->u.handle.non_uniform = !!sm6_value_get_constant_uint(operands[3]);
 
     /* NOP is used to flag no instruction emitted. */
     ins->opcode = VKD3DSIH_NOP;
@@ -5284,7 +5298,7 @@ static void sm6_parser_emit_dx_get_dimensions(struct sm6_parser *sm6, enum dx_in
 
     if (!(src_params = instruction_src_params_alloc(ins, 1 + is_texture, sm6)))
         return;
-    src_param_init_vector_from_reg(&src_params[is_texture], &resource->u.handle.reg);
+    src_param_init_vector_from_handle(sm6, &src_params[is_texture], &resource->u.handle);
 
     if (is_texture)
     {
@@ -5304,7 +5318,7 @@ static void sm6_parser_emit_dx_get_dimensions(struct sm6_parser *sm6, enum dx_in
 
             if (!(src_params = instruction_src_params_alloc(ins, 1, sm6)))
                 return;
-            src_param_init_vector_from_reg(&src_params[0], &resource->u.handle.reg);
+            src_param_init_vector_from_handle(sm6, &src_params[0], &resource->u.handle);
             src_params[0].swizzle = VKD3D_SHADER_SWIZZLE(X, X, X, X);
 
             if (!instruction_dst_param_init_temp_vector(ins, sm6))
@@ -5546,7 +5560,7 @@ static void sm6_parser_emit_dx_raw_buffer_load(struct sm6_parser *sm6, enum dx_i
     if (!(src_params = instruction_src_params_alloc(ins, operand_count, sm6)))
         return;
     src_params_init_from_operands(src_params, &operands[1], operand_count - 1);
-    src_param_init_vector_from_reg(&src_params[operand_count - 1], &resource->u.handle.reg);
+    src_param_init_vector_from_handle(sm6, &src_params[operand_count - 1], &resource->u.handle);
 
     instruction_dst_param_init_ssa_vector(ins, component_count, sm6);
 }
@@ -5617,7 +5631,7 @@ static void sm6_parser_emit_dx_raw_buffer_store(struct sm6_parser *sm6, enum dx_
 
     dst_param = instruction_dst_params_alloc(ins, 1, sm6);
     dst_param_init_with_mask(dst_param, write_mask);
-    dst_param->reg = resource->u.handle.reg;
+    sm6_register_from_handle(sm6, &resource->u.handle, &dst_param->reg);
     dst_param->reg.alignment = alignment;
 }
 
@@ -5658,7 +5672,7 @@ static void sm6_parser_emit_dx_buffer_load(struct sm6_parser *sm6, enum dx_intri
         vkd3d_shader_parser_warning(&sm6->p, VKD3D_SHADER_WARNING_DXIL_IGNORING_OPERANDS,
                 "Ignoring structure offset for a typed buffer load.");
     }
-    src_param_init_vector_from_reg(&src_params[1], &resource->u.handle.reg);
+    src_param_init_vector_from_handle(sm6, &src_params[1], &resource->u.handle);
 
     instruction_dst_param_init_ssa_vector(ins, VKD3D_VEC4_SIZE, sm6);
 }
@@ -5727,7 +5741,7 @@ static void sm6_parser_emit_dx_buffer_store(struct sm6_parser *sm6, enum dx_intr
 
     dst_param = instruction_dst_params_alloc(ins, 1, sm6);
     dst_param_init_with_mask(dst_param, write_mask);
-    dst_param->reg = resource->u.handle.reg;
+    sm6_register_from_handle(sm6, &resource->u.handle, &dst_param->reg);
 }
 
 static void sm6_parser_emit_dx_get_sample_count(struct sm6_parser *sm6, enum dx_intrinsic_opcode op,
@@ -5769,7 +5783,7 @@ static void sm6_parser_emit_dx_get_sample_pos(struct sm6_parser *sm6, enum dx_in
         return;
     if (op == DX_TEX2DMS_GET_SAMPLE_POS)
     {
-        src_param_init_vector_from_reg(&src_params[0], &resource->u.handle.reg);
+        src_param_init_vector_from_handle(sm6, &src_params[0], &resource->u.handle);
         src_param_init_from_value(&src_params[1], operands[1]);
     }
     else
@@ -5873,8 +5887,8 @@ static void sm6_parser_emit_dx_sample(struct sm6_parser *sm6, enum dx_intrinsic_
     }
 
     src_param_init_vector_from_reg(&src_params[0], &coord);
-    src_param_init_vector_from_reg(&src_params[1], &resource->u.handle.reg);
-    src_param_init_vector_from_reg(&src_params[2], &sampler->u.handle.reg);
+    src_param_init_vector_from_handle(sm6, &src_params[1], &resource->u.handle);
+    src_param_init_vector_from_handle(sm6, &src_params[2], &sampler->u.handle);
     instruction_set_texel_offset(ins, &operands[6], sm6);
 
     instruction_dst_param_init_ssa_vector(ins, component_count, sm6);
@@ -6071,8 +6085,8 @@ static void sm6_parser_emit_dx_texture_gather(struct sm6_parser *sm6, enum dx_in
         src_param_init_vector_from_reg(&src_params[1], &offset);
     else
         instruction_set_texel_offset(ins, &operands[6], sm6);
-    src_param_init_vector_from_reg(&src_params[1 + extended_offset], &resource->u.handle.reg);
-    src_param_init_vector_from_reg(&src_params[2 + extended_offset], &sampler->u.handle.reg);
+    src_param_init_vector_from_handle(sm6, &src_params[1 + extended_offset], &resource->u.handle);
+    src_param_init_vector_from_handle(sm6, &src_params[2 + extended_offset], &sampler->u.handle);
     /* Swizzle stored in the sampler parameter is the scalar component index to be gathered. */
     swizzle = sm6_value_get_constant_uint(operands[8]);
     if (swizzle >= VKD3D_VEC4_SIZE)
@@ -6124,7 +6138,7 @@ static void sm6_parser_emit_dx_texture_load(struct sm6_parser *sm6, enum dx_intr
     if (!(src_params = instruction_src_params_alloc(ins, 2 + is_multisample, sm6)))
         return;
     src_param_init_vector_from_reg(&src_params[0], &coord);
-    src_param_init_vector_from_reg(&src_params[1], &resource->u.handle.reg);
+    src_param_init_vector_from_handle(sm6, &src_params[1], &resource->u.handle);
     if (is_multisample)
         src_param_init_from_value(&src_params[2], mip_level_or_sample_count);
 
@@ -6177,7 +6191,7 @@ static void sm6_parser_emit_dx_texture_store(struct sm6_parser *sm6, enum dx_int
     src_param_init_vector_from_reg(&src_params[1], &texel);
 
     dst_param = instruction_dst_params_alloc(ins, 1, sm6);
-    dst_param->reg = resource->u.handle.reg;
+    sm6_register_from_handle(sm6, &resource->u.handle, &dst_param->reg);
     dst_param_init_with_mask(dst_param, write_mask);
 }
 
@@ -9689,7 +9703,7 @@ static enum vkd3d_result sm6_parser_signatures_init(struct sm6_parser *sm6, cons
     if ((ret = sm6_parser_init_input_signature(sm6, &program->input_signature)) < 0)
         return ret;
 
-    if ((ret = sm6_parser_init_output_signature(sm6, &program->output_signature) < 0))
+    if ((ret = sm6_parser_init_output_signature(sm6, &program->output_signature)) < 0)
         return ret;
 
     if ((ret = sm6_parser_init_patch_constant_signature(sm6, &program->patch_constant_signature)) < 0)

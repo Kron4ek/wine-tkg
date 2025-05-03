@@ -3332,7 +3332,7 @@ static void test_negative_width(HDC hdc, const LOGFONTA *lf)
 }
 
 /* PANOSE is 10 bytes in size, need to pack the structure properly */
-#include "pshpack2.h"
+#pragma pack(push,2)
 typedef struct
 {
     USHORT version;
@@ -3382,7 +3382,7 @@ typedef struct
     USHORT usLowerOpticalPointSize;
     USHORT usUpperOpticalPointSize;
 } TT_OS2_V4;
-#include "poppack.h"
+#pragma pack(pop)
 
 #define TT_OS2_V0_SIZE (FIELD_OFFSET(TT_OS2_V4, ulCodePageRange1))
 
@@ -6116,8 +6116,6 @@ static void test_CreateScalableFontResource(void)
         ret = pNtGdiMakeFontDir( 0, buffer, sizeof(*fontdir), nt_name.Buffer, nt_name.Length );
         ok( !ret, "got %lx\n", ret );
         ret = pNtGdiMakeFontDir( 0, buffer, sizeof(*fontdir), nt_name.Buffer, 0 );
-        ok( !ret, "got %lx\n", ret );
-        ret = pNtGdiMakeFontDir( 0, buffer, sizeof(*fontdir), nt_name.Buffer, nt_name.Length + 6 );
         ok( !ret, "got %lx\n", ret );
         ret = pNtGdiMakeFontDir( 0, buffer, sizeof(*fontdir), nt_name.Buffer, nt_name.Length + 2 );
         ok( ret, "NtGdiMakeFontDir failed\n" );

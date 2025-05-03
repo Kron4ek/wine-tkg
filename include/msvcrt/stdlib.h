@@ -12,7 +12,7 @@
 #include <corecrt_wstdlib.h>
 #include <limits.h>
 
-#include <pshpack8.h>
+#pragma pack(push,8)
 
 typedef struct
 {
@@ -134,11 +134,8 @@ _ACRTIMP int*            __cdecl _errno(void);
 #define errno                  (*_errno())
 _ACRTIMP int*            __cdecl __sys_nerr(void);
 #define _sys_nerr              (*__sys_nerr())
-
-/* FIXME: We need functions to access these:
- * int _sys_nerr;
- * char** _sys_errlist;
- */
+_ACRTIMP char**          __cdecl __sys_errlist(void);
+#define _sys_errlist           (__sys_errlist())
 
 _ACRTIMP errno_t       __cdecl _get_doserrno(int*);
 _ACRTIMP errno_t       __cdecl _get_errno(int*);
@@ -324,6 +321,6 @@ static inline ldiv_t __wine_msvcrt_ldiv(__msvcrt_long num, __msvcrt_long denom)
 #define ldiv(num,denom) __wine_msvcrt_ldiv(num,denom)
 #endif
 
-#include <poppack.h>
+#pragma pack(pop)
 
 #endif /* __WINE_STDLIB_H */

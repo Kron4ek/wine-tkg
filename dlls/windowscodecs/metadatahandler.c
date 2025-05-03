@@ -1545,7 +1545,7 @@ static HRESULT load_app1_metadata_internal(MetadataHandler *handler, IStream *in
     MetadataItem *result;
     LARGE_INTEGER move;
 
-#include "pshpack2.h"
+#pragma pack(push,2)
     struct app1_header
     {
         BYTE exif_header[6];
@@ -1553,7 +1553,7 @@ static HRESULT load_app1_metadata_internal(MetadataHandler *handler, IStream *in
         USHORT marker;
         ULONG ifd0_offset;
     } header;
-#include "poppack.h"
+#pragma pack(pop)
 
     IStream *ifd_stream;
     ULONG length;

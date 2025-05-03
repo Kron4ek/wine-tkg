@@ -114,7 +114,7 @@ static int coff_add_file(struct CoffFileSet* coff_files, struct module* module,
     file = coff_files->files + coff_files->nfiles;
     file->startaddr = 0xffffffff;
     file->endaddr   = 0;
-    file->compiland = symt_new_compiland(module, source_new(module, NULL, filename));
+    file->compiland = symt_new_compiland(module, filename);
     file->linetab_offset = -1;
     file->linecnt = 0;
     file->entries = NULL;
@@ -218,8 +218,7 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
                  */
                 const char* fn;
 
-                fn = source_get(msc_dbg->module,
-                                coff_files.files[curr_file_idx].compiland->source);
+                fn = coff_files.files[curr_file_idx].compiland->filename;
 
                 TRACE("Duplicating sect from %s: %lx %x %x %d %d\n",
                       fn, aux->Section.Length,
@@ -241,7 +240,7 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
             else
 	    {
                 TRACE("New text sect from %s: %lx %x %x %d %d\n",
-                      source_get(msc_dbg->module, coff_files.files[curr_file_idx].compiland->source),
+                      coff_files.files[curr_file_idx].compiland->filename,
                       aux->Section.Length,
                       aux->Section.NumberOfRelocations,
                       aux->Section.NumberOfLinenumbers,
@@ -285,7 +284,7 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
                                                nampnt,
                                                msc_dbg->module->module.BaseOfImage + base + coff_sym->Value,
                                                0 /* FIXME */,
-                                               0 /* FIXME */)->symt);
+                                               0 /* FIXME */, 0)->symt);
             continue;
 	}
 
@@ -318,13 +317,13 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
                 coff_add_symbol(&coff_files.files[j],
                                 &symt_new_function(msc_dbg->module, compiland, nampnt,
                                                    msc_dbg->module->module.BaseOfImage + base + coff_sym->Value,
-                                                   0 /* FIXME */, 0 /* FIXME */)->symt);
+                                                   0 /* FIXME */, 0 /* FIXME */, 0)->symt);
             }
             else
             {
                 symt_new_function(msc_dbg->module, NULL, nampnt,
                                   msc_dbg->module->module.BaseOfImage + base + coff_sym->Value,
-                                  0 /* FIXME */, 0 /* FIXME */);
+                                  0 /* FIXME */, 0 /* FIXME */, 0);
             }
             i += naux;
             continue;
@@ -420,7 +419,7 @@ BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
                             {
                                 symt_add_func_line(msc_dbg->module,
                                                    (struct symt_function*)coff_files.files[j].entries[l+1],
-                                                   coff_files.files[j].compiland->source,
+                                                   source_new(msc_dbg->module, NULL, coff_files.files[j].compiland->filename),
                                                    linepnt->Linenumber,
                                                    msc_dbg->module->module.BaseOfImage + linepnt->Type.VirtualAddress);
                             }

@@ -189,7 +189,7 @@ typedef ULONG_PTR symref_t;
 struct symt_block
 {
     struct symt                 symt;
-    struct symt*                container;      /* block, or func */
+    symref_t                    container;      /* block, or func */
     struct vector               vchildren;      /* sub-blocks & local variables */
     unsigned                    num_ranges;
     struct addr_range           ranges[];
@@ -205,9 +205,9 @@ struct symt_module /* in fact any of .exe, .dll... */
 struct symt_compiland
 {
     struct symt                 symt;
-    struct symt_module*         container;      /* symt_module */
+    symref_t                    container;      /* symt_module */
     ULONG_PTR                   address;
-    unsigned                    source;
+    const char                 *filename;
     struct vector               vchildren;      /* global variables & functions */
     void*                       user;           /* when debug info provider needs to store information */
 };
@@ -217,7 +217,7 @@ struct symt_data
     struct symt                 symt;
     struct hash_table_elt       hash_elt;       /* if global symbol */
     enum DataKind               kind;
-    struct symt*                container;
+    symref_t                    container;
     symref_t                    type;
     union                                       /* depends on kind */
     {
@@ -294,11 +294,12 @@ struct symt_function
 {
     struct symt                 symt;           /* SymTagFunction or SymTagInlineSite */
     struct hash_table_elt       hash_elt;       /* if global symbol, inline site */
-    struct symt*                container;      /* compiland (for SymTagFunction) or function (for SymTagInlineSite) */
+    symref_t                    container;      /* compiland (for SymTagFunction) or function (for SymTagInlineSite) */
     symref_t                    type;           /* points to function_signature */
     struct vector               vlines;
     struct vector               vchildren;      /* locals, params, blocks, start/end, labels, inline sites */
     struct symt_function*       next_inlinesite;/* linked list of inline sites in this function */
+    DWORD_PTR                   user;           /* free to use by debug info backends */
     unsigned                    num_ranges;
     struct addr_range           ranges[];
 };
@@ -307,7 +308,7 @@ struct symt_hierarchy_point
 {
     struct symt                 symt;           /* either SymTagFunctionDebugStart, SymTagFunctionDebugEnd, SymTagLabel */
     struct hash_table_elt       hash_elt;       /* if label (and in compiland's hash table if global) */
-    struct symt*                parent;         /* symt_function or symt_compiland */
+    symref_t                    container;      /* symt_function or symt_compiland */
     struct location             loc;
 };
 
@@ -315,7 +316,7 @@ struct symt_public
 {
     struct symt                 symt;
     struct hash_table_elt       hash_elt;
-    struct symt*                container;      /* compiland */
+    symref_t                    container;      /* compiland */
     BOOL                        is_function;
     ULONG_PTR                   address;
     ULONG_PTR                   size;
@@ -325,7 +326,7 @@ struct symt_thunk
 {
     struct symt                 symt;
     struct hash_table_elt       hash_elt;
-    struct symt*                container;      /* compiland */
+    symref_t                    container;      /* compiland */
     ULONG_PTR                   address;
     ULONG_PTR                   size;
     THUNK_ORDINAL               ordinal;        /* FIXME: doesn't seem to be accessible */
@@ -455,6 +456,8 @@ struct module_format_vtable
                                                      struct lineinfo_t *line_info, BOOL forward);
     enum method_result          (*enumerate_lines)(struct module_format *modfmt, const WCHAR* compiland_regex,
                                                    const WCHAR *source_file_regex, PSYM_ENUMLINES_CALLBACK cb, void *user);
+    enum method_result          (*get_line_from_inlined_address)(struct module_format *modfmt, struct symt_function *inlined,
+                                                                 DWORD64 address, struct lineinfo_t *line_info);
 
     /* source files information */
     enum method_result          (*enumerate_sources)(struct module_format *modfmt, const WCHAR *sourcefile_regex,
@@ -863,6 +866,7 @@ extern BOOL         pe_has_buildid_debug(struct image_file_map *fmap, GUID *guid
 extern unsigned     source_new(struct module* module, const char* basedir, const char* source);
 extern const char*  source_get(const struct module* module, unsigned idx);
 extern int          source_rb_compare(const void *key, const struct wine_rb_entry *entry);
+extern char        *source_build_path(const char *base, const char *name);
 
 /* stabs.c */
 typedef void (*stabs_def_cb)(struct module* module, ULONG_PTR load_offset,
@@ -903,10 +907,10 @@ extern struct symt_ht*
 extern struct symt_module*
                     symt_new_module(struct module* module);
 extern struct symt_compiland*
-                    symt_new_compiland(struct module* module, unsigned src_idx);
+                    symt_new_compiland(struct module* module, const char *filename);
 extern struct symt_public*
-                    symt_new_public(struct module* module, 
-                                    struct symt_compiland* parent, 
+                    symt_new_public(struct module* module,
+                                    struct symt_compiland* parent,
                                     const char* typename,
                                     BOOL is_function,
                                     ULONG_PTR address,
@@ -922,13 +926,14 @@ extern struct symt_function*
                                       struct symt_compiland* parent,
                                       const char* name,
                                       ULONG_PTR addr, ULONG_PTR size,
-                                      symref_t type);
+                                      symref_t type, DWORD_PTR user);
 extern struct symt_function*
                     symt_new_inlinesite(struct module* module,
                                         struct symt_function* func,
                                         struct symt* parent,
                                         const char* name,
                                         symref_t type,
+                                        DWORD_PTR user,
                                         unsigned num_ranges);
 extern void         symt_add_func_line(struct module* module,
                                        struct symt_function* func, 
@@ -973,12 +978,25 @@ extern struct symt_hierarchy_point*
                     symt_new_label(struct module* module,
                                    struct symt_compiland* compiland,
                                    const char* name, ULONG_PTR address);
+static inline BOOL  symt_is_symref_ptr(symref_t ref) {return (ref & 3) == 0;}
 static inline symref_t
                     symt_ptr_to_symref(const struct symt *symt) {return (ULONG_PTR)symt;}
+static inline struct symt*
+                    _symt_symref_to_ptr(const char *file, unsigned lineno, symref_t symref)
+{
+    if (!symt_is_symref_ptr(symref))
+    {
+        MESSAGE("%s:%u can't convert symref to ptr\n", file, lineno);
+        return NULL;
+    }
+    return (struct symt*)symref;
+}
+/* this function shall be used with care as not all symref:s are actual pointers */
+#define SYMT_SYMREF_TO_PTR(s) _symt_symref_to_ptr(__FILE__, __LINE__, (s))
 extern symref_t     symt_index_to_symref(struct module* module, DWORD id);
 extern DWORD        symt_symref_to_index(struct module* module, symref_t sym);
 static inline DWORD symt_ptr_to_index(struct module *module, const struct symt *symt) {return symt_symref_to_index(module, symt_ptr_to_symref(symt));}
-static inline BOOL  symt_is_symref_ptr(symref_t ref) {return (ref & 3) == 0;}
+
 extern struct symt_custom*
                     symt_new_custom(struct module* module, const char* name,
                                     DWORD64 addr, DWORD size);

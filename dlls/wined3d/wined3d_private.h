@@ -178,7 +178,7 @@ enum complex_fixup
     COMPLEX_FIXUP_YUV  = 6,
 };
 
-#include <pshpack2.h>
+#pragma pack(push,2)
 struct color_fixup_desc
 {
     unsigned short x_sign_fixup : 1;
@@ -190,7 +190,7 @@ struct color_fixup_desc
     unsigned short w_sign_fixup : 1;
     unsigned short w_source : 3;
 };
-#include <poppack.h>
+#pragma pack(pop)
 
 struct fragment_caps
 {
@@ -2870,15 +2870,22 @@ enum wined3d_push_constants
     WINED3D_PUSH_CONSTANTS_COUNT,
 };
 
-/* Pixel shader states part of the Direct3D 1-9 FFP, which are also used when
+/* States part of the Direct3D 1-9 FFP, which are also used when
  * using shaders, which are not implemented as uniforms.
  * These eventually make their way into vs_compile_args / ps_compile_args, but
  * those structs also include states other than the FFP states. */
+
+struct wined3d_extra_vs_args
+{
+    uint8_t clip_planes;
+};
+
 struct wined3d_extra_ps_args
 {
     bool point_sprite;
     bool flat_shading;
     bool fog_enable;
+    bool srgb_write;
     enum wined3d_fog_mode fog_mode;
     enum wined3d_cmp_func alpha_func;
     uint32_t texcoord_index[WINED3D_MAX_FFP_TEXTURES];
@@ -2985,6 +2992,7 @@ struct wined3d_state
     uint32_t sample_mask;
     struct wined3d_depth_stencil_state *depth_stencil_state;
     unsigned int stencil_ref;
+    struct wined3d_extra_vs_args extra_vs_args;
     struct wined3d_extra_ps_args extra_ps_args;
     bool depth_bounds_enable;
     float depth_bounds_min, depth_bounds_max;
@@ -3775,6 +3783,8 @@ void wined3d_device_context_emit_set_depth_stencil_view(struct wined3d_device_co
         struct wined3d_rendertarget_view *view);
 void wined3d_device_context_emit_set_extra_ps_args(struct wined3d_device_context *context,
         const struct wined3d_extra_ps_args *args);
+void wined3d_device_context_emit_set_extra_vs_args(struct wined3d_device_context *context,
+        const struct wined3d_extra_vs_args *args);
 void wined3d_device_context_emit_set_feature_level(struct wined3d_device_context *context,
         enum wined3d_feature_level level);
 void wined3d_device_context_emit_set_index_buffer(struct wined3d_device_context *context, struct wined3d_buffer *buffer,
@@ -4710,7 +4720,7 @@ static inline BOOL needs_srgb_write(const struct wined3d_d3d_info *d3d_info,
         const struct wined3d_state *state, const struct wined3d_fb_state *fb)
 {
     return (!(d3d_info->wined3d_creation_flags & WINED3D_SRGB_READ_WRITE_CONTROL)
-            || state->render_states[WINED3D_RS_SRGBWRITEENABLE])
+            || state->extra_ps_args.srgb_write)
             && fb->render_targets[0] && fb->render_targets[0]->format_caps & WINED3D_FORMAT_CAP_SRGB_WRITE;
 }
 

@@ -122,6 +122,7 @@ enum wined3d_cs_op
     WINED3D_CS_OP_SET_COLOR_KEY,
     WINED3D_CS_OP_SET_LIGHT,
     WINED3D_CS_OP_SET_LIGHT_ENABLE,
+    WINED3D_CS_OP_SET_EXTRA_VS_ARGS,
     WINED3D_CS_OP_SET_EXTRA_PS_ARGS,
     WINED3D_CS_OP_SET_FEATURE_LEVEL,
     WINED3D_CS_OP_PUSH_CONSTANTS,
@@ -399,6 +400,12 @@ struct wined3d_cs_set_light_enable
     BOOL enable;
 };
 
+struct wined3d_cs_set_extra_vs_args
+{
+    enum wined3d_cs_op opcode;
+    struct wined3d_extra_vs_args args;
+};
+
 struct wined3d_cs_set_extra_ps_args
 {
     enum wined3d_cs_op opcode;
@@ -617,6 +624,7 @@ static const char *debug_cs_op(enum wined3d_cs_op op)
         WINED3D_TO_STR(WINED3D_CS_OP_SET_LIGHT);
         WINED3D_TO_STR(WINED3D_CS_OP_SET_LIGHT_ENABLE);
         WINED3D_TO_STR(WINED3D_CS_OP_SET_EXTRA_PS_ARGS);
+        WINED3D_TO_STR(WINED3D_CS_OP_SET_EXTRA_VS_ARGS);
         WINED3D_TO_STR(WINED3D_CS_OP_SET_FEATURE_LEVEL);
         WINED3D_TO_STR(WINED3D_CS_OP_PUSH_CONSTANTS);
         WINED3D_TO_STR(WINED3D_CS_OP_RESET_STATE);
@@ -1337,12 +1345,12 @@ static void wined3d_cs_exec_set_rendertarget_views(struct wined3d_cs *cs, const 
             device_invalidate_state(device, STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL));
 
         if (!(device->adapter->d3d_info.wined3d_creation_flags & WINED3D_SRGB_READ_WRITE_CONTROL)
-                || cs->state.render_states[WINED3D_RS_SRGBWRITEENABLE])
+                || cs->state.extra_ps_args.srgb_write)
         {
             prev_srgb_write = prev && prev->format_caps & WINED3D_FORMAT_CAP_SRGB_WRITE;
             curr_srgb_write = view && view->format_caps & WINED3D_FORMAT_CAP_SRGB_WRITE;
             if (prev_srgb_write != curr_srgb_write)
-                device_invalidate_state(device, STATE_RENDER(WINED3D_RS_SRGBWRITEENABLE));
+                device_invalidate_state(device, STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL));
         }
     }
 
@@ -2103,6 +2111,26 @@ void wined3d_device_context_emit_set_light_enable(struct wined3d_device_context 
     op->opcode = WINED3D_CS_OP_SET_LIGHT_ENABLE;
     op->idx = idx;
     op->enable = enable;
+
+    wined3d_device_context_submit(context, WINED3D_CS_QUEUE_DEFAULT);
+}
+
+static void wined3d_cs_exec_set_extra_vs_args(struct wined3d_cs *cs, const void *data)
+{
+    const struct wined3d_cs_set_extra_vs_args *op = data;
+
+    cs->state.extra_vs_args = op->args;
+    device_invalidate_state(cs->c.device, STATE_SHADER(WINED3D_SHADER_TYPE_VERTEX));
+}
+
+void wined3d_device_context_emit_set_extra_vs_args(struct wined3d_device_context *context,
+        const struct wined3d_extra_vs_args *args)
+{
+    struct wined3d_cs_set_extra_vs_args *op;
+
+    op = wined3d_device_context_require_space(context, sizeof(*op), WINED3D_CS_QUEUE_DEFAULT);
+    op->opcode = WINED3D_CS_OP_SET_EXTRA_VS_ARGS;
+    op->args = *args;
 
     wined3d_device_context_submit(context, WINED3D_CS_QUEUE_DEFAULT);
 }
@@ -3036,6 +3064,7 @@ static void (* const wined3d_cs_op_handlers[])(struct wined3d_cs *cs, const void
     /* WINED3D_CS_OP_SET_COLOR_KEY               */ wined3d_cs_exec_set_color_key,
     /* WINED3D_CS_OP_SET_LIGHT                   */ wined3d_cs_exec_set_light,
     /* WINED3D_CS_OP_SET_LIGHT_ENABLE            */ wined3d_cs_exec_set_light_enable,
+    /* WINED3D_CS_OP_SET_EXTRA_VS_ARGS           */ wined3d_cs_exec_set_extra_vs_args,
     /* WINED3D_CS_OP_SET_EXTRA_PS_ARGS           */ wined3d_cs_exec_set_extra_ps_args,
     /* WINED3D_CS_OP_SET_FEATURE_LEVEL           */ wined3d_cs_exec_set_feature_level,
     /* WINED3D_CS_OP_PUSH_CONSTANTS              */ wined3d_cs_exec_push_constants,
