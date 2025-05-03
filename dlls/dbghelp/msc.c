@@ -1814,8 +1814,9 @@ static BOOL func_has_local(struct symt_function* func, const char* name)
 
     for (i = 0; i < func->vchildren.num_elts; ++i)
     {
-        struct symt* p = *(struct symt**)vector_at(&func->vchildren, i);
-        if (symt_check_tag(p, SymTagData) && !strcmp(((struct symt_data*)p)->hash_elt.name, name))
+        struct symt *lsym = SYMT_SYMREF_TO_PTR(*(symref_t*)vector_at(&func->vchildren, i));
+
+        if (symt_check_tag(lsym, SymTagData) && !strcmp(((struct symt_data*)lsym)->hash_elt.name, name))
             return TRUE;
     }
     return FALSE;
@@ -1865,7 +1866,7 @@ static inline void codeview_add_variable(const struct msc_debug_info* msc_dbg,
                     if (symdata->kind == (is_local ? DataIsFileStatic : DataIsGlobal) &&
                         symdata->u.var.kind == loc.kind &&
                         symdata->u.var.offset == loc.offset &&
-                        symdata->container == &compiland->symt)
+                        symdata->container == symt_ptr_to_symref(&compiland->symt))
                     {
                         /* We don't compare types yet... Unfortunately, they are not
                          * always the same typeid... it'd require full type equivalence
@@ -2188,6 +2189,7 @@ static struct symt_function* codeview_create_inline_site(const struct msc_debug_
                                                          struct symt_function* top_func,
                                                          struct symt* container,
                                                          cv_itemid_t inlinee,
+                                                         DWORD_PTR user,
                                                          const unsigned char* annot,
                                                          const unsigned char* last_annot)
 {
@@ -2214,14 +2216,14 @@ static struct symt_function* codeview_create_inline_site(const struct msc_debug_
         inlined = symt_new_inlinesite(msc_dbg->module, top_func, container,
                                       cvt->func_id_v3.name,
                                       codeview_get_symref(msc_dbg->module, cvt->func_id_v3.type),
-                                      num_ranges);
+                                      user, num_ranges);
         break;
     case LF_MFUNC_ID:
         /* FIXME we just declare a function, not a method */
         inlined = symt_new_inlinesite(msc_dbg->module, top_func, container,
                                       cvt->mfunc_id_v3.name,
                                       codeview_get_symref(msc_dbg->module, cvt->mfunc_id_v3.type),
-                                      num_ranges);
+                                      user, num_ranges);
         break;
     default:
         FIXME("unsupported inlinee kind %x\n", cvt->generic.id);
@@ -2311,7 +2313,6 @@ static struct symt_function* codeview_create_inline_site(const struct msc_debug_
 
 static struct symt_compiland* codeview_new_compiland(const struct msc_debug_info* msc_dbg, const char* objname)
 {
-    unsigned int    src_idx = source_new(msc_dbg->module, NULL, objname);
     unsigned int    i;
 
     /* In some cases MSVC generates several compiland entries with same pathname in PDB file.
@@ -2320,11 +2321,11 @@ static struct symt_compiland* codeview_new_compiland(const struct msc_debug_info
      */
     for (i = 0; i < msc_dbg->module->top->vchildren.num_elts; i++)
     {
-        struct symt_compiland** p = vector_at(&msc_dbg->module->top->vchildren, i);
-        if (symt_check_tag(&(*p)->symt, SymTagCompiland) && (*p)->source == src_idx)
-            return *p;
+        struct symt_compiland* p = (struct symt_compiland*)SYMT_SYMREF_TO_PTR(*(symref_t*)vector_at(&msc_dbg->module->top->vchildren, i));
+        if (symt_check_tag(&p->symt, SymTagCompiland) && !strcmp(p->filename, objname))
+            return p;
     }
-    return symt_new_compiland(msc_dbg->module, src_idx);
+    return symt_new_compiland(msc_dbg->module, objname);
 }
 
 static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
@@ -2438,7 +2439,7 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
                                               terminate_string(&sym->proc_v1.p_name),
                                               codeview_get_address(msc_dbg, sym->proc_v1.segment, sym->proc_v1.offset),
                                               sym->proc_v1.proc_len,
-                                              codeview_get_symref(msc_dbg->module, sym->proc_v1.proctype))))
+                                              codeview_get_symref(msc_dbg->module, sym->proc_v1.proctype), i)))
             {
                 curr_func = top_func;
                 loc.kind = loc_absolute;
@@ -2455,7 +2456,7 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
                                               terminate_string(&sym->proc_v2.p_name),
                                               codeview_get_address(msc_dbg, sym->proc_v2.segment, sym->proc_v2.offset),
                                               sym->proc_v2.proc_len,
-                                              codeview_get_symref(msc_dbg->module, sym->proc_v2.proctype))))
+                                              codeview_get_symref(msc_dbg->module, sym->proc_v2.proctype), i)))
             {
                 curr_func = top_func;
                 loc.kind = loc_absolute;
@@ -2472,7 +2473,7 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
                                               sym->proc_v3.name,
                                               codeview_get_address(msc_dbg, sym->proc_v3.segment, sym->proc_v3.offset),
                                               sym->proc_v3.proc_len,
-                                              codeview_get_symref(msc_dbg->module, sym->proc_v3.proctype))))
+                                              codeview_get_symref(msc_dbg->module, sym->proc_v3.proctype), i)))
             {
                 curr_func = top_func;
                 loc.kind = loc_absolute;
@@ -2742,6 +2743,7 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
                 struct symt_function* inlined = codeview_create_inline_site(msc_dbg, cvmod, top_func,
                                                                             block ? &block->symt : &curr_func->symt,
                                                                             sym->inline_site_v3.inlinee,
+                                                                            i,
                                                                             sym->inline_site_v3.binaryAnnotations,
                                                                             (const unsigned char*)sym + length);
                 if (inlined)
@@ -2763,6 +2765,7 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
                 struct symt_function* inlined = codeview_create_inline_site(msc_dbg, cvmod, top_func,
                                                                             block ? &block->symt : &curr_func->symt,
                                                                             sym->inline_site2_v3.inlinee,
+                                                                            i,
                                                                             sym->inline_site2_v3.binaryAnnotations,
                                                                             (const unsigned char*)sym + length);
                 if (inlined)
@@ -2781,8 +2784,8 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
             break;
 
         case S_INLINESITE_END:
-            block = symt_check_tag(curr_func->container, SymTagBlock) ?
-                (struct symt_block*)curr_func->container : NULL;
+            block = symt_check_tag(SYMT_SYMREF_TO_PTR(curr_func->container), SymTagBlock) ?
+                (struct symt_block *)((struct symt_block*)curr_func->container) : NULL;
             curr_func = (struct symt_function*)symt_get_upper_inlined(curr_func);
             break;
 
@@ -2826,7 +2829,7 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
                     struct symt_function* pfunc = (struct symt_function*)parent;
                     top_func = symt_new_function(msc_dbg->module, compiland, pfunc->hash_elt.name,
                                                  codeview_get_address(msc_dbg, sym->sepcode_v3.sect, sym->sepcode_v3.off),
-                                                 sym->sepcode_v3.length, pfunc->type);
+                                                 sym->sepcode_v3.length, pfunc->type, i);
                     curr_func = top_func;
                 }
                 else
@@ -3890,7 +3893,7 @@ static BOOL pdb_process_internal(const struct process *pcs,
          * streams' loading can succeed them.
          */
         globalimage = pdb_read_stream(pdb_file, symbols.gsym_stream);
-        if (globalimage)
+        if (globalimage && !pdb_file->pdb_reader)
         {
             const BYTE* data;
             unsigned global_size = pdb_get_stream_size(pdb_file, symbols.gsym_stream);

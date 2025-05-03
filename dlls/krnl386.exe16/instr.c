@@ -59,13 +59,14 @@ static inline void *get_stack( CONTEXT *context )
     return ldt_get_ptr( context->SegSs, context->Esp );
 }
 
-#include "pshpack1.h"
+#pragma pack(push,1)
+
 struct dtr
 {
     WORD  limit;
     BYTE *base;
 };
-#include "poppack.h"
+#pragma pack(pop)
 
 static LDT_ENTRY idt[256];
 static LDT_ENTRY gdt[8192];

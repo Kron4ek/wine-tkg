@@ -1266,19 +1266,20 @@ struct set_process_info_request
 {
     struct request_header __header;
     obj_handle_t handle;
-    int          mask;
     int          priority;
+    int          base_priority;
     affinity_t   affinity;
     obj_handle_t token;
-    char __pad_36[4];
+    int          mask;
 };
 struct set_process_info_reply
 {
     struct reply_header __header;
 };
-#define SET_PROCESS_INFO_PRIORITY 0x01
-#define SET_PROCESS_INFO_AFFINITY 0x02
-#define SET_PROCESS_INFO_TOKEN    0x04
+#define SET_PROCESS_INFO_PRIORITY      0x01
+#define SET_PROCESS_INFO_BASE_PRIORITY 0x02
+#define SET_PROCESS_INFO_AFFINITY      0x04
+#define SET_PROCESS_INFO_TOKEN         0x08
 
 
 
@@ -6917,6 +6918,6 @@ union generic_reply
     struct get_inproc_alert_event_reply get_inproc_alert_event_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 868
+#define SERVER_PROTOCOL_VERSION 869
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

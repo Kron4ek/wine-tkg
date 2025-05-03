@@ -622,7 +622,7 @@ static enum vkd3d_result vsir_program_lower_texkill(struct vsir_program *program
     if (*tmp_idx == ~0u)
         *tmp_idx = program->temp_count++;
 
-    /* tmp = ins->dst[0] < 0  */
+    /* tmp = ins->src[0] < 0  */
 
     ins = &instructions->elements[pos + 1];
     if (!vsir_instruction_init_with_params(program, ins, &texkill->location, VKD3DSIH_LTO, 1, 2))
@@ -633,7 +633,7 @@ static enum vkd3d_result vsir_program_lower_texkill(struct vsir_program *program
     ins->dst[0].reg.idx[0].offset = *tmp_idx;
     ins->dst[0].write_mask = VKD3DSP_WRITEMASK_ALL;
 
-    ins->src[0].reg = texkill->dst[0].reg;
+    ins->src[0].reg = texkill->src[0].reg;
     ins->src[0].swizzle = VKD3D_SHADER_NO_SWIZZLE;
     vsir_register_init(&ins->src[1].reg, VKD3DSPR_IMMCONST, VKD3D_DATA_FLOAT, 0);
     ins->src[1].reg.dimension = VSIR_DIMENSION_VEC4;
@@ -2064,7 +2064,7 @@ static enum vkd3d_result shader_signature_map_patch_constant_index_ranges(struct
             continue;
 
         if ((ret = range_map_set_register_range(normaliser, range_map,
-                e->register_index, register_count, e->mask, e->used_mask, false) < 0))
+                e->register_index, register_count, e->mask, e->used_mask, false)) < 0)
             return ret;
     }
 

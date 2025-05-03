@@ -426,7 +426,7 @@ static enum vkd3d_result spirv_parser_read_header(struct spirv_parser *parser)
 
     major = (version & VKD3D_SPIRV_VERSION_MAJOR_MASK) >> VKD3D_SPIRV_VERSION_MAJOR_SHIFT;
     minor = (version & VKD3D_SPIRV_VERSION_MINOR_MASK) >> VKD3D_SPIRV_VERSION_MINOR_SHIFT;
-    if (major != 1 || minor > 0)
+    if (major != 1 || minor > 6)
     {
         spirv_parser_error(parser, VKD3D_SHADER_ERROR_SPV_NOT_IMPLEMENTED,
                 "Unable to parse SPIR-V version %u.%u.", major, minor);

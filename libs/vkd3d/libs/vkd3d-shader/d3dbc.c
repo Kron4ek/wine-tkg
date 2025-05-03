@@ -1215,6 +1215,7 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
     struct vkd3d_shader_src_param *src_params, *predicate;
     const struct vkd3d_sm1_opcode_info *opcode_info;
     struct vsir_program *program = sm1->p.program;
+    unsigned int vsir_dst_count, vsir_src_count;
     struct vkd3d_shader_dst_param *dst_param;
     const uint32_t **ptr = &sm1->ptr;
     uint32_t opcode_token;
@@ -1241,6 +1242,17 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
         goto fail;
     }
 
+    if (opcode_info->vkd3d_opcode == VKD3DSIH_TEXKILL)
+    {
+        vsir_src_count = 1;
+        vsir_dst_count = 0;
+    }
+    else
+    {
+        vsir_src_count = opcode_info->src_count;
+        vsir_dst_count = opcode_info->dst_count;
+    }
+
     vsir_instruction_init(ins, &sm1->p.location, opcode_info->vkd3d_opcode);
     ins->flags = (opcode_token & VKD3D_SM1_INSTRUCTION_FLAGS_MASK) >> VKD3D_SM1_INSTRUCTION_FLAGS_SHIFT;
     ins->coissue = opcode_token & VKD3D_SM1_COISSUE;
@@ -1248,9 +1260,9 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
     ins->structured = false;
     predicated = !!(opcode_token & VKD3D_SM1_INSTRUCTION_PREDICATED);
     ins->predicate = predicate = predicated ? vsir_program_get_src_params(program, 1) : NULL;
-    ins->dst_count = opcode_info->dst_count;
+    ins->dst_count = vsir_dst_count;
     ins->dst = dst_param = vsir_program_get_dst_params(program, ins->dst_count);
-    ins->src_count = opcode_info->src_count;
+    ins->src_count = vsir_src_count;
     ins->src = src_params = vsir_program_get_src_params(program, ins->src_count);
     if ((!predicate && predicated) || (!src_params && ins->src_count) || (!dst_param && ins->dst_count))
     {
@@ -1297,6 +1309,25 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
         shader_sm1_read_dst_param(sm1, &p, dst_param);
         shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_VEC4, VKD3D_DATA_INT);
         shader_sm1_scan_register(sm1, &dst_param->reg, dst_param->write_mask, true);
+    }
+    else if (ins->opcode == VKD3DSIH_TEXKILL)
+    {
+        /* TEXKILL, uniquely, encodes its argument as a destination, when it is
+         * semantically a source. Since we have multiple passes which operate
+         * generically on sources or destinations, normalize that. */
+        const struct vkd3d_shader_register *reg;
+        struct vkd3d_shader_dst_param tmp_dst;
+
+        reg = &tmp_dst.reg;
+        shader_sm1_read_dst_param(sm1, &p, &tmp_dst);
+        shader_sm1_scan_register(sm1, reg, tmp_dst.write_mask, false);
+
+        vsir_src_param_init(&src_params[0], reg->type, reg->data_type, reg->idx_count);
+        src_params[0].reg = *reg;
+        src_params[0].swizzle = vsir_swizzle_from_writemask(tmp_dst.write_mask);
+
+        if (ins->predicate)
+            shader_sm1_read_src_param(sm1, &p, predicate);
     }
     else
     {
@@ -1834,6 +1865,27 @@ static void d3dbc_write_instruction(struct d3dbc_compiler *d3dbc, const struct v
     }
 };
 
+static void d3dbc_write_texkill(struct d3dbc_compiler *d3dbc, const struct vkd3d_shader_instruction *ins)
+{
+    const struct vkd3d_shader_register *reg = &ins->src[0].reg;
+    struct vkd3d_shader_instruction tmp;
+    struct vkd3d_shader_dst_param dst;
+
+    /* TEXKILL, uniquely, encodes its argument as a destination, when it is
+     * semantically a source. We store it as a source in vsir, so convert it. */
+
+    vsir_dst_param_init(&dst, reg->type, reg->data_type, reg->idx_count);
+    dst.reg = *reg;
+    dst.write_mask = mask_from_swizzle(ins->src[0].swizzle);
+
+    tmp = *ins;
+    tmp.dst_count = 1;
+    tmp.dst = &dst;
+    tmp.src_count = 0;
+
+    d3dbc_write_instruction(d3dbc, &tmp);
+}
+
 static void d3dbc_write_vsir_def(struct d3dbc_compiler *d3dbc, const struct vkd3d_shader_instruction *ins)
 {
     const struct vkd3d_shader_version *version = &d3dbc->program->shader_version;
@@ -1938,6 +1990,10 @@ static void d3dbc_write_vsir_instruction(struct d3dbc_compiler *d3dbc, const str
             d3dbc_write_vsir_dcl(d3dbc, ins);
             break;
 
+        case VKD3DSIH_TEXKILL:
+            d3dbc_write_texkill(d3dbc, ins);
+            break;
+
         case VKD3DSIH_ABS:
         case VKD3DSIH_ADD:
         case VKD3DSIH_CMP:
@@ -1959,7 +2015,6 @@ static void d3dbc_write_vsir_instruction(struct d3dbc_compiler *d3dbc, const str
         case VKD3DSIH_SINCOS:
         case VKD3DSIH_SLT:
         case VKD3DSIH_TEX:
-        case VKD3DSIH_TEXKILL:
         case VKD3DSIH_TEXLDD:
             d3dbc_write_instruction(d3dbc, ins);
             break;

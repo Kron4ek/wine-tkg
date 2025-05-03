@@ -780,10 +780,11 @@ static void text_metric_ex_WtoA(const NEWTEXTMETRICEXW *tmW, NEWTEXTMETRICEXA *t
 
 static void logfont_AtoW( const LOGFONTA *fontA, LPLOGFONTW fontW )
 {
+    int len = MultiByteToWideChar( CP_ACP, 0, fontA->lfFaceName,
+                                   strnlen( fontA->lfFaceName, LF_FACESIZE ),
+                                   fontW->lfFaceName, LF_FACESIZE );
+    fontW->lfFaceName[min( len, LF_FACESIZE - 1 )] = 0;
     memcpy( fontW, fontA, sizeof(LOGFONTA) - LF_FACESIZE );
-    MultiByteToWideChar( CP_ACP, 0, fontA->lfFaceName, -1, fontW->lfFaceName,
-                         LF_FACESIZE );
-    fontW->lfFaceName[LF_FACESIZE - 1] = 0;
 }
 
 static void logfont_WtoA( const LOGFONTW *fontW, LPLOGFONTA fontA )
@@ -2601,7 +2602,7 @@ HANDLE WINAPI AddFontMemResourceEx( void *ptr, DWORD size, void *dv, DWORD *coun
 static const char dos_string[0x40] = "This is a TrueType resource file";
 static const char FONTRES[] = {'F','O','N','T','R','E','S',':'};
 
-#include <pshpack2.h>
+#pragma pack(push,2)
 
 struct ne_typeinfo
 {
@@ -2630,7 +2631,7 @@ struct rsrc_tab
     BYTE fontdir_res_name[8];
 };
 
-#include <poppack.h>
+#pragma pack(pop)
 
 static BOOL create_fot( const WCHAR *resource, const WCHAR *font_file, const struct fontdir *fontdir )
 {

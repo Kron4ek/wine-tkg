@@ -44,6 +44,12 @@ WINE_DEFAULT_DEBUG_CHANNEL(waylanddrv);
 
 #include "wine/opengl_driver.h"
 
+/* Support building on systems with older EGL headers, which may not include
+ * the EGL_EXT_present_opaque extension. */
+#ifndef EGL_PRESENT_OPAQUE_EXT
+#define EGL_PRESENT_OPAQUE_EXT 0x31DF
+#endif
+
 static void *egl_handle;
 static struct opengl_funcs opengl_funcs;
 static EGLDisplay egl_display;
@@ -248,11 +254,7 @@ static void wayland_update_gl_drawable(HWND hwnd, struct wayland_gl_drawable *ne
 
     if ((old = find_drawable(hwnd, 0))) list_remove(&old->entry);
     if (new) list_add_head(&gl_drawables, &new->entry);
-    if (old && new)
-    {
-        update_context_drawables(new, old);
-        new->swap_interval = old->swap_interval;
-    }
+    if (old && new) update_context_drawables(new, old);
 
     pthread_mutex_unlock(&gl_object_mutex);
 
@@ -416,11 +418,7 @@ static void wayland_context_refresh(struct wayland_context *ctx)
         ctx->new_read = NULL;
         refresh = TRUE;
     }
-    if (refresh)
-    {
-        p_eglMakeCurrent(egl_display, ctx->draw, ctx->read, ctx->context);
-        if (ctx->draw) p_eglSwapInterval(egl_display, ctx->draw->swap_interval);
-    }
+    if (refresh) p_eglMakeCurrent(egl_display, ctx->draw, ctx->read, ctx->context);
 
     pthread_mutex_unlock(&gl_object_mutex);
 
@@ -517,25 +515,9 @@ static BOOL wayland_context_destroy(void *private)
     return TRUE;
 }
 
-static PROC wayland_wglGetProcAddress(LPCSTR name)
+static void *wayland_get_proc_address(const char *name)
 {
-    if (!strncmp(name, "wgl", 3)) return NULL;
-    return (PROC)p_eglGetProcAddress(name);
-}
-
-static int wayland_wglGetSwapIntervalEXT(void)
-{
-    struct wayland_context *ctx = NtCurrentTeb()->glReserved2;
-
-    if (!ctx || !ctx->draw)
-    {
-        WARN("No GL drawable found, returning swap interval 0\n");
-        return 0;
-    }
-
-    /* It's safe to read the value without a lock, since only
-     * the current thread can write to it. */
-    return ctx->draw->swap_interval;
+    return p_eglGetProcAddress(name);
 }
 
 static BOOL wayland_context_share(void *src_private, void *dst_private)
@@ -582,13 +564,25 @@ static BOOL wayland_context_share(void *src_private, void *dst_private)
     return TRUE;
 }
 
-static BOOL wayland_wglSwapBuffers(HDC hdc)
+static BOOL wayland_context_flush( void *private, HWND hwnd, HDC hdc, int interval, BOOL finish )
 {
-    struct wayland_context *ctx = NtCurrentTeb()->glReserved2;
-    HWND hwnd = NtUserWindowFromDC(hdc), toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
+    return FALSE;
+}
+
+static BOOL wayland_swap_buffers(void *private, HWND hwnd, HDC hdc, int interval)
+{
+    struct wayland_context *ctx = private;
+    HWND toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
     struct wayland_gl_drawable *gl;
 
     if (!(gl = wayland_gl_drawable_get(NtUserWindowFromDC(hdc), hdc))) return FALSE;
+
+    if (interval < 0) interval = -interval;
+    if (gl->swap_interval != interval)
+    {
+        p_eglSwapInterval(egl_display, interval);
+        gl->swap_interval = interval;
+    }
 
     if (ctx) wayland_context_refresh(ctx);
     ensure_window_surface_contents(toplevel);
@@ -600,37 +594,6 @@ static BOOL wayland_wglSwapBuffers(HDC hdc)
     wayland_gl_drawable_release(gl);
 
     return TRUE;
-}
-
-static BOOL wayland_wglSwapIntervalEXT(int interval)
-{
-    struct wayland_context *ctx = NtCurrentTeb()->glReserved2;
-    BOOL ret;
-
-    TRACE("(%d)\n", interval);
-
-    if (interval < 0)
-    {
-        RtlSetLastWin32Error(ERROR_INVALID_DATA);
-        return FALSE;
-    }
-
-    if (!ctx || !ctx->draw)
-    {
-        RtlSetLastWin32Error(ERROR_DC_NOT_FOUND);
-        return FALSE;
-    }
-
-    /* Lock to protect against concurrent access to drawable swap_interval
-     * from wayland_update_gl_drawable */
-    pthread_mutex_lock(&gl_object_mutex);
-    if ((ret = p_eglSwapInterval(egl_display, interval)))
-        ctx->draw->swap_interval = interval;
-    else
-        RtlSetLastWin32Error(ERROR_DC_NOT_FOUND);
-    pthread_mutex_unlock(&gl_object_mutex);
-
-    return ret;
 }
 
 static BOOL wayland_pbuffer_create(HDC hdc, int format, BOOL largest, GLenum texture_format, GLenum texture_target,
@@ -859,10 +822,6 @@ static BOOL init_opengl_funcs(void)
 
 static const char *wayland_init_wgl_extensions(void)
 {
-    register_extension("WGL_EXT_swap_control");
-    opengl_funcs.p_wglGetSwapIntervalEXT = wayland_wglGetSwapIntervalEXT;
-    opengl_funcs.p_wglSwapIntervalEXT = wayland_wglSwapIntervalEXT;
-
     if (has_egl_ext_pixel_format_float)
     {
         register_extension("WGL_ARB_pixel_format_float");
@@ -929,14 +888,17 @@ static UINT wayland_init_pixel_formats(UINT *onscreen_count)
 
 static const struct opengl_driver_funcs wayland_driver_funcs =
 {
+    .p_get_proc_address = wayland_get_proc_address,
     .p_init_pixel_formats = wayland_init_pixel_formats,
     .p_describe_pixel_format = wayland_describe_pixel_format,
     .p_init_wgl_extensions = wayland_init_wgl_extensions,
     .p_set_pixel_format = wayland_set_pixel_format,
+    .p_swap_buffers = wayland_swap_buffers,
     .p_context_create = wayland_context_create,
     .p_context_destroy = wayland_context_destroy,
     .p_context_copy = wayland_context_copy,
     .p_context_share = wayland_context_share,
+    .p_context_flush = wayland_context_flush,
     .p_context_make_current = wayland_context_make_current,
     .p_pbuffer_create = wayland_pbuffer_create,
     .p_pbuffer_destroy = wayland_pbuffer_destroy,
@@ -1046,12 +1008,6 @@ err:
     egl_handle = NULL;
     return STATUS_NOT_SUPPORTED;
 }
-
-static struct opengl_funcs opengl_funcs =
-{
-    .p_wglGetProcAddress = wayland_wglGetProcAddress,
-    .p_wglSwapBuffers = wayland_wglSwapBuffers,
-};
 
 /**********************************************************************
  *           wayland_destroy_gl_drawable

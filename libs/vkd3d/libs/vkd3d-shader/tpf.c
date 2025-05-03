@@ -3822,6 +3822,25 @@ static void tpf_dcl_sampler(const struct tpf_compiler *tpf, const struct vkd3d_s
     write_sm4_instruction(tpf, &instr);
 }
 
+static uint32_t pack_resource_data_type(const enum vkd3d_data_type *resource_data_type)
+{
+    unsigned int i, k, type = 0;
+
+    for (k = 0; k < 4; ++k)
+    {
+        for (i = ARRAY_SIZE(data_type_table) - 1; i < ARRAY_SIZE(data_type_table); --i)
+        {
+            if (resource_data_type[k] == data_type_table[i])
+            {
+                type |= i << (4 * k);
+                break;
+            }
+        }
+    }
+
+    return type;
+}
+
 static void tpf_dcl_texture(const struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
 {
     const struct vkd3d_shader_structured_resource *structured_resource = &ins->declaration.structured_resource;
@@ -3829,7 +3848,6 @@ static void tpf_dcl_texture(const struct tpf_compiler *tpf, const struct vkd3d_s
     const struct vkd3d_shader_version *version = &tpf->program->shader_version;
     const struct vkd3d_sm4_opcode_info *info;
     struct sm4_instruction instr = {0};
-    unsigned int i, k;
     bool uav;
 
     info = get_info_from_vsir_opcode(&tpf->lookup, ins->opcode);
@@ -3844,18 +3862,11 @@ static void tpf_dcl_texture(const struct tpf_compiler *tpf, const struct vkd3d_s
     instr.dsts[0] = semantic->resource.reg;
     instr.dst_count = 1;
 
-    for (k = 0; k < 4; ++k)
+    if (ins->opcode == VKD3DSIH_DCL || ins->opcode == VKD3DSIH_DCL_UAV_TYPED)
     {
-        for (i = ARRAY_SIZE(data_type_table) - 1; i < ARRAY_SIZE(data_type_table); --i)
-        {
-            if (semantic->resource_data_type[k] == data_type_table[i])
-            {
-                instr.idx[0] |= i << (4 * k);
-                break;
-            }
-        }
+        instr.idx[0] = pack_resource_data_type(semantic->resource_data_type);
+        instr.idx_count = 1;
     }
-    instr.idx_count = 1;
 
     if (vkd3d_shader_ver_ge(version, 5, 1))
     {
@@ -3864,8 +3875,7 @@ static void tpf_dcl_texture(const struct tpf_compiler *tpf, const struct vkd3d_s
         instr.dsts[0].reg.idx[2].offset = semantic->resource.range.last;
         instr.dsts[0].reg.idx_count = 3;
 
-        instr.idx[1] = semantic->resource.range.space;
-        instr.idx_count = 2;
+        instr.idx[instr.idx_count++] = semantic->resource.range.space;
     }
     else
     {

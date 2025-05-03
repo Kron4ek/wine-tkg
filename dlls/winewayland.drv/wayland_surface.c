@@ -48,7 +48,8 @@ static void xdg_surface_handle_configure(void *private, struct xdg_surface *xdg_
 
     /* Handle this event only if wayland_surface is still associated with
      * the target xdg_surface. */
-    if ((surface = data->wayland_surface) && surface->xdg_surface == xdg_surface)
+    if ((surface = data->wayland_surface) && wayland_surface_is_toplevel(surface) &&
+        surface->xdg_surface == xdg_surface)
     {
         /* If we have a previously requested config, we have already sent a
          * WM_WAYLAND_CONFIGURE which hasn't been handled yet. In that case,
@@ -116,7 +117,7 @@ static void xdg_toplevel_handle_configure(void *private,
 
     if (!(data = wayland_win_data_get(hwnd))) return;
 
-    if ((surface = data->wayland_surface) && surface->xdg_toplevel == xdg_toplevel)
+    if ((surface = data->wayland_surface) && wayland_surface_is_toplevel(surface))
     {
         surface->pending.width = width;
         surface->pending.height = height;
@@ -816,7 +817,7 @@ struct wayland_shm_buffer *wayland_shm_buffer_create(int width, int height,
                              NULL, &section_size, PAGE_READWRITE, SEC_COMMIT, 0);
     if (status)
     {
-        ERR("Failed to create SHM section status=0x%lx\n", (long)status);
+        ERR("Failed to create SHM section status=0x%x\n", status);
         goto err;
     }
 
@@ -826,14 +827,14 @@ struct wayland_shm_buffer *wayland_shm_buffer_create(int width, int height,
     if (status)
     {
         shm_buffer->map_data = NULL;
-        ERR("Failed to create map SHM handle status=0x%lx\n", (long)status);
+        ERR("Failed to create map SHM handle status=0x%x\n", status);
         goto err;
     }
 
     status = wine_server_handle_to_fd(handle, FILE_READ_DATA, &fd, NULL);
     if (status)
     {
-        ERR("Failed to get fd from SHM handle status=0x%lx\n", (long)status);
+        ERR("Failed to get fd from SHM handle status=0x%x\n", status);
         goto err;
     }
 
@@ -1172,7 +1173,7 @@ void wayland_surface_set_title(struct wayland_surface *surface, LPCWSTR text)
     DWORD utf8_count;
     char *utf8 = NULL;
 
-    assert(surface->xdg_toplevel);
+    assert(wayland_surface_is_toplevel(surface));
 
     TRACE("surface=%p hwnd=%p text='%s'\n",
           surface, surface->hwnd, wine_dbgstr_w(text));
@@ -1198,7 +1199,7 @@ void wayland_surface_set_icon(struct wayland_surface *surface, UINT type, ICONIN
     struct wayland_shm_buffer *icon_buf;
 
     assert(ii);
-    assert(surface->role == WAYLAND_SURFACE_ROLE_TOPLEVEL && surface->xdg_toplevel);
+    assert(wayland_surface_is_toplevel(surface));
 
     hDC = NtGdiCreateCompatibleDC(0);
     icon_buf = wayland_shm_buffer_from_color_bitmaps(hDC, ii->hbmColor, ii->hbmMask);

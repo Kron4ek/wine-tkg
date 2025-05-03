@@ -18,6 +18,13 @@
 
 #include "vkd3d_shader_private.h"
 
+enum msl_data_type
+{
+    MSL_DATA_FLOAT,
+    MSL_DATA_UINT,
+    MSL_DATA_UNION,
+};
+
 struct msl_src
 {
     struct vkd3d_string_buffer *str;
@@ -267,15 +274,14 @@ static void msl_print_srv_name(struct vkd3d_string_buffer *buffer, struct msl_ge
     vkd3d_string_buffer_printf(buffer, ">>()");
 }
 
-static void msl_print_register_name(struct vkd3d_string_buffer *buffer,
+static enum msl_data_type msl_print_register_name(struct vkd3d_string_buffer *buffer,
         struct msl_generator *gen, const struct vkd3d_shader_register *reg)
 {
     switch (reg->type)
     {
         case VKD3DSPR_TEMP:
             vkd3d_string_buffer_printf(buffer, "r[%u]", reg->idx[0].offset);
-            msl_print_register_datatype(buffer, gen, reg->data_type);
-            break;
+            return MSL_DATA_UNION;
 
         case VKD3DSPR_INPUT:
             if (reg->idx_count != 1)
@@ -283,18 +289,17 @@ static void msl_print_register_name(struct vkd3d_string_buffer *buffer,
                 msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                         "Internal compiler error: Unhandled input register index count %u.", reg->idx_count);
                 vkd3d_string_buffer_printf(buffer, "<unhandled register %#x>", reg->type);
-                break;
+                return MSL_DATA_UNION;
             }
             if (reg->idx[0].rel_addr)
             {
                 msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                         "Internal compiler error: Unhandled input register indirect addressing.");
                 vkd3d_string_buffer_printf(buffer, "<unhandled register %#x>", reg->type);
-                break;
+                return MSL_DATA_UNION;
             }
             vkd3d_string_buffer_printf(buffer, "v[%u]", reg->idx[0].offset);
-            msl_print_register_datatype(buffer, gen, reg->data_type);
-            break;
+            return MSL_DATA_UNION;
 
         case VKD3DSPR_OUTPUT:
             if (reg->idx_count != 1)
@@ -302,18 +307,17 @@ static void msl_print_register_name(struct vkd3d_string_buffer *buffer,
                 msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                         "Internal compiler error: Unhandled output register index count %u.", reg->idx_count);
                 vkd3d_string_buffer_printf(buffer, "<unhandled register %#x>", reg->type);
-                break;
+                return MSL_DATA_UNION;
             }
             if (reg->idx[0].rel_addr)
             {
                 msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                         "Internal compiler error: Unhandled output register indirect addressing.");
                 vkd3d_string_buffer_printf(buffer, "<unhandled register %#x>", reg->type);
-                break;
+                return MSL_DATA_UNION;
             }
             vkd3d_string_buffer_printf(buffer, "o[%u]", reg->idx[0].offset);
-            msl_print_register_datatype(buffer, gen, reg->data_type);
-            break;
+            return MSL_DATA_UNION;
 
         case VKD3DSPR_DEPTHOUT:
             if (gen->program->shader_version.type != VKD3D_SHADER_TYPE_PIXEL)
@@ -321,64 +325,27 @@ static void msl_print_register_name(struct vkd3d_string_buffer *buffer,
                         "Internal compiler error: Unhandled depth output in shader type #%x.",
                         gen->program->shader_version.type);
             vkd3d_string_buffer_printf(buffer, "o_depth");
-            break;
+            return MSL_DATA_FLOAT;
 
         case VKD3DSPR_IMMCONST:
             switch (reg->dimension)
             {
                 case VSIR_DIMENSION_SCALAR:
-                    switch (reg->data_type)
-                    {
-                        case VKD3D_DATA_INT:
-                            vkd3d_string_buffer_printf(buffer, "as_type<int>(%#xu)", reg->u.immconst_u32[0]);
-                            break;
-                        case VKD3D_DATA_UINT:
-                            vkd3d_string_buffer_printf(buffer, "%#xu", reg->u.immconst_u32[0]);
-                            break;
-                        case VKD3D_DATA_FLOAT:
-                            vkd3d_string_buffer_printf(buffer, "as_type<float>(%#xu)", reg->u.immconst_u32[0]);
-                            break;
-                        default:
-                            msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
-                                    "Internal compiler error: Unhandled immconst datatype %#x.", reg->data_type);
-                            vkd3d_string_buffer_printf(buffer, "<unrecognised immconst datatype %#x>", reg->data_type);
-                            break;
-                    }
-                    break;
+                    vkd3d_string_buffer_printf(buffer, "%#xu", reg->u.immconst_u32[0]);
+                    return MSL_DATA_UINT;
 
                 case VSIR_DIMENSION_VEC4:
-                    switch (reg->data_type)
-                    {
-                        case VKD3D_DATA_INT:
-                            vkd3d_string_buffer_printf(buffer, "as_type<int4>(uint4(%#xu, %#xu, %#xu, %#xu))",
-                                    reg->u.immconst_u32[0], reg->u.immconst_u32[1],
-                                    reg->u.immconst_u32[2], reg->u.immconst_u32[3]);
-                            break;
-                        case VKD3D_DATA_UINT:
-                            vkd3d_string_buffer_printf(buffer, "uint4(%#xu, %#xu, %#xu, %#xu)",
-                                    reg->u.immconst_u32[0], reg->u.immconst_u32[1],
-                                    reg->u.immconst_u32[2], reg->u.immconst_u32[3]);
-                            break;
-                        case VKD3D_DATA_FLOAT:
-                            vkd3d_string_buffer_printf(buffer, "as_type<float4>(uint4(%#xu, %#xu, %#xu, %#xu))",
-                                    reg->u.immconst_u32[0], reg->u.immconst_u32[1],
-                                    reg->u.immconst_u32[2], reg->u.immconst_u32[3]);
-                            break;
-                        default:
-                            msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
-                                    "Internal compiler error: Unhandled immconst datatype %#x.", reg->data_type);
-                            vkd3d_string_buffer_printf(buffer, "<unrecognised immconst datatype %#x>", reg->data_type);
-                            break;
-                    }
-                    break;
+                    vkd3d_string_buffer_printf(buffer, "uint4(%#xu, %#xu, %#xu, %#xu)",
+                            reg->u.immconst_u32[0], reg->u.immconst_u32[1],
+                            reg->u.immconst_u32[2], reg->u.immconst_u32[3]);
+                    return MSL_DATA_UINT;
 
                 default:
                     vkd3d_string_buffer_printf(buffer, "<unhandled_dimension %#x>", reg->dimension);
                     msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                             "Internal compiler error: Unhandled dimension %#x.", reg->dimension);
-                    break;
+                    return MSL_DATA_UINT;
             }
-            break;
 
         case VKD3DSPR_CONSTBUFFER:
             {
@@ -390,33 +357,32 @@ static void msl_print_register_name(struct vkd3d_string_buffer *buffer,
                             "Internal compiler error: Unhandled constant buffer register index count %u.",
                             reg->idx_count);
                     vkd3d_string_buffer_printf(buffer, "<unhandled register %#x>", reg->type);
-                    break;
+                    return MSL_DATA_UNION;
                 }
                 if (reg->idx[0].rel_addr || reg->idx[1].rel_addr || reg->idx[2].rel_addr)
                 {
                     msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                             "Internal compiler error: Unhandled constant buffer register indirect addressing.");
                     vkd3d_string_buffer_printf(buffer, "<unhandled register %#x>", reg->type);
-                    break;
+                    return MSL_DATA_UNION;
                 }
                 if (!(binding = msl_get_cbv_binding(gen, 0, reg->idx[1].offset)))
                 {
                     msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_BINDING_NOT_FOUND,
                             "Cannot finding binding for CBV register %u.", reg->idx[0].offset);
                     vkd3d_string_buffer_printf(buffer, "<unhandled register %#x>", reg->type);
-                    break;
+                    return MSL_DATA_UNION;
                 }
                 msl_print_cbv_name(buffer, binding->binding);
                 vkd3d_string_buffer_printf(buffer, "[%u]", reg->idx[2].offset);
-                msl_print_register_datatype(buffer, gen, reg->data_type);
-                break;
+                return MSL_DATA_UNION;
             }
 
         default:
             msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                     "Internal compiler error: Unhandled register type %#x.", reg->type);
             vkd3d_string_buffer_printf(buffer, "<unrecognised register %#x>", reg->type);
-            break;
+            return MSL_DATA_UINT;
     }
 }
 
@@ -451,24 +417,64 @@ static void msl_src_cleanup(struct msl_src *src, struct vkd3d_string_buffer_cach
     vkd3d_string_buffer_release(cache, src->str);
 }
 
-static void msl_src_init(struct msl_src *msl_src, struct msl_generator *gen,
-        const struct vkd3d_shader_src_param *vsir_src, uint32_t mask)
+static void msl_print_bitcast(struct vkd3d_string_buffer *dst, struct msl_generator *gen, const char *src,
+        enum vkd3d_data_type dst_data_type, enum msl_data_type src_data_type, enum vsir_dimension dimension)
+{
+    bool write_cast = false;
+
+    if (dst_data_type == VKD3D_DATA_UNORM || dst_data_type == VKD3D_DATA_SNORM)
+        dst_data_type = VKD3D_DATA_FLOAT;
+
+    switch (src_data_type)
+    {
+        case MSL_DATA_FLOAT:
+            write_cast = dst_data_type != VKD3D_DATA_FLOAT;
+            break;
+
+        case MSL_DATA_UINT:
+            write_cast = dst_data_type != VKD3D_DATA_UINT;
+            break;
+
+        case MSL_DATA_UNION:
+            break;
+    }
+
+    if (write_cast)
+    {
+        vkd3d_string_buffer_printf(dst, "as_type<");
+        msl_print_resource_datatype(gen, dst, dst_data_type);
+        vkd3d_string_buffer_printf(dst, "%s>(", dimension == VSIR_DIMENSION_VEC4 ? "4" : "");
+    }
+
+    vkd3d_string_buffer_printf(dst, "%s", src);
+
+    if (write_cast)
+        vkd3d_string_buffer_printf(dst, ")");
+
+    if (src_data_type == MSL_DATA_UNION)
+        msl_print_register_datatype(dst, gen, dst_data_type);
+}
+
+static void msl_print_src_with_type(struct vkd3d_string_buffer *buffer, struct msl_generator *gen,
+    const struct vkd3d_shader_src_param *vsir_src, uint32_t mask, enum vkd3d_data_type data_type)
 {
     const struct vkd3d_shader_register *reg = &vsir_src->reg;
-    struct vkd3d_string_buffer *str;
+    struct vkd3d_string_buffer *register_name, *str;
+    enum msl_data_type src_data_type;
 
-    msl_src->str = vkd3d_string_buffer_get(&gen->string_buffers);
+    register_name = vkd3d_string_buffer_get(&gen->string_buffers);
 
     if (reg->non_uniform)
         msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                 "Internal compiler error: Unhandled 'non-uniform' modifier.");
 
     if (!vsir_src->modifiers)
-        str = msl_src->str;
+        str = buffer;
     else
         str = vkd3d_string_buffer_get(&gen->string_buffers);
 
-    msl_print_register_name(str, gen, reg);
+    src_data_type = msl_print_register_name(register_name, gen, reg);
+    msl_print_bitcast(str, gen, register_name->buffer, data_type, src_data_type, reg->dimension);
     if (reg->dimension == VSIR_DIMENSION_VEC4)
         msl_print_swizzle(str, vsir_src->swizzle, mask);
 
@@ -477,21 +483,28 @@ static void msl_src_init(struct msl_src *msl_src, struct msl_generator *gen,
         case VKD3DSPSM_NONE:
             break;
         case VKD3DSPSM_NEG:
-            vkd3d_string_buffer_printf(msl_src->str, "-%s", str->buffer);
+            vkd3d_string_buffer_printf(buffer, "-%s", str->buffer);
             break;
         case VKD3DSPSM_ABS:
-            vkd3d_string_buffer_printf(msl_src->str, "abs(%s)", str->buffer);
+            vkd3d_string_buffer_printf(buffer, "abs(%s)", str->buffer);
             break;
         default:
-            vkd3d_string_buffer_printf(msl_src->str, "<unhandled modifier %#x>(%s)",
+            vkd3d_string_buffer_printf(buffer, "<unhandled modifier %#x>(%s)",
                     vsir_src->modifiers, str->buffer);
             msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                     "Internal compiler error: Unhandled source modifier(s) %#x.", vsir_src->modifiers);
             break;
     }
 
-    if (str != msl_src->str)
+    if (str != buffer)
         vkd3d_string_buffer_release(&gen->string_buffers, str);
+}
+
+static void msl_src_init(struct msl_src *msl_src, struct msl_generator *gen,
+        const struct vkd3d_shader_src_param *vsir_src, uint32_t mask)
+{
+    msl_src->str = vkd3d_string_buffer_get(&gen->string_buffers);
+    msl_print_src_with_type(msl_src->str, gen, vsir_src, mask, vsir_src->reg.data_type);
 }
 
 static void msl_dst_cleanup(struct msl_dst *dst, struct vkd3d_string_buffer_cache *cache)
@@ -504,6 +517,7 @@ static uint32_t msl_dst_init(struct msl_dst *msl_dst, struct msl_generator *gen,
         const struct vkd3d_shader_instruction *ins, const struct vkd3d_shader_dst_param *vsir_dst)
 {
     uint32_t write_mask = vsir_dst->write_mask;
+    enum msl_data_type dst_data_type;
 
     if (ins->flags & VKD3DSI_PRECISE_XYZW)
         msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
@@ -516,7 +530,9 @@ static uint32_t msl_dst_init(struct msl_dst *msl_dst, struct msl_generator *gen,
     msl_dst->register_name = vkd3d_string_buffer_get(&gen->string_buffers);
     msl_dst->mask = vkd3d_string_buffer_get(&gen->string_buffers);
 
-    msl_print_register_name(msl_dst->register_name, gen, &vsir_dst->reg);
+    dst_data_type = msl_print_register_name(msl_dst->register_name, gen, &vsir_dst->reg);
+    if (dst_data_type == MSL_DATA_UNION)
+        msl_print_register_datatype(msl_dst->mask, gen, vsir_dst->reg.data_type);
     if (vsir_dst->reg.dimension == VSIR_DIMENSION_VEC4)
         msl_print_write_mask(msl_dst->mask, write_mask);
 
@@ -710,7 +726,6 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
     const struct vkd3d_shader_descriptor_info1 *descriptor;
     const struct vkd3d_shader_descriptor_binding *binding;
     enum vkd3d_shader_resource_type resource_type;
-    struct msl_src coord, array_index, lod;
     struct vkd3d_string_buffer *read;
     enum vkd3d_data_type data_type;
     uint32_t coord_mask;
@@ -762,34 +777,28 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
     }
 
     msl_dst_init(&dst, gen, ins, &ins->dst[0]);
-    msl_src_init(&coord, gen, &ins->src[0], coord_mask);
-    /* `coord_mask + 1` gives exactly the array index component mask if it is an array resource */
-    /* Or it's simply unused, saving some branches */
-    msl_src_init(&array_index, gen, &ins->src[0], coord_mask + 1);
-    msl_src_init(&lod, gen, &ins->src[0], VKD3DSP_WRITEMASK_3);
     read = vkd3d_string_buffer_get(&gen->string_buffers);
 
     vkd3d_string_buffer_printf(read, "as_type<uint4>(");
     msl_print_srv_name(read, gen, binding->binding, resource_type_info, data_type);
     vkd3d_string_buffer_printf(read, ".read(");
-    if (resource_type_info->read_coord_size > 1)
-        vkd3d_string_buffer_printf(read, "as_type<uint%zu>(%s)",
-                resource_type_info->read_coord_size, coord.str->buffer);
-    else
-        vkd3d_string_buffer_printf(read, "as_type<uint>(%s)", coord.str->buffer);
+    msl_print_src_with_type(read, gen, &ins->src[0], coord_mask, VKD3D_DATA_UINT);
     if (resource_type_info->array)
-        vkd3d_string_buffer_printf(read, ", as_type<uint>(%s)", array_index.str->buffer);
+    {
+        vkd3d_string_buffer_printf(read, ", ");
+        msl_print_src_with_type(read, gen, &ins->src[0], coord_mask + 1, VKD3D_DATA_UINT);
+    }
     if (resource_type_info->lod)
-        vkd3d_string_buffer_printf(read, ", as_type<uint>(%s)", lod.str->buffer);
+    {
+        vkd3d_string_buffer_printf(read, ", ");
+        msl_print_src_with_type(read, gen, &ins->src[0], VKD3DSP_WRITEMASK_3, VKD3D_DATA_UINT);
+    }
     vkd3d_string_buffer_printf(read, "))");
     msl_print_swizzle(read, ins->src[1].swizzle, ins->dst[0].write_mask);
 
     msl_print_assignment(gen, &dst, "%s", read->buffer);
 
     vkd3d_string_buffer_release(&gen->string_buffers, read);
-    msl_src_cleanup(&lod, &gen->string_buffers);
-    msl_src_cleanup(&array_index, &gen->string_buffers);
-    msl_src_cleanup(&coord, &gen->string_buffers);
     msl_dst_cleanup(&dst, &gen->string_buffers);
 }
 
