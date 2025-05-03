@@ -11,7 +11,7 @@
 
 #include <corecrt.h>
 
-#include <pshpack8.h>
+#pragma pack(push,8)
 
 #ifdef __cplusplus
 extern "C" {
@@ -318,6 +318,13 @@ _ACRTIMP short __cdecl _fdclass(float);
 #define isnormal(x)   (fpclassify(x) == FP_NORMAL)
 #define isfinite(x)   (fpclassify(x) <= 0)
 
+ _ACRTIMP int __cdecl _dpcomp(double, double);
+ _ACRTIMP int __cdecl _fdpcomp(float, float);
+
+#define _FP_LT  1
+#define _FP_EQ  2
+#define _FP_GT  4
+
 #else
 
 static inline int __isnanf(float x)
@@ -371,13 +378,6 @@ static inline int __signbit(double x)
 
 #ifdef _UCRT
 
- _ACRTIMP int __cdecl _dpcomp(double, double);
- _ACRTIMP int __cdecl _fdpcomp(float, float);
-
-#define _FP_LT  1
-#define _FP_EQ  2
-#define _FP_GT  4
-
 #if defined(__GNUC__) || defined(__clang__)
 # define isgreater(x, y)      __builtin_isgreater(x, y)
 # define isgreaterequal(x, y) __builtin_isgreaterequal(x, y)
@@ -401,7 +401,7 @@ static inline int __signbit(double x)
 }
 #endif
 
-#include <poppack.h>
+#pragma pack(pop)
 
 #if !defined(__STRICT_ANSI__) || defined(_POSIX_C_SOURCE) || defined(_POSIX_SOURCE) || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE) || defined(_USE_MATH_DEFINES)
 #ifndef _MATH_DEFINES_DEFINED

@@ -70,6 +70,7 @@ struct wined3d_saved_states
     uint32_t position_transformed : 1;
     uint32_t bumpenv_constants : 1;
     uint32_t fog_constants : 1;
+    uint32_t extra_vs_args : 1;
     uint32_t extra_ps_args : 1;
 };
 
@@ -330,6 +331,7 @@ void CDECL wined3d_stateblock_primary_dirtify_all_states(struct wined3d_device *
     states->position_transformed = 1;
     states->bumpenv_constants = 1;
     states->fog_constants = 1;
+    states->extra_vs_args = 1;
     states->extra_ps_args = 1;
 
     list_init(&stateblock->changed.changed_lights);
@@ -1708,10 +1710,16 @@ void CDECL wined3d_stateblock_set_render_state(struct wined3d_stateblock *stateb
             stateblock->changed.fog_constants = 1;
             break;
 
+        case WINED3D_RS_CLIPPING:
+        case WINED3D_RS_CLIPPLANEENABLE:
+            stateblock->changed.extra_vs_args = 1;
+            break;
+
         case WINED3D_RS_ALPHAFUNC:
         case WINED3D_RS_ALPHATESTENABLE:
         case WINED3D_RS_POINTSPRITEENABLE:
         case WINED3D_RS_SHADEMODE:
+        case WINED3D_RS_SRGBWRITEENABLE:
             stateblock->changed.extra_ps_args = 1;
             break;
 
@@ -2935,7 +2943,8 @@ void CDECL wined3d_stateblock_apply_clear_state(struct wined3d_stateblock *state
     const struct wined3d_stateblock_state *state = &stateblock->stateblock_state;
     struct wined3d_device_context *context = &device->cs->c;
 
-    /* Clear state depends on the viewport, scissor rect, and scissor enable. */
+    /* Clear state depends on the viewport, scissor rect, scissor enable,
+     * and SRGB write enable. */
 
     if (stateblock->changed.viewport)
         wined3d_device_context_set_viewports(context, 1, &state->viewport);
@@ -2974,8 +2983,23 @@ void CDECL wined3d_stateblock_apply_clear_state(struct wined3d_stateblock *state
         }
     }
 
-    if (wined3d_bitmap_is_set(stateblock->changed.renderState, WINED3D_RS_SRGBWRITEENABLE))
-        wined3d_device_set_render_state(device, WINED3D_RS_SRGBWRITEENABLE, state->rs[WINED3D_RS_SRGBWRITEENABLE]);
+    if (stateblock->changed.extra_ps_args)
+    {
+        struct wined3d_extra_ps_args args;
+
+        args.point_sprite = state->rs[WINED3D_RS_POINTSPRITEENABLE];
+        args.flat_shading = state->rs[WINED3D_RS_SHADEMODE] == WINED3D_SHADE_FLAT;
+        args.fog_enable = state->rs[WINED3D_RS_FOGENABLE];
+        args.fog_mode = state->rs[WINED3D_RS_FOGTABLEMODE];
+        args.alpha_func = state->rs[WINED3D_RS_ALPHATESTENABLE] ? state->rs[WINED3D_RS_ALPHAFUNC] : WINED3D_CMP_ALWAYS;
+        args.srgb_write = state->rs[WINED3D_RS_SRGBWRITEENABLE];
+        for (unsigned int i = 0; i < 4; ++i)
+        {
+            args.texture_transform_flags[i] = state->texture_states[i][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS];
+            args.texcoord_index[i] = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
+        }
+        wined3d_device_context_emit_set_extra_ps_args(context, &args);
+    }
 }
 
 static struct wined3d_shader *get_ffp_vertex_shader(struct wined3d_device *device, const struct wined3d_state *state)
@@ -3204,6 +3228,9 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                 case WINED3D_RS_POINTSPRITEENABLE:
                 case WINED3D_RS_ALPHAFUNC:
                 case WINED3D_RS_ALPHATESTENABLE:
+                case WINED3D_RS_SRGBWRITEENABLE:
+                case WINED3D_RS_CLIPPING:
+                case WINED3D_RS_CLIPPLANEENABLE:
                     break;
 
                 case WINED3D_RS_ANTIALIAS:
@@ -3948,21 +3975,12 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                 WINED3D_SHADER_CONST_FFP_PS, 0, offsetof(struct wined3d_ffp_ps_constants, color_key), &constants);
     }
 
-    if (changed->extra_ps_args)
+    if (changed->extra_vs_args)
     {
-        struct wined3d_extra_ps_args args;
+        struct wined3d_extra_vs_args args;
 
-        args.point_sprite = state->rs[WINED3D_RS_POINTSPRITEENABLE];
-        args.flat_shading = state->rs[WINED3D_RS_SHADEMODE] == WINED3D_SHADE_FLAT;
-        args.fog_enable = state->rs[WINED3D_RS_FOGENABLE];
-        args.fog_mode = state->rs[WINED3D_RS_FOGTABLEMODE];
-        args.alpha_func = state->rs[WINED3D_RS_ALPHATESTENABLE] ? state->rs[WINED3D_RS_ALPHAFUNC] : WINED3D_CMP_ALWAYS;
-        for (unsigned int i = 0; i < 4; ++i)
-        {
-            args.texture_transform_flags[i] = state->texture_states[i][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS];
-            args.texcoord_index[i] = state->texture_states[i][WINED3D_TSS_TEXCOORD_INDEX];
-        }
-        wined3d_device_context_emit_set_extra_ps_args(context, &args);
+        args.clip_planes = state->rs[WINED3D_RS_CLIPPING] ? state->rs[WINED3D_RS_CLIPPLANEENABLE] : 0;
+        wined3d_device_context_emit_set_extra_vs_args(context, &args);
     }
 
     if (wined3d_bitmap_is_set(changed->renderState, WINED3D_RS_ALPHAREF))

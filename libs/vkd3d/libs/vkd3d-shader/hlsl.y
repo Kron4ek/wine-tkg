@@ -2115,7 +2115,7 @@ static bool add_assignment(struct hlsl_ctx *ctx, struct hlsl_block *block, struc
         VKD3D_ASSERT(coords->data_type->e.numeric.type == HLSL_TYPE_UINT);
         VKD3D_ASSERT(coords->data_type->e.numeric.dimx == dim_count);
 
-        hlsl_block_add_resource_store(ctx, block, &resource_deref, coords, rhs, &lhs->loc);
+        hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STORE, &resource_deref, coords, rhs, &lhs->loc);
         hlsl_cleanup_deref(&resource_deref);
     }
     else if (matrix_writemask)
@@ -6220,8 +6220,54 @@ static bool add_store_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block
     if (!hlsl_init_deref_from_index_chain(ctx, &resource_deref, object))
         return false;
 
-    hlsl_block_add_resource_store(ctx, block, &resource_deref, offset, rhs, loc);
+    hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STORE, &resource_deref, offset, rhs, loc);
     hlsl_cleanup_deref(&resource_deref);
+
+    return true;
+}
+
+static bool add_so_append_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block, struct hlsl_ir_node *object,
+        const char *name, const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_deref so_deref;
+    struct hlsl_ir_node *rhs;
+
+    if (params->args_count != 1)
+    {
+        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_WRONG_PARAMETER_COUNT,
+                "Wrong number of arguments to method '%s': expected 1.", name);
+        return false;
+    }
+
+    if (!hlsl_init_deref_from_index_chain(ctx, &so_deref, object))
+        return false;
+
+    if (!(rhs = add_implicit_conversion(ctx, block, params->args[0], object->data_type->e.so.type, loc)))
+        return false;
+
+    hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STREAM_APPEND, &so_deref, NULL, rhs, loc);
+    hlsl_cleanup_deref(&so_deref);
+
+    return true;
+}
+
+static bool add_so_restartstrip_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block, struct hlsl_ir_node *object,
+        const char *name, const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_deref so_deref;
+
+    if (params->args_count)
+    {
+        hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_WRONG_PARAMETER_COUNT,
+                "Wrong number of arguments to method '%s': expected 0.", name);
+        return false;
+    }
+
+    if (!hlsl_init_deref_from_index_chain(ctx, &so_deref, object))
+        return false;
+
+    hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STREAM_RESTART, &so_deref, NULL, NULL, loc);
+    hlsl_cleanup_deref(&so_deref);
 
     return true;
 }
@@ -6269,6 +6315,12 @@ static const struct method_function uav_methods[] =
     { "Store4", add_store_method_call, "00000000000001" },
 };
 
+static const struct method_function so_methods[] =
+{
+    { "Append",       add_so_append_method_call,       "" },
+    { "RestartStrip", add_so_restartstrip_method_call, "" },
+};
+
 static int object_method_function_name_compare(const void *a, const void *b)
 {
     const struct method_function *func = b;
@@ -6280,8 +6332,7 @@ static bool add_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block, stru
         const char *name, const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
     const struct hlsl_type *object_type = object->data_type;
-    const struct method_function *method, *methods;
-    unsigned int count;
+    const struct method_function *method;
 
     if (object_type->class == HLSL_CLASS_ERROR)
     {
@@ -6300,13 +6351,24 @@ static bool add_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block, stru
 
     if (object_type->class == HLSL_CLASS_TEXTURE)
     {
-        count = ARRAY_SIZE(texture_methods);
-        methods = texture_methods;
+        method = bsearch(name, texture_methods, ARRAY_SIZE(texture_methods), sizeof(*method),
+                object_method_function_name_compare);
+
+        if (method && method->valid_dims[object_type->sampler_dim] != '1')
+            method = NULL;
     }
     else if (object_type->class == HLSL_CLASS_UAV)
     {
-        count = ARRAY_SIZE(uav_methods);
-        methods = uav_methods;
+        method = bsearch(name, uav_methods, ARRAY_SIZE(uav_methods), sizeof(*method),
+                object_method_function_name_compare);
+
+        if (method && method->valid_dims[object_type->sampler_dim] != '1')
+            method = NULL;
+    }
+    else if (object_type->class == HLSL_CLASS_STREAM_OUTPUT)
+    {
+        method = bsearch(name, so_methods, ARRAY_SIZE(so_methods), sizeof(*method),
+                object_method_function_name_compare);
     }
     else
     {
@@ -6319,17 +6381,10 @@ static bool add_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block, stru
         return false;
     }
 
-    method = bsearch(name, methods, count, sizeof(*method),
-            object_method_function_name_compare);
-
-    if (method && method->valid_dims[object_type->sampler_dim] == '1')
-    {
+    if (method)
         return method->handler(ctx, block, object, name, params, loc);
-    }
     else
-    {
         return raise_invalid_method_object_type(ctx, object_type, name, loc);
-    }
 }
 
 static bool add_object_property_access(struct hlsl_ctx *ctx,

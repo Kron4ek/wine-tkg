@@ -527,21 +527,11 @@ static void blend_dbb(struct wined3d_context *context, const struct wined3d_stat
 
 void state_clipping(struct wined3d_context *context, const struct wined3d_state *state, DWORD state_id)
 {
-    struct wined3d_context_gl *context_gl = wined3d_context_gl(context);
-    uint32_t enable_mask;
-
     /* glEnable(GL_CLIP_PLANEx) doesn't apply to (ARB backend) vertex shaders.
      * The enabled / disabled planes are hardcoded into the shader. Update the
      * shader to update the enabled clipplanes. In case of fixed function, we
      * need to update the clipping field from ffp_vertex_settings. */
     context->shader_update_mask |= 1u << WINED3D_SHADER_TYPE_VERTEX;
-
-    /* If enabling / disabling all
-     * TODO: Is this correct? Doesn't D3DRS_CLIPPING disable clipping on the viewport frustrum?
-     */
-    enable_mask = state->render_states[WINED3D_RS_CLIPPING] ?
-            state->render_states[WINED3D_RS_CLIPPLANEENABLE] : 0;
-    wined3d_context_gl_enable_clip_distances(context_gl, enable_mask);
 }
 
 static void renderstate_stencil_twosided(struct wined3d_context *context, GLint face,
@@ -1543,15 +1533,14 @@ static void validate_state_table(struct wined3d_state_entry *state_table)
         { 30,  34},
         { 36,  40},
         { 42,  47},
-        { 49, 135},
+        { 49, 136},
         {138, 139},
         {144, 144},
         {149, 150},
-        {153, 153},
+        {152, 153},
         {156, 160},
         {162, 165},
-        {167, 193},
-        {195, 209},
+        {167, 209},
         {  0,   0},
     };
     static const unsigned int simple_states[] =

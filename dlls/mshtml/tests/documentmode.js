@@ -3146,6 +3146,13 @@ sync_test("__proto__", function() {
         ok(e.number === 0xa13b6 - 0x80000000 && e.name === "TypeError",
             "changing __proto__ on non-extensible object threw exception " + e.number + " (" + e.name + ")");
     }
+
+    obj = document.createElement("img");
+    obj.__proto__ = ctor.prototype;
+    document.body.setAttribute.call(obj, "height", "101");
+    r = document.body.getAttribute.call(obj, "height");
+    ok(r === "101", "getAttribute(height) = " + r);
+    ok(!("getAttribute" in obj), "getAttribute exposed in obj");
 });
 
 sync_test("__defineGetter__", function() {
@@ -3765,6 +3772,13 @@ sync_test("prototypes", function() {
     check(Attr.prototype, Node.prototype, "attr prototype");
     check(document.createDocumentFragment(), DocumentFragment.prototype, "fragment");
     check(DocumentFragment.prototype, Node.prototype, "fragment prototype");
+
+    try {
+        HTMLAreaElement.prototype.toString.call(document.createElement("a"));
+        ok(false, "Area element's toString on Anchor element didn't fail");
+    } catch(e) {
+        ok(e.number == 0xffff - 0x80000000, "Area element's toString on Anchor element threw exception " + e.number);
+    }
 });
 
 sync_test("prototype props", function() {
@@ -4009,7 +4023,19 @@ sync_test("constructors", function() {
         r = ctors[i];
         ok(window.hasOwnProperty(r), r + " not prop of window");
         ok(!(r in Window.prototype), r + " is a prop of window's prototype");
+        ok(window[r].toString() === "\nfunction " + r + "() {\n    [native code]\n}\n", r + ".toString() = " + window[r].toString());
     }
     ok(window.Image.prototype === window.HTMLImageElement.prototype, "Image.prototype != HTMLImageElement.prototype");
     ok(window.Option.prototype === window.HTMLOptionElement.prototype, "Option.prototype != HTMLOptionElement.prototype");
+
+    ok(typeof(XMLHttpRequest.create) === "function", "XMLHttpRequest.create not a function");
+    ok(XMLHttpRequest.create.toString() === "\nfunction create() {\n    [native code]\n}\n", "XMLHttpRequest.create.toString() = " + XMLHttpRequest.create.toString());
+    ok(XMLHttpRequest.create() instanceof XMLHttpRequest, "XMLHttpRequest.create did not return XMLHttpRequest instance");
+    ok(XMLHttpRequest.create.call(Object) instanceof XMLHttpRequest, "XMLHttpRequest.create with Object 'this' did not return XMLHttpRequest instance");
+    try {
+        new XMLHttpRequest.create();
+        ok(false, "new XMLHttpRequest.create() did not throw");
+    }catch(e) {
+        ok(e.number === 0x0ffff - 0x80000000, "new XMLHttpRequest.create() threw " + e.number);
+    }
 });

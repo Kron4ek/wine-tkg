@@ -141,7 +141,8 @@ enum hlsl_regset
     HLSL_REGSET_SAMPLERS,
     HLSL_REGSET_TEXTURES,
     HLSL_REGSET_UAVS,
-    HLSL_REGSET_LAST_OBJECT = HLSL_REGSET_UAVS,
+    HLSL_REGSET_STREAM_OUTPUTS,
+    HLSL_REGSET_LAST_OBJECT = HLSL_REGSET_STREAM_OUTPUTS,
     HLSL_REGSET_NUMERIC,
     HLSL_REGSET_LAST = HLSL_REGSET_NUMERIC,
 };
@@ -894,9 +895,17 @@ struct hlsl_ir_resource_load
     enum hlsl_sampler_dim sampling_dim;
 };
 
+enum hlsl_resource_store_type
+{
+    HLSL_RESOURCE_STORE,
+    HLSL_RESOURCE_STREAM_APPEND,
+    HLSL_RESOURCE_STREAM_RESTART,
+};
+
 struct hlsl_ir_resource_store
 {
     struct hlsl_ir_node node;
+    enum hlsl_resource_store_type store_type;
     struct hlsl_deref resource;
     struct hlsl_src coords, value;
 };
@@ -1204,6 +1213,8 @@ struct hlsl_ctx
     unsigned int max_vertex_count;
     /* The input primitive type of a geometry shader. */
     enum vkd3d_primitive_type input_primitive_type;
+    /* The output topology type of a geometry shader. */
+    enum vkd3d_primitive_type output_topology_type;
 
     /* In some cases we generate opcodes by parsing an HLSL function and then
      * invoking it. If not NULL, this field is the name of the function that we
@@ -1554,8 +1565,9 @@ void hlsl_block_add_loop(struct hlsl_ctx *ctx, struct hlsl_block *block,
         unsigned int unroll_limit, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_block_add_resource_load(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_resource_load_params *params, const struct vkd3d_shader_location *loc);
-void hlsl_block_add_resource_store(struct hlsl_ctx *ctx, struct hlsl_block *block, const struct hlsl_deref *resource,
-        struct hlsl_ir_node *coords, struct hlsl_ir_node *value, const struct vkd3d_shader_location *loc);
+void hlsl_block_add_resource_store(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        enum hlsl_resource_store_type type, const struct hlsl_deref *resource, struct hlsl_ir_node *coords,
+        struct hlsl_ir_node *value, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_block_add_simple_load(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_ir_var *var, const struct vkd3d_shader_location *loc);
 void hlsl_block_add_simple_store(struct hlsl_ctx *ctx, struct hlsl_block *block,

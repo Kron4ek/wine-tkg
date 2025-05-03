@@ -10946,6 +10946,8 @@ static void shader_glsl_update_graphics_program(struct shader_glsl_priv *priv,
         current_vertex_color_clamp = glsl_program->vs.vertex_color_clamp;
         if (glsl_program->shader_controlled_clip_distances)
             wined3d_context_gl_enable_clip_distances(context_gl, glsl_program->clip_distance_mask);
+        else if (context_gl->c.shader_update_mask & (1u << WINED3D_SHADER_TYPE_VERTEX))
+            wined3d_context_gl_enable_clip_distances(context_gl, state->extra_vs_args.clip_planes);
     }
     else
     {
@@ -10990,6 +10992,10 @@ static void shader_glsl_apply_draw_state(void *shader_priv, struct wined3d_conte
     struct shader_glsl_priv *priv = shader_priv;
 
     shader_glsl_update_legacy_states(context_gl, state);
+
+    if (context_gl->gl_info->supported[ARB_FRAMEBUFFER_SRGB]
+            && (context_gl->c.shader_update_mask & (1u << WINED3D_SHADER_TYPE_PIXEL)))
+        state_srgbwrite(&context_gl->c, state, STATE_RENDER(WINED3D_RS_SRGBWRITEENABLE));
 
     if (context->shader_update_mask & ~(1u << WINED3D_SHADER_TYPE_COMPUTE))
         shader_glsl_update_graphics_program(priv, context_gl, state);
@@ -12016,8 +12022,6 @@ static const struct wined3d_state_entry_template glsl_vertex_pipe_vp_states[] =
     {STATE_RENDER(WINED3D_RS_SPECULARENABLE),                    {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_SPECULARMATERIALSOURCE),            {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_VERTEXBLEND),                       {STATE_RENDER(WINED3D_RS_FOGENABLE),                         NULL                   }, WINED3D_GL_EXT_NONE          },
-    {STATE_RENDER(WINED3D_RS_CLIPPING),                          {STATE_RENDER(WINED3D_RS_CLIPPING),                          state_clipping         }, WINED3D_GL_EXT_NONE          },
-    {STATE_RENDER(WINED3D_RS_CLIPPLANEENABLE),                   {STATE_RENDER(WINED3D_RS_CLIPPING),                          NULL                   }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_POINTSIZE),                         {STATE_RENDER(WINED3D_RS_POINTSIZE_MIN),                     NULL                   }, WINED3D_GL_EXT_NONE          },
     {STATE_RENDER(WINED3D_RS_POINTSIZE_MIN),                     {STATE_RENDER(WINED3D_RS_POINTSIZE_MIN),                     glsl_vertex_pipe_pointsize}, WINED3D_GL_EXT_NONE       },
     {STATE_RENDER(WINED3D_RS_POINTSIZE_MAX),                     {STATE_RENDER(WINED3D_RS_POINTSIZE_MIN),                     NULL                   }, WINED3D_GL_EXT_NONE          },
@@ -12204,8 +12208,6 @@ static const struct wined3d_state_entry_template glsl_fragment_pipe_state_templa
     {STATE_SHADER(WINED3D_SHADER_TYPE_VERTEX),                  {STATE_SHADER(WINED3D_SHADER_TYPE_VERTEX),                   glsl_fragment_pipe_vs                  }, WINED3D_GL_EXT_NONE },
     {STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),                   {STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),                    glsl_fragment_pipe_shader              }, WINED3D_GL_EXT_NONE },
     {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                   {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    state_nop                              }, WINED3D_GL_EXT_NONE },
-    {STATE_RENDER(WINED3D_RS_SRGBWRITEENABLE),                  {STATE_RENDER(WINED3D_RS_SRGBWRITEENABLE),                   state_srgbwrite                        }, ARB_FRAMEBUFFER_SRGB},
-    {STATE_RENDER(WINED3D_RS_SRGBWRITEENABLE),                  {STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL),                    NULL                                   }, WINED3D_GL_EXT_NONE },
     {STATE_TEXTURESTAGE(0, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
     {STATE_TEXTURESTAGE(1, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
     {STATE_TEXTURESTAGE(2, WINED3D_TSS_ALPHA_ARG0),             {STATE_RENDER(WINED3D_RS_COLORKEYENABLE),                    NULL                                   }, WINED3D_GL_EXT_NONE },
