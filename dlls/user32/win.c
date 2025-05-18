@@ -151,20 +151,6 @@ HWND WIN_GetFullHandle( HWND hwnd )
 
 
 /***********************************************************************
- *           WIN_SetStyle
- *
- * Change the style of a window.
- */
-ULONG WIN_SetStyle( HWND hwnd, ULONG set_bits, ULONG clear_bits )
-{
-    /* FIXME: Use SetWindowLong or move callers to win32u instead.
-     * We use STYLESTRUCT to pass params, but meaning of its field does not match our usage. */
-    STYLESTRUCT style = { .styleNew = set_bits, .styleOld = clear_bits };
-    return NtUserCallHwndParam( hwnd, (UINT_PTR)&style, NtUserSetWindowStyle );
-}
-
-
-/***********************************************************************
  *           dump_window_styles
  */
 static void dump_window_styles( DWORD style, DWORD exstyle )
@@ -1255,6 +1241,17 @@ BOOL WINAPI IsChild( HWND parent, HWND child )
 BOOL WINAPI IsWindowVisible( HWND hwnd )
 {
     return NtUserIsWindowVisible( hwnd );
+}
+
+
+/***********************************************************************
+ *		IsWindowArranged (USER32.@)
+ */
+BOOL WINAPI IsWindowArranged( HWND hwnd )
+{
+    FIXME( "hwnd %p stub.\n", hwnd );
+
+    return FALSE;
 }
 
 

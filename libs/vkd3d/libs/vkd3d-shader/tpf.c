@@ -4165,6 +4165,7 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
         case VKD3DSIH_BREAK:
         case VKD3DSIH_CASE:
         case VKD3DSIH_CONTINUE:
+        case VKD3DSIH_CUT:
         case VKD3DSIH_DEFAULT:
         case VKD3DSIH_DISCARD:
         case VKD3DSIH_DIV:
@@ -4178,6 +4179,7 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
         case VKD3DSIH_DSY_COARSE:
         case VKD3DSIH_DSY_FINE:
         case VKD3DSIH_ELSE:
+        case VKD3DSIH_EMIT:
         case VKD3DSIH_ENDIF:
         case VKD3DSIH_ENDLOOP:
         case VKD3DSIH_ENDSWITCH:
@@ -4213,6 +4215,7 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
         case VKD3DSIH_IMM_ATOMIC_UMIN:
         case VKD3DSIH_IMM_ATOMIC_OR:
         case VKD3DSIH_IMM_ATOMIC_XOR:
+        case VKD3DSIH_SYNC:
         case VKD3DSIH_IMUL:
         case VKD3DSIH_INE:
         case VKD3DSIH_INEG:

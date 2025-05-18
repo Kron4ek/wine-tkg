@@ -212,17 +212,26 @@ struct object_lock
 };
 #define OBJECT_LOCK_INIT {0}
 
+#if defined(__i386__) || defined(__x86_64__)
+/* this prevents compilers from incorrectly reordering non-volatile reads (e.g., memcpy) from shared memory */
+#define __SHARED_READ_FENCE do { __asm__ __volatile__( "" ::: "memory" ); } while (0)
+#else
+#define __SHARED_READ_FENCE __atomic_thread_fence( __ATOMIC_ACQUIRE )
+#endif
+
 /* Get shared session object's data pointer, must be called in a loop while STATUS_PENDING
  * is returned, lock must be initialized with OBJECT_LOCK_INIT.
  *
  * The data read from the objects may be transient and no logic should be executed based
  * on it, within the loop, or after, unless the function has returned STATUS_SUCCESS.
  */
+extern const session_shm_t *shared_session;
 extern NTSTATUS get_shared_desktop( struct object_lock *lock, const desktop_shm_t **desktop_shm );
 extern NTSTATUS get_shared_queue( struct object_lock *lock, const queue_shm_t **queue_shm );
 extern NTSTATUS get_shared_input( UINT tid, struct object_lock *lock, const input_shm_t **input_shm );
 
 extern BOOL is_virtual_desktop(void);
+extern BOOL is_service_process(void);
 
 /* window.c */
 struct tagWND;
@@ -266,7 +275,7 @@ extern BOOL screen_to_client( HWND hwnd, POINT *pt );
 extern LONG_PTR set_window_long( HWND hwnd, INT offset, UINT size, LONG_PTR newval,
                                  BOOL ansi );
 extern BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y );
-extern ULONG set_window_style( HWND hwnd, ULONG set_bits, ULONG clear_bits );
+extern UINT set_window_style_bits( HWND hwnd, UINT set_bits, UINT clear_bits );
 extern void update_window_state( HWND hwnd );
 extern HWND window_from_point( HWND hwnd, POINT pt, INT *hittest );
 extern HWND get_shell_window(void);
@@ -279,6 +288,8 @@ static inline void release_win_ptr( struct tagWND *ptr )
     user_unlock();
 }
 
+extern SYSTEM_BASIC_INFORMATION system_info;
+extern void shared_session_init(void);
 extern void gdi_init(void);
 extern void winstation_init(void);
 extern void sysparams_init(void);

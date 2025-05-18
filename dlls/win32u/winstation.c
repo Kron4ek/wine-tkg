@@ -71,6 +71,7 @@ struct session_block
 
 static pthread_mutex_t session_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct list session_blocks = LIST_INIT(session_blocks);
+const session_shm_t *shared_session;
 
 static struct session_thread_data *get_session_thread_data(void)
 {
@@ -78,13 +79,6 @@ static struct session_thread_data *get_session_thread_data(void)
     if (!thread_info->session_data) thread_info->session_data = calloc(1, sizeof(*thread_info->session_data));
     return thread_info->session_data;
 }
-
-#if defined(__i386__) || defined(__x86_64__)
-/* this prevents compilers from incorrectly reordering non-volatile reads (e.g., memcpy) from shared memory */
-#define __SHARED_READ_FENCE do { __asm__ __volatile__( "" ::: "memory" ); } while (0)
-#else
-#define __SHARED_READ_FENCE __atomic_thread_fence( __ATOMIC_ACQUIRE )
-#endif
 
 static void shared_object_acquire_seqlock( const shared_object_t *object, UINT64 *seq )
 {
@@ -193,6 +187,17 @@ static const shared_object_t *find_shared_session_object( struct obj_locator loc
     }
 
     return NULL;
+}
+
+void shared_session_init(void)
+{
+    struct session_block *block;
+    UINT status;
+
+    if ((status = find_shared_session_block( 0, sizeof(*shared_session), &block )))
+        ERR( "Failed to map initial shared session block, status %#x\n", status );
+    else
+        shared_session = (const session_shm_t *)block->data;
 }
 
 NTSTATUS get_shared_desktop( struct object_lock *lock, const desktop_shm_t **desktop_shm )
@@ -340,6 +345,15 @@ BOOL is_virtual_desktop(void)
     if (status) ret = FALSE;
 
     return ret;
+}
+
+BOOL is_service_process(void)
+{
+    static const WCHAR wine_service_station_name[] = {'_','_','w','i','n','e','s','e','r','v','i','c','e','_','w','i','n','s','t','a','t','i','o','n',0};
+    WCHAR name[MAX_PATH];
+
+    return NtUserGetObjectInformation( NtUserGetProcessWindowStation(), UOI_NAME, name, sizeof(name), NULL ) &&
+           !wcscmp( name, wine_service_station_name );
 }
 
 /***********************************************************************
@@ -774,20 +788,13 @@ static inline TEB64 *NtCurrentTeb64(void) { return (TEB64 *)NtCurrentTeb()->GdiB
 
 HWND get_desktop_window(void)
 {
-    static const WCHAR wine_service_station_name[] =
-        {'_','_','w','i','n','e','s','e','r','v','i','c','e','_','w','i','n','s','t','a','t','i','o','n',0};
     struct ntuser_thread_info *thread_info = NtUserGetThreadInfo();
-    WCHAR name[MAX_PATH];
     BOOL is_service;
 
     if (thread_info->top_window) return UlongToHandle( thread_info->top_window );
 
     /* don't create an actual explorer desktop window for services */
-    if (NtUserGetObjectInformation( NtUserGetProcessWindowStation(), UOI_NAME, name, sizeof(name), NULL )
-        && !wcscmp( name, wine_service_station_name ))
-        is_service = TRUE;
-    else
-        is_service = FALSE;
+    is_service = is_service_process();
 
     SERVER_START_REQ( get_desktop_window )
     {

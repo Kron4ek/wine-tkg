@@ -15934,6 +15934,144 @@ static void test_get_dxgi_device(BOOL d3d11)
     release_test_context(&ctx);
 }
 
+static void test_no_target(BOOL d3d11)
+{
+    D2D1_BITMAP_PROPERTIES1 bitmap_desc;
+    IDWriteFactory *dwrite_factory;
+    IDWriteTextFormat *text_format;
+    ID2D1SolidColorBrush *brush;
+    ID2D1DeviceContext *context;
+    D2D1_MATRIX_3X2_F matrix;
+    IDXGIDevice *dxgi_device;
+    ID2D1Bitmap1 *bitmap;
+    ID2D1Device *device;
+    D2D1_COLOR_F color;
+    D2D1_SIZE_U size;
+    D2D1_RECT_F rect;
+    D2D1_TAG t1, t2;
+    HRESULT hr;
+
+    if (!pD2D1CreateDevice)
+    {
+        win_skip("D2D1CreateDevice() is unavailable.\n");
+        return;
+    }
+
+    dxgi_device = create_device(d3d11);
+    ok(!!dxgi_device, "Failed to create device.\n");
+
+    hr = pD2D1CreateDevice(dxgi_device, NULL, &device);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1Device_CreateDeviceContext(device, D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    /* Clear method */
+    ID2D1DeviceContext_BeginDraw(context);
+
+    set_matrix_identity(&matrix);
+    ID2D1DeviceContext_SetTags(context, 0x10, 0x10);
+    ID2D1DeviceContext_SetTransform(context, &matrix);
+
+    ID2D1DeviceContext_SetTags(context, 0x10, 0x20);
+    ID2D1DeviceContext_Clear(context, 0);
+
+    ID2D1DeviceContext_SetTags(context, 0x10, 0x30);
+    ID2D1DeviceContext_Clear(context, 0);
+
+    hr = ID2D1DeviceContext_EndDraw(context, &t1, &t2);
+    ok(hr == D2DERR_WRONG_STATE, "Got unexpected hr %#lx.\n", hr);
+    ok(t1 == 0x10 && t2 == 0x20, "Unexpected tags %s:%s.\n", wine_dbgstr_longlong(t1), wine_dbgstr_longlong(t2));
+
+    /* DrawBitmap method */
+    set_size_u(&size, 4, 4);
+    bitmap_desc.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    bitmap_desc.pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
+    bitmap_desc.dpiX = 96.0f;
+    bitmap_desc.dpiY = 96.0f;
+    bitmap_desc.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+    bitmap_desc.colorContext = NULL;
+    hr = ID2D1DeviceContext_CreateBitmap(context, size, NULL, 0, &bitmap_desc, &bitmap);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1DeviceContext_BeginDraw(context);
+
+    ID2D1DeviceContext_SetTags(context, 0x20, 0x10);
+    ID2D1DeviceContext_SetPrimitiveBlend(context, D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+
+    ID2D1DeviceContext_SetTags(context, 0x20, 0x20);
+    ID2D1DeviceContext_DrawBitmap(context, (ID2D1Bitmap *)bitmap, NULL, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR, NULL, NULL);
+
+    ID2D1DeviceContext_SetTags(context, 0x20, 0x30);
+    ID2D1DeviceContext_DrawBitmap(context, (ID2D1Bitmap *)bitmap, NULL, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR, NULL, NULL);
+
+    hr = ID2D1DeviceContext_EndDraw(context, &t1, &t2);
+    ok(hr == D2DERR_WRONG_STATE, "Got unexpected hr %#lx.\n", hr);
+    ok(t1 == 0x20 && t2 == 0x20, "Unexpected tags %s:%s.\n", wine_dbgstr_longlong(t1), wine_dbgstr_longlong(t2));
+
+    ID2D1Bitmap1_Release(bitmap);
+
+    /* DrawRectangle method */
+    set_color(&color, 0.0f, 0.0f, 0.0f, 0.0f);
+    hr = ID2D1DeviceContext_CreateSolidColorBrush(context, &color, NULL, &brush);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    set_rect(&rect, 0.0f, 0.0f, 1.0f, 1.0f);
+
+    ID2D1DeviceContext_BeginDraw(context);
+
+    ID2D1DeviceContext_SetTags(context, 0x30, 0x10);
+    ID2D1DeviceContext_DrawRectangle(context, &rect, (ID2D1Brush *)brush, 1.0f, NULL);
+
+    ID2D1DeviceContext_SetTags(context, 0x30, 0x20);
+    ID2D1DeviceContext_DrawRectangle(context, &rect, (ID2D1Brush *)brush, 1.0f, NULL);
+
+    hr = ID2D1DeviceContext_EndDraw(context, &t1, &t2);
+    ok(hr == D2DERR_WRONG_STATE, "Got unexpected hr %#lx.\n", hr);
+    ok(t1 == 0x30 && t2 == 0x10, "Unexpected tags %s:%s.\n", wine_dbgstr_longlong(t1), wine_dbgstr_longlong(t2));
+
+    /* FillRectangle method */
+    ID2D1DeviceContext_BeginDraw(context);
+
+    ID2D1DeviceContext_SetTags(context, 0x40, 0x10);
+    ID2D1DeviceContext_FillRectangle(context, &rect, (ID2D1Brush *)brush);
+
+    ID2D1DeviceContext_SetTags(context, 0x40, 0x20);
+    ID2D1DeviceContext_FillRectangle(context, &rect, (ID2D1Brush *)brush);
+
+    hr = ID2D1DeviceContext_EndDraw(context, &t1, &t2);
+    ok(hr == D2DERR_WRONG_STATE, "Got unexpected hr %#lx.\n", hr);
+    ok(t1 == 0x40 && t2 == 0x10, "Unexpected tags %s:%s.\n", wine_dbgstr_longlong(t1), wine_dbgstr_longlong(t2));
+
+    /* DrawText method */
+    hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &IID_IDWriteFactory, (IUnknown **)&dwrite_factory);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = IDWriteFactory_CreateTextFormat(dwrite_factory, L"Tahoma", NULL, DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 10.0f, L"", &text_format);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1DeviceContext_BeginDraw(context);
+
+    ID2D1DeviceContext_SetTags(context, 0x50, 0x10);
+    ID2D1DeviceContext_DrawText(context, L"Wine", 4, text_format, &rect, (ID2D1Brush *)brush, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+
+    ID2D1DeviceContext_SetTags(context, 0x50, 0x20);
+    ID2D1DeviceContext_DrawText(context, L"Wine", 4, text_format, &rect, (ID2D1Brush *)brush, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
+
+    hr = ID2D1DeviceContext_EndDraw(context, &t1, &t2);
+    ok(hr == D2DERR_WRONG_STATE, "Got unexpected hr %#lx.\n", hr);
+    ok(t1 == 0x50 && t2 == 0x10, "Unexpected tags %s:%s.\n", wine_dbgstr_longlong(t1), wine_dbgstr_longlong(t2));
+
+    IDWriteTextFormat_Release(text_format);
+    IDWriteFactory_Release(dwrite_factory);
+
+    ID2D1SolidColorBrush_Release(brush);
+
+    ID2D1DeviceContext_Release(context);
+    ID2D1Device_Release(device);
+    IDXGIDevice_Release(dxgi_device);
+}
+
 START_TEST(d2d1)
 {
     HMODULE d2d1_dll = GetModuleHandleA("d2d1.dll");
@@ -16031,6 +16169,7 @@ START_TEST(d2d1)
     queue_test(test_wic_target_format);
     queue_test(test_effect_blob_property);
     queue_test(test_get_dxgi_device);
+    queue_test(test_no_target);
 
     run_queued_tests();
 }

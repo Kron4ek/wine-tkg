@@ -46,6 +46,25 @@ typedef enum MONITOR_DPI_TYPE
 typedef NTSTATUS (WINAPI *ntuser_callback)( void *args, ULONG len );
 NTSYSAPI NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len );
 
+struct user_entry
+{
+    ULONG64 offset;   /* shared user object offset */
+    ULONG   tid;      /* owner thread id */
+    ULONG   pid;      /* owner process id */
+    ULONG64 padding;
+    union
+    {
+        struct
+        {
+            USHORT type;       /* object type (0 if free) */
+            USHORT generation; /* generation counter */
+        };
+        LONG64 uniq;
+    };
+};
+
+#define MAX_USER_HANDLES ((LAST_USER_HANDLE - FIRST_USER_HANDLE + 1) >> 1)
+
 /* KernelCallbackTable codes, not compatible with Windows.
    All of these functions must live inside user32.dll. Overwatch 2's
    KiUserCallbackDispatcher hook verifies this and prevents the callback from
@@ -718,6 +737,7 @@ typedef enum _USERTHREADSTATECLASS
 
 W32KAPI HKL     WINAPI NtUserActivateKeyboardLayout( HKL layout, UINT flags );
 W32KAPI BOOL    WINAPI NtUserAddClipboardFormatListener( HWND hwnd );
+W32KAPI ULONG   WINAPI NtUserAlterWindowStyle( HWND hwnd, UINT mask, UINT style );
 W32KAPI UINT    WINAPI NtUserArrangeIconicWindows( HWND parent );
 W32KAPI UINT    WINAPI NtUserAssociateInputContext( HWND hwnd, HIMC ctx, ULONG flags );
 W32KAPI BOOL    WINAPI NtUserAttachThreadInput( DWORD from, DWORD to, BOOL attach );
@@ -1378,8 +1398,6 @@ enum
     NtUserCallHwndParam_ExposeWindowSurface,
     NtUserCallHwndParam_GetWinMonitorDpi,
     NtUserCallHwndParam_SetRawWindowPos,
-    /* temporary exports */
-    NtUserSetWindowStyle,
 };
 
 struct get_window_rects_params

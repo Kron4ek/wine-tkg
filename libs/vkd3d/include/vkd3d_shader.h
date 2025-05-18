@@ -2740,6 +2740,10 @@ VKD3D_SHADER_API const enum vkd3d_shader_target_type *vkd3d_shader_get_supported
  * source code or byte code.
  *
  * This version of vkd3d-shader supports the following transformations:
+ * - VKD3D_SHADER_SOURCE_DXBC_DXIL to VKD3D_SHADER_TARGET_SPIRV_BINARY
+ * - VKD3D_SHADER_SOURCE_DXBC_DXIL to VKD3D_SHADER_TARGET_SPIRV_TEXT
+ *   (if vkd3d was compiled with SPIRV-Tools)
+ * - VKD3D_SHADER_SOURCE_DXBC_DXIL to VKD3D_SHADER_TARGET_D3D_ASM
  * - VKD3D_SHADER_SOURCE_DXBC_TPF to VKD3D_SHADER_TARGET_SPIRV_BINARY
  * - VKD3D_SHADER_SOURCE_DXBC_TPF to VKD3D_SHADER_TARGET_SPIRV_TEXT
  *   (if vkd3d was compiled with SPIRV-Tools)
@@ -2952,6 +2956,7 @@ VKD3D_SHADER_API int vkd3d_shader_convert_root_signature(struct vkd3d_shader_ver
  * VKD3D_SHADER_RESOURCE_DATA_FLOAT.)
  *
  * Currently this function supports the following code types:
+ * - VKD3D_SHADER_SOURCE_DXBC_DXIL
  * - VKD3D_SHADER_SOURCE_DXBC_TPF
  * - VKD3D_SHADER_SOURCE_D3D_BYTECODE
  *

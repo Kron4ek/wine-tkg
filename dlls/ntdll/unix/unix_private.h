@@ -245,8 +245,8 @@ static inline void set_context_exception_reporting_flags( DWORD *context_flags, 
 }
 
 extern BOOL xstate_compaction_enabled;
+extern UINT xstate_features_size;
 extern UINT64 xstate_supported_features_mask;
-extern UINT64 xstate_features_size;
 extern unsigned int xstate_get_size( UINT64 compaction_mask, UINT64 mask );
 extern void copy_xstate( XSAVE_AREA_HEADER *dst, XSAVE_AREA_HEADER *src, UINT64 mask );
 
@@ -579,5 +579,7 @@ static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, UL
     return NtMapViewOfSection( mapping, NtCurrentProcess(), ptr, user_space_wow_limit,
                                0, NULL, size, ViewShare, 0, protect );
 }
+
+BOOL WINAPI __wine_needs_override_large_address_aware(void);
 
 #endif /* __NTDLL_UNIX_PRIVATE_H */
