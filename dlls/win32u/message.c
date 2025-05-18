@@ -390,13 +390,9 @@ static BOOL init_window_call_params( struct win_proc_params *params, HWND hwnd, 
 
     user_check_not_lock();
 
+    if (!is_current_thread_window( hwnd )) return FALSE;
     if (!(win = get_win_ptr( hwnd ))) return FALSE;
     if (win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
-    if (win->tid != GetCurrentThreadId())
-    {
-        release_win_ptr( win );
-        return FALSE;
-    }
     params->func = win->winproc;
     params->ansi_dst = !(win->flags & WIN_ISUNICODE);
     is_dialog = win->dlgInfo != NULL;
@@ -420,11 +416,14 @@ static LRESULT dispatch_win_proc_params( struct win_proc_params *params, size_t 
     LRESULT result = 0;
     void *ret_ptr;
     ULONG ret_len;
+    NTSTATUS status;
 
     if (thread_info->recursion_count > MAX_WINPROC_RECURSION) return 0;
     thread_info->recursion_count++;
-    KeUserModeCallback( NtUserCallWinProc, params, size, &ret_ptr, &ret_len );
+    status = KeUserModeCallback( NtUserCallWinProc, params, size, &ret_ptr, &ret_len );
     thread_info->recursion_count--;
+
+    if (status) return result;
 
     if (ret_len >= sizeof(result))
     {
@@ -2143,7 +2142,7 @@ static LRESULT handle_internal_message( HWND hwnd, UINT msg, WPARAM wparam, LPAR
         return set_window_long( hwnd, (short)LOWORD(wparam), HIWORD(wparam), lparam, FALSE );
     case WM_WINE_SETSTYLE:
         if (is_desktop_window( hwnd )) return 0;
-        return set_window_style( hwnd, wparam, lparam );
+        return set_window_style_bits( hwnd, wparam, lparam );
     case WM_WINE_SETACTIVEWINDOW:
     {
         HWND prev;

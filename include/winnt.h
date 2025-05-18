@@ -1486,15 +1486,25 @@ typedef struct _XSTATE_CONFIGURATION
     ULONG64 EnabledFeatures;
     ULONG64 EnabledVolatileFeatures;
     ULONG Size;
-    ULONG OptimizedSave:1;
-    ULONG CompactionEnabled:1;
+    union
+    {
+        ULONG ControlFlags;
+        struct
+        {
+            ULONG OptimizedSave : 1;
+            ULONG CompactionEnabled : 1;
+            ULONG ExtendedFeatureDisable : 1;
+        };
+    };
     XSTATE_FEATURE Features[MAXIMUM_XSTATE_FEATURES];
-
     ULONG64 EnabledSupervisorFeatures;
     ULONG64 AlignedFeatures;
     ULONG AllFeatureSize;
     ULONG AllFeatures[MAXIMUM_XSTATE_FEATURES];
     ULONG64 EnabledUserVisibleSupervisorFeatures;
+    ULONG64 ExtendedFeatureDisableFeatures;
+    ULONG AllNonLargeFeatureSize;
+    ULONG Spare;
 } XSTATE_CONFIGURATION, *PXSTATE_CONFIGURATION;
 
 typedef struct _XSAVE_AREA_HEADER
@@ -7101,20 +7111,36 @@ void _ReadWriteBarrier(void);
 
 static void __wine_memory_barrier_acq_rel(void)
 {
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__aarch64__) || defined(__arm64ec__)
+    __dmb(_ARM64_BARRIER_ISH);
+#elif defined(__i386__) || defined(__x86_64__)
 #pragma warning(suppress:4996)
     _ReadWriteBarrier();
 #elif defined(__arm__)
     __dmb(_ARM_BARRIER_ISH);
-#elif defined(__aarch64__)
-    __dmb(_ARM64_BARRIER_ISH);
-#endif  /* defined(__i386__) || defined(__x86_64__) */
+#endif
 }
 
 static FORCEINLINE LONG ReadAcquire( LONG const volatile *src )
 {
     LONG value = __WINE_LOAD32_NO_FENCE( (int const volatile *)src );
     __wine_memory_barrier_acq_rel();
+    return value;
+}
+
+static FORCEINLINE LONG64 ReadAcquire64( LONG64 const volatile *src )
+{
+    LONG64 value;
+#if defined(__i386__) && _MSC_VER < 1700
+    __asm {
+        mov   eax, src
+        fild  qword ptr [eax]
+        fistp value
+    }
+#else
+    value = __WINE_LOAD64_NO_FENCE( (__int64 const volatile *)src );
+    __wine_memory_barrier_acq_rel();
+#endif
     return value;
 }
 
@@ -7329,6 +7355,17 @@ static FORCEINLINE LONG ReadAcquire( LONG const volatile *src )
 {
     LONG value;
     __WINE_ATOMIC_LOAD_ACQUIRE( src, &value );
+    return value;
+}
+
+static FORCEINLINE LONG64 ReadAcquire64( LONG64 const volatile *src )
+{
+    LONG64 value;
+#ifdef __i386__
+    __asm__ __volatile__( "fildq %1\n\tfistpq %0" : "=m" (value) : "m" (*src) : "memory", "st" );
+#else
+    __WINE_ATOMIC_LOAD_ACQUIRE( src, &value );
+#endif
     return value;
 }
 

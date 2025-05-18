@@ -4901,14 +4901,131 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_CreatePipelineLibrary(ID3D12Device
     return DXGI_ERROR_UNSUPPORTED;
 }
 
+struct waiting_event_semaphore
+{
+    HANDLE event;
+    PFN_vkd3d_signal_event signal;
+    uint32_t value;
+};
+
+static HRESULT waiting_event_semaphore_signal(HANDLE h)
+{
+    struct waiting_event_semaphore *s = h;
+
+    if (vkd3d_atomic_decrement_u32(&s->value))
+        return S_OK;
+
+    if (s->event)
+        s->signal(s->event);
+    vkd3d_free(s);
+
+    return S_OK;
+}
+
+static HRESULT waiting_event_semaphore_signal_first(HANDLE h)
+{
+    struct waiting_event_semaphore *s = h;
+    HANDLE event;
+
+    if ((event = vkd3d_atomic_exchange_ptr(&s->event, NULL)))
+        s->signal(event);
+
+    return waiting_event_semaphore_signal(h);
+}
+
+static bool waiting_event_semaphore_cancel(struct waiting_event_semaphore *s)
+{
+    bool ret;
+
+    ret = !vkd3d_atomic_exchange_ptr(&s->event, NULL);
+    waiting_event_semaphore_signal(s);
+
+    return ret;
+}
+
 static HRESULT STDMETHODCALLTYPE d3d12_device_SetEventOnMultipleFenceCompletion(ID3D12Device9 *iface,
         ID3D12Fence *const *fences, const UINT64 *values, UINT fence_count,
         D3D12_MULTIPLE_FENCE_WAIT_FLAGS flags, HANDLE event)
 {
-    FIXME("iface %p, fences %p, values %p, fence_count %u, flags %#x, event %p stub!\n",
+    struct d3d12_device *device = impl_from_ID3D12Device9(iface);
+    struct vkd3d_null_event null_event;
+    struct waiting_event_semaphore *s;
+    PFN_vkd3d_signal_event signal;
+    struct d3d12_fence *fence;
+    HRESULT hr = S_OK;
+    unsigned int i;
+
+    TRACE("iface %p, fences %p, values %p, fence_count %u, flags %#x, event %p.\n",
             iface, fences, values, fence_count, flags, event);
 
-    return E_NOTIMPL;
+    if (flags & ~D3D12_MULTIPLE_FENCE_WAIT_FLAG_ANY)
+    {
+        FIXME("Unhandled flags %#x.\n", flags & ~D3D12_MULTIPLE_FENCE_WAIT_FLAG_ANY);
+        return E_NOTIMPL;
+    }
+
+    if (!fence_count)
+        return E_INVALIDARG;
+
+    if (fence_count == 1)
+        return ID3D12Fence_SetEventOnCompletion(fences[0], values[0], event);
+
+    if (!(s = vkd3d_malloc(sizeof(*s))))
+    {
+        WARN("Failed to allocate semaphore memory.\n");
+        return E_OUTOFMEMORY;
+    }
+
+    signal = device->signal_event;
+    if (!event)
+    {
+        vkd3d_null_event_init(&null_event);
+        event = &null_event;
+        signal = vkd3d_signal_null_event;
+    }
+    s->event = event;
+    s->signal = signal;
+    s->value = fence_count;
+
+    if (flags & D3D12_MULTIPLE_FENCE_WAIT_FLAG_ANY)
+        signal = waiting_event_semaphore_signal_first;
+    else
+        signal = waiting_event_semaphore_signal;
+
+    for (i = 0; i < fence_count; ++i)
+    {
+        fence = unsafe_impl_from_ID3D12Fence(fences[i]);
+
+        vkd3d_mutex_lock(&fence->mutex);
+
+        if (values[i] <= fence->value)
+        {
+            vkd3d_mutex_unlock(&fence->mutex);
+            signal(s);
+            continue;
+        }
+
+        if (!d3d12_fence_add_waiting_event(fence, s, signal, values[i]))
+        {
+            WARN("Failed to add event.\n");
+            /* If the event was already signalled, we don't need to fail here.
+             * Note that cancel() will also return "true" for any subsequent
+             * cancel() calls; that's fine, because we already failed in that
+             * case. */
+            if (!waiting_event_semaphore_cancel(s))
+                hr = E_OUTOFMEMORY;
+        }
+
+        vkd3d_mutex_unlock(&fence->mutex);
+    }
+
+    if (event == &null_event)
+    {
+        vkd3d_null_event_wait(&null_event);
+        vkd3d_null_event_cleanup(&null_event);
+    }
+
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE d3d12_device_SetResidencyPriority(ID3D12Device9 *iface,

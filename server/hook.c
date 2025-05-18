@@ -154,7 +154,7 @@ static struct hook *add_hook( struct desktop *desktop, struct process *process, 
     }
     if (!(hook = mem_alloc( sizeof(*hook) ))) return NULL;
 
-    if (!(hook->handle = alloc_user_handle( hook, USER_HOOK )))
+    if (!(hook->handle = alloc_user_handle( hook, NTUSER_OBJ_HOOK )))
     {
         free( hook );
         return NULL;
@@ -503,7 +503,7 @@ DECL_HANDLER(remove_hook)
 
     if (req->handle)
     {
-        if (!(hook = get_user_object( req->handle, USER_HOOK )))
+        if (!(hook = get_user_object( req->handle, NTUSER_OBJ_HOOK )))
         {
             set_error( STATUS_INVALID_HANDLE );
             return;
@@ -590,7 +590,7 @@ DECL_HANDLER(get_hook_info)
 {
     struct hook *hook;
 
-    if (!(hook = get_user_object( req->handle, USER_HOOK ))) return;
+    if (!(hook = get_user_object( req->handle, NTUSER_OBJ_HOOK ))) return;
     if (hook->thread && (hook->thread != current))
     {
         set_error( STATUS_INVALID_HANDLE );

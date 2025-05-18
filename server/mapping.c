@@ -252,6 +252,7 @@ struct session
     object_id_t last_object_id;
 };
 
+session_shm_t *shared_session;
 static struct mapping *session_mapping;
 static struct session session =
 {
@@ -1306,7 +1307,7 @@ struct mapping *create_session_mapping( struct object *root, const struct unicod
                                         unsigned int attr, const struct security_descriptor *sd )
 {
     static const unsigned int access = FILE_READ_DATA | FILE_WRITE_DATA;
-    size_t size = max( sizeof(shared_object_t) * 512, 0x10000 );
+    size_t size = max( sizeof(*shared_session) + sizeof(object_shm_t) * 512, 0x10000 );
 
     size = round_size( size, host_page_mask );
     return create_mapping( root, name, attr, size, SEC_COMMIT, 0, access, sd );
@@ -1328,9 +1329,10 @@ void set_session_mapping( struct mapping *mapping )
 
     block->data = tmp;
     block->offset = 0;
-    block->used_size = 0;
+    block->used_size = sizeof(*shared_session);
     block->block_size = size;
 
+    shared_session = tmp;
     session_mapping = mapping;
     list_add_tail( &session.blocks, &block->entry );
 }
@@ -1378,7 +1380,7 @@ static struct session_block *find_free_session_block( mem_size_t size )
     return grow_session_mapping( size );
 }
 
-const volatile void *alloc_shared_object(void)
+volatile void *alloc_shared_object(void)
 {
     struct session_object *object;
     struct list *ptr;
@@ -1410,7 +1412,7 @@ const volatile void *alloc_shared_object(void)
     return &object->obj.shm;
 }
 
-void free_shared_object( const volatile void *object_shm )
+void free_shared_object( volatile void *object_shm )
 {
     struct session_object *object = CONTAINING_RECORD( object_shm, struct session_object, obj.shm );
 
@@ -1425,7 +1427,7 @@ void free_shared_object( const volatile void *object_shm )
 }
 
 /* invalidate client caches for a shared object by giving it a new id */
-void invalidate_shared_object( const volatile void *object_shm )
+void invalidate_shared_object( volatile void *object_shm )
 {
     struct session_object *object = CONTAINING_RECORD( object_shm, struct session_object, obj.shm );
 
@@ -1436,7 +1438,7 @@ void invalidate_shared_object( const volatile void *object_shm )
     SHARED_WRITE_END;
 }
 
-struct obj_locator get_shared_object_locator( const volatile void *object_shm )
+struct obj_locator get_shared_object_locator( volatile void *object_shm )
 {
     struct session_object *object = CONTAINING_RECORD( object_shm, struct session_object, obj.shm );
     struct obj_locator locator = {.offset = object->offset, .id = object->obj.id};
@@ -1449,7 +1451,7 @@ struct object *create_user_data_mapping( struct object *root, const struct unico
     void *ptr;
     struct mapping *mapping;
 
-    if (!(mapping = create_mapping( root, name, attr, sizeof(KSHARED_USER_DATA),
+    if (!(mapping = create_mapping( root, name, attr, sizeof(KUSER_SHARED_DATA),
                                     SEC_COMMIT, 0, FILE_READ_DATA | FILE_WRITE_DATA, sd ))) return NULL;
     ptr = mmap( NULL, mapping->size, PROT_WRITE, MAP_SHARED, get_unix_fd( mapping->fd ), 0 );
     if (ptr != MAP_FAILED)

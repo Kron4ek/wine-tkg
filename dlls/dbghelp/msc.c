@@ -2848,6 +2848,19 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
                 FIXME("Unexpected S_FRAMEPROC %d (%p %p) %x\n", top_frame_size, top_func, curr_func, i);
             break;
 
+        case S_GMANPROC:
+        case S_LMANPROC:
+            /* skip whole record and sub-records */
+            i = sym->managed_proc_v3.pend;
+            sym = (const union codeview_symbol*)(root + i);
+            if (i + sizeof(sym->generic) > size || sym->generic.id != S_END)
+            {
+                FIXME("Wrong relocation after managed proc, aborting\n");
+                return FALSE;
+            }
+            length = 2 + sym->generic.len;
+            break;
+
         /* the symbols we can safely ignore for now */
         case S_SKIP:
         case S_TRAMPOLINE:
@@ -2857,6 +2870,9 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,
         case S_EXPORT:
         case S_CALLSITEINFO:
         case S_ARMSWITCHTABLE:
+        case S_TOKENREF:
+        case S_OEM:
+        case S_MANSLOT:
             /* even if S_LOCAL groks all the S_DEFRANGE* records following itself,
              * those kinds of records can also be present after a S_FILESTATIC record
              * so silence them until (at least) S_FILESTATIC is supported
@@ -2961,11 +2977,13 @@ static BOOL codeview_snarf_sym_hashtable(const struct msc_debug_info* msc_dbg, c
     if (hashsize < sizeof(DBI_HASH_HEADER) ||
         hash_hdr->signature != 0xFFFFFFFF ||
         hash_hdr->version != 0xeffe0000 + 19990810 ||
+        !hash_hdr->hash_records_size ||
         (hash_hdr->hash_records_size % sizeof(DBI_HASH_RECORD)) != 0 ||
         sizeof(DBI_HASH_HEADER) + hash_hdr->hash_records_size + DBI_BITMAP_HASH_SIZE > hashsize ||
         (hashsize - (sizeof(DBI_HASH_HEADER) + hash_hdr->hash_records_size + DBI_BITMAP_HASH_SIZE)) % sizeof(unsigned))
     {
-        FIXME("Incorrect hash structure\n");
+        if (hash_hdr->hash_records_size)
+            FIXME("Incorrect hash structure\n");
         return FALSE;
     }
 
@@ -3911,6 +3929,7 @@ static BOOL pdb_process_internal(const struct process *pcs,
 
         /* Read per-module symbols' tables */
         file = symbols_image + header_size;
+        if (pdb_file->pdb_reader) file += symbols.module_size; /* skip it */
         while (file - symbols_image < header_size + symbols.module_size)
         {
             PDB_SYMBOL_FILE_EX          sfile;
@@ -3955,7 +3974,7 @@ static BOOL pdb_process_internal(const struct process *pcs,
             file = (BYTE*)((DWORD_PTR)(file_name + strlen(file_name) + 1 + 3) & ~3);
         }
         /* Load the global variables and constants (if not yet loaded) and public information */
-        if (globalimage)
+        if (globalimage && !pdb_file->pdb_reader)
         {
             const BYTE* data;
             unsigned global_size = pdb_get_stream_size(pdb_file, symbols.gsym_stream);
@@ -3997,6 +4016,9 @@ static BOOL pdb_process_internal(const struct process *pcs,
 static const struct module_format_vtable old_pdb_module_format_vtable =
 {
     pdb_module_remove,
+    NULL,
+    NULL,
+    NULL,
     NULL,
     NULL,
     NULL,

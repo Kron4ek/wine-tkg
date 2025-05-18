@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-ntsync-git configuration - Sat May  3 09:58:24 AM UTC 2025 :
+# Last wine-tkg-staging-ntsync-git configuration - Sun May 18 09:29:17 AM UTC 2025 :
 
 Local cfg files used
 
-Wine (plain) version: 10.7.r0.g71c6c3dd6dc
-Using wine-staging patchset (version 10.7.r0.gedfe4935)
+Wine (plain) version: 10.8.r0.g7f833db11ff
+Using wine-staging patchset (version 10.8.r0.g47f77594)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -17,6 +17,7 @@ Staging overrides, if any: -W winedevice-Default_Drivers
 
 
 enable_dynamic_wow64_def.patch -- ( Enable WINEARCH=wow64 by default )
+LAA-unix-staging-wow64.patch -- ( Applied large address aware override support )
 
 ntsync-config.h.in-alt.patch -- ( Using alternative config.h.in patchset for ntsync5 )
 ntsync5-staging.patch -- ( Using ntsync patchset )

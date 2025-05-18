@@ -1007,6 +1007,11 @@ typedef volatile struct
     object_shm_t         shm;
 } shared_object_t;
 
+typedef volatile struct
+{
+    struct user_entry user_entries[MAX_USER_HANDLES];
+} session_shm_t;
+
 struct obj_locator
 {
     object_id_t          id;
@@ -3487,14 +3492,10 @@ struct get_window_info_request
 struct get_window_info_reply
 {
     struct reply_header __header;
-    user_handle_t  full_handle;
     user_handle_t  last_active;
-    process_id_t   pid;
-    thread_id_t    tid;
-    atom_t         atom;
     int            is_unicode;
     unsigned int   dpi_context;
-    char __pad_36[4];
+    char __pad_20[4];
 };
 
 
@@ -5395,9 +5396,11 @@ struct get_token_info_reply
     unsigned int   session_id;
     int            primary;
     int            impersonation_level;
-    int            elevation;
+    int            elevation_type;
+    int            is_elevated;
     int            group_count;
     int            privilege_count;
+    char __pad_52[4];
 };
 
 
@@ -5642,7 +5645,8 @@ struct set_window_layered_info_reply
 struct alloc_user_handle_request
 {
     struct request_header __header;
-    char __pad_12[4];
+    unsigned short type;
+    char __pad_14[2];
 };
 struct alloc_user_handle_reply
 {
@@ -5656,7 +5660,10 @@ struct alloc_user_handle_reply
 struct free_user_handle_request
 {
     struct request_header __header;
+    unsigned short type;
+    char __pad_14[2];
     user_handle_t  handle;
+    char __pad_20[4];
 };
 struct free_user_handle_reply
 {
@@ -6918,6 +6925,6 @@ union generic_reply
     struct get_inproc_alert_event_reply get_inproc_alert_event_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 869
+#define SERVER_PROTOCOL_VERSION 876
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

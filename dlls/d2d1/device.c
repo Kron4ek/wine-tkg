@@ -586,6 +586,9 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawLine(ID2D1DeviceContext6 *i
     TRACE("iface %p, p0 %s, p1 %s, brush %p, stroke_width %.8e, stroke_style %p.\n",
             iface, debug_d2d_point_2f(&p0), debug_d2d_point_2f(&p1), brush, stroke_width, stroke_style);
 
+    if (FAILED(context->error.code))
+        return;
+
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
     {
         d2d_command_list_draw_line(context->target.command_list, context, p0, p1, brush, stroke_width, stroke_style);
@@ -626,6 +629,9 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawRectangle(ID2D1DeviceContex
     TRACE("iface %p, rect %s, brush %p, stroke_width %.8e, stroke_style %p.\n",
             iface, debug_d2d_rect_f(rect), brush, stroke_width, stroke_style);
 
+    if (FAILED(context->error.code))
+        return;
+
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
     {
         d2d_command_list_draw_rectangle(context->target.command_list, context, rect, brush, stroke_width, stroke_style);
@@ -650,6 +656,9 @@ static void STDMETHODCALLTYPE d2d_device_context_FillRectangle(ID2D1DeviceContex
     HRESULT hr;
 
     TRACE("iface %p, rect %s, brush %p.\n", iface, debug_d2d_rect_f(rect), brush);
+
+    if (FAILED(context->error.code))
+        return;
 
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
     {
@@ -677,6 +686,9 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawRoundedRectangle(ID2D1Devic
     TRACE("iface %p, rect %p, brush %p, stroke_width %.8e, stroke_style %p.\n",
             iface, rect, brush, stroke_width, stroke_style);
 
+    if (FAILED(render_target->error.code))
+        return;
+
     if (FAILED(hr = ID2D1Factory_CreateRoundedRectangleGeometry(render_target->factory, rect, &geometry)))
     {
         ERR("Failed to create geometry, hr %#lx.\n", hr);
@@ -695,6 +707,9 @@ static void STDMETHODCALLTYPE d2d_device_context_FillRoundedRectangle(ID2D1Devic
     HRESULT hr;
 
     TRACE("iface %p, rect %p, brush %p.\n", iface, rect, brush);
+
+    if (FAILED(render_target->error.code))
+        return;
 
     if (FAILED(hr = ID2D1Factory_CreateRoundedRectangleGeometry(render_target->factory, rect, &geometry)))
     {
@@ -716,6 +731,9 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawEllipse(ID2D1DeviceContext6
     TRACE("iface %p, ellipse %p, brush %p, stroke_width %.8e, stroke_style %p.\n",
             iface, ellipse, brush, stroke_width, stroke_style);
 
+    if (FAILED(render_target->error.code))
+        return;
+
     if (FAILED(hr = ID2D1Factory_CreateEllipseGeometry(render_target->factory, ellipse, &geometry)))
     {
         ERR("Failed to create geometry, hr %#lx.\n", hr);
@@ -734,6 +752,9 @@ static void STDMETHODCALLTYPE d2d_device_context_FillEllipse(ID2D1DeviceContext6
     HRESULT hr;
 
     TRACE("iface %p, ellipse %p, brush %p.\n", iface, ellipse, brush);
+
+    if (FAILED(render_target->error.code))
+        return;
 
     if (FAILED(hr = ID2D1Factory_CreateEllipseGeometry(render_target->factory, ellipse, &geometry)))
     {
@@ -961,6 +982,15 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawGeometry(ID2D1DeviceContext
     TRACE("iface %p, geometry %p, brush %p, stroke_width %.8e, stroke_style %p.\n",
             iface, geometry, brush, stroke_width, stroke_style);
 
+    if (FAILED(context->error.code))
+        return;
+
+    if (context->target.type == D2D_TARGET_UNKNOWN)
+    {
+        d2d_device_context_set_error(context, D2DERR_WRONG_STATE);
+        return;
+    }
+
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
     {
         d2d_command_list_draw_geometry(context->target.command_list, context, geometry, brush,
@@ -1087,6 +1117,12 @@ static void STDMETHODCALLTYPE d2d_device_context_FillGeometry(ID2D1DeviceContext
 
     if (FAILED(context->error.code))
         return;
+
+    if (context->target.type == D2D_TARGET_UNKNOWN)
+    {
+        d2d_device_context_set_error(context, D2DERR_WRONG_STATE);
+        return;
+    }
 
     if (opacity_brush && brush_impl->type != D2D_BRUSH_TYPE_BITMAP)
     {
@@ -1215,6 +1251,15 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawBitmap(ID2D1DeviceContext6 
 
     TRACE("iface %p, bitmap %p, dst_rect %s, opacity %.8e, interpolation_mode %#x, src_rect %s.\n",
             iface, bitmap, debug_d2d_rect_f(dst_rect), opacity, interpolation_mode, debug_d2d_rect_f(src_rect));
+
+    if (FAILED(context->error.code))
+        return;
+
+    if (context->target.type == D2D_TARGET_UNKNOWN)
+    {
+        d2d_device_context_set_error(context, D2DERR_WRONG_STATE);
+        return;
+    }
 
     if (interpolation_mode != D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR
             && interpolation_mode != D2D1_BITMAP_INTERPOLATION_MODE_LINEAR)
@@ -1503,6 +1548,12 @@ static void d2d_device_context_draw_glyph_run(struct d2d_device_context *context
 
     if (FAILED(context->error.code))
         return;
+
+    if (context->target.type == D2D_TARGET_UNKNOWN)
+    {
+        d2d_device_context_set_error(context, D2DERR_WRONG_STATE);
+        return;
+    }
 
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
     {
@@ -1857,6 +1908,15 @@ static void STDMETHODCALLTYPE d2d_device_context_Clear(ID2D1DeviceContext6 *ifac
     HRESULT hr;
 
     TRACE("iface %p, colour %p.\n", iface, colour);
+
+    if (FAILED(context->error.code))
+        return;
+
+    if (context->target.type == D2D_TARGET_UNKNOWN)
+    {
+        d2d_device_context_set_error(context, D2DERR_WRONG_STATE);
+        return;
+    }
 
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
     {
@@ -2550,6 +2610,15 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawImage(ID2D1DeviceContext6 *
             iface, image, debug_d2d_point_2f(target_offset), debug_d2d_rect_f(image_rect),
             interpolation_mode, composite_mode);
 
+    if (FAILED(context->error.code))
+        return;
+
+    if (context->target.type == D2D_TARGET_UNKNOWN)
+    {
+        d2d_device_context_set_error(context, D2DERR_WRONG_STATE);
+        return;
+    }
+
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
     {
         d2d_command_list_draw_image(context->target.command_list, image, target_offset, image_rect,
@@ -2588,6 +2657,15 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_DrawBitmap(I
             "src_rect %s, perspective_transform %p.\n",
             iface, bitmap, debug_d2d_rect_f(dst_rect), opacity, interpolation_mode,
             debug_d2d_rect_f(src_rect), perspective_transform);
+
+    if (FAILED(context->error.code))
+        return;
+
+    if (context->target.type == D2D_TARGET_UNKNOWN)
+    {
+        d2d_device_context_set_error(context, D2DERR_WRONG_STATE);
+        return;
+    }
 
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
     {

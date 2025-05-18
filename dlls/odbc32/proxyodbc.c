@@ -809,9 +809,42 @@ static SQLRETURN bind_col_unix( struct statement *stmt, SQLUSMALLINT column, SQL
     }
 }
 
+static BOOL driver_ansi_only( const struct win32_funcs *funcs )
+{
+    BOOL ansi =  !( funcs->SQLBrowseConnectW || funcs->SQLColAttributeW || funcs->SQLColAttributesW ||
+        funcs->SQLColumnPrivilegesW || funcs->SQLColumnsW || funcs->SQLConnectW ||
+        funcs->SQLDescribeColW || funcs->SQLDriverConnectW || funcs->SQLErrorW ||
+        funcs->SQLExecDirectW || funcs->SQLGetConnectAttrW || funcs->SQLGetConnectOptionW ||
+        funcs->SQLGetCursorNameW || funcs->SQLGetDescFieldW || funcs->SQLGetDescRecW ||
+        funcs->SQLGetDiagFieldW || funcs->SQLGetDiagRecW || funcs->SQLGetInfoW ||
+        funcs->SQLGetStmtAttrW || funcs->SQLGetTypeInfoW || funcs->SQLNativeSqlW ||
+        funcs->SQLPrepareW || funcs->SQLPrimaryKeysW || funcs->SQLProceduresW ||
+        funcs->SQLSetConnectAttrW || funcs->SQLSetConnectOptionW || funcs->SQLSetCursorNameW ||
+        funcs->SQLSetDescFieldW || funcs->SQLSetStmtAttrW || funcs->SQLSpecialColumnsW ||
+        funcs->SQLStatisticsW || funcs->SQLTablePrivilegesW || funcs->SQLTablesW );
+
+    return ansi;
+}
+
 static SQLRETURN bind_col_win32( struct statement *stmt, SQLUSMALLINT column, SQLSMALLINT type, SQLPOINTER value,
                                  SQLLEN buflen, SQLLEN *retlen )
 {
+    if ( driver_ansi_only(stmt->hdr.win32_funcs) )
+    {
+        UINT i = column - 1;
+        SQLSMALLINT orig_type = type;
+
+        /* For ANSI Drivers we need to remap to standard char binding to stop Fetch from causing an error */
+        if (type == SQL_C_WCHAR)
+            type = SQL_CHAR;
+
+         if (!alloc_binding( &stmt->bind_col, SQL_PARAM_INPUT_OUTPUT, column, stmt->row_count ))
+            return SQL_ERROR;
+
+        stmt->bind_col.param[i].col.target_type   = type;
+        stmt->bind_col.param[i].col.target_value  = value;
+        stmt->bind_col.param[i].col.buffer_length = orig_type;
+    }
     if (stmt->hdr.win32_funcs->SQLBindCol)
         return stmt->hdr.win32_funcs->SQLBindCol( stmt->hdr.win32_handle, column, type, value, buflen, retlen );
     return SQL_ERROR;
@@ -1028,6 +1061,7 @@ static SQLRETURN col_attribute_win32_a( struct statement *stmt, SQLUSMALLINT col
             field_id = SQL_COLUMN_NAME;
             break;
 
+        case SQL_COLUMN_NAME:
         case SQL_COLUMN_TYPE:
         case SQL_COLUMN_DISPLAY_SIZE:
         case SQL_MAX_COLUMNS_IN_TABLE:
@@ -1974,9 +2008,31 @@ static SQLRETURN fetch_unix( struct statement *stmt )
 
 static SQLRETURN fetch_win32( struct statement *stmt )
 {
+    SQLRETURN ret = SQL_ERROR;
+
     if (stmt->hdr.win32_funcs->SQLFetch)
-        return stmt->hdr.win32_funcs->SQLFetch( stmt->hdr.win32_handle );
-    return SQL_ERROR;
+    {
+        ret = stmt->hdr.win32_funcs->SQLFetch( stmt->hdr.win32_handle );
+
+        if (driver_ansi_only(stmt->hdr.win32_funcs) && stmt->bind_col.param)
+        {
+            int i;
+
+            for (i = 0; i < stmt->bind_col.count; i++)
+            {
+                /* buffer_length currently used for Original Type */
+                if (stmt->bind_col.param[i].col.buffer_length == SQL_C_WCHAR &&
+                        stmt->bind_col.param[i].col.target_type != stmt->bind_col.param[i].col.buffer_length)
+                {
+                    WCHAR *str = strnAtoW(stmt->bind_col.param[i].col.target_value, -1);
+                    wcscpy(stmt->bind_col.param[i].col.target_value, str);
+                    free(str);
+                }
+            }
+        }
+    }
+
+    return ret;
 }
 
 /*************************************************************************
@@ -2494,8 +2550,11 @@ static struct object *find_object_type(SQLSMALLINT type, struct object *object)
 static SQLRETURN get_data_win32( struct statement *stmt, SQLUSMALLINT column, SQLSMALLINT type, SQLPOINTER value,
                                  SQLLEN buflen, SQLLEN *retlen )
 {
+    SQLRETURN ret = SQL_ERROR;
+
     if (stmt->hdr.win32_funcs->SQLGetData)
     {
+        BOOL wants_wchar = FALSE;
         struct environment *env = (struct environment *)find_object_type(SQL_HANDLE_ENV, stmt->hdr.parent);
         if (env && env->driver_ver == SQL_OV_ODBC2)
         {
@@ -2507,10 +2566,29 @@ static SQLRETURN get_data_win32( struct statement *stmt, SQLUSMALLINT column, SQ
                 type = SQL_C_TIMESTAMP;
         }
 
-        return stmt->hdr.win32_funcs->SQLGetData( stmt->hdr.win32_handle, column, type, value, buflen, retlen );
+        if ( driver_ansi_only(stmt->hdr.win32_funcs) )
+        {
+            if (type == SQL_C_WCHAR)
+            {
+                type = SQL_CHAR;
+                wants_wchar = TRUE;
+            }
+        }
+
+        ret  = stmt->hdr.win32_funcs->SQLGetData( stmt->hdr.win32_handle, column, type, value, buflen, retlen );
+
+        if (SUCCESS(ret) && wants_wchar )
+        {
+            WCHAR *str = strnAtoW(value, -1);
+            wcscpy(value, str);
+            free(str);
+
+            if (retlen)
+                *retlen = *retlen * sizeof(WCHAR);
+        }
     }
 
-    return SQL_ERROR;
+    return ret;
 }
 
 /*************************************************************************
@@ -5714,6 +5792,8 @@ SQLRETURN WINAPI SQLDriverConnect(SQLHDBC ConnectionHandle, SQLHWND WindowHandle
 
     if (has_suffix( filename, L".dll" ))
     {
+        struct environment *env;
+
         if (!(con->hdr.win32_funcs = con->hdr.parent->win32_funcs = load_driver( filename )))
         {
             WARN( "failed to load driver %s\n", debugstr_w(filename) );
@@ -5721,7 +5801,11 @@ SQLRETURN WINAPI SQLDriverConnect(SQLHDBC ConnectionHandle, SQLHWND WindowHandle
         }
         TRACE( "using Windows driver %s\n", debugstr_w(filename) );
 
-        if (!SUCCESS((ret = create_env( (struct environment *)con->hdr.parent, FALSE )))) goto done;
+        env = (struct environment *)find_object_type(SQL_HANDLE_ENV, con->hdr.parent);
+        if (!env || !env->hdr.win32_handle)
+        {
+            if (!SUCCESS((ret = create_env( (struct environment *)con->hdr.parent, FALSE )))) goto done;
+        }
         if (!SUCCESS((ret = create_con( con )))) goto done;
 
         ret = driver_connect_win32_a( con, WindowHandle, strA, Length, OutConnectionString, BufferLength, Length2,
@@ -6386,6 +6470,7 @@ static SQLRETURN col_attribute_win32_w( struct statement *stmt, SQLUSMALLINT col
             field_id = SQL_COLUMN_NAME;
             break;
 
+        case SQL_COLUMN_NAME:
         case SQL_COLUMN_TYPE:
         case SQL_COLUMN_DISPLAY_SIZE:
         case SQL_MAX_COLUMNS_IN_TABLE:
@@ -7100,6 +7185,7 @@ SQLRETURN WINAPI SQLDriverConnectW(SQLHDBC ConnectionHandle, SQLHWND WindowHandl
 
     if (has_suffix( filename, L".dll" ))
     {
+        struct environment *env;
         if (!(con->hdr.win32_funcs = con->hdr.parent->win32_funcs = load_driver( filename )))
         {
             WARN( "failed to load driver %s\n", debugstr_w(filename) );
@@ -7107,7 +7193,12 @@ SQLRETURN WINAPI SQLDriverConnectW(SQLHDBC ConnectionHandle, SQLHWND WindowHandl
         }
         TRACE( "using Windows driver %s\n", debugstr_w(filename) );
 
-        if (!SUCCESS((ret = create_env( (struct environment *)con->hdr.parent, FALSE )))) goto done;
+        env = (struct environment *)find_object_type(SQL_HANDLE_ENV, con->hdr.parent);
+        if (!env || !env->hdr.win32_handle)
+        {
+            if (!SUCCESS((ret = create_env( (struct environment *)con->hdr.parent, FALSE )))) goto done;
+        }
+
         if (!SUCCESS((ret = create_con( con )))) goto done;
 
         ret = driver_connect_win32_w( con, WindowHandle, InConnectionString, Length, OutConnectionString,

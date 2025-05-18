@@ -1727,11 +1727,7 @@ static void dump_get_window_info_request( const struct get_window_info_request *
 
 static void dump_get_window_info_reply( const struct get_window_info_reply *req )
 {
-    fprintf( stderr, " full_handle=%08x", req->full_handle );
-    fprintf( stderr, ", last_active=%08x", req->last_active );
-    fprintf( stderr, ", pid=%04x", req->pid );
-    fprintf( stderr, ", tid=%04x", req->tid );
-    fprintf( stderr, ", atom=%04x", req->atom );
+    fprintf( stderr, " last_active=%08x", req->last_active );
     fprintf( stderr, ", is_unicode=%d", req->is_unicode );
     fprintf( stderr, ", dpi_context=%08x", req->dpi_context );
 }
@@ -3047,7 +3043,8 @@ static void dump_get_token_info_reply( const struct get_token_info_reply *req )
     fprintf( stderr, ", session_id=%08x", req->session_id );
     fprintf( stderr, ", primary=%d", req->primary );
     fprintf( stderr, ", impersonation_level=%d", req->impersonation_level );
-    fprintf( stderr, ", elevation=%d", req->elevation );
+    fprintf( stderr, ", elevation_type=%d", req->elevation_type );
+    fprintf( stderr, ", is_elevated=%d", req->is_elevated );
     fprintf( stderr, ", group_count=%d", req->group_count );
     fprintf( stderr, ", privilege_count=%d", req->privilege_count );
 }
@@ -3201,6 +3198,7 @@ static void dump_set_window_layered_info_request( const struct set_window_layere
 
 static void dump_alloc_user_handle_request( const struct alloc_user_handle_request *req )
 {
+    fprintf( stderr, " type=%04x", req->type );
 }
 
 static void dump_alloc_user_handle_reply( const struct alloc_user_handle_reply *req )
@@ -3210,7 +3208,8 @@ static void dump_alloc_user_handle_reply( const struct alloc_user_handle_reply *
 
 static void dump_free_user_handle_request( const struct free_user_handle_request *req )
 {
-    fprintf( stderr, " handle=%08x", req->handle );
+    fprintf( stderr, " type=%04x", req->type );
+    fprintf( stderr, ", handle=%08x", req->handle );
 }
 
 static void dump_set_cursor_request( const struct set_cursor_request *req )
