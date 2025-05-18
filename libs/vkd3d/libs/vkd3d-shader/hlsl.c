@@ -319,6 +319,28 @@ bool hlsl_type_is_shader(const struct hlsl_type *type)
     return false;
 }
 
+bool hlsl_type_is_minimum_precision(const struct hlsl_type *type)
+{
+    if (!hlsl_is_numeric_type(type))
+        return false;
+
+    switch (type->e.numeric.type)
+    {
+        case HLSL_TYPE_BOOL:
+        case HLSL_TYPE_DOUBLE:
+        case HLSL_TYPE_FLOAT:
+        case HLSL_TYPE_HALF:
+        case HLSL_TYPE_INT:
+        case HLSL_TYPE_UINT:
+            return false;
+
+        case HLSL_TYPE_MIN16UINT:
+            return true;
+    }
+
+    vkd3d_unreachable();
+}
+
 bool hlsl_type_is_patch_array(const struct hlsl_type *type)
 {
     return type->class == HLSL_CLASS_ARRAY && (type->e.array.array_type == HLSL_ARRAY_PATCH_INPUT
@@ -344,6 +366,27 @@ bool hlsl_base_type_is_integer(enum hlsl_base_type type)
         case HLSL_TYPE_DOUBLE:
         case HLSL_TYPE_FLOAT:
         case HLSL_TYPE_HALF:
+            return false;
+    }
+
+    vkd3d_unreachable();
+}
+
+bool hlsl_type_is_signed_integer(const struct hlsl_type *type)
+{
+    VKD3D_ASSERT(hlsl_is_numeric_type(type));
+
+    switch (type->e.numeric.type)
+    {
+        case HLSL_TYPE_INT:
+            return true;
+
+        case HLSL_TYPE_BOOL:
+        case HLSL_TYPE_DOUBLE:
+        case HLSL_TYPE_FLOAT:
+        case HLSL_TYPE_HALF:
+        case HLSL_TYPE_MIN16UINT:
+        case HLSL_TYPE_UINT:
             return false;
     }
 
@@ -2291,6 +2334,26 @@ struct hlsl_ir_node *hlsl_new_interlocked(struct hlsl_ctx *ctx, enum hlsl_interl
     return &interlocked->node;
 }
 
+static struct hlsl_ir_node *hlsl_new_sync(struct hlsl_ctx *ctx,
+        uint32_t sync_flags, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_ir_sync *sync;
+
+    if (!(sync = hlsl_alloc(ctx, sizeof(*sync))))
+        return NULL;
+
+    init_node(&sync->node, HLSL_IR_SYNC, NULL, loc);
+    sync->sync_flags = sync_flags;
+
+    return &sync->node;
+}
+
+struct hlsl_ir_node *hlsl_block_add_sync(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        uint32_t sync_flags, const struct vkd3d_shader_location *loc)
+{
+    return append_new_instr(ctx, block, hlsl_new_sync(ctx, sync_flags, loc));
+}
+
 bool hlsl_index_is_noncontiguous(struct hlsl_ir_index *index)
 {
     struct hlsl_type *type = index->val.node->data_type;
@@ -2667,7 +2730,7 @@ static struct hlsl_ir_node *clone_interlocked(struct hlsl_ctx *ctx,
 
     if (!(dst = hlsl_alloc(ctx, sizeof(*dst))))
         return NULL;
-    init_node(&dst->node, HLSL_IR_INTERLOCKED, NULL, &src->node.loc);
+    init_node(&dst->node, HLSL_IR_INTERLOCKED, src->node.data_type, &src->node.loc);
     dst->op = src->op;
 
     if (!clone_deref(ctx, map, &dst->dst, &src->dst))
@@ -2678,6 +2741,18 @@ static struct hlsl_ir_node *clone_interlocked(struct hlsl_ctx *ctx,
     clone_src(map, &dst->coords, &src->coords);
     clone_src(map, &dst->cmp_value, &src->cmp_value);
     clone_src(map, &dst->value, &src->value);
+    return &dst->node;
+}
+
+static struct hlsl_ir_node *clone_sync(struct hlsl_ctx *ctx, struct hlsl_ir_sync *src)
+{
+    struct hlsl_ir_sync *dst;
+
+    if (!(dst = hlsl_alloc(ctx, sizeof(*dst))))
+        return NULL;
+    init_node(&dst->node, HLSL_IR_SYNC, NULL, &src->node.loc);
+    dst->sync_flags = src->sync_flags;
+
     return &dst->node;
 }
 
@@ -2883,6 +2958,9 @@ static struct hlsl_ir_node *clone_instr(struct hlsl_ctx *ctx,
 
         case HLSL_IR_INTERLOCKED:
             return clone_interlocked(ctx, map, hlsl_ir_interlocked(instr));
+
+        case HLSL_IR_SYNC:
+            return clone_sync(ctx, hlsl_ir_sync(instr));
 
         case HLSL_IR_COMPILE:
             return clone_compile(ctx, map, hlsl_ir_compile(instr));
@@ -3341,7 +3419,9 @@ const char *hlsl_node_type_to_string(enum hlsl_ir_node_type type)
         [HLSL_IR_STORE          ] = "HLSL_IR_STORE",
         [HLSL_IR_SWITCH         ] = "HLSL_IR_SWITCH",
         [HLSL_IR_SWIZZLE        ] = "HLSL_IR_SWIZZLE",
+
         [HLSL_IR_INTERLOCKED    ] = "HLSL_IR_INTERLOCKED",
+        [HLSL_IR_SYNC           ] = "HLSL_IR_SYNC",
 
         [HLSL_IR_COMPILE]             = "HLSL_IR_COMPILE",
         [HLSL_IR_SAMPLER_STATE]       = "HLSL_IR_SAMPLER_STATE",
@@ -3831,6 +3911,19 @@ static void dump_ir_interlocked(struct vkd3d_string_buffer *buffer, const struct
     vkd3d_string_buffer_printf(buffer, ")");
 }
 
+static void dump_ir_sync(struct vkd3d_string_buffer *buffer, const struct hlsl_ir_sync *sync)
+{
+    vkd3d_string_buffer_printf(buffer, "sync");
+    if (sync->sync_flags & VKD3DSSF_GLOBAL_UAV)
+        vkd3d_string_buffer_printf(buffer, "_uglobal");
+    if (sync->sync_flags & VKD3DSSF_THREAD_GROUP_UAV)
+        vkd3d_string_buffer_printf(buffer, "_ugroup");
+    if (sync->sync_flags & VKD3DSSF_GROUP_SHARED_MEMORY)
+        vkd3d_string_buffer_printf(buffer, "_g");
+    if (sync->sync_flags & VKD3DSSF_THREAD_GROUP)
+        vkd3d_string_buffer_printf(buffer, "_t");
+}
+
 static void dump_ir_compile(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer,
         const struct hlsl_ir_compile *compile)
 {
@@ -3966,6 +4059,10 @@ static void dump_instr(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer,
 
         case HLSL_IR_INTERLOCKED:
             dump_ir_interlocked(buffer, hlsl_ir_interlocked(instr));
+            break;
+
+        case HLSL_IR_SYNC:
+            dump_ir_sync(buffer, hlsl_ir_sync(instr));
             break;
 
         case HLSL_IR_COMPILE:
@@ -4205,6 +4302,11 @@ static void free_ir_interlocked(struct hlsl_ir_interlocked *interlocked)
     vkd3d_free(interlocked);
 }
 
+static void free_ir_sync(struct hlsl_ir_sync *sync)
+{
+    vkd3d_free(sync);
+}
+
 static void free_ir_compile(struct hlsl_ir_compile *compile)
 {
     unsigned int i;
@@ -4293,6 +4395,10 @@ void hlsl_free_instr(struct hlsl_ir_node *node)
 
         case HLSL_IR_INTERLOCKED:
             free_ir_interlocked(hlsl_ir_interlocked(node));
+            break;
+
+        case HLSL_IR_SYNC:
+            free_ir_sync(hlsl_ir_sync(node));
             break;
 
         case HLSL_IR_COMPILE:

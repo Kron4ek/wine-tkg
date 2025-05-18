@@ -2655,38 +2655,31 @@ fx_4_states[] =
     { "ComputeShader",  HLSL_CLASS_PASS, HLSL_CLASS_SCALAR, FX_COMPUTESHADER, 1, 1, 58 },
 };
 
-static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl_state_block_entry *entry,
-        struct fx_write_context *fx)
+static const struct fx_4_state fx_5_blend_states[] =
 {
-    static const struct fx_4_state fx_5_blend_states[] =
-    {
-        { "AlphaToCoverageEnable", HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 1, 36, bool_values },
-        { "BlendEnable",           HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 8, 37, bool_values },
-        { "SrcBlend",              HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 38, blend_values },
-        { "DestBlend",             HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 39, blend_values },
-        { "BlendOp",               HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 40, blendop_values },
-        { "SrcBlendAlpha",         HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 41, blend_values },
-        { "DestBlendAlpha",        HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 42, blend_values },
-        { "BlendOpAlpha",          HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 43, blendop_values },
-        { "RenderTargetWriteMask", HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT8, 1, 8, 44 },
-    };
+    { "AlphaToCoverageEnable", HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 1, 36, bool_values },
+    { "BlendEnable",           HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_BOOL,  1, 8, 37, bool_values },
+    { "SrcBlend",              HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 38, blend_values },
+    { "DestBlend",             HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 39, blend_values },
+    { "BlendOp",               HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 40, blendop_values },
+    { "SrcBlendAlpha",         HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 41, blend_values },
+    { "DestBlendAlpha",        HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 42, blend_values },
+    { "BlendOpAlpha",          HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT,  1, 8, 43, blendop_values },
+    { "RenderTargetWriteMask", HLSL_CLASS_BLEND_STATE, HLSL_CLASS_SCALAR, FX_UINT8, 1, 8, 44 },
+};
 
-    struct state_table
-    {
-        const struct fx_4_state *ptr;
-        unsigned int count;
-    } table;
+struct fx_4_state_table
+{
+    const struct fx_4_state *ptr;
+    unsigned int count;
+};
 
-    const struct hlsl_type *type = hlsl_get_multiarray_element_type(var->data_type);
-    struct replace_state_context replace_context;
-    const struct fx_4_state *state = NULL;
-    struct hlsl_type *state_type = NULL;
-    struct hlsl_ctx *ctx = fx->ctx;
-    enum hlsl_base_type base_type;
-    struct hlsl_ir_node *node;
-    unsigned int i;
+static struct fx_4_state_table fx_4_get_state_table(enum hlsl_type_class type_class,
+        unsigned int major, unsigned int minor)
+{
+    struct fx_4_state_table table;
 
-    if (type->class == HLSL_CLASS_BLEND_STATE && ctx->profile->major_version == 5)
+    if (type_class == HLSL_CLASS_BLEND_STATE && (major == 5 || (major == 4 && minor == 1)))
     {
         table.ptr = fx_5_blend_states;
         table.count = ARRAY_SIZE(fx_5_blend_states);
@@ -2696,6 +2689,24 @@ static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var, struct hlsl
         table.ptr = fx_4_states;
         table.count = ARRAY_SIZE(fx_4_states);
     }
+
+    return table;
+}
+
+static void resolve_fx_4_state_block_values(struct hlsl_ir_var *var,
+        struct hlsl_state_block_entry *entry, struct fx_write_context *fx)
+{
+    const struct hlsl_type *type = hlsl_get_multiarray_element_type(var->data_type);
+    struct replace_state_context replace_context;
+    const struct fx_4_state *state = NULL;
+    struct hlsl_type *state_type = NULL;
+    struct hlsl_ctx *ctx = fx->ctx;
+    enum hlsl_base_type base_type;
+    struct fx_4_state_table table;
+    struct hlsl_ir_node *node;
+    unsigned int i;
+
+    table = fx_4_get_state_table(type->class, ctx->profile->major_version, ctx->profile->minor_version);
 
     for (i = 0; i < table.count; ++i)
     {
@@ -3439,7 +3450,11 @@ struct fx_parser
     struct vkd3d_shader_message_context *message_context;
     struct vkd3d_string_buffer buffer;
     unsigned int indent;
-    unsigned int version;
+    struct
+    {
+        unsigned int major;
+        unsigned int minor;
+    } version;
     struct
     {
         const uint8_t *ptr;
@@ -4904,16 +4919,18 @@ static void fx_4_parse_state_object_initializer(struct fx_parser *parser, uint32
     };
     const struct rhs_named_value *named_value;
     struct fx_5_shader shader = { 0 };
+    struct fx_4_state_table table;
     unsigned int shader_type = 0;
     uint32_t i, j, comp_count;
     struct fx_4_state *state;
+
+    table = fx_4_get_state_table(type_class, parser->version.major, parser->version.minor);
 
     for (i = 0; i < count; ++i)
     {
         fx_parser_read_u32s(parser, &entry, sizeof(entry));
 
-        if (!(state = bsearch(&entry.id, fx_4_states, ARRAY_SIZE(fx_4_states),
-                sizeof(*fx_4_states), fx_4_state_id_compare)))
+        if (!(state = bsearch(&entry.id, table.ptr, table.count, sizeof(*table.ptr), fx_4_state_id_compare)))
         {
             fx_parser_error(parser, VKD3D_SHADER_ERROR_FX_INVALID_DATA, "Unrecognized state id %#x.", entry.id);
             break;
@@ -5183,7 +5200,7 @@ static void fx_parse_fx_4_technique(struct fx_parser *parser)
     name = fx_4_get_string(parser, technique.name);
 
     parse_fx_print_indent(parser);
-    vkd3d_string_buffer_printf(&parser->buffer, "technique%u %s", parser->version, name);
+    vkd3d_string_buffer_printf(&parser->buffer, "technique%u %s", parser->version.major == 4 ? 10 : 11, name);
     fx_parse_fx_4_annotations(parser);
 
     vkd3d_string_buffer_printf(&parser->buffer, "\n");
@@ -5277,7 +5294,6 @@ static void fx_4_parse(struct fx_parser *parser)
     } header;
     uint32_t i;
 
-    parser->version = 10;
     fx_parser_read_u32s(parser, &header, sizeof(header));
     parser->buffer_count = header.buffer_count;
     parser->object_count = header.object_count;
@@ -5331,7 +5347,6 @@ static void fx_5_parse(struct fx_parser *parser)
         uint32_t class_instance_element_count;
     } header;
 
-    parser->version = 11;
     fx_parser_read_u32s(parser, &header, sizeof(header));
     parser->buffer_count = header.buffer_count;
     parser->object_count = header.object_count;
@@ -5390,13 +5405,20 @@ int fx_parse(const struct vkd3d_shader_compile_info *compile_info,
     switch (version)
     {
         case 0xfeff0901:
+            parser.version.major = 3;
             fx_2_parse(&parser);
             break;
         case 0xfeff1001:
+            parser.version.major = 4;
+            fx_4_parse(&parser);
+            break;
         case 0xfeff1011:
+            parser.version.major = 4;
+            parser.version.minor = 1;
             fx_4_parse(&parser);
             break;
         case 0xfeff2001:
+            parser.version.major = 5;
             fx_5_parse(&parser);
             break;
         default:

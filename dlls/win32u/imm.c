@@ -48,7 +48,6 @@ struct ime_update
 
 struct imc
 {
-    struct user_object obj;
     DWORD    thread_id;
     UINT_PTR client_ptr;
 };
@@ -95,7 +94,7 @@ HIMC WINAPI NtUserCreateInputContext( UINT_PTR client_ptr )
     if (!(imc = malloc( sizeof(*imc) ))) return 0;
     imc->client_ptr = client_ptr;
     imc->thread_id = GetCurrentThreadId();
-    if (!(handle = alloc_user_handle( &imc->obj, NTUSER_OBJ_IMC )))
+    if (!(handle = alloc_user_handle( imc, NTUSER_OBJ_IMC )))
     {
         free( imc );
         return 0;
@@ -212,11 +211,10 @@ UINT WINAPI NtUserAssociateInputContext( HWND hwnd, HIMC ctx, ULONG flags )
             return AICR_FAILED;
     }
 
-    if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS || win == WND_DESKTOP)
-        return AICR_FAILED;
+    if (ctx && !is_current_thread_window( hwnd )) return AICR_FAILED;
+    if (!(win = get_win_ptr( hwnd )) || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return AICR_FAILED;
 
-    if (ctx && win->tid != GetCurrentThreadId()) ret = AICR_FAILED;
-    else if (flags != IACE_IGNORENOCONTEXT || win->imc)
+    if (flags != IACE_IGNORENOCONTEXT || win->imc)
     {
         if (win->imc != ctx && get_focus() == hwnd) ret = AICR_FOCUS_CHANGED;
         win->imc = ctx;
@@ -425,9 +423,8 @@ NTSTATUS WINAPI NtUserBuildHimcList( UINT thread_id, UINT count, HIMC *buffer, U
 
     *size = 0;
     user_lock();
-    while (count && (imc = next_process_user_handle_ptr( &handle, NTUSER_OBJ_IMC )))
+    while (count && (imc = next_thread_user_object( thread_id, &handle, NTUSER_OBJ_IMC )))
     {
-        if (thread_id != -1 && imc->thread_id != thread_id) continue;
         buffer[(*size)++] = handle;
         count--;
     }

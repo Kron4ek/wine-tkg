@@ -51,14 +51,11 @@ static bool fold_abs(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
                     dst->u[k].i = abs(src->value.u[k].i);
                 break;
 
+            case HLSL_TYPE_BOOL:
             case HLSL_TYPE_MIN16UINT:
             case HLSL_TYPE_UINT:
-                dst->u[k].u = src->value.u[k].u;
-                break;
-
-            default:
-                FIXME("Fold abs() for type %s.\n", debug_hlsl_type(ctx, dst_type));
-                return false;
+                /* Should not occur. */
+                vkd3d_unreachable();
         }
     }
     return true;

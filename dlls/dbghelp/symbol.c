@@ -892,14 +892,47 @@ static BOOL send_symbol(const struct sym_enum* se, struct module_pair* pair,
     return !se->cb(se->sym_info, se->sym_info->Size, se->user);
 }
 
+struct symbol_enum_method
+{
+    struct module_pair *pair;
+    const struct sym_enum *se;
+};
+
+static BOOL symbol_enum_method_cb(symref_t symref, const char *name, void *user)
+{
+    struct symbol_enum_method *sem = user;
+
+    sem->se->sym_info->SizeOfStruct = sizeof(SYMBOL_INFO);
+    sem->se->sym_info->MaxNameLen = sizeof(sem->se->buffer) - sizeof(SYMBOL_INFO);
+
+    if (symt_is_symref_ptr(symref))
+    {
+        if (send_symbol(sem->se, sem->pair, NULL, (struct symt*)symref)) return TRUE;
+    }
+    else FIXME("No support for this case yet %Ix\n", symref);
+    return TRUE;
+}
+
 static BOOL symt_enum_module(struct module_pair* pair, const WCHAR* match,
                              const struct sym_enum* se)
 {
+    struct module_format_vtable_iterator iter = {};
     void*                       ptr;
     struct symt_ht*             sym = NULL;
     struct hash_table_iter      hti;
     WCHAR*                      nameW;
     BOOL                        ret;
+
+    while ((module_format_vtable_iterator_next(pair->effective, &iter,
+                                               MODULE_FORMAT_VTABLE_INDEX(enumerate_symbols))))
+    {
+        struct symbol_enum_method sem = {pair, se};
+        enum method_result result = iter.modfmt->vtable->enumerate_symbols(iter.modfmt, match, symbol_enum_method_cb, &sem);
+
+        if (result == MR_SUCCESS) return TRUE;
+        if (result == MR_FAILURE) return FALSE;
+        /* fall back in all the other cases */
+    }
 
     hash_table_iter_init(&pair->effective->ht_symbols, &hti, NULL);
     while ((ptr = hash_table_iter_up(&hti)))
@@ -1034,7 +1067,7 @@ static int symt_get_best_at(struct module* module, int idx_sorttab)
 }
 
 /* assume addr is in module */
-struct symt_ht* symt_find_nearest(struct module* module, DWORD_PTR addr)
+static struct symt_ht* symt_find_nearest_internal(struct module* module, DWORD_PTR addr)
 {
     int         mid, high, low;
     ULONG64     ref_addr, ref_size;
@@ -1078,6 +1111,33 @@ struct symt_ht* symt_find_nearest(struct module* module, DWORD_PTR addr)
     low = symt_get_best_at(module, low);
 
     return module->addr_sorttab[low];
+}
+
+struct symt_ht *symt_find_nearest(struct module *module, DWORD_PTR addr)
+{
+    static int recursive;
+    struct module_format_vtable_iterator iter = {};
+
+    /* prevent recursive lookup inside backend */
+    if (!recursive++)
+    {
+        while ((module_format_vtable_iterator_next(module, &iter,
+                                                   MODULE_FORMAT_VTABLE_INDEX(lookup_by_address))))
+        {
+            symref_t symref;
+            enum method_result result = iter.modfmt->vtable->lookup_by_address(iter.modfmt, addr, &symref);
+            if (result == MR_SUCCESS)
+            {
+                recursive--;
+                if (symt_is_symref_ptr(symref)) return (struct symt_ht*)SYMT_SYMREF_TO_PTR(symref);
+                FIXME("No support for this case yet\n");
+                return NULL;
+            }
+            /* fall back in all the other cases */
+        }
+    }
+    recursive--;
+    return symt_find_nearest_internal(module, addr);
 }
 
 struct symt_ht* symt_find_symbol_at(struct module* module, DWORD_PTR addr)
@@ -1583,6 +1643,7 @@ BOOL WINAPI SymGetSymFromAddr64(HANDLE hProcess, DWORD64 Address,
 static BOOL find_name(struct process* pcs, struct module* module, const char* name,
                       SYMBOL_INFO* symbol)
 {
+    struct module_format_vtable_iterator iter = {};
     struct hash_table_iter      hti;
     void*                       ptr;
     struct symt_ht*             sym = NULL;
@@ -1591,6 +1652,24 @@ static BOOL find_name(struct process* pcs, struct module* module, const char* na
     pair.pcs = pcs;
     if (!(pair.requested = module)) return FALSE;
     if (!module_get_debug(&pair)) return FALSE;
+
+    while ((module_format_vtable_iterator_next(pair.effective, &iter,
+                                               MODULE_FORMAT_VTABLE_INDEX(lookup_by_name))))
+    {
+        symref_t symref;
+        enum method_result result = iter.modfmt->vtable->lookup_by_name(iter.modfmt, name, &symref);
+        if (result == MR_SUCCESS)
+        {
+            if (symt_is_symref_ptr(symref))
+            {
+                symt_fill_sym_info(&pair, NULL, SYMT_SYMREF_TO_PTR(symref), symbol);
+                return TRUE;
+            }
+            FIXME("Not expected case\n");
+            return FALSE;
+        }
+        if (result != MR_NOT_FOUND) return FALSE;
+    }
 
     hash_table_iter_init(&pair.effective->ht_symbols, &hti, name);
     while ((ptr = hash_table_iter_up(&hti)))

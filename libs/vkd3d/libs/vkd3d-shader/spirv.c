@@ -5775,7 +5775,7 @@ static unsigned int shader_signature_next_location(const struct shader_signature
     return max_row;
 }
 
-static uint32_t spirv_compiler_emit_input(struct spirv_compiler *compiler,
+static void spirv_compiler_emit_input(struct spirv_compiler *compiler,
         enum vkd3d_shader_register_type reg_type, unsigned int element_idx)
 {
     struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
@@ -5786,12 +5786,10 @@ static uint32_t spirv_compiler_emit_input(struct spirv_compiler *compiler,
     const struct vkd3d_spirv_builtin *builtin;
     enum vkd3d_shader_sysval_semantic sysval;
     uint32_t write_mask, reg_write_mask;
-    struct vkd3d_symbol *symbol = NULL;
     uint32_t val_id, input_id, var_id;
     uint32_t type_id, float_type_id;
     struct vkd3d_symbol reg_symbol;
     SpvStorageClass storage_class;
-    struct rb_entry *entry = NULL;
     bool use_private_var = false;
     unsigned int array_sizes[2];
 
@@ -5805,6 +5803,9 @@ static uint32_t spirv_compiler_emit_input(struct spirv_compiler *compiler,
      * well, and we don't actually need them to be in builtins. */
     if (compiler->shader_type == VKD3D_SHADER_TYPE_DOMAIN && reg_type != VKD3DSPR_PATCHCONST)
         sysval = VKD3D_SHADER_SV_NONE;
+
+    if (!signature_element->used_mask)
+        return;
 
     builtin = get_spirv_builtin_for_sysval(compiler, sysval);
 
@@ -5846,7 +5847,7 @@ static uint32_t spirv_compiler_emit_input(struct spirv_compiler *compiler,
 
     vkd3d_symbol_make_io(&reg_symbol, reg_type, element_idx);
 
-    if ((entry = rb_get(&compiler->symbol_table, &reg_symbol)))
+    if (rb_get(&compiler->symbol_table, &reg_symbol))
     {
         /* Except for vicp there should be one declaration per signature element. Sources of
          * duplicate declarations are: a single register split into multiple declarations having
@@ -5854,8 +5855,7 @@ static uint32_t spirv_compiler_emit_input(struct spirv_compiler *compiler,
          * being repeated in another (i.e. vcp/vocp), which should have been deleted. */
         if (reg_type != VKD3DSPR_INPUT || !is_in_fork_or_join_phase(compiler))
             FIXME("Duplicate input definition found.\n");
-        symbol = RB_ENTRY_VALUE(entry, struct vkd3d_symbol, entry);
-        return symbol->id;
+        return;
     }
 
     if (builtin)
@@ -5927,8 +5927,6 @@ static uint32_t spirv_compiler_emit_input(struct spirv_compiler *compiler,
 
         spirv_compiler_emit_store_reg(compiler, &dst_reg, signature_element->mask, val_id);
     }
-
-    return input_id;
 }
 
 static void spirv_compiler_emit_io_register(struct spirv_compiler *compiler,
