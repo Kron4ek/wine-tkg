@@ -50,6 +50,42 @@ static BYTE arguments[ARRAY_SIZE(syscalls)] =
 #undef SYSCALL_ENTRY
 };
 
+static const char *syscall_names[] =
+{
+#define SYSCALL_ENTRY(id,name,args) #name,
+    ALL_SYSCALLS
+#undef SYSCALL_ENTRY
+};
+
+static const char *usercall_names[NtUserCallCount] =
+{
+    "NtUserCallDispatchCallback",
+    "NtUserCallEnumDisplayMonitor",
+    "NtUserCallSendAsyncCallback",
+    "NtUserCallWinEventHook",
+    "NtUserCallWinProc",
+    "NtUserCallWindowsHook",
+    "NtUserCopyImage",
+    "NtUserDrawNonClientButton",
+    "NtUserDrawScrollBar",
+    "NtUserDrawText",
+    "NtUserFreeCachedClipboardData",
+    "NtUserImmProcessKey",
+    "NtUserImmTranslateMessage",
+    "NtUserInitBuiltinClasses",
+    "NtUserLoadDriver",
+    "NtUserLoadImage",
+    "NtUserLoadSysMenu",
+    "NtUserPostDDEMessage",
+    "NtUserRenderSynthesizedFormat",
+    "NtUserUnpackDDEMessage",
+    "NtUserDragDropEnter",
+    "NtUserDragDropLeave",
+    "NtUserDragDropDrag",
+    "NtUserDragDropDrop",
+    "NtUserDragDropPost",
+};
+
 static NTSTATUS init( void *args )
 {
 #ifdef _WIN64
@@ -62,6 +98,7 @@ static NTSTATUS init( void *args )
     }
 #endif
     KeAddSystemServiceTable( syscalls, NULL, ARRAY_SIZE(syscalls), arguments, 1 );
+    ntdll_add_syscall_debug_info( 1, syscall_names, usercall_names );
     return STATUS_SUCCESS;
 }
 

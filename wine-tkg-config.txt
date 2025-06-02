@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sun May 18 09:26:43 AM UTC 2025 :
+# Last wine-tkg-staging-fsync-git configuration - Mon Jun  2 09:59:27 PM UTC 2025 :
 
 Local cfg files used
 
-Wine (plain) version: 10.8.r0.g7f833db11ff
-Using wine-staging patchset (version 10.8.r0.g47f77594)
+Wine (plain) version: 10.9.r0.gffcbbf8f015
+Using wine-staging patchset (version 10.9.r0.gb4006fc0)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -28,9 +28,9 @@ wow64_loader_hack.patch -- ( Hack around loader name for EAC on 10.2+ )
 
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix a608ef1.mypatch
-Applied hotfix opencl-fixup.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
 Applied hotfix HACK-user32-Always-call-get_message-request-after-waiting.mypatch
+Applied hotfix opencl-fixup.mypatch
 Applied your own patch hags.mypatch
 Applied your own patch win32u-hdr.mypatch
 

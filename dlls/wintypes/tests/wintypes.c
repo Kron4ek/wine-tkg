@@ -736,15 +736,40 @@ static void test_IPropertyValueStatics(void)
     IInspectable *inspectable = NULL, *tmp_inspectable = NULL;
     IPropertyValueStatics *statics = NULL;
     IActivationFactory *factory = NULL;
+    IReference_BYTE *iref_byte;
+    IReference_INT16 *iref_int16;
+    IReference_INT32 *iref_int32;
+    IReference_UINT32 *iref_uint32;
+    IReference_INT64 *iref_int64;
+    IReference_UINT64 *iref_uint64;
     IReference_boolean *iref_boolean;
     IReference_HSTRING *iref_hstring;
+    IReference_FLOAT *iref_float;
     IReference_DOUBLE *iref_double;
+    IReference_DateTime *iref_datetime;
+    IReference_TimeSpan *iref_timespan;
+    IReference_GUID *iref_guid;
+    IReference_Point *iref_point;
+    IReference_Size *iref_size;
+    IReference_Rect *iref_rect;
     IPropertyValue *value = NULL;
     enum PropertyType type;
     unsigned int i, count;
     BYTE byte, *ptr_byte;
     HSTRING str, ret_str;
+    INT16 ret_int16;
+    INT32 ret_int32;
+    UINT32 ret_uint32;
+    INT64 ret_int64;
+    UINT64 ret_uint64;
+    FLOAT ret_float;
     DOUBLE ret_double;
+    struct DateTime ret_datetime;
+    struct TimeSpan ret_timespan;
+    GUID ret_guid;
+    struct Point ret_point;
+    struct Size ret_size;
+    struct Rect ret_rect;
     boolean ret;
     HRESULT hr;
 
@@ -989,16 +1014,29 @@ static void test_IPropertyValueStatics(void)
                                                                                              \
         hr = IFACE_TYPE##_get_Value(RET_OBJ, &RET_VALUE);                                    \
         ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);                                     \
-        ok(RET_VALUE == VALUE, "Got unexpected value.\n");                                   \
+        ok(!memcmp(&RET_VALUE, &VALUE, sizeof(VALUE)), "Got unexpected value.\n");           \
                                                                                              \
         IFACE_TYPE##_Release(RET_OBJ);                                                       \
         IPropertyValue_Release(value);                                                       \
         IInspectable_Release(inspectable);                                                   \
     } while (0);
 
-    TEST_PROPERTY_VALUE_IREFERENCE(Boolean, IReference_boolean, TRUE, iref_boolean, ret)
+    TEST_PROPERTY_VALUE_IREFERENCE(UInt8, IReference_BYTE, byte_value, iref_byte, byte)
+    TEST_PROPERTY_VALUE_IREFERENCE(Int16, IReference_INT16, int16_value, iref_int16, ret_int16)
+    TEST_PROPERTY_VALUE_IREFERENCE(Int32, IReference_INT32, int32_value, iref_int32, ret_int32)
+    TEST_PROPERTY_VALUE_IREFERENCE(UInt32, IReference_UINT32, uint32_value, iref_uint32, ret_uint32)
+    TEST_PROPERTY_VALUE_IREFERENCE(Int64, IReference_INT64, int64_value, iref_int64, ret_int64)
+    TEST_PROPERTY_VALUE_IREFERENCE(UInt64, IReference_UINT64, uint64_value, iref_uint64, ret_uint64)
+    TEST_PROPERTY_VALUE_IREFERENCE(Boolean, IReference_boolean, boolean_value, iref_boolean, ret)
     TEST_PROPERTY_VALUE_IREFERENCE(String, IReference_HSTRING, str, iref_hstring, ret_str)
-    TEST_PROPERTY_VALUE_IREFERENCE(Double, IReference_DOUBLE, 1.5, iref_double, ret_double)
+    TEST_PROPERTY_VALUE_IREFERENCE(Single, IReference_FLOAT, float_value, iref_float, ret_float)
+    TEST_PROPERTY_VALUE_IREFERENCE(Double, IReference_DOUBLE, double_value, iref_double, ret_double)
+    TEST_PROPERTY_VALUE_IREFERENCE(DateTime, IReference_DateTime, datetime_value, iref_datetime, ret_datetime)
+    TEST_PROPERTY_VALUE_IREFERENCE(TimeSpan, IReference_TimeSpan, timespan_value, iref_timespan, ret_timespan)
+    TEST_PROPERTY_VALUE_IREFERENCE(Guid, IReference_GUID, IID_IPropertyValue, iref_guid, ret_guid)
+    TEST_PROPERTY_VALUE_IREFERENCE(Point, IReference_Point, point_value, iref_point, ret_point)
+    TEST_PROPERTY_VALUE_IREFERENCE(Size, IReference_Size, size_value, iref_size, ret_size)
+    TEST_PROPERTY_VALUE_IREFERENCE(Rect, IReference_Rect, rect_value, iref_rect, ret_rect)
 
 #undef TEST_PROPERTY_VALUE_IREFERENCE
 

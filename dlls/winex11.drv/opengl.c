@@ -179,7 +179,7 @@ typedef XID GLXPbuffer;
 #define GLX_FLOAT_COMPONENTS_NV           0x20B0
 
 
-static char *glExtensions;
+static const char *glExtensions;
 static const char *glxExtensions;
 static char wglExtensions[4096];
 static int glxVersion[2];
@@ -230,7 +230,6 @@ struct gl_drawable
     Pixmap                         pixmap;       /* base pixmap if drawable is a GLXPixmap */
     const struct glx_pixel_format *format;       /* pixel format for the drawable */
     int                            swap_interval;
-    BOOL                           mutable_pf;
     HDC                            hdc_src;
     HDC                            hdc_dst;
 };
@@ -261,8 +260,6 @@ static BOOL has_swap_method = FALSE;
 static pthread_mutex_t context_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static const BOOL is_win64 = sizeof(void *) > sizeof(int);
-
-static struct opengl_funcs opengl_funcs;
 
 static BOOL glxRequireVersion(int requiredVersion);
 
@@ -356,7 +353,6 @@ static INT64 (*pglXSwapBuffersMscOML)( Display *dpy, GLXDrawable drawable,
 static void (*pglFinish)(void);
 static void (*pglFlush)(void);
 static const GLubyte *(*pglGetString)(GLenum name);
-static const GLubyte *wglGetString(GLenum name);
 
 /* check if the extension is present in the list */
 static BOOL has_extension( const char *list, const char *ext )
@@ -382,13 +378,10 @@ static int GLXErrorHandler(Display *dpy, XErrorEvent *event, void *arg)
 
 static BOOL X11DRV_WineGL_InitOpenglInfo(void)
 {
-    static const char legacy_extensions[] = " WGL_EXT_extensions_string WGL_EXT_swap_control";
-
     int screen = DefaultScreen(gdi_display);
     Window win = 0, root = 0;
     const char *gl_version;
     const char *gl_renderer;
-    const char* str;
     BOOL glx_direct;
     XVisualInfo *vis;
     GLXContext ctx = NULL;
@@ -438,10 +431,7 @@ static BOOL X11DRV_WineGL_InitOpenglInfo(void)
     }
     gl_renderer = (const char *)pglGetString(GL_RENDERER);
     gl_version  = (const char *)pglGetString(GL_VERSION);
-    str = (const char *) pglGetString(GL_EXTENSIONS);
-    glExtensions = malloc( strlen(str) + sizeof(legacy_extensions) );
-    strcpy(glExtensions, str);
-    strcat(glExtensions, legacy_extensions);
+    glExtensions = (const char *) pglGetString(GL_EXTENSIONS);
 
     /* Get the common GLX version supported by GLX client and server ( major/minor) */
     pglXQueryVersion(gdi_display, &glxVersion[0], &glxVersion[1]);
@@ -510,7 +500,7 @@ static const struct opengl_driver_funcs x11drv_driver_funcs;
 /**********************************************************************
  *           X11DRV_OpenglInit
  */
-UINT X11DRV_OpenGLInit( UINT version, struct opengl_funcs **funcs, const struct opengl_driver_funcs **driver_funcs )
+UINT X11DRV_OpenGLInit( UINT version, const struct opengl_funcs *opengl_funcs, const struct opengl_driver_funcs **driver_funcs )
 {
     int error_base, event_base;
 
@@ -688,7 +678,6 @@ UINT X11DRV_OpenGLInit( UINT version, struct opengl_funcs **funcs, const struct 
         pglXSwapBuffersMscOML = pglXGetProcAddressARB( (const GLubyte *)"glXSwapBuffersMscOML" );
     }
 
-    *funcs = &opengl_funcs;
     *driver_funcs = &x11drv_driver_funcs;
     return STATUS_SUCCESS;
 
@@ -1058,8 +1047,7 @@ static GLXContext create_glxcontext(Display *display, struct x11drv_context *con
 /***********************************************************************
  *              create_gl_drawable
  */
-static struct gl_drawable *create_gl_drawable( HWND hwnd, const struct glx_pixel_format *format, BOOL known_child,
-                                               BOOL mutable_pf )
+static struct gl_drawable *create_gl_drawable( HWND hwnd, const struct glx_pixel_format *format, BOOL known_child )
 {
     static const WCHAR displayW[] = {'D','I','S','P','L','A','Y'};
     UNICODE_STRING device_str = RTL_CONSTANT_STRING(displayW);
@@ -1080,7 +1068,6 @@ static struct gl_drawable *create_gl_drawable( HWND hwnd, const struct glx_pixel
     gl->ref = 1;
     gl->hwnd = hwnd;
     gl->rect = rect;
-    gl->mutable_pf = mutable_pf;
 
     if (!needs_offscreen_rendering( hwnd, known_child ))
     {
@@ -1176,7 +1163,7 @@ static BOOL x11drv_set_pixel_format( HWND hwnd, int old_format, int new_format, 
 
     if (!(old = get_gl_drawable( hwnd, 0 )) || old->format != fmt)
     {
-        if (!(gl = create_gl_drawable( hwnd, fmt, FALSE, internal )))
+        if (!(gl = create_gl_drawable( hwnd, fmt, FALSE )))
         {
             release_gl_drawable( old );
             return FALSE;
@@ -1217,7 +1204,7 @@ static void update_gl_drawable_size( struct gl_drawable *gl )
         set_dc_drawable( gl->hdc_src, gl->window, &gl->rect, IncludeInferiors );
         break;
     case DC_GL_PIXMAP_WIN:
-        new_gl = create_gl_drawable( gl->hwnd, gl->format, TRUE, gl->mutable_pf );
+        new_gl = create_gl_drawable( gl->hwnd, gl->format, TRUE );
         mark_drawable_dirty( gl, new_gl );
         release_gl_drawable( new_gl );
     default:
@@ -1247,7 +1234,7 @@ void sync_gl_drawable( HWND hwnd, BOOL known_child )
         }
         /* fall through */
     case DC_GL_PIXMAP_WIN:
-        if (!(new = create_gl_drawable( hwnd, old->format, known_child, old->mutable_pf ))) break;
+        if (!(new = create_gl_drawable( hwnd, old->format, known_child ))) break;
         mark_drawable_dirty( old, new );
         XFlush( gdi_display );
         TRACE( "Recreated GL drawable %lx to replace %lx\n", new->drawable, old->drawable );
@@ -1284,7 +1271,7 @@ void set_gl_drawable_parent( HWND hwnd, HWND parent )
         return;
     }
 
-    if ((new = create_gl_drawable( hwnd, old->format, FALSE, old->mutable_pf )))
+    if ((new = create_gl_drawable( hwnd, old->format, FALSE )))
     {
         mark_drawable_dirty( old, new );
         release_gl_drawable( new );
@@ -1558,10 +1545,6 @@ static BOOL x11drv_context_destroy(void *private)
 static void *x11drv_get_proc_address( const char *name )
 {
     void *ptr;
-
-    /* redirect some standard OpenGL functions */
-    if (!strcmp( name, "glGetString" )) return wglGetString;
-
     if ((ptr = dlsym( opengl_handle, name ))) return ptr;
     return pglXGetProcAddressARB( (const GLubyte *)name );
 }
@@ -1732,12 +1715,6 @@ static BOOL x11drv_context_flush( void *private, HWND hwnd, HDC hdc, int interva
     present_gl_drawable( hwnd, ctx->hdc, gl, TRUE, !finish );
     release_gl_drawable( gl );
     return TRUE;
-}
-
-static const GLubyte *wglGetString(GLenum name)
-{
-    if (name == GL_EXTENSIONS && glExtensions) return (const GLubyte *)glExtensions;
-    return pglGetString(name);
 }
 
 /***********************************************************************
@@ -1950,7 +1927,7 @@ static void register_extension(const char *ext)
     TRACE("'%s'\n", ext);
 }
 
-static const char *x11drv_init_wgl_extensions(void)
+static const char *x11drv_init_wgl_extensions( struct opengl_funcs *funcs )
 {
     wglExtensions[0] = 0;
 
@@ -2002,8 +1979,8 @@ static const char *x11drv_init_wgl_extensions(void)
     if (has_extension(glExtensions, "GL_NV_vertex_array_range"))
     {
         register_extension( "WGL_NV_vertex_array_range" );
-        opengl_funcs.p_wglAllocateMemoryNV = pglXAllocateMemoryNV;
-        opengl_funcs.p_wglFreeMemoryNV = pglXFreeMemoryNV;
+        funcs->p_wglAllocateMemoryNV = pglXAllocateMemoryNV;
+        funcs->p_wglFreeMemoryNV = pglXFreeMemoryNV;
     }
 
     if (has_extension(glxExtensions, "GLX_OML_swap_method"))
@@ -2014,10 +1991,10 @@ static const char *x11drv_init_wgl_extensions(void)
     if (has_extension( glxExtensions, "GLX_MESA_query_renderer" ))
     {
         register_extension( "WGL_WINE_query_renderer" );
-        opengl_funcs.p_wglQueryCurrentRendererIntegerWINE = X11DRV_wglQueryCurrentRendererIntegerWINE;
-        opengl_funcs.p_wglQueryCurrentRendererStringWINE = X11DRV_wglQueryCurrentRendererStringWINE;
-        opengl_funcs.p_wglQueryRendererIntegerWINE = X11DRV_wglQueryRendererIntegerWINE;
-        opengl_funcs.p_wglQueryRendererStringWINE = X11DRV_wglQueryRendererStringWINE;
+        funcs->p_wglQueryCurrentRendererIntegerWINE = X11DRV_wglQueryCurrentRendererIntegerWINE;
+        funcs->p_wglQueryCurrentRendererStringWINE = X11DRV_wglQueryCurrentRendererStringWINE;
+        funcs->p_wglQueryRendererIntegerWINE = X11DRV_wglQueryRendererIntegerWINE;
+        funcs->p_wglQueryRendererStringWINE = X11DRV_wglQueryRendererStringWINE;
     }
 
     return wglExtensions;
@@ -2119,7 +2096,7 @@ static const struct opengl_driver_funcs x11drv_driver_funcs =
 /**********************************************************************
  *           X11DRV_OpenglInit
  */
-UINT X11DRV_OpenGLInit( UINT version, struct opengl_funcs **funcs, const struct opengl_driver_funcs **driver_funcs )
+UINT X11DRV_OpenGLInit( UINT version, const struct opengl_funcs *opengl_funcs, const struct opengl_driver_funcs **driver_funcs )
 {
     return STATUS_NOT_IMPLEMENTED;
 }

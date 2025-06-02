@@ -61,7 +61,7 @@ struct wgl_pixel_format
 #ifdef WINE_UNIX_LIB
 
 /* Wine internal opengl driver version, needs to be bumped upon opengl_funcs changes. */
-#define WINE_OPENGL_DRIVER_VERSION 31
+#define WINE_OPENGL_DRIVER_VERSION 35
 
 struct wgl_context;
 struct wgl_pbuffer;
@@ -105,18 +105,31 @@ struct opengl_funcs
     BOOL       (*p_wglSetPixelFormatWINE)( HDC hdc, int format );
     BOOL       (*p_wglSwapIntervalEXT)( int interval );
 #define USE_GL_FUNC(x) PFN_##x p_##x;
+    ALL_EGL_FUNCS
     ALL_GL_FUNCS
     ALL_GL_EXT_FUNCS
 #undef USE_GL_FUNC
+
+    void       *egl_handle;
+};
+
+struct egl_platform
+{
+    EGLDisplay  display;
+    UINT        config_count;
+    EGLConfig  *configs;
+    BOOL        has_EGL_EXT_present_opaque;
+    BOOL        has_EGL_EXT_pixel_format_float;
 };
 
 /* interface between win32u and the user drivers */
 struct opengl_driver_funcs
 {
+    GLenum (*p_init_egl_platform)(const struct egl_platform*,EGLNativeDisplayType*);
     void *(*p_get_proc_address)(const char *);
     UINT (*p_init_pixel_formats)(UINT*);
     BOOL (*p_describe_pixel_format)(int,struct wgl_pixel_format*);
-    const char *(*p_init_wgl_extensions)(void);
+    const char *(*p_init_wgl_extensions)(struct opengl_funcs *funcs);
     BOOL (*p_set_pixel_format)(HWND,int,int,BOOL);
     BOOL (*p_swap_buffers)(void*,HWND,HDC,int);
     BOOL (*p_context_create)(HDC,int,void*,const int*,void**);
