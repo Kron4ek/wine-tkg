@@ -101,25 +101,42 @@ static inline BOOL is_arm64ec(void)
 /* thread private data, stored in NtCurrentTeb()->GdiTebBatch */
 struct ntdll_thread_data
 {
-    void              *cpu_data[16];  /* reserved for CPU-specific data */
-    void              *kernel_stack;  /* stack for thread startup and kernel syscalls */
-    int                request_fd;    /* fd for sending server requests */
-    int                reply_fd;      /* fd for receiving server replies */
-    int                wait_fd[2];    /* fd for sleeping server requests */
-    BOOL               allow_writes;  /* ThreadAllowWrites flags */
-    pthread_t          pthread_id;    /* pthread thread id */
-    struct list        entry;         /* entry in TEB list */
-    PRTL_THREAD_START_ROUTINE start;  /* thread entry point */
-    void              *param;         /* thread entry point parameter */
-    void              *jmp_buf;       /* setjmp buffer for exception handling */
-    int                linux_alert_obj; /* fd for the linux in-process alert event */
+    void                     *cpu_data[16];  /* 1d4/02f0 reserved for CPU-specific data */
+    SYSTEM_SERVICE_TABLE     *syscall_table; /* 214/0370 syscall table */
+    struct syscall_frame     *syscall_frame; /* 218/0378 current syscall frame */
+    int                       syscall_trace; /* 21c/0380 syscall trace flag */
+    int                       request_fd;    /* fd for sending server requests */
+    int                       reply_fd;      /* fd for receiving server replies */
+    int                       wait_fd[2];    /* fd for sleeping server requests */
+    BOOL                      allow_writes;  /* ThreadAllowWrites flags */
+    pthread_t                 pthread_id;    /* pthread thread id */
+    void                     *kernel_stack;  /* stack for thread startup and kernel syscalls */
+    struct list               entry;         /* entry in TEB list */
+    PRTL_THREAD_START_ROUTINE start;         /* thread entry point */
+    void                     *param;         /* thread entry point parameter */
+    void                     *jmp_buf;       /* setjmp buffer for exception handling */
+    int                       linux_alert_obj; /* fd for the linux in-process alert event */
 };
 
 C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
+#ifdef _WIN64
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_table ) == 0x370 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_frame ) == 0x378 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_trace ) == 0x380 );
+#else
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_table ) == 0x214 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_frame ) == 0x218 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_trace ) == 0x21c );
+#endif
 
 static inline struct ntdll_thread_data *ntdll_get_thread_data(void)
 {
     return (struct ntdll_thread_data *)&NtCurrentTeb()->GdiTebBatch;
+}
+
+static inline struct syscall_frame *get_syscall_frame(void)
+{
+    return ntdll_get_thread_data()->syscall_frame;
 }
 
 /* returns TRUE if the async is complete; FALSE if it should be restarted */
@@ -185,7 +202,6 @@ extern HANDLE keyed_event;
 extern timeout_t server_start_time;
 extern sigset_t server_block_set;
 extern struct _KUSER_SHARED_DATA *user_shared_data;
-extern SYSTEM_CPU_INFORMATION cpu_info;
 #ifdef __i386__
 extern struct ldt_copy __wine_ldt_copy;
 #endif
@@ -244,16 +260,8 @@ static inline void set_context_exception_reporting_flags( DWORD *context_flags, 
                      | CONTEXT_EXCEPTION_REPORTING | reporting_flag;
 }
 
-extern BOOL xstate_compaction_enabled;
-extern UINT xstate_features_size;
-extern UINT64 xstate_supported_features_mask;
 extern unsigned int xstate_get_size( UINT64 compaction_mask, UINT64 mask );
 extern void copy_xstate( XSAVE_AREA_HEADER *dst, XSAVE_AREA_HEADER *src, UINT64 mask );
-
-static inline UINT64 xstate_extended_features(void)
-{
-    return xstate_supported_features_mask & ~(UINT64)3;
-}
 
 extern void set_process_instrumentation_callback( void *callback );
 
@@ -292,6 +300,7 @@ extern NTSTATUS virtual_clear_tls_index( ULONG index );
 extern NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_low, ULONG_PTR limit_high,
                                             SIZE_T reserve_size, SIZE_T commit_size, BOOL guard_page );
 extern void virtual_map_user_shared_data(void);
+extern void virtual_init_user_shared_data(void);
 extern NTSTATUS virtual_handle_fault( EXCEPTION_RECORD *rec, void *stack );
 extern unsigned int virtual_locked_server_call( void *req_ptr );
 extern ssize_t virtual_locked_read( int fd, void *addr, size_t size );
@@ -324,7 +333,7 @@ extern void DECLSPEC_NORETURN signal_start_thread( PRTL_THREAD_START_ROUTINE ent
                                                    BOOL suspend, TEB *teb );
 extern SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4];
 extern void __wine_syscall_dispatcher(void);
-extern void DECLSPEC_NORETURN __wine_syscall_dispatcher_return( void *frame, ULONG_PTR retval );
+extern void __wine_syscall_dispatcher_return(void);
 extern void __wine_unix_call_dispatcher(void);
 extern NTSTATUS signal_set_full_context( CONTEXT *context );
 extern NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size );
@@ -364,6 +373,7 @@ extern NTSTATUS open_unix_file( HANDLE *handle, const char *unix_name, ACCESS_MA
 extern NTSTATUS get_device_info( int fd, struct _FILE_FS_DEVICE_INFORMATION *info );
 extern void init_files(void);
 extern void init_cpu_info(void);
+extern void init_shared_data_cpuinfo( struct _KUSER_SHARED_DATA *data );
 extern void file_complete_async( HANDLE handle, unsigned int options, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user,
                                  IO_STATUS_BLOCK *io, NTSTATUS status, ULONG_PTR information );
 extern void set_async_direct_result( HANDLE *async_handle, unsigned int options, IO_STATUS_BLOCK *io,
@@ -426,6 +436,12 @@ static inline BOOL is_inside_signal_stack( void *ptr )
 {
     return ((char *)ptr >= (char *)get_signal_stack() &&
             (char *)ptr < (char *)get_signal_stack() + signal_stack_size);
+}
+
+static inline BOOL is_inside_syscall( ULONG_PTR sp )
+{
+    return ((char *)sp >= (char *)ntdll_get_thread_data()->kernel_stack &&
+            (char *)sp <= (char *)get_syscall_frame());
 }
 
 static inline BOOL is_ec_code( ULONG_PTR ptr )

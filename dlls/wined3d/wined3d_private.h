@@ -2820,6 +2820,11 @@ struct wined3d_ffp_vs_constants
 
     /* States not used by the HLSL pipeline. */
     struct wined3d_vec4 clip_planes[WINED3D_MAX_CLIP_DISTANCES];
+    struct wined3d_ffp_point_clamp_constants
+    {
+        float min, max;
+    } point_clamp;
+    float padding2[2]; /* Align to 16-bytes. */
 };
 
 struct wined3d_ffp_ps_constants
@@ -2878,6 +2883,9 @@ enum wined3d_push_constants
 struct wined3d_extra_vs_args
 {
     uint8_t clip_planes;
+    bool pixel_fog;
+    bool flat_shading;
+    bool ortho_fog;
 };
 
 struct wined3d_extra_ps_args
@@ -2978,7 +2986,6 @@ struct wined3d_state
 
     uint32_t texture_states[WINED3D_MAX_FFP_TEXTURES][WINED3D_HIGHEST_TEXTURE_STATE + 1];
 
-    struct wined3d_matrix transforms[WINED3D_HIGHEST_TRANSFORM_STATE + 1];
     struct wined3d_viewport viewports[WINED3D_MAX_VIEWPORTS];
     unsigned int viewport_count;
     RECT scissor_rects[WINED3D_MAX_VIEWPORTS];
@@ -3256,6 +3263,7 @@ struct wined3d_resource_ops
     ULONG (*resource_decref)(struct wined3d_resource *resource);
     void (*resource_preload)(struct wined3d_resource *resource);
     void (*resource_unload)(struct wined3d_resource *resource);
+    unsigned int (*resource_get_sub_resource_count)(struct wined3d_resource *resource);
     HRESULT (*resource_sub_resource_get_desc)(struct wined3d_resource *resource,
             unsigned int sub_resource_idx, struct wined3d_sub_resource_desc *desc);
     void (*resource_sub_resource_get_map_pitch)(struct wined3d_resource *resource,
@@ -3314,12 +3322,6 @@ static inline ULONG wined3d_resource_incref(struct wined3d_resource *resource)
 static inline ULONG wined3d_resource_decref(struct wined3d_resource *resource)
 {
     return resource->resource_ops->resource_decref(resource);
-}
-
-static inline HRESULT wined3d_resource_get_sub_resource_desc(struct wined3d_resource *resource,
-        unsigned int sub_resource_idx, struct wined3d_sub_resource_desc *desc)
-{
-    return resource->resource_ops->resource_sub_resource_get_desc(resource, sub_resource_idx, desc);
 }
 
 static inline void wined3d_resource_get_sub_resource_map_pitch(struct wined3d_resource *resource,
@@ -3819,8 +3821,6 @@ void wined3d_device_context_emit_set_texture(struct wined3d_device_context *cont
         struct wined3d_shader_resource_view *view);
 void wined3d_device_context_emit_set_texture_state(struct wined3d_device_context *context, unsigned int stage,
         enum wined3d_texture_stage_state state, unsigned int value);
-void wined3d_device_context_emit_set_transform(struct wined3d_device_context *context,
-        enum wined3d_transform_state state, const struct wined3d_matrix *matrix);
 void wined3d_device_context_emit_set_unordered_access_views(struct wined3d_device_context *context,
         enum wined3d_pipeline pipeline, unsigned int start_idx, unsigned int count,
         struct wined3d_unordered_access_view *const *views, const unsigned int *initial_count);
@@ -4491,8 +4491,6 @@ void get_identity_matrix(struct wined3d_matrix *mat);
 void get_modelview_matrix(const struct wined3d_stateblock_state *state, unsigned int index, struct wined3d_matrix *mat);
 void get_texture_matrix(const struct wined3d_stateblock_state *state,
         const unsigned int tex, struct wined3d_matrix *mat);
-void get_pointsize_minmax(const struct wined3d_context *context, const struct wined3d_state *state,
-        float *out_min, float *out_max);
 
 struct wined3d_palette
 {

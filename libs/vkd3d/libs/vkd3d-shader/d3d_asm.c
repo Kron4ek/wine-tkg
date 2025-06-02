@@ -88,6 +88,7 @@ static const char * const shader_opcode_names[] =
     [VKD3DSIH_DCL_INTERFACE                   ] = "dcl_interface",
     [VKD3DSIH_DCL_OUTPUT                      ] = "dcl_output",
     [VKD3DSIH_DCL_OUTPUT_CONTROL_POINT_COUNT  ] = "dcl_output_control_point_count",
+    [VKD3DSIH_DCL_OUTPUT_SGV                  ] = "dcl_output_sgv",
     [VKD3DSIH_DCL_OUTPUT_SIV                  ] = "dcl_output_siv",
     [VKD3DSIH_DCL_OUTPUT_TOPOLOGY             ] = "dcl_outputtopology",
     [VKD3DSIH_DCL_RESOURCE_RAW                ] = "dcl_resource_raw",
@@ -1865,6 +1866,7 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
         case VKD3DSIH_DCL_INPUT_PS_SGV:
         case VKD3DSIH_DCL_INPUT_SGV:
         case VKD3DSIH_DCL_INPUT_SIV:
+        case VKD3DSIH_DCL_OUTPUT_SGV:
         case VKD3DSIH_DCL_OUTPUT_SIV:
             shader_print_dst_param(compiler, " ", &ins->declaration.register_semantic.reg, true, "");
             shader_print_input_sysval_semantic(compiler, ", ", ins->declaration.register_semantic.sysval_semantic, "");

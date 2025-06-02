@@ -186,6 +186,7 @@ SOURCES = \
 	dbinit.idl \
 	dbprop.idl \
 	dbs.idl \
+	dbsrst.idl \
 	dbt.h \
 	dciddi.h \
 	dciman.h \

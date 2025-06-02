@@ -265,7 +265,8 @@ if (0)
     hr = _Recordset_get_ActiveConnection( recordset, NULL );
 }
 
-    VariantInit(&active);
+    V_VT(&active) = VT_UNKNOWN;
+    V_UNKNOWN(&active) = (IUnknown *)0xdeadbeef;
     hr = _Recordset_get_ActiveConnection( recordset, &active );
     ok( hr == S_OK, "got %08lx\n", hr );
     ok( V_VT(&active) == VT_DISPATCH, "got %d\n", V_VT(&active) );
@@ -745,6 +746,7 @@ static void test_ADORecordsetConstruction(void)
     ok( count == 1, "got %ld\n", count );
     if (count > 0)
     {
+        unsigned char prec, scale;
         VARIANT index;
         ADO_LONGPTR size;
         DataTypeEnum type;
@@ -753,6 +755,7 @@ static void test_ADORecordsetConstruction(void)
         V_BSTR( &index ) = SysAllocString( L"Column1" );
 
         hr = Fields_get_Item( fields, index, &field );
+        VariantClear(&index);
         ok( hr == S_OK, "got %08lx\n", hr );
 
         hr = Field_get_Type( field, &type );
@@ -762,8 +765,12 @@ static void test_ADORecordsetConstruction(void)
         hr = Field_get_DefinedSize( field, &size );
         ok( hr == S_OK, "got %08lx\n", hr );
         ok( size == 5, "got %Id\n", size );
-
-        VariantClear(&index);
+        hr = Field_get_Precision( field, &prec );
+        ok( hr == S_OK, "got %08lx\n", hr );
+        ok( prec == 1, "got %u\n", prec );
+        hr = Field_get_NumericScale( field, &scale );
+        ok( hr == S_OK, "got %08lx\n", hr );
+        ok( scale == 1, "got %u\n", scale );
 
         Field_Release(field);
     }
@@ -782,6 +789,7 @@ static void test_Fields(void)
 {
     _Recordset *recordset;
     ISupportErrorInfo *errorinfo;
+    unsigned char prec, scale;
     Fields *fields;
     Field *field, *field2;
     VARIANT val, index;
@@ -836,6 +844,7 @@ static void test_Fields(void)
     V_VT( &index ) = VT_BSTR;
     V_BSTR( &index ) = name;
     hr = Fields_get_Item( fields, index, &field );
+    ok( hr == S_OK, "got %08lx\n", hr );
 
     /* calling get_Item again returns the same object and adds reference */
     hr = Fields_get_Item( fields, index, &field2 );
@@ -867,6 +876,24 @@ static void test_Fields(void)
     hr = Field_get_Attributes( field, &attrs );
     ok( hr == S_OK, "got %08lx\n", hr );
     ok( !attrs, "got %ld\n", attrs );
+    hr = Field_get_Precision( field, &prec );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( !prec, "got %u\n", prec );
+    hr = Field_get_NumericScale( field, &scale );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( !scale, "got %u\n", scale );
+
+    hr = Field_put_Precision( field, 7 );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    hr = Field_get_Precision( field, &prec );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( prec == 7, "got %u\n", prec );
+
+    hr = Field_put_NumericScale( field, 12 );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    hr = Field_get_NumericScale( field, &scale );
+    ok( hr == S_OK, "got %08lx\n", hr );
+    ok( scale == 12, "got %u\n", scale );
 
     Field_Release( field );
     Fields_Release( fields );

@@ -1031,6 +1031,7 @@ static enum vkd3d_result vsir_program_lower_instructions(struct vsir_program *pr
             case VKD3DSIH_DCL_INPUT_PS:
             case VKD3DSIH_DCL_INPUT_PS_SGV:
             case VKD3DSIH_DCL_INPUT_PS_SIV:
+            case VKD3DSIH_DCL_OUTPUT_SGV:
             case VKD3DSIH_DCL_OUTPUT_SIV:
                 vkd3d_shader_instruction_make_nop(ins);
                 break;
@@ -1142,15 +1143,15 @@ static enum vkd3d_result vsir_program_ensure_ret(struct vsir_program *program,
     return VKD3D_OK;
 }
 
-static bool add_signature_element(struct shader_signature *signature, const char *semantic_name,
-        uint32_t semantic_index, uint32_t mask, uint32_t register_index,
+static struct signature_element *add_signature_element(struct shader_signature *signature,
+        const char *semantic_name, uint32_t semantic_index, uint32_t mask, uint32_t register_index,
         enum vkd3d_shader_interpolation_mode interpolation_mode)
 {
     struct signature_element *new_elements, *e;
 
     if (!(new_elements = vkd3d_realloc(signature->elements,
             (signature->element_count + 1) * sizeof(*signature->elements))))
-        return false;
+        return NULL;
     signature->elements = new_elements;
     e = &signature->elements[signature->element_count++];
     memset(e, 0, sizeof(*e));
@@ -1164,7 +1165,7 @@ static bool add_signature_element(struct shader_signature *signature, const char
     e->register_index = register_index;
     e->target_location = register_index;
     e->interpolation_mode = interpolation_mode;
-    return true;
+    return e;
 }
 
 static enum vkd3d_result vsir_program_add_diffuse_output(struct vsir_program *program,
@@ -6362,9 +6363,9 @@ static enum vkd3d_result vsir_program_insert_clip_planes(struct vsir_program *pr
     struct shader_signature *signature = &program->output_signature;
     unsigned int low_signature_idx = ~0u, high_signature_idx = ~0u;
     const struct vkd3d_shader_parameter1 *mask_parameter = NULL;
-    struct signature_element *new_elements, *clip_element;
     uint32_t position_signature_idx, position_temp, mask;
     static const struct vkd3d_shader_location no_loc;
+    struct signature_element *clip_element;
     struct vkd3d_shader_instruction *ins;
     unsigned int plane_count;
     size_t new_pos;
@@ -6422,33 +6423,20 @@ static enum vkd3d_result vsir_program_insert_clip_planes(struct vsir_program *pr
 
     plane_count = vkd3d_popcount(mask);
 
-    if (!(new_elements = vkd3d_realloc(signature->elements,
-            (signature->element_count + 2) * sizeof(*signature->elements))))
+    /* Register mask is ignored since we operate after I/O normalisation. */
+    if (!(clip_element = add_signature_element(signature, "SV_ClipDistance", 0,
+            vkd3d_write_mask_from_component_count(min(plane_count, 4)), 0, VKD3DSIM_NONE)))
         return VKD3D_ERROR_OUT_OF_MEMORY;
-    signature->elements = new_elements;
-
-    low_signature_idx = signature->element_count;
-    clip_element = &signature->elements[signature->element_count++];
-    memset(clip_element, 0, sizeof(*clip_element));
+    low_signature_idx = clip_element - signature->elements;
     clip_element->sysval_semantic = VKD3D_SHADER_SV_CLIP_DISTANCE;
-    clip_element->component_type = VKD3D_SHADER_COMPONENT_FLOAT;
-    clip_element->register_count = 1;
-    clip_element->mask = vkd3d_write_mask_from_component_count(min(plane_count, 4));
-    clip_element->used_mask = clip_element->mask;
-    clip_element->min_precision = VKD3D_SHADER_MINIMUM_PRECISION_NONE;
 
     if (plane_count > 4)
     {
-        high_signature_idx = signature->element_count;
-        clip_element = &signature->elements[signature->element_count++];
-        memset(clip_element, 0, sizeof(*clip_element));
+        if (!(clip_element = add_signature_element(signature, "SV_ClipDistance", 1,
+                vkd3d_write_mask_from_component_count(plane_count - 4), 0, VKD3DSIM_NONE)))
+            return VKD3D_ERROR_OUT_OF_MEMORY;
+        high_signature_idx = clip_element - signature->elements;
         clip_element->sysval_semantic = VKD3D_SHADER_SV_CLIP_DISTANCE;
-        clip_element->semantic_index = 1;
-        clip_element->component_type = VKD3D_SHADER_COMPONENT_FLOAT;
-        clip_element->register_count = 1;
-        clip_element->mask = vkd3d_write_mask_from_component_count(plane_count - 4);
-        clip_element->used_mask = clip_element->mask;
-        clip_element->min_precision = VKD3D_SHADER_MINIMUM_PRECISION_NONE;
     }
 
     /* We're going to be reading from the output position, so we need to go

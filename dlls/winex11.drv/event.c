@@ -952,6 +952,12 @@ static BOOL X11DRV_FocusOut( HWND hwnd, XEvent *xev )
               hwnd, event->window, event->serial, focus_details[event->detail], focus_modes[event->mode], foreground );
         return FALSE;
     }
+    if (!is_virtual_desktop() && window_is_reparenting( hwnd )) /* ignore FocusOut only if the window is being reparented */
+    {
+        WARN( "Ignoring window %p/%lx FocusOut serial %lu, detail %s, mode %s, foreground %p during reparenting\n",
+              hwnd, event->window, event->serial, focus_details[event->detail], focus_modes[event->mode], foreground );
+        return FALSE;
+    }
 
     TRACE( "window %p/%lx FocusOut serial %lu, detail %s, mode %s, foreground %p\n", hwnd, event->window,
            event->serial, focus_details[event->detail], focus_modes[event->mode], foreground );
@@ -1031,6 +1037,11 @@ static BOOL X11DRV_MapNotify( HWND hwnd, XEvent *event )
     if (event->xany.window == x11drv_thread_data()->clip_window) return TRUE;
 
     if (!(data = get_win_data( hwnd ))) return FALSE;
+    if (data->reparenting)
+    {
+        TRACE( "window %p/%lx has been reparented\n", data->hwnd, data->whole_window );
+        data->reparenting = 0;
+    }
 
     if (!data->managed && !data->embedded && data->desired_state.wm_state != WithdrawnState)
     {
@@ -1048,6 +1059,15 @@ static BOOL X11DRV_MapNotify( HWND hwnd, XEvent *event )
  */
 static BOOL X11DRV_UnmapNotify( HWND hwnd, XEvent *event )
 {
+    struct x11drv_win_data *data;
+
+    if (!(data = get_win_data( hwnd ))) return FALSE;
+    if (data->managed && !data->wm_state_serial && data->current_state.wm_state == NormalState)
+    {
+        WARN( "window %p/%lx unexpectedly unmapped, assuming reparenting\n", data->hwnd, data->whole_window );
+        data->reparenting = 1;
+    }
+    release_win_data( data );
     return TRUE;
 }
 
@@ -1212,6 +1232,21 @@ static int get_window_xembed_info( Display *display, Window window )
     return ret;
 }
 
+static void get_window_mwm_hints( Display *display, Window window, MwmHints *hints )
+{
+    unsigned long count, remaining;
+    MwmHints *value;
+    int format;
+    Atom type;
+
+    if (!XGetWindowProperty( display, window, x11drv_atom(_MOTIF_WM_HINTS), 0, 65535, False, x11drv_atom(_MOTIF_WM_HINTS),
+                             &type, &format, &count, &remaining, (unsigned char **)&value ))
+    {
+        if (type == x11drv_atom(_MOTIF_WM_HINTS) && get_property_size( format, count ) >= sizeof(*value))
+            *hints = *value;
+        XFree( value );
+    }
+}
 
 /***********************************************************************
  *           handle_wm_state_notify
@@ -1258,6 +1293,17 @@ static void handle_net_wm_state_notify( HWND hwnd, XPropertyEvent *event )
     NtUserPostMessage( hwnd, WM_WINE_WINDOW_STATE_CHANGED, 0, 0 );
 }
 
+static void handle_mwm_hints_notify( HWND hwnd, XPropertyEvent *event )
+{
+    struct x11drv_win_data *data;
+    MwmHints hints = {0};
+
+    if (!(data = get_win_data( hwnd ))) return;
+    if (event->state == PropertyNewValue) get_window_mwm_hints( event->display, event->window, &hints );
+    window_mwm_hints_notify( data, event->serial, &hints );
+    release_win_data( data );
+}
+
 static void handle_net_supported_notify( XPropertyEvent *event )
 {
     struct x11drv_thread_data *data = x11drv_thread_data();
@@ -1292,6 +1338,7 @@ static BOOL X11DRV_PropertyNotify( HWND hwnd, XEvent *xev )
     if (event->atom == x11drv_atom(WM_STATE)) handle_wm_state_notify( hwnd, event );
     if (event->atom == x11drv_atom(_XEMBED_INFO)) handle_xembed_info_notify( hwnd, event );
     if (event->atom == x11drv_atom(_NET_WM_STATE)) handle_net_wm_state_notify( hwnd, event );
+    if (event->atom == x11drv_atom(_MOTIF_WM_HINTS)) handle_mwm_hints_notify( hwnd, event );
     if (event->atom == x11drv_atom(_NET_SUPPORTED)) handle_net_supported_notify( event );
     if (event->atom == x11drv_atom(_NET_ACTIVE_WINDOW)) handle_net_active_window( event );
 
@@ -1308,7 +1355,7 @@ void X11DRV_ActivateWindow( HWND hwnd, HWND previous )
 {
     struct x11drv_win_data *data;
 
-    set_net_active_window( hwnd, previous );
+    if (!is_virtual_desktop()) set_net_active_window( hwnd, previous );
 
     if (!(data = get_win_data( hwnd ))) return;
     if (!data->managed || data->embedder) set_input_focus( data );

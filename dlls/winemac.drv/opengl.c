@@ -88,8 +88,6 @@ static pthread_mutex_t context_mutex = PTHREAD_MUTEX_INITIALIZER;
 static CFMutableDictionaryRef dc_pbuffers;
 static pthread_mutex_t dc_pbuffers_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-
-static struct opengl_funcs opengl_funcs;
 static const struct opengl_driver_funcs macdrv_driver_funcs;
 
 static void (*pglCopyColorTable)(GLenum target, GLenum internalformat, GLint x, GLint y,
@@ -2729,7 +2727,7 @@ static void register_extension(const char *ext)
     TRACE("'%s'\n", ext);
 }
 
-static const char *macdrv_init_wgl_extensions(void)
+static const char *macdrv_init_wgl_extensions(struct opengl_funcs *funcs)
 {
     /*
      * ARB Extensions
@@ -2767,10 +2765,10 @@ static const char *macdrv_init_wgl_extensions(void)
      */
 
     register_extension("WGL_WINE_query_renderer");
-    opengl_funcs.p_wglQueryCurrentRendererIntegerWINE = macdrv_wglQueryCurrentRendererIntegerWINE;
-    opengl_funcs.p_wglQueryCurrentRendererStringWINE = macdrv_wglQueryCurrentRendererStringWINE;
-    opengl_funcs.p_wglQueryRendererIntegerWINE = macdrv_wglQueryRendererIntegerWINE;
-    opengl_funcs.p_wglQueryRendererStringWINE = macdrv_wglQueryRendererStringWINE;
+    funcs->p_wglQueryCurrentRendererIntegerWINE = macdrv_wglQueryCurrentRendererIntegerWINE;
+    funcs->p_wglQueryCurrentRendererStringWINE = macdrv_wglQueryCurrentRendererStringWINE;
+    funcs->p_wglQueryRendererIntegerWINE = macdrv_wglQueryRendererIntegerWINE;
+    funcs->p_wglQueryRendererStringWINE = macdrv_wglQueryRendererStringWINE;
 
     return gl_info.wglExtensions;
 }
@@ -2778,7 +2776,7 @@ static const char *macdrv_init_wgl_extensions(void)
 /**********************************************************************
  *              macdrv_OpenGLInit
  */
-UINT macdrv_OpenGLInit(UINT version, struct opengl_funcs **funcs, const struct opengl_driver_funcs **driver_funcs)
+UINT macdrv_OpenGLInit(UINT version, const struct opengl_funcs *opengl_funcs, const struct opengl_driver_funcs **driver_funcs)
 {
     TRACE("()\n");
 
@@ -2803,9 +2801,6 @@ UINT macdrv_OpenGLInit(UINT version, struct opengl_funcs **funcs, const struct o
         return STATUS_NOT_SUPPORTED;
     }
 
-    if (!init_gl_info())
-        goto failed;
-
 #define LOAD_FUNCPTR(func) \
         if (!(p##func = dlsym(opengl_handle, #func))) \
         { \
@@ -2819,11 +2814,14 @@ UINT macdrv_OpenGLInit(UINT version, struct opengl_funcs **funcs, const struct o
     LOAD_FUNCPTR(glViewport);
     LOAD_FUNCPTR(glCopyColorTable);
     LOAD_FUNCPTR(glFlush);
+
+    if (!init_gl_info())
+        goto failed;
+
     if (gluCheckExtension((GLubyte*)"GL_APPLE_flush_render", (GLubyte*)gl_info.glExtensions))
         LOAD_FUNCPTR(glFlushRenderAPPLE);
 #undef LOAD_FUNCPTR
 
-    *funcs = &opengl_funcs;
     *driver_funcs = &macdrv_driver_funcs;
     return STATUS_SUCCESS;
 

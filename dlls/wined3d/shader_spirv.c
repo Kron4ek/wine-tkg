@@ -61,6 +61,7 @@ struct shader_spirv_compile_arguments
         {
             struct vkd3d_shader_varying_map varying_map[MAX_SM1_INTER_STAGE_VARYINGS];
             unsigned int varying_count;
+            uint8_t clip_planes;
         } vs;
         struct
         {
@@ -104,7 +105,7 @@ struct wined3d_shader_spirv_compile_args
     struct vkd3d_shader_spirv_target_info spirv_target;
     struct vkd3d_shader_parameter_info parameter_info;
     enum vkd3d_shader_spirv_extension extensions[1];
-    struct vkd3d_shader_parameter1 parameters[4];
+    struct vkd3d_shader_parameter1 parameters[12];
     unsigned int ps_alpha_swizzle[WINED3D_MAX_RENDER_TARGETS];
 };
 
@@ -149,12 +150,51 @@ static void shader_spirv_compile_arguments_init(struct shader_spirv_compile_argu
                 vkd3d_shader_build_varying_map(&vs_program->signature_info.output,
                         &ps_program->signature_info.input, &args->u.vs.varying_count, args->u.vs.varying_map);
             }
+
+            args->u.vs.clip_planes = state->extra_vs_args.clip_planes;
             break;
         }
 
         default:
             break;
     }
+}
+
+static void fill_buffer_parameter(struct vkd3d_shader_parameter1 *parameter, uint32_t binding,
+        enum vkd3d_shader_parameter_name name, enum vkd3d_shader_parameter_data_type data_type, uint32_t offset)
+{
+    parameter->name = name;
+    parameter->type = VKD3D_SHADER_PARAMETER_TYPE_BUFFER;
+    parameter->data_type = data_type;
+    parameter->u.buffer.set = 0;
+    parameter->u.buffer.binding = binding;
+    parameter->u.buffer.offset = offset;
+}
+
+static void fill_vs_parameters(struct wined3d_shader_spirv_compile_args *vkd3d_args,
+        const struct shader_spirv_compile_arguments *compile_args, uint32_t ffp_extra_binding)
+{
+    struct vkd3d_shader_parameter1 *parameters = vkd3d_args->parameters;
+
+    for (unsigned int i = 0; i < WINED3D_MAX_CLIP_DISTANCES; ++i)
+        fill_buffer_parameter(&parameters[i], ffp_extra_binding,
+                VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_0 + i, VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32_VEC4,
+                offsetof(struct wined3d_ffp_vs_constants, clip_planes[i]));
+
+    parameters[8].name = VKD3D_SHADER_PARAMETER_NAME_CLIP_PLANE_MASK;
+    parameters[8].type = VKD3D_SHADER_PARAMETER_TYPE_IMMEDIATE_CONSTANT;
+    parameters[8].data_type = VKD3D_SHADER_PARAMETER_DATA_TYPE_UINT32;
+    parameters[8].u.immediate_constant.u.u32 = compile_args->u.vs.clip_planes;
+
+    fill_buffer_parameter(&parameters[9], ffp_extra_binding, VKD3D_SHADER_PARAMETER_NAME_POINT_SIZE,
+            VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32, offsetof(struct wined3d_ffp_vs_constants, point.size));
+    fill_buffer_parameter(&parameters[10], ffp_extra_binding, VKD3D_SHADER_PARAMETER_NAME_POINT_SIZE_MIN,
+            VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32, offsetof(struct wined3d_ffp_vs_constants, point_clamp.min));
+    fill_buffer_parameter(&parameters[11], ffp_extra_binding, VKD3D_SHADER_PARAMETER_NAME_POINT_SIZE_MAX,
+            VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32, offsetof(struct wined3d_ffp_vs_constants, point_clamp.max));
+
+    vkd3d_args->parameter_info.parameter_count = 12;
+    vkd3d_args->parameter_info.parameters = vkd3d_args->parameters;
 }
 
 static void fill_ps_parameters(struct wined3d_shader_spirv_compile_args *vkd3d_args,
@@ -177,14 +217,15 @@ static void fill_ps_parameters(struct wined3d_shader_spirv_compile_args *vkd3d_a
     parameters[2].data_type = VKD3D_SHADER_PARAMETER_DATA_TYPE_UINT32;
     parameters[2].u.immediate_constant.u.u32 = compile_args->u.fs.args.alpha_test_func + 1;
 
-    parameters[3].name = VKD3D_SHADER_PARAMETER_NAME_ALPHA_TEST_REF;
-    parameters[3].type = VKD3D_SHADER_PARAMETER_TYPE_BUFFER;
-    parameters[3].data_type = VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32;
-    parameters[3].u.buffer.set = 0;
-    parameters[3].u.buffer.binding = ffp_extra_binding;
-    parameters[3].u.buffer.offset = offsetof(struct wined3d_ffp_ps_constants, alpha_test_ref);
+    fill_buffer_parameter(&parameters[3], ffp_extra_binding, VKD3D_SHADER_PARAMETER_NAME_ALPHA_TEST_REF,
+            VKD3D_SHADER_PARAMETER_DATA_TYPE_FLOAT32, offsetof(struct wined3d_ffp_ps_constants, alpha_test_ref));
 
-    vkd3d_args->parameter_info.parameter_count = 4;
+    parameters[4].name = VKD3D_SHADER_PARAMETER_NAME_POINT_SPRITE;
+    parameters[4].type = VKD3D_SHADER_PARAMETER_TYPE_IMMEDIATE_CONSTANT;
+    parameters[4].data_type = VKD3D_SHADER_PARAMETER_DATA_TYPE_UINT32;
+    parameters[4].u.immediate_constant.u.u32 = compile_args->u.fs.args.pointsprite;
+
+    vkd3d_args->parameter_info.parameter_count = 5;
     vkd3d_args->parameter_info.parameters = vkd3d_args->parameters;
 }
 
@@ -233,14 +274,16 @@ static void shader_spirv_init_compile_args(const struct wined3d_vk_info *vk_info
     }
     else if (shader_type == WINED3D_SHADER_TYPE_VERTEX)
     {
+        fill_vs_parameters(args, compile_args, bindings->ffp_vs_extra_binding);
+
         if (source_type == VKD3D_SHADER_SOURCE_D3D_BYTECODE)
         {
-            args->spirv_target.next = &args->varying_map;
-
             args->varying_map.type = VKD3D_SHADER_STRUCTURE_TYPE_VARYING_MAP_INFO;
-            args->varying_map.next = vkd3d_interface;
+            args->varying_map.next = args->spirv_target.next;
             args->varying_map.varying_map = compile_args->u.vs.varying_map;
             args->varying_map.varying_count = compile_args->u.vs.varying_count;
+
+            args->spirv_target.next = &args->varying_map;
         }
     }
 }
@@ -1217,9 +1260,6 @@ static void spirv_vertex_pipe_vk_vp_free(struct wined3d_device *device, struct w
 
 static const struct wined3d_state_entry_template spirv_vertex_pipe_vk_vp_states[] =
 {
-    {STATE_RENDER(WINED3D_RS_POINTSIZE),                {STATE_RENDER(WINED3D_RS_POINTSIZE),                state_nop}},
-    {STATE_RENDER(WINED3D_RS_POINTSIZE_MIN),            {STATE_RENDER(WINED3D_RS_POINTSIZE_MIN),            state_nop}},
-    {STATE_RENDER(WINED3D_RS_POINTSIZE_MAX),            {STATE_RENDER(WINED3D_RS_POINTSIZE_MAX),            state_nop}},
     {STATE_SHADER(WINED3D_SHADER_TYPE_VERTEX),          {STATE_SHADER(WINED3D_SHADER_TYPE_VERTEX),          state_nop}},
     {0}, /* Terminate */
 };

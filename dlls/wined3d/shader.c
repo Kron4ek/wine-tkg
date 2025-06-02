@@ -2695,12 +2695,9 @@ void find_vs_compile_args(const struct wined3d_state *state, const struct wined3
     const struct wined3d_d3d_info *d3d_info = context->d3d_info;
     WORD swizzle_map = context->stream_info.swizzle_map;
 
-    if (state->render_states[WINED3D_RS_FOGTABLEMODE] != WINED3D_FOG_NONE)
+    if (state->extra_vs_args.pixel_fog)
     {
-        if (state->transforms[WINED3D_TS_PROJECTION]._14 == 0.0f
-                && state->transforms[WINED3D_TS_PROJECTION]._24 == 0.0f
-                && state->transforms[WINED3D_TS_PROJECTION]._34 == 0.0f
-                && state->transforms[WINED3D_TS_PROJECTION]._44 == 1.0f)
+        if (state->extra_vs_args.ortho_fog)
         {
             /* Fog source is vertex output Z.
              *
@@ -2740,7 +2737,7 @@ void find_vs_compile_args(const struct wined3d_state *state, const struct wined3
         args->next_shader_input_count = 0;
     args->swizzle_map = swizzle_map;
     if (d3d_info->emulated_flatshading)
-        args->flatshading = state->render_states[WINED3D_RS_SHADEMODE] == WINED3D_SHADE_FLAT;
+        args->flatshading = state->extra_vs_args.flat_shading;
     else
         args->flatshading = 0;
 

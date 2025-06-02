@@ -1527,20 +1527,17 @@ static void validate_state_table(struct wined3d_state_entry *state_table)
     }
     rs_holes[] =
     {
-        {  1,   8},
+        {  1,   9},
         { 11,  25},
         { 27,  27},
-        { 30,  34},
-        { 36,  40},
+        { 30,  40},
         { 42,  47},
         { 49, 136},
         {138, 139},
         {144, 144},
         {149, 150},
-        {152, 153},
-        {156, 160},
-        {162, 165},
-        {167, 209},
+        {152, 160},
+        {162, 209},
         {  0,   0},
     };
     static const unsigned int simple_states[] =
