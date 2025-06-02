@@ -2639,14 +2639,50 @@ static void WINAPI termination_handler(ULONG flags, ULONG64 frame)
     ok(frame == 0x1234, "frame = %p\n", (void*)frame);
 }
 
+struct exception_code_context
+{
+    EXCEPTION_RECORD *rec;
+    CONTEXT *context;
+    DISPATCHER_CONTEXT *dispatch;
+};
+
+static void invoke_c_handler(struct exception_code_context *ctx, ULONG_PTR frame)
+{
+    p__C_specific_handler(ctx->rec, frame, ctx->context, ctx->dispatch);
+    ok(0, "__C_specific_handler returned\n");
+}
+
+static void check_exception_code(ULONG_PTR code)
+{
+    ok(code == 0x123, "code = %Ix\n", code);
+}
+
+static char call_invoke_c_handler_code[] = {
+    0x48,0x83,0xec,0x28,         /* 0:  subq     $0x28, %rsp*/
+    0x48,0x89,0xe2,              /* 4:  movq     %rsp, %rdx */
+    0x48,0xb8,0,0,0,0,0,0,0,0,   /* 7:  movabsq  $invoke_c_handler, %rax */
+    0xff,0xd0,                   /* 17: callq    *%rax */
+    0xcc,                        /* 19: int3 */
+    /* exception handler: */
+    0x48,0x89,0xc1,              /* 20: movq     %rax, %rcx */
+    0x48,0xb8,0,0,0,0,0,0,0,0,   /* 23: movabsq  $check_exception_code, %rax */
+    0xff,0xd0,                   /* 33: callq    *%rax */
+    0x48,0x83,0xc4,0x28,         /* 35: addq     $0x28, %rsp */
+    0xc3                         /* 39: retq */
+};
+
 static void test___C_specific_handler(void)
 {
+    void (*test_exception_code)(void *ctx) = code_mem;
+    IMAGE_AMD64_RUNTIME_FUNCTION_ENTRY rt_func;
+    struct exception_code_context ctx;
     DISPATCHER_CONTEXT dispatch;
     EXCEPTION_RECORD rec;
     CONTEXT context;
     ULONG64 frame;
     EXCEPTION_DISPOSITION ret;
     SCOPE_TABLE scope_table;
+    BOOLEAN res;
 
     if (!p__C_specific_handler)
     {
@@ -2681,6 +2717,41 @@ static void test___C_specific_handler(void)
     ok(termination_handler_called == 1, "termination_handler_called = %d\n",
             termination_handler_called);
     ok(dispatch.ScopeIndex == 1, "dispatch.ScopeIndex = %ld\n", dispatch.ScopeIndex);
+
+    *(void **)&call_invoke_c_handler_code[9] = invoke_c_handler;
+    *(void **)&call_invoke_c_handler_code[25] = check_exception_code;
+    test_exception_code = (void *)((char *)code_mem + 0x1000);
+    memset(code_mem, 0, 0x3000);
+    memcpy(test_exception_code, call_invoke_c_handler_code, sizeof(call_invoke_c_handler_code));
+
+    memset(&rec, 0, sizeof(rec));
+    memset(&dispatch, 0, sizeof(dispatch));
+    memset(&context, 0, sizeof(context));
+    rec.ExceptionCode = 0x123;
+    dispatch.ImageBase = (ULONG_PTR)code_mem;
+    dispatch.ControlPc = (ULONG_PTR)test_exception_code + 7;
+    dispatch.HandlerData = &scope_table;
+    dispatch.ContextRecord = &context;
+    scope_table.Count = 1;
+    scope_table.ScopeRecord[0].BeginAddress = 0x1000;
+    scope_table.ScopeRecord[0].EndAddress = 0x1013;
+    scope_table.ScopeRecord[0].HandlerAddress = EXCEPTION_EXECUTE_HANDLER;
+    scope_table.ScopeRecord[0].JumpTarget = 0x1014;
+
+    ((char *)code_mem)[0x2000] = 1;
+    rt_func.BeginAddress = 0x1000;
+    rt_func.EndAddress = 0x1000 + sizeof(call_invoke_c_handler_code);
+    rt_func.UnwindData = 0x2000;
+    res = RtlAddFunctionTable(&rt_func, 1, dispatch.ImageBase);
+    ok(res, "RtlAddFunctionTable failed\n");
+
+    ctx.rec = &rec;
+    ctx.context = &context;
+    ctx.dispatch = &dispatch;
+    test_exception_code(&ctx);
+
+    res = RtlDeleteFunctionTable(&rt_func);
+    ok(res, "RtlDeleteFunctionTable failed\n");
 }
 
 /* This is heavily based on the i386 exception tests. */

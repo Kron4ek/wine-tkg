@@ -478,8 +478,7 @@ C_ASSERT( sizeof(struct callback_stack_layout) == 0x1c );
 
 struct syscall_frame
 {
-    WORD                  syscall_flags;  /* 000 */
-    WORD                  restore_flags;  /* 002 */
+    UINT                  restore_flags;  /* 000 */
     UINT                  eflags;         /* 004 */
     UINT                  eip;            /* 008 */
     UINT                  esp;            /* 00c */
@@ -503,9 +502,6 @@ struct syscall_frame
         XSAVE_FORMAT       xsave;
         FLOATING_SAVE_AREA fsave;
     } u;
-    /* Leave space for the whole set of YMM registers. They're not used in
-     * 32-bit mode, but some processors fault if they're not in writable memory.
-     */
     DECLSPEC_ALIGN(64) XSAVE_AREA_HEADER xstate; /* 240 */
 };
 
@@ -521,24 +517,16 @@ struct x86_thread_data
     UINT               dr3;           /* 1e8 */
     UINT               dr6;           /* 1ec */
     UINT               dr7;           /* 1f0 */
-    SYSTEM_SERVICE_TABLE *syscall_table; /* 1f4 syscall table */
-    struct syscall_frame *syscall_frame; /* 1f8 frame pointer on syscall entry */
-    UINT64             xstate_features_mask;   /* 1fc  */
-    UINT               xstate_features_size;   /* 204 */
+    UINT               frame_size;    /* 1f4 syscall frame size including xstate */
 };
 
 C_ASSERT( sizeof(struct x86_thread_data) <= sizeof(((struct ntdll_thread_data *)0)->cpu_data) );
 C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct x86_thread_data, gs ) == 0x1d8 );
-C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct x86_thread_data, syscall_table ) == 0x1f4 );
-C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct x86_thread_data, syscall_frame ) == 0x1f8 );
-C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct x86_thread_data, xstate_features_size ) == 0x204 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct x86_thread_data, frame_size ) == 0x1f4 );
 
-/* flags to control the behavior of the syscall dispatcher */
-#define SYSCALL_HAVE_XSAVE    1
-#define SYSCALL_HAVE_XSAVEC   2
-#define SYSCALL_HAVE_FXSAVE   4
-
-static unsigned int syscall_flags;
+static unsigned int frame_size;
+static unsigned int xstate_size = sizeof(XSAVE_AREA_HEADER);
+static UINT64 xstate_extended_features;
 
 static inline struct x86_thread_data *x86_thread_data(void)
 {
@@ -593,16 +581,6 @@ static inline TEB *get_current_teb(void)
 }
 
 
-/***********************************************************************
- *           is_inside_syscall
- */
-static BOOL is_inside_syscall( ucontext_t *sigcontext )
-{
-    return ((char *)ESP_sig(sigcontext) >= (char *)ntdll_get_thread_data()->kernel_stack &&
-            (char *)ESP_sig(sigcontext) <= (char *)x86_thread_data()->syscall_frame);
-}
-
-
 void set_process_instrumentation_callback( void *callback )
 {
     if (callback) FIXME( "Not supported.\n" );
@@ -633,7 +611,7 @@ static inline void context_init_xstate( CONTEXT *context, void *xstate_buffer )
 
     if (xstate_buffer)
     {
-        xctx->XState.Length = sizeof(XSAVE_AREA_HEADER) + xstate_features_size;
+        xctx->XState.Length = xstate_size;
         xctx->XState.Offset = (BYTE *)xstate_buffer - (BYTE *)xctx;
         context->ContextFlags |= CONTEXT_XSTATE;
 
@@ -836,7 +814,7 @@ static inline void save_context( struct xcontext *xcontext, const ucontext_t *si
         context->ContextFlags |= CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS;
         memcpy( context->ExtendedRegisters, fpux, sizeof(*fpux) );
         if (!fpu) fpux_to_fpu( &context->FloatSave, fpux );
-        if (xstate_extended_features() && (xs = XState_sig(fpux))) context_init_xstate( context, xs );
+        if (xstate_extended_features && (xs = XState_sig(fpux))) context_init_xstate( context, xs );
     }
     if (!fpu && !fpux) save_fpu( context );
 }
@@ -890,7 +868,7 @@ NTSTATUS signal_set_full_context( CONTEXT *context )
     NTSTATUS status = NtSetContextThread( GetCurrentThread(), context );
 
     if (!status && (context->ContextFlags & CONTEXT_INTEGER) == CONTEXT_INTEGER)
-        x86_thread_data()->syscall_frame->restore_flags |= LOWORD(CONTEXT_INTEGER);
+        get_syscall_frame()->restore_flags |= LOWORD(CONTEXT_INTEGER);
     return status;
 }
 
@@ -920,19 +898,19 @@ void *get_wow_context( CONTEXT *context )
 NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
 {
     NTSTATUS ret = STATUS_SUCCESS;
-    struct syscall_frame *frame = x86_thread_data()->syscall_frame;
+    struct syscall_frame *frame = get_syscall_frame();
     DWORD flags = context->ContextFlags & ~CONTEXT_i386;
     BOOL self = (handle == GetCurrentThread());
 
-    if ((flags & CONTEXT_XSTATE) && xstate_extended_features())
+    if ((flags & CONTEXT_XSTATE) && xstate_extended_features)
     {
         CONTEXT_EX *context_ex = (CONTEXT_EX *)(context + 1);
         XSAVE_AREA_HEADER *xs = (XSAVE_AREA_HEADER *)((char *)context_ex + context_ex->XState.Offset);
 
         if (context_ex->XState.Length < sizeof(XSAVE_AREA_HEADER) ||
-            context_ex->XState.Length > sizeof(XSAVE_AREA_HEADER) + xstate_features_size)
+            context_ex->XState.Length > xstate_size)
             return STATUS_INVALID_PARAMETER;
-        if ((xs->Mask & xstate_extended_features())
+        if ((xs->Mask & xstate_extended_features)
             && (context_ex->XState.Length < xstate_get_size( xs->CompactionMask, xs->Mask )))
             return STATUS_BUFFER_OVERFLOW;
     }
@@ -996,7 +974,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
     }
     else if (flags & CONTEXT_FLOATING_POINT)
     {
-        if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_FXSR)
+        if (user_shared_data->ProcessorFeatures[PF_XMMI_INSTRUCTIONS_AVAILABLE])
         {
             fpu_to_fpux( &frame->u.xsave, &context->FloatSave );
         }
@@ -1012,7 +990,8 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
         XSAVE_AREA_HEADER *xs = (XSAVE_AREA_HEADER *)((char *)context_ex + context_ex->XState.Offset);
         UINT64 mask = frame->xstate.Mask;
 
-        if (xstate_compaction_enabled) frame->xstate.CompactionMask |= xstate_extended_features();
+        if (user_shared_data->XState.CompactionEnabled)
+            frame->xstate.CompactionMask |= xstate_extended_features;
         copy_xstate( &frame->xstate, xs, xs->Mask );
         if (xs->CompactionMask) frame->xstate.Mask |= mask & ~xs->CompactionMask;
     }
@@ -1031,7 +1010,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
  */
 NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
 {
-    struct syscall_frame *frame = x86_thread_data()->syscall_frame;
+    struct syscall_frame *frame = get_syscall_frame();
     DWORD needed_flags = context->ContextFlags & ~CONTEXT_i386;
     BOOL self = (handle == GetCurrentThread());
     NTSTATUS ret;
@@ -1076,11 +1055,11 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
         }
         if (needed_flags & CONTEXT_FLOATING_POINT)
         {
-            if (!(cpu_info.ProcessorFeatureBits & CPU_FEATURE_FXSR))
+            if (!user_shared_data->ProcessorFeatures[PF_XMMI_INSTRUCTIONS_AVAILABLE])
             {
                 context->FloatSave = frame->u.fsave;
             }
-            else if (!xstate_compaction_enabled ||
+            else if (!user_shared_data->XState.CompactionEnabled ||
                      (frame->xstate.Mask & XSTATE_MASK_LEGACY_FLOATING_POINT))
             {
                 fpux_to_fpu( &context->FloatSave, &frame->u.xsave );
@@ -1096,7 +1075,7 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
         {
             XSAVE_FORMAT *xs = (XSAVE_FORMAT *)context->ExtendedRegisters;
 
-            if (!xstate_compaction_enabled ||
+            if (!user_shared_data->XState.CompactionEnabled ||
                 (frame->xstate.Mask & XSTATE_MASK_LEGACY_FLOATING_POINT))
             {
                 memcpy( xs, &frame->u.xsave, FIELD_OFFSET( XSAVE_FORMAT, MxCsr ));
@@ -1110,7 +1089,8 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
                 xs->ControlWord = 0x37f;
             }
 
-            if (!xstate_compaction_enabled || (frame->xstate.Mask & XSTATE_MASK_LEGACY_SSE))
+            if (!user_shared_data->XState.CompactionEnabled ||
+                (frame->xstate.Mask & XSTATE_MASK_LEGACY_SSE))
             {
                 memcpy( xs->XmmRegisters, frame->u.xsave.XmmRegisters, sizeof( xs->XmmRegisters ));
                 xs->MxCsr      = frame->u.xsave.MxCsr;
@@ -1125,20 +1105,30 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
 
             context->ContextFlags |= CONTEXT_EXTENDED_REGISTERS;
         }
-        if ((needed_flags & CONTEXT_XSTATE) && xstate_extended_features())
+        if ((needed_flags & CONTEXT_XSTATE) && xstate_extended_features)
         {
             CONTEXT_EX *context_ex = (CONTEXT_EX *)(context + 1);
             XSAVE_AREA_HEADER *xstate = (XSAVE_AREA_HEADER *)((char *)context_ex + context_ex->XState.Offset);
             UINT64 mask;
 
             if (context_ex->XState.Length < sizeof(XSAVE_AREA_HEADER) ||
-                context_ex->XState.Length > sizeof(XSAVE_AREA_HEADER) + xstate_features_size)
+                context_ex->XState.Length > xstate_size)
                 return STATUS_INVALID_PARAMETER;
 
-            if (xstate_compaction_enabled) frame->xstate.CompactionMask |= xstate_extended_features();
-            mask = (xstate_compaction_enabled ? xstate->CompactionMask : xstate->Mask) & xstate_extended_features();
-            xstate->Mask = frame->xstate.Mask & mask;
-            xstate->CompactionMask = xstate_compaction_enabled ? (0x8000000000000000 | mask) : 0;
+            if (user_shared_data->XState.CompactionEnabled)
+            {
+                frame->xstate.CompactionMask |= xstate_extended_features;
+                mask = xstate->CompactionMask & xstate_extended_features;
+                xstate->Mask = frame->xstate.Mask & mask;
+                xstate->CompactionMask = 0x8000000000000000 | mask;
+            }
+            else
+            {
+                mask = xstate->Mask & xstate_extended_features;
+                xstate->Mask = frame->xstate.Mask & mask;
+                xstate->CompactionMask = 0;
+            }
+
             memset( xstate->Reserved2, 0, sizeof(xstate->Reserved2) );
             if (xstate->Mask)
             {
@@ -1455,7 +1445,6 @@ static void setup_raise_exception( ucontext_t *sigcontext, void *stack_ptr,
     XSAVE_AREA_HEADER *src_xs;
     struct exc_stack_layout *stack;
     size_t stack_size;
-    unsigned int xstate_size;
     NTSTATUS status = send_debug_event( rec, context, TRUE, TRUE );
 
     if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
@@ -1467,7 +1456,6 @@ static void setup_raise_exception( ucontext_t *sigcontext, void *stack_ptr,
     /* fix up instruction pointer in context for EXCEPTION_BREAKPOINT */
     if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context->Eip--;
 
-    xstate_size = sizeof(XSAVE_AREA_HEADER) + xstate_features_size;
     stack_size = (ULONG_PTR)stack_ptr - (((ULONG_PTR)stack_ptr - sizeof(*stack) - xstate_size) & ~(ULONG_PTR)63);
     stack = virtual_setup_exception( stack_ptr, stack_size, rec );
     stack->rec_ptr      = &stack->rec;
@@ -1482,7 +1470,7 @@ static void setup_raise_exception( ucontext_t *sigcontext, void *stack_ptr,
         assert( !((ULONG_PTR)dst_xs & 63) );
         context_init_xstate( &stack->context, dst_xs );
         memset( dst_xs, 0, sizeof(*dst_xs) );
-        dst_xs->CompactionMask = xstate_compaction_enabled ? 0x8000000000000000 | xstate_extended_features() : 0;
+        dst_xs->CompactionMask = user_shared_data->XState.CompactionEnabled ? 0x8000000000000000 | xstate_extended_features : 0;
         copy_xstate( dst_xs, src_xs, src_xs->Mask );
     }
     else
@@ -1523,7 +1511,7 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3,
                                    PNTAPCFUNC func, NTSTATUS status )
 {
-    struct syscall_frame *frame = x86_thread_data()->syscall_frame;
+    struct syscall_frame *frame = get_syscall_frame();
     ULONG esp = context ? context->Esp : frame->esp;
     struct apc_stack_layout *stack = (struct apc_stack_layout *)esp - 1;
 
@@ -1553,7 +1541,7 @@ NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR a
  */
 void call_raise_user_exception_dispatcher(void)
 {
-    x86_thread_data()->syscall_frame->eip = (DWORD)pKiRaiseUserExceptionDispatcher;
+    get_syscall_frame()->eip = (DWORD)pKiRaiseUserExceptionDispatcher;
 }
 
 
@@ -1562,15 +1550,13 @@ void call_raise_user_exception_dispatcher(void)
  */
 NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context )
 {
-    struct syscall_frame *frame = x86_thread_data()->syscall_frame;
+    struct syscall_frame *frame = get_syscall_frame();
     ULONG esp = (frame->esp - sizeof(struct exc_stack_layout)) & ~3;
     struct exc_stack_layout *stack;
     XSAVE_AREA_HEADER *src_xs;
-    unsigned int xstate_size;
 
     if (rec->ExceptionCode == EXCEPTION_BREAKPOINT) context->Eip--;
 
-    xstate_size = sizeof(XSAVE_AREA_HEADER) + xstate_features_size;
     stack = (struct exc_stack_layout *)((esp - sizeof(*stack) - xstate_size) & ~(ULONG_PTR)63);
     stack->rec_ptr      = &stack->rec;
     stack->context_ptr  = &stack->context;
@@ -1584,7 +1570,7 @@ NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context
         context_init_xstate( &stack->context, dst_xs );
         assert( !((ULONG_PTR)dst_xs & 63) );
         memset( dst_xs, 0, sizeof(*dst_xs) );
-        dst_xs->CompactionMask = xstate_compaction_enabled ? 0x8000000000000000 | xstate_extended_features() : 0;
+        dst_xs->CompactionMask = user_shared_data->XState.CompactionEnabled ? 0x8000000000000000 | xstate_extended_features : 0;
         copy_xstate( dst_xs, src_xs, src_xs->Mask );
     }
     else
@@ -1615,21 +1601,27 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    __ASM_CFI(".cfi_rel_offset %esi,-8\n\t")
                    "pushl %edi\n\t"
                    __ASM_CFI(".cfi_rel_offset %edi,-12\n\t")
+                   "movl 8(%ebp),%ebx\n\t"     /* user_esp */
                    "movl 0x18(%ebp),%edx\n\t"  /* teb */
+                   "pushl 4(%ebx)\n\t"         /* id */
                    "pushl 0(%edx)\n\t"         /* teb->Tib.ExceptionList */
-                   "subl $0x280,%esp\n\t"      /* sizeof(struct syscall_frame) */
-                   "subl 0x204(%edx),%esp\n\t" /* x86_thread_data()->xstate_features_size */
+                   "subl 0x1f4(%edx),%esp\n\t" /* x86_thread_data()->frame_size */
                    "andl $~63,%esp\n\t"
                    "leal 8(%ebp),%eax\n\t"
                    "movl %eax,0x38(%esp)\n\t"  /* frame->syscall_cfa */
-                   "movl 0x1f8(%edx),%ecx\n\t" /* x86_thread_data()->syscall_frame */
-                   "movl (%ecx),%eax\n\t"      /* frame->syscall_flags */
-                   "movl %eax,(%esp)\n\t"
+                   "movl 0x218(%edx),%ecx\n\t" /* thread_data->syscall_frame */
                    "movl %ecx,0x3c(%esp)\n\t"  /* frame->prev_frame */
-                   "movl %esp,0x1f8(%edx)\n\t" /* x86_thread_data()->syscall_frame */
-                   "movl 0x14(%ebp),%ecx\n\t"  /* func */
+                   "movl %esp,0x218(%edx)\n\t" /* thread_data->syscall_frame */
+                   "testl $1,0x21c(%edx)\n\t"  /* thread_data->syscall_trace */
+                   "jz 1f\n\t"
+                   "subl $4,%esp\n\t"
+                   "push 12(%ebx)\n\t"         /* len */
+                   "push 8(%ebx)\n\t"          /* args */
+                   "push 4(%ebx)\n\t"          /* id */
+                   "call " __ASM_NAME("trace_usercall") "\n"
+                   "1:\tmovl 0x14(%ebp),%ecx\n\t" /* func */
                    /* switch to user stack */
-                   "movl 8(%ebp),%esp\n\t"
+                   "movl %ebx,%esp\n\t"
                    "xorl %ebp,%ebp\n\t"
                    "jmpl *%ecx" )
 
@@ -1640,10 +1632,10 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
 extern void DECLSPEC_NORETURN user_mode_callback_return( void *ret_ptr, ULONG ret_len,
                                                          NTSTATUS status, TEB *teb );
 __ASM_GLOBAL_FUNC( user_mode_callback_return,
-                   "movl 16(%esp),%edx\n"      /* teb */
-                   "movl 0x1f8(%edx),%eax\n\t" /* x86_thread_data()->syscall_frame */
+                   "movl 16(%esp),%ebx\n"      /* teb */
+                   "movl 0x218(%ebx),%eax\n\t" /* thread_data->syscall_frame */
                    "movl 0x3c(%eax),%ecx\n\t"  /* frame->prev_frame */
-                   "movl %ecx,0x1f8(%edx)\n\t" /* x86_thread_data()->syscall_frame */
+                   "movl %ecx,0x218(%ebx)\n\t" /* thread_data->syscall_frame */
                    "movl 0x38(%eax),%ebp\n\t"  /* frame->syscall_cfa */
                    "subl $8,%ebp\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
@@ -1655,13 +1647,25 @@ __ASM_GLOBAL_FUNC( user_mode_callback_return,
                    "movl 4(%esp),%esi\n\t"     /* ret_ptr */
                    "movl 8(%esp),%edi\n\t"     /* ret_len */
                    "movl 12(%esp),%eax\n\t"    /* status */
-                   "leal -16(%ebp),%esp\n\t"
+                   "leal -20(%ebp),%esp\n\t"
                    "movl 0x0c(%ebp),%ecx\n\t"  /* ret_ptr */
                    "movl %esi,(%ecx)\n\t"
                    "movl 0x10(%ebp),%ecx\n\t"  /* ret_len */
                    "movl %edi,(%ecx)\n\t"
-                   "popl 0(%edx)\n\t"          /* teb->Tib.ExceptionList */
-                   "popl %edi\n\t"
+                   "popl (%ebx)\n\t"           /* teb->Tib.ExceptionList */
+                   "popl %edx\n\t"             /* id */
+                   "testl $1,0x21c(%ebx)\n\t"  /* thread_data->syscall_trace */
+                   "jz 1f\n\t"
+                   "pushl %eax\n\t"            /* status */
+                   "subl $8,%esp\n\t"
+                   "pushl %edx\n\t"            /* id */
+                   "pushl %eax\n\t"            /* status */
+                   "pushl %edi\n\t"            /* ret_len */
+                   "pushl %esi\n\t"            /* ret_ptr */
+                   "call " __ASM_NAME("trace_userret") "\n\t"
+                   "addl $24,%esp\n\t"
+                   "popl %eax\n\t"             /* status */
+                   "1:\tpopl %edi\n\t"
                    __ASM_CFI(".cfi_same_value %edi\n\t")
                    "popl %esi\n\t"
                    __ASM_CFI(".cfi_same_value %esi\n\t")
@@ -1699,7 +1703,7 @@ __ASM_GLOBAL_FUNC( user_mode_abort_thread,
  */
 NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_ptr, ULONG *ret_len )
 {
-    struct syscall_frame *frame = x86_thread_data()->syscall_frame;
+    struct syscall_frame *frame = get_syscall_frame();
     ULONG esp = (frame->esp - offsetof(struct callback_stack_layout, args_data[len])) & ~3;
     struct callback_stack_layout *stack = (struct callback_stack_layout *)esp;
 
@@ -1721,7 +1725,7 @@ NTSTATUS KeUserModeCallback( ULONG id, const void *args, ULONG len, void **ret_p
  */
 NTSTATUS WINAPI NtCallbackReturn( void *ret_ptr, ULONG ret_len, NTSTATUS status )
 {
-    if (!x86_thread_data()->syscall_frame->prev_frame) return STATUS_NO_CALLBACK_ACTIVE;
+    if (!get_syscall_frame()->prev_frame) return STATUS_NO_CALLBACK_ACTIVE;
     user_mode_callback_return( ret_ptr, ret_len, status, NtCurrentTeb() );
 }
 
@@ -1809,10 +1813,10 @@ static BOOL handle_interrupt( unsigned int interrupt, ucontext_t *sigcontext, vo
 static BOOL handle_syscall_fault( ucontext_t *sigcontext, void *stack_ptr,
                                   EXCEPTION_RECORD *rec, CONTEXT *context )
 {
-    struct syscall_frame *frame = x86_thread_data()->syscall_frame;
+    struct syscall_frame *frame = get_syscall_frame();
     UINT i, *stack;
 
-    if (!is_inside_syscall( sigcontext )) return FALSE;
+    if (!is_inside_syscall( ESP_sig(sigcontext) )) return FALSE;
 
     TRACE( "code=%x flags=%x addr=%p ip=%08x\n",
            rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress, context->Eip );
@@ -1840,11 +1844,8 @@ static BOOL handle_syscall_fault( ucontext_t *sigcontext, void *stack_ptr,
     else
     {
         TRACE( "returning to user mode ip=%08x ret=%08x\n", frame->eip, rec->ExceptionCode );
-        stack = (UINT *)frame;
-        *(--stack) = rec->ExceptionCode;
-        *(--stack) = (UINT)frame;
-        *(--stack) = 0xdeadbabe;  /* return address */
-        ESP_sig(sigcontext) = (DWORD)stack;
+        EAX_sig(sigcontext) = rec->ExceptionCode;
+        EBP_sig(sigcontext) = (DWORD)&frame->ebp;
         EIP_sig(sigcontext) = (DWORD)__wine_syscall_dispatcher_return;
     }
     return TRUE;
@@ -1858,7 +1859,7 @@ static BOOL handle_syscall_fault( ucontext_t *sigcontext, void *stack_ptr,
  */
 static BOOL handle_syscall_trap( ucontext_t *sigcontext, siginfo_t *siginfo )
 {
-    struct syscall_frame *frame = x86_thread_data()->syscall_frame;
+    struct syscall_frame *frame = get_syscall_frame();
 
     /* disallow single-stepping through a syscall */
 
@@ -1874,7 +1875,7 @@ static BOOL handle_syscall_trap( ucontext_t *sigcontext, siginfo_t *siginfo )
 
         EIP_sig( sigcontext ) = (ULONG)__wine_unix_call_dispatcher_prolog_end;
     }
-    else if (siginfo->si_code == 4 /* TRAP_HWBKPT */ && is_inside_syscall( sigcontext ))
+    else if (siginfo->si_code == 4 /* TRAP_HWBKPT */ && is_inside_syscall( ESP_sig(sigcontext) ))
     {
         TRACE_(seh)( "ignoring HWBKPT in syscall eip=%p\n", (void *)EIP_sig(sigcontext) );
         return TRUE;
@@ -2111,8 +2112,10 @@ static void abrt_handler( int signal, siginfo_t *siginfo, void *sigcontext )
  */
 static void quit_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
+    ucontext_t *ucontext = sigcontext;
+
     init_handler( sigcontext );
-    if (!is_inside_syscall( sigcontext )) user_mode_abort_thread( 0, x86_thread_data()->syscall_frame );
+    if (!is_inside_syscall( ESP_sig(ucontext) )) user_mode_abort_thread( 0, get_syscall_frame() );
     abort_thread( 0 );
 }
 
@@ -2128,9 +2131,9 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 
     init_handler( sigcontext );
 
-    if (is_inside_syscall( ucontext ))
+    if (is_inside_syscall( ESP_sig(ucontext) ))
     {
-        struct syscall_frame *frame = x86_thread_data()->syscall_frame;
+        struct syscall_frame *frame = get_syscall_frame();
         ULONG64 saved_compaction = 0;
         struct xcontext *context;
 
@@ -2142,14 +2145,15 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         }
         context->c.ContextFlags = CONTEXT_FULL | CONTEXT_EXCEPTION_REQUEST;
         NtGetContextThread( GetCurrentThread(), &context->c );
-        if (xstate_extended_features())
+        if (xstate_extended_features)
         {
-            if (xstate_compaction_enabled) frame->xstate.CompactionMask |= xstate_extended_features();
+            if (user_shared_data->XState.CompactionEnabled)
+                frame->xstate.CompactionMask |= xstate_extended_features;
             context_init_xstate( &context->c, &frame->xstate );
             saved_compaction = frame->xstate.CompactionMask;
         }
         wait_suspend( &context->c );
-        if (xstate_extended_features()) frame->xstate.CompactionMask = saved_compaction;
+        if (xstate_extended_features) frame->xstate.CompactionMask = saved_compaction;
         if (context->c.ContextFlags & 0x40)
         {
             /* xstate is updated directly in frame's xstate */
@@ -2424,7 +2428,7 @@ NTSTATUS signal_alloc_thread( TEB *teb )
     else thread_data->fs = gdt_fs_sel;
 
     teb->WOW32Reserved = __wine_syscall_dispatcher;
-    thread_data->xstate_features_size = xstate_features_size;
+    thread_data->frame_size = frame_size;
     return STATUS_SUCCESS;
 }
 
@@ -2451,15 +2455,16 @@ void signal_free_thread( TEB *teb )
 void signal_init_process(void)
 {
     struct sigaction sig_act;
-    void *kernel_stack = (char *)ntdll_get_thread_data()->kernel_stack + kernel_stack_size;
+    struct ntdll_thread_data *thread_data = ntdll_get_thread_data();
+    void *kernel_stack = (char *)thread_data->kernel_stack + kernel_stack_size;
 
-    x86_thread_data()->syscall_frame = (struct syscall_frame *)((ULONG_PTR)((char *)kernel_stack
-                                       - sizeof(struct syscall_frame) - xstate_features_size) & ~(ULONG_PTR)63);
-    x86_thread_data()->xstate_features_size = xstate_features_size;
+    if (user_shared_data->XState.Size) xstate_size = user_shared_data->XState.Size - sizeof(XSAVE_FORMAT);
+    frame_size = offsetof( struct syscall_frame, xstate ) + xstate_size;
 
-    if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_FXSR) syscall_flags |= SYSCALL_HAVE_FXSAVE;
-    if (cpu_info.ProcessorFeatureBits & CPU_FEATURE_XSAVE) syscall_flags |= SYSCALL_HAVE_XSAVE;
-    if (xstate_compaction_enabled) syscall_flags |= SYSCALL_HAVE_XSAVEC;
+    thread_data->syscall_frame = (struct syscall_frame *)(((ULONG_PTR)kernel_stack - frame_size) & ~(ULONG_PTR)63);
+    x86_thread_data()->frame_size = frame_size;
+
+    xstate_extended_features = user_shared_data->XState.EnabledFeatures & ~(UINT64)3;
 
     sig_act.sa_mask = server_block_set;
     sig_act.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
@@ -2492,20 +2497,18 @@ void signal_init_process(void)
 
 
 /***********************************************************************
- *           call_init_thunk
+ *           init_syscall_frame
  */
-void call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB *teb,
-                      struct syscall_frame *frame, void *syscall_cfa )
+void init_syscall_frame( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB *teb )
 {
     struct x86_thread_data *thread_data = (struct x86_thread_data *)&teb->GdiTebBatch;
+    struct syscall_frame *frame = ((struct ntdll_thread_data *)&teb->GdiTebBatch)->syscall_frame;
     CONTEXT *ctx, context = { CONTEXT_ALL };
     DWORD *stack;
 
     ldt_set_fs( thread_data->fs, teb );
     thread_data->gs = get_gs();
-    thread_data->syscall_table = KeServiceDescriptorTable;
-    thread_data->xstate_features_mask = xstate_supported_features_mask;
-    assert( thread_data->xstate_features_size == xstate_features_size );
+    assert( thread_data->frame_size == frame_size );
 
     context.SegCs  = get_cs();
     context.SegDs  = get_ds();
@@ -2532,10 +2535,10 @@ void call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB
     ctx = (CONTEXT *)((ULONG_PTR)context.Esp & ~3) - 1;
     *ctx = context;
     ctx->ContextFlags = CONTEXT_FULL | CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS;
-    memset( frame, 0, sizeof(*frame) );
-    if (xstate_compaction_enabled)
-        frame->xstate.CompactionMask = 0x8000000000000000 | xstate_supported_features_mask;
-    NtSetContextThread( GetCurrentThread(), ctx );
+    memset( &frame->xstate, 0, sizeof(frame->xstate) );
+    if (user_shared_data->XState.CompactionEnabled)
+        frame->xstate.CompactionMask = 0x8000000000000000 | user_shared_data->XState.EnabledFeatures;
+    signal_set_full_context( ctx );
 
     stack = (DWORD *)ctx;
     *(--stack) = 0;
@@ -2545,13 +2548,8 @@ void call_init_thunk( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB
     *(--stack) = 0xdeadbabe;
     frame->esp = (DWORD)stack;
     frame->eip = (DWORD)pLdrInitializeThunk;
-    frame->prev_frame    = NULL;
-    frame->syscall_flags = syscall_flags;
-    frame->syscall_cfa   = syscall_cfa;
-    frame->restore_flags |= LOWORD(CONTEXT_INTEGER);
 
     pthread_sigmask( SIG_UNBLOCK, &server_block_set, NULL );
-    __wine_syscall_dispatcher_return( frame, 0 );
 }
 
 
@@ -2573,30 +2571,33 @@ __ASM_GLOBAL_FUNC( signal_start_thread,
                    "leal 8(%ebp),%edx\n\t"      /* syscall_cfa */
                    /* set syscall frame */
                    "movl 20(%ebp),%ecx\n\t"     /* teb */
-                   "movl 0x1f8(%ecx),%eax\n\t"  /* x86_thread_data()->syscall_frame */
+                   "movl 0x218(%ecx),%eax\n\t"  /* thread_data->syscall_frame */
                    "orl %eax,%eax\n\t"
                    "jnz 1f\n\t"
-                   "leal -0x280(%esp),%eax\n\t" /* sizeof(struct syscall_frame) */
-                   "subl 0x204(%ecx),%eax\n\t"  /* x86_thread_data()->xstate_features_size */
+                   "movl %esp,%eax\n\t"
+                   "subl 0x1f4(%ecx),%eax\n\t"  /* x86_thread_data()->frame_size */
                    "andl $~63,%eax\n\t"
-                   "movl %eax,0x1f8(%ecx)\n"    /* x86_thread_data()->syscall_frame */
+                   "movl %eax,0x218(%ecx)\n"    /* thread_data->syscall_frame */
+                   "1:\tmovl $0,(%eax)\n\t"     /* frame->restore_flags */
+                   "movl %edx,0x38(%eax)\n\t"   /* frame->syscall_cfa */
+                   "movl $0,0x3c(%eax)\n\t"     /* frame->prev_frame */
                    /* switch to kernel stack */
-                   "1:\tleal -8(%eax),%esp\n\t"
-                   "pushl %edx\n\t"             /* syscall_cfa */
-                   "pushl %eax\n\t"             /* syscall_frame */
+                   "movl %eax,%esp\n\t"
                    "pushl %ecx\n\t"             /* teb */
                    "pushl 16(%ebp)\n\t"         /* suspend */
                    "pushl 12(%ebp)\n\t"         /* arg */
                    "pushl 8(%ebp)\n\t"          /* entry */
-                   "call " __ASM_NAME("call_init_thunk") )
+                   "call " __ASM_NAME("init_syscall_frame") "\n\t"
+                   "addl $16,%esp\n\t"
+                   "jmp " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") )
 
 
 /***********************************************************************
  *           __wine_syscall_dispatcher
  */
 __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
-                   "movl %fs:0x1f8,%ecx\n\t"       /* x86_thread_data()->syscall_frame */
-                   "movw $0,0x02(%ecx)\n\t"        /* frame->restore_flags */
+                   "movl %fs:0x218,%ecx\n\t"       /* thread_data->syscall_frame */
+                   "movl $0,(%ecx)\n\t"            /* frame->restore_flags */
                    "popl 0x08(%ecx)\n\t"           /* frame->eip */
                    __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")
                    __ASM_CFI_REG_IS_AT1(eip, ecx, 0x08)
@@ -2604,8 +2605,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
                    "popl 0x04(%ecx)\n\t"           /* frame->eflags */
                    __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")
-                   __ASM_GLOBL(__ASM_NAME("__wine_syscall_dispatcher_prolog_end")) "\n"
-                   __ASM_NAME("__wine_syscall_dispatcher_prolog_end") ":\n\t"
+                   __ASM_GLOBL(__ASM_NAME("__wine_syscall_dispatcher_prolog_end")) "\n\t"
                    "movl %esp,0x0c(%ecx)\n\t"      /* frame->esp */
                    __ASM_CFI_CFA_IS_AT1(ecx, 0x0c)
                    "movw %cs,0x10(%ecx)\n\t"
@@ -2634,10 +2634,10 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movl %eax,%ebx\n\t"
                    "shrl $8,%ebx\n\t"
                    "andl $0x30,%ebx\n\t"           /* syscall table number */
-                   "addl %fs:0x1f4,%ebx\n\t"       /* x86_thread_data()->syscall_table */
-                   "testl $3,(%ecx)\n\t"           /* frame->syscall_flags & (SYSCALL_HAVE_XSAVE | SYSCALL_HAVE_XSAVEC) */
+                   "addl %fs:0x214,%ebx\n\t"       /* thread_data->syscall_table */
+                   "cmpb $0,0x7ffe0285\n\t"        /* user_shared_data->ProcessorFeatures[PF_XSAVE_ENABLED] */
                    "jz 2f\n\t"
-                   "movl %fs:0x1fc,%eax\n\t"       /* x86_thread_data()->xstate_features_mask */
+                   "movl 0x7ffe03d8,%eax\n\t"      /* user_shared_data->XState.EnabledFeatures */
                    "xorl %edx,%edx\n\t"
                    "andl $7,%eax\n\t"
                    "xorl %edi,%edi\n\t"
@@ -2647,7 +2647,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movl %edi,0x24c(%ecx)\n\t"
                    "movl %edi,0x250(%ecx)\n\t"
                    "movl %edi,0x254(%ecx)\n\t"
-                   "testl $2,(%ecx)\n\t"           /* frame->syscall_flags & SYSCALL_HAVE_XSAVEC */
+                   "testl $2,0x7ffe03ec\n\t"       /* user_shared_data->XState.CompactionEnabled */
                    "jz 1f\n\t"
                    "movl %edi,0x258(%ecx)\n\t"
                    "movl %edi,0x25c(%ecx)\n\t"
@@ -2665,7 +2665,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "jmp 4f\n"
                    "1:\txsave 0x40(%ecx)\n\t"
                    "jmp 4f\n"
-                   "2:\ttestl $4,(%ecx)\n\t"       /* frame->syscall_flags & SYSCALL_HAVE_FXSAVE */
+                   "2:\tcmpb $0,0x7ffe027a\n\t"    /* user_shared_data->ProcessorFeatures[PF_XMMI_INSTRUCTIONS_AVAILABLE] */
                    "jz 3f\n\t"
                    "fxsave 0x40(%ecx)\n\t"
                    "jmp 4f\n"
@@ -2683,7 +2683,8 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movl 0x1c(%esp),%edx\n\t"      /* frame->eax */
                    "andl $0xfff,%edx\n\t"          /* syscall number */
                    "cmpl 8(%ebx),%edx\n\t"         /* table->ServiceLimit */
-                   "jae 6f\n\t"
+                   "jae "__ASM_LOCAL_LABEL("bad_syscall") "\n\t"
+                   "pushl 0x1c(%esp)\n\t"          /* frame->eax */
                    "movl 12(%ebx),%eax\n\t"        /* table->ArgumentTable */
                    "movzbl (%eax,%edx,1),%ecx\n\t"
                    "movl (%ebx),%eax\n\t"          /* table->ServiceTable */
@@ -2693,22 +2694,25 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "movl %esp,%edi\n\t"
                    "cld\n\t"
                    "rep; movsl\n\t"
-                   "call *(%eax,%edx,4)\n\t"
+                   "movl (%eax,%edx,4),%edi\n\t"
+                   "testl $1,%fs:0x21c\n\t"        /* thread_data->syscall_trace */
+                   "jnz " __ASM_LOCAL_LABEL("trace_syscall") "\n\t"
+                   "call *%edi\n\t"
                    "leal -0x34(%ebp),%esp\n"
 
                    __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") ":\t"
-                   "movl 0(%esp),%ecx\n\t"         /* frame->syscall_flags + (frame->restore_flags << 16) */
-                   "testl $0x68 << 16,%ecx\n\t"    /* CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS | CONTEXT_XSAVE */
+                   "movl 0(%esp),%ecx\n\t"         /* frame->restore_flags */
+                   "testl $0x68,%ecx\n\t"          /* CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS | CONTEXT_XSAVE */
                    "jz 3f\n\t"
-                   "testl $3,%ecx\n\t"             /* SYSCALL_HAVE_XSAVE | SYSCALL_HAVE_XSAVEC */
+                   "cmpb $0,0x7ffe0285\n\t"        /* user_shared_data->ProcessorFeatures[PF_XSAVE_ENABLED] */
                    "jz 1f\n\t"
                    "movl %eax,%esi\n\t"
-                   "movl %fs:0x1fc,%eax\n\t"       /* x86_thread_data()->xstate_features_mask */
-                   "movl %fs:0x200,%edx\n\t"       /* x86_thread_data()->xstate_features_mask high dword */
+                   "movl 0x7ffe03d8,%eax\n\t"      /* user_shared_data->XState.EnabledFeatures */
+                   "movl 0x7ffe03dc,%edx\n\t"
                    "xrstor 0x40(%esp)\n\t"
                    "movl %esi,%eax\n\t"
                    "jmp 3f\n"
-                   "1:\ttestl $4,%ecx\n\t"         /* SYSCALL_HAVE_FXSAVE */
+                   "1:\tcmpb $0,0x7ffe027a\n\t"    /* user_shared_data->ProcessorFeatures[PF_XMMI_INSTRUCTIONS_AVAILABLE] */
                    "jz 2f\n\t"
                    "fxrstor 0x40(%esp)\n\t"
                    "jmp 3f\n"
@@ -2720,7 +2724,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    /* push ebp-based kernel stack cfi */
                    __ASM_CFI("\t.cfi_remember_state\n")
                    __ASM_CFI_CFA_IS_AT2(esp, 0xb8, 0x00) /* frame->syscall_cfa */
-                   "testl $0x7 << 16,%ecx\n\t"     /* CONTEXT_CONTROL | CONTEXT_SEGMENTS | CONTEXT_INTEGER */
+                   "testl $0x7,%ecx\n\t"           /* CONTEXT_CONTROL | CONTEXT_SEGMENTS | CONTEXT_INTEGER */
                    "jnz 1f\n\t"
                    "movl 0x20(%esp),%ebx\n\t"
                    "movl 0x08(%esp),%ecx\n\t"      /* frame->eip */
@@ -2740,7 +2744,7 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    /* pop esp-based kernel stack cfi */
                    __ASM_CFI("\t.cfi_restore_state\n")
 
-                   "1:\ttestl $0x2 << 16,%ecx\n\t" /* CONTEXT_INTEGER */
+                   "1:\ttestl $0x2,%ecx\n\t"       /* CONTEXT_INTEGER */
                    "jz 1f\n\t"
                    "movl 0x1c(%esp),%eax\n\t"
                    "movl 0x24(%esp),%ecx\n\t"
@@ -2772,15 +2776,43 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
                    "popl %ds\n\t"
                    __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")
                    "iret\n"
+
                    /* pop ebp-based kernel stack cfi */
                    __ASM_CFI("\t.cfi_restore_state\n")
+                   __ASM_LOCAL_LABEL("trace_syscall") ":\n\t"
+                   "movl %esp,%eax\n\t"
+                   "subl $16,%esp\n\t"
+                   "movl -0x38(%ebp),%esi\n\t"     /* syscall_id */
+                   "movl %esi,(%esp)\n\t"          /* id */
+                   "movl %eax,4(%esp)\n\t"         /* args */
+                   "movl %esi,%edx\n\t"
+                   "andl $0xfff,%edx\n\t"          /* syscall number */
+                   "movl 12(%ebx),%eax\n\t"        /* table->ArgumentTable */
+                   "movzbl (%eax,%edx,1),%edx\n\t"
+                   "movl %edx,8(%esp)\n\t"         /* len */
+                   "call " __ASM_NAME("trace_syscall") "\n\t"
+                   "addl $16,%esp\n\t"
+                   "call *%edi\n"
 
-                   "6:\tmovl $0xc000001c,%eax\n\t" /* STATUS_INVALID_SYSTEM_SERVICE */
+                   __ASM_LOCAL_LABEL("trace_syscall_ret") ":\n\t"
+                   "pushl %eax\n\t"
+                   "pushl %eax\n\t"
+                   "pushl %eax\n\t"                /* retval */
+                   "pushl %esi\n\t"                /* id */
+                   "call " __ASM_NAME("trace_sysret") "\n\t"
+                   "movl 8(%esp),%eax\n\t"         /* retval */
+                   "leal -0x34(%ebp),%esp\n\t"     /* frame */
+                   "jmp " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") "\n"
+
+                   __ASM_LOCAL_LABEL("bad_syscall") ":\n\t"
+                   "movl $0xc000001c,%eax\n\t"     /* STATUS_INVALID_SYSTEM_SERVICE */
                    "jmp " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") )
 
 __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher_return,
-                   "movl 8(%esp),%eax\n\t"
-                   "movl 4(%esp),%esp\n\t"
+                   "movl -0x38(%ebp),%esi\n\t"     /* syscall id */
+                   "leal -0x34(%ebp),%esp\n\t"     /* frame */
+                   "testl $1,%fs:0x21c\n\t"        /* thread_data->syscall_trace */
+                   "jnz " __ASM_LOCAL_LABEL("trace_syscall_ret") "\n\t"
                    "jmp " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") )
 
 
@@ -2788,13 +2820,12 @@ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher_return,
  *           __wine_unix_call_dispatcher
  */
 __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
-                   "movl %fs:0x1f8,%ecx\n\t"   /* x86_thread_data()->syscall_frame */
-                   "movw $0,0x02(%ecx)\n\t"    /* frame->restore_flags */
+                   "movl %fs:0x218,%ecx\n\t"   /* thread_data->syscall_frame */
+                   "movl $0,(%ecx)\n\t"        /* frame->restore_flags */
                    "popl 0x08(%ecx)\n\t"       /* frame->eip */
                    __ASM_CFI(".cfi_adjust_cfa_offset -4\n\t")
                    __ASM_CFI_REG_IS_AT1(eip, ecx, 0x08)
-                   __ASM_GLOBL(__ASM_NAME("__wine_unix_call_dispatcher_prolog_end")) "\n"
-                   __ASM_NAME("__wine_unix_call_dispatcher_prolog_end") ":\n\t"
+                   __ASM_GLOBL(__ASM_NAME("__wine_unix_call_dispatcher_prolog_end")) "\n\t"
                    "leal 0x10(%esp),%edx\n\t"
                    "movl %edx,0x0c(%ecx)\n\t"  /* frame->esp */
                    __ASM_CFI_CFA_IS_AT1(ecx, 0x0c)
@@ -2827,7 +2858,7 @@ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
                    __ASM_CFI(".cfi_offset %edi,-20\n\t")
                    "call *(%eax,%edx,4)\n\t"
                    "leal 16(%esp),%esp\n\t"
-                   "testw $0xffff,2(%esp)\n\t" /* frame->restore_flags */
+                   "testl $0xffff,(%esp)\n\t"  /* frame->restore_flags */
                    "jnz " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") "\n\t"
                    "movl 0x08(%esp),%ecx\n\t"  /* frame->eip */
                    /* switch to user stack */

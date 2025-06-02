@@ -261,6 +261,7 @@ enum vkd3d_sm4_opcode
     VKD3D_SM4_OP_DCL_INPUT_PS_SGV                 = 0x63,
     VKD3D_SM4_OP_DCL_INPUT_PS_SIV                 = 0x64,
     VKD3D_SM4_OP_DCL_OUTPUT                       = 0x65,
+    VKD3D_SM4_OP_DCL_OUTPUT_SGV                   = 0x66,
     VKD3D_SM4_OP_DCL_OUTPUT_SIV                   = 0x67,
     VKD3D_SM4_OP_DCL_TEMPS                        = 0x68,
     VKD3D_SM4_OP_DCL_INDEXABLE_TEMP               = 0x69,
@@ -1168,7 +1169,7 @@ static void shader_sm4_read_dcl_input_ps(struct vkd3d_shader_instruction *ins, u
             WARN("No matching signature element for input register %u with mask %#x.\n",
                     dst->reg.idx[dst->reg.idx_count - 1].offset, dst->write_mask);
             vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_DCL,
-                    "No matching signature element for input register %u with mask %#x.\n",
+                    "No matching signature element for input register %u with mask %#x.",
                     dst->reg.idx[dst->reg.idx_count - 1].offset, dst->write_mask);
         }
         else
@@ -1194,7 +1195,7 @@ static void shader_sm4_read_dcl_input_ps_siv(struct vkd3d_shader_instruction *in
             WARN("No matching signature element for input register %u with mask %#x.\n",
                     dst->reg.idx[dst->reg.idx_count - 1].offset, dst->write_mask);
             vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_DCL,
-                    "No matching signature element for input register %u with mask %#x.\n",
+                    "No matching signature element for input register %u with mask %#x.",
                     dst->reg.idx[dst->reg.idx_count - 1].offset, dst->write_mask);
         }
         else
@@ -1559,6 +1560,8 @@ static void init_sm4_lookup_tables(struct vkd3d_sm4_lookup_tables *lookup)
                 shader_sm4_read_dcl_input_ps_siv},
         {VKD3D_SM4_OP_DCL_OUTPUT,                       VKD3DSIH_DCL_OUTPUT,                       "",     "",
                 shader_sm4_read_declaration_dst},
+        {VKD3D_SM4_OP_DCL_OUTPUT_SGV,                   VKD3DSIH_DCL_OUTPUT_SGV,                   "",     "",
+                shader_sm4_read_declaration_register_semantic},
         {VKD3D_SM4_OP_DCL_OUTPUT_SIV,                   VKD3DSIH_DCL_OUTPUT_SIV,                   "",     "",
                 shader_sm4_read_declaration_register_semantic},
         {VKD3D_SM4_OP_DCL_TEMPS,                        VKD3DSIH_DCL_TEMPS,                        "",     "",
@@ -3129,6 +3132,9 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
         {"position",                    true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_POSITION},
         {"sv_position",                 true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_POSITION},
         {"sv_primitiveid",              true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_PRIMITIVE_ID},
+        {"sv_isfrontface",              true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_IS_FRONT_FACE},
+        {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
+        {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
 
         {"sv_outputcontrolpointid",     false, VKD3D_SHADER_TYPE_HULL,      ~0u},
         {"sv_position",                 false, VKD3D_SHADER_TYPE_HULL,      ~0u},
@@ -4133,6 +4139,10 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
 
         case VKD3DSIH_DCL_OUTPUT:
             tpf_dcl_semantic(tpf, VKD3D_SM4_OP_DCL_OUTPUT, &ins->declaration.dst, 0);
+            break;
+
+        case VKD3DSIH_DCL_OUTPUT_SGV:
+            tpf_dcl_siv_semantic(tpf, VKD3D_SM4_OP_DCL_OUTPUT_SGV, &ins->declaration.register_semantic, 0);
             break;
 
         case VKD3DSIH_DCL_OUTPUT_SIV:

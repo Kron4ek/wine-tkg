@@ -32,10 +32,10 @@
 @ stub PdhEnumObjectItemsHA
 @ stub PdhEnumObjectItemsHW
 @ stdcall PdhEnumObjectItemsW(wstr wstr wstr ptr ptr ptr ptr long long)
-@ stub PdhEnumObjectsA
+@ stdcall PdhEnumObjectsA(str str ptr ptr long long)
 @ stub PdhEnumObjectsHA
 @ stub PdhEnumObjectsHW
-@ stub PdhEnumObjectsW
+@ stdcall PdhEnumObjectsW(wstr wstr ptr ptr long long)
 @ stdcall PdhExpandCounterPathA(str ptr ptr)
 @ stdcall PdhExpandCounterPathW(wstr ptr ptr)
 @ stdcall PdhExpandWildCardPathA(str str ptr ptr long)
@@ -65,8 +65,8 @@
 @ stdcall PdhGetLogFileTypeA(str ptr)
 @ stdcall PdhGetLogFileTypeW(wstr ptr)
 @ stub PdhGetLogSetGUID
-@ stub PdhGetRawCounterArrayA
-@ stub PdhGetRawCounterArrayW
+@ stdcall PdhGetRawCounterArrayA(ptr ptr ptr ptr)
+@ stdcall PdhGetRawCounterArrayW(ptr ptr ptr ptr)
 @ stdcall PdhGetRawCounterValue(ptr ptr ptr)
 @ stub PdhIsRealTimeQuery
 @ stub PdhListLogFileHeaderA

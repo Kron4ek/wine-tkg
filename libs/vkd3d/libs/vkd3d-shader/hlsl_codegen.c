@@ -3919,7 +3919,7 @@ static bool lower_separate_samples(struct hlsl_ctx *ctx, struct hlsl_ir_node *in
     if (load->texel_offset.node)
     {
         hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_INCOMPATIBLE_PROFILE,
-                "Texel offsets are not supported on profiles lower than 4.0.\n");
+                "Texel offsets are not supported on profiles lower than 4.0.");
         return false;
     }
 
@@ -5754,7 +5754,7 @@ static const char *debug_register(char class, struct hlsl_reg reg, const struct 
     static const char writemask_offset[] = {'w','x','y','z'};
     unsigned int reg_size = type->reg_size[HLSL_REGSET_NUMERIC];
 
-    if (reg_size > 4)
+    if (reg_size > 4 && !hlsl_type_is_patch_array(type))
     {
         if (reg_size & 3)
             return vkd3d_dbg_sprintf("%c%u-%c%u.%c", class, reg.id, class, reg.id + (reg_size / 4),
@@ -9983,6 +9983,9 @@ static void sm4_generate_vsir_instr_dcl_semantic(struct hlsl_ctx *ctx, struct vs
         if (semantic == VKD3D_SHADER_SV_NONE || version->type == VKD3D_SHADER_TYPE_PIXEL
                 || (version->type == VKD3D_SHADER_TYPE_HULL && !ctx->is_patch_constant_func))
             opcode = VKD3DSIH_DCL_OUTPUT;
+        else if ((semantic == VKD3D_SHADER_SV_PRIMITIVE_ID || semantic == VKD3D_SHADER_SV_IS_FRONT_FACE)
+                && version->type == VKD3D_SHADER_TYPE_GEOMETRY)
+            opcode = VKD3DSIH_DCL_OUTPUT_SGV;
         else
             opcode = VKD3DSIH_DCL_OUTPUT_SIV;
     }
@@ -13523,7 +13526,26 @@ static void process_entry_function(struct hlsl_ctx *ctx,
     else
     {
         if (profile->type == VKD3D_SHADER_TYPE_HULL && !ctx->is_patch_constant_func)
-            hlsl_fixme(ctx, &entry_func->loc, "Passthrough hull shader control point function.");
+        {
+            if (!ctx->input_control_point_type)
+            {
+                hlsl_error(ctx, &entry_func->loc, VKD3D_SHADER_ERROR_HLSL_MISSING_INPUT_PATCH,
+                        "Pass-through control point function \"%s\" is missing an InputPatch parameter.",
+                        entry_func->func->name);
+            }
+            else if (ctx->output_control_point_count
+                    && ctx->output_control_point_count != ctx->input_control_point_count)
+            {
+                hlsl_error(ctx, &entry_func->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_CONTROL_POINT_COUNT,
+                        "Output control point count %u does not match the input control point count %u.",
+                        ctx->output_control_point_count, ctx->input_control_point_count);
+            }
+            else
+            {
+                ctx->output_control_point_type = ctx->input_control_point_type;
+                ctx->output_control_point_count = ctx->input_control_point_count;
+            }
+        }
     }
 
     if (profile->type == VKD3D_SHADER_TYPE_GEOMETRY && ctx->input_primitive_type == VKD3D_PT_UNDEFINED)

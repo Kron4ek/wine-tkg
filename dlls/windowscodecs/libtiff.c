@@ -976,7 +976,7 @@ static HRESULT tiff_decoder_read_tile(struct tiff_decoder *This, UINT tile_x, UI
     else if (info->source_bpp == 16 && info->samples == 4 && info->frame.bpp == 32)
     {
         BYTE *srcdata, *src, *dst;
-        DWORD x, y, count, width_bytes = (info->tile_width * 12 + 7) / 8;
+        DWORD x, y, count, width_bytes = (info->tile_width * 16 + 7) / 8;
 
         count = width_bytes * info->tile_height;
 
@@ -1164,7 +1164,6 @@ static HRESULT CDECL tiff_decoder_get_metadata_blocks(struct decoder *iface,
 {
     struct tiff_decoder *This = impl_from_decoder(iface);
     HRESULT hr;
-    BOOL byte_swapped;
     struct decoder_block result;
 
     hr = tiff_decoder_select_frame(This, frame);
@@ -1176,12 +1175,7 @@ static HRESULT CDECL tiff_decoder_get_metadata_blocks(struct decoder *iface,
     result.offset = TIFFCurrentDirOffset(This->tiff);
     result.length = 0;
 
-    byte_swapped = TIFFIsByteSwapped(This->tiff);
-#ifdef WORDS_BIGENDIAN
-    result.options = byte_swapped ? WICPersistOptionLittleEndian : WICPersistOptionBigEndian;
-#else
-    result.options = byte_swapped ? WICPersistOptionBigEndian : WICPersistOptionLittleEndian;
-#endif
+    result.options = TIFFIsByteSwapped(This->tiff) ? WICPersistOptionBigEndian : WICPersistOptionLittleEndian;
     result.options |= WICPersistOptionNoCacheStream|DECODER_BLOCK_FULL_STREAM|DECODER_BLOCK_READER_CLSID;
     result.reader_clsid = CLSID_WICIfdMetadataReader;
 
