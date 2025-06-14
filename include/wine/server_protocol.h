@@ -993,11 +993,17 @@ typedef volatile struct
     int                  keystate_lock;
 } input_shm_t;
 
+typedef volatile struct
+{
+    unsigned int         dpi_context;
+} window_shm_t;
+
 typedef volatile union
 {
     desktop_shm_t        desktop;
     queue_shm_t          queue;
     input_shm_t          input;
+    window_shm_t         window;
 } object_shm_t;
 
 typedef volatile struct
@@ -3421,12 +3427,13 @@ struct create_window_request
     user_handle_t  parent;
     user_handle_t  owner;
     atom_t         atom;
+    mod_handle_t   class_instance;
     mod_handle_t   instance;
     unsigned int   dpi_context;
     unsigned int   style;
     unsigned int   ex_style;
     /* VARARG(class,unicode_str); */
-    char __pad_44[4];
+    char __pad_52[4];
 };
 struct create_window_reply
 {
@@ -3436,8 +3443,6 @@ struct create_window_reply
     user_handle_t  owner;
     int            extra;
     client_ptr_t   class_ptr;
-    unsigned int   dpi_context;
-    char __pad_36[4];
 };
 
 
@@ -3488,14 +3493,31 @@ struct get_window_info_request
 {
     struct request_header __header;
     user_handle_t  handle;
+    int            offset;
+    data_size_t    size;
 };
 struct get_window_info_reply
 {
     struct reply_header __header;
     user_handle_t  last_active;
     int            is_unicode;
-    unsigned int   dpi_context;
-    char __pad_20[4];
+    lparam_t       info;
+};
+
+
+
+struct init_window_info_request
+{
+    struct request_header __header;
+    user_handle_t  handle;
+    unsigned int   style;
+    unsigned int   ex_style;
+    short int      is_unicode;
+    char __pad_26[6];
+};
+struct init_window_info_reply
+{
+    struct reply_header __header;
 };
 
 
@@ -3503,35 +3525,16 @@ struct get_window_info_reply
 struct set_window_info_request
 {
     struct request_header __header;
-    unsigned short flags;
-    short int      is_unicode;
     user_handle_t  handle;
-    unsigned int   style;
-    unsigned int   ex_style;
-    data_size_t    extra_size;
-    mod_handle_t   instance;
-    lparam_t       user_data;
-    lparam_t       extra_value;
-    int            extra_offset;
-    char __pad_60[4];
+    int            offset;
+    data_size_t    size;
+    lparam_t       new_info;
 };
 struct set_window_info_reply
 {
     struct reply_header __header;
-    unsigned int   old_style;
-    unsigned int   old_ex_style;
-    mod_handle_t   old_instance;
-    lparam_t       old_user_data;
-    lparam_t       old_extra_value;
-    lparam_t       old_id;
+    lparam_t       old_info;
 };
-#define SET_WIN_STYLE     0x01
-#define SET_WIN_EXSTYLE   0x02
-#define SET_WIN_ID        0x04
-#define SET_WIN_INSTANCE  0x08
-#define SET_WIN_USERDATA  0x10
-#define SET_WIN_EXTRA     0x20
-#define SET_WIN_UNICODE   0x40
 
 
 
@@ -3547,8 +3550,6 @@ struct set_parent_reply
     struct reply_header __header;
     user_handle_t  old_parent;
     user_handle_t  full_parent;
-    unsigned int   dpi_context;
-    char __pad_20[4];
 };
 
 
@@ -6161,6 +6162,7 @@ enum request
     REQ_get_desktop_window,
     REQ_set_window_owner,
     REQ_get_window_info,
+    REQ_init_window_info,
     REQ_set_window_info,
     REQ_set_parent,
     REQ_get_window_parents,
@@ -6467,6 +6469,7 @@ union generic_request
     struct get_desktop_window_request get_desktop_window_request;
     struct set_window_owner_request set_window_owner_request;
     struct get_window_info_request get_window_info_request;
+    struct init_window_info_request init_window_info_request;
     struct set_window_info_request set_window_info_request;
     struct set_parent_request set_parent_request;
     struct get_window_parents_request get_window_parents_request;
@@ -6771,6 +6774,7 @@ union generic_reply
     struct get_desktop_window_reply get_desktop_window_reply;
     struct set_window_owner_reply set_window_owner_reply;
     struct get_window_info_reply get_window_info_reply;
+    struct init_window_info_reply init_window_info_reply;
     struct set_window_info_reply set_window_info_reply;
     struct set_parent_reply set_parent_reply;
     struct get_window_parents_reply get_window_parents_reply;
@@ -6925,6 +6929,6 @@ union generic_reply
     struct get_inproc_alert_event_reply get_inproc_alert_event_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 876
+#define SERVER_PROTOCOL_VERSION 882
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

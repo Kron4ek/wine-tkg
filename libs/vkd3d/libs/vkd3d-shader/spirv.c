@@ -847,57 +847,6 @@ static void vkd3d_spirv_dump(const struct vkd3d_shader_code *spirv, enum vkd3d_s
     vkd3d_shader_message_context_cleanup(&message_context);
 }
 
-enum vkd3d_shader_input_sysval_semantic vkd3d_siv_from_sysval_indexed(enum vkd3d_shader_sysval_semantic sysval,
-        unsigned int index)
-{
-    switch (sysval)
-    {
-        case VKD3D_SHADER_SV_COVERAGE:
-        case VKD3D_SHADER_SV_DEPTH:
-        case VKD3D_SHADER_SV_DEPTH_GREATER_EQUAL:
-        case VKD3D_SHADER_SV_DEPTH_LESS_EQUAL:
-        case VKD3D_SHADER_SV_NONE:
-        case VKD3D_SHADER_SV_STENCIL_REF:
-        case VKD3D_SHADER_SV_TARGET:
-            return VKD3D_SIV_NONE;
-        case VKD3D_SHADER_SV_POSITION:
-            return VKD3D_SIV_POSITION;
-        case VKD3D_SHADER_SV_CLIP_DISTANCE:
-            return VKD3D_SIV_CLIP_DISTANCE;
-        case VKD3D_SHADER_SV_CULL_DISTANCE:
-            return VKD3D_SIV_CULL_DISTANCE;
-        case VKD3D_SHADER_SV_INSTANCE_ID:
-            return VKD3D_SIV_INSTANCE_ID;
-        case VKD3D_SHADER_SV_IS_FRONT_FACE:
-            return VKD3D_SIV_IS_FRONT_FACE;
-        case VKD3D_SHADER_SV_PRIMITIVE_ID:
-            return VKD3D_SIV_PRIMITIVE_ID;
-        case VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX:
-            return VKD3D_SIV_RENDER_TARGET_ARRAY_INDEX;
-        case VKD3D_SHADER_SV_SAMPLE_INDEX:
-            return VKD3D_SIV_SAMPLE_INDEX;
-        case VKD3D_SHADER_SV_TESS_FACTOR_QUADEDGE:
-            return VKD3D_SIV_QUAD_U0_TESS_FACTOR + index;
-        case VKD3D_SHADER_SV_TESS_FACTOR_QUADINT:
-            return VKD3D_SIV_QUAD_U_INNER_TESS_FACTOR + index;
-        case VKD3D_SHADER_SV_TESS_FACTOR_TRIEDGE:
-            return VKD3D_SIV_TRIANGLE_U_TESS_FACTOR + index;
-        case VKD3D_SHADER_SV_TESS_FACTOR_TRIINT:
-            return VKD3D_SIV_TRIANGLE_INNER_TESS_FACTOR;
-        case VKD3D_SHADER_SV_TESS_FACTOR_LINEDET:
-            return VKD3D_SIV_LINE_DETAIL_TESS_FACTOR;
-        case VKD3D_SHADER_SV_TESS_FACTOR_LINEDEN:
-            return VKD3D_SIV_LINE_DENSITY_TESS_FACTOR;
-        case VKD3D_SHADER_SV_VERTEX_ID:
-            return VKD3D_SIV_VERTEX_ID;
-        case VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX:
-            return VKD3D_SIV_VIEWPORT_ARRAY_INDEX;
-        default:
-            FIXME("Unhandled sysval %#x, index %u.\n", sysval, index);
-            return VKD3D_SIV_NONE;
-    }
-}
-
 struct vkd3d_spirv_stream
 {
     uint32_t *words;
@@ -4578,70 +4527,6 @@ static uint32_t spirv_compiler_emit_bool_to_double(struct spirv_compiler *compil
     return vkd3d_spirv_build_op_select(builder, type_id, val_id, true_id, false_id);
 }
 
-/* Based on the implementation in the OpenGL Mathematics library. */
-static uint32_t half_to_float(uint16_t value)
-{
-    uint32_t s = (value & 0x8000u) << 16;
-    uint32_t e = (value >> 10) & 0x1fu;
-    uint32_t m = value & 0x3ffu;
-
-    if (!e)
-    {
-        if (!m)
-        {
-            /* Plus or minus zero */
-            return s;
-        }
-        else
-        {
-            /* Denormalized number -- renormalize it */
-
-            while (!(m & 0x400u))
-            {
-                m <<= 1;
-                --e;
-            }
-
-            ++e;
-            m &= ~0x400u;
-        }
-    }
-    else if (e == 31u)
-    {
-        /* Positive or negative infinity for zero 'm'.
-         * Nan for non-zero 'm' -- preserve sign and significand bits */
-        return s | 0x7f800000u | (m << 13);
-    }
-
-    /* Normalized number */
-    e += 127u - 15u;
-    m <<= 13;
-
-    /* Assemble s, e and m. */
-    return s | (e << 23) | m;
-}
-
-static uint32_t convert_raw_constant32(enum vkd3d_data_type data_type, unsigned int uint_value)
-{
-    int16_t i;
-
-    /* TODO: native 16-bit support. */
-    if (data_type != VKD3D_DATA_UINT16 && data_type != VKD3D_DATA_HALF)
-        return uint_value;
-
-    if (data_type == VKD3D_DATA_HALF)
-        return half_to_float(uint_value);
-
-    /* Values in DXIL have no signedness, so it is ambiguous whether 16-bit constants should or
-     * should not be sign-extended when 16-bit execution is not supported. The AMD RX 580 Windows
-     * driver has no 16-bit support, and sign-extends all 16-bit constant ints to 32 bits. These
-     * results differ from SM 5. The RX 6750 XT supports 16-bit execution, so constants are not
-     * extended, and results match SM 5. It seems best to replicate the sign-extension, and if
-     * execution is 16-bit, the values will be truncated. */
-    i = uint_value;
-    return (int32_t)i;
-}
-
 static uint32_t spirv_compiler_emit_load_constant(struct spirv_compiler *compiler,
         const struct vkd3d_shader_register *reg, uint32_t swizzle, uint32_t write_mask)
 {
@@ -4654,15 +4539,14 @@ static uint32_t spirv_compiler_emit_load_constant(struct spirv_compiler *compile
     if (reg->dimension == VSIR_DIMENSION_SCALAR)
     {
         for (i = 0; i < component_count; ++i)
-            values[i] = convert_raw_constant32(reg->data_type, reg->u.immconst_u32[0]);
+            values[i] = reg->u.immconst_u32[0];
     }
     else
     {
         for (i = 0, j = 0; i < VKD3D_VEC4_SIZE; ++i)
         {
             if (write_mask & (VKD3DSP_WRITEMASK_0 << i))
-                values[j++] = convert_raw_constant32(reg->data_type,
-                        reg->u.immconst_u32[vsir_swizzle_get_component(swizzle, i)]);
+                values[j++] = reg->u.immconst_u32[vsir_swizzle_get_component(swizzle, i)];
         }
     }
 
@@ -4806,13 +4690,6 @@ static uint32_t spirv_compiler_emit_constant_array(struct spirv_compiler *compil
 
     switch (icb->data_type)
     {
-        case VKD3D_DATA_HALF:
-        case VKD3D_DATA_UINT16:
-            /* Scalar only. */
-            for (i = 0; i < element_count; ++i)
-                elements[i] = vkd3d_spirv_get_op_constant(builder, elem_type_id,
-                        convert_raw_constant32(icb->data_type, icb->data[i]));
-            break;
         case VKD3D_DATA_FLOAT:
         case VKD3D_DATA_INT:
         case VKD3D_DATA_UINT:
@@ -9254,7 +9131,9 @@ static void spirv_compiler_emit_sample(struct spirv_compiler *compiler,
                     &src[3], VKD3DSP_WRITEMASK_0);
             break;
         default:
-            ERR("Unexpected instruction %#x.\n", instruction->opcode);
+            spirv_compiler_error(compiler, VKD3D_SHADER_ERROR_SPV_NOT_IMPLEMENTED,
+                    "Unhandled instruction \"%s\" (%#x).",
+                    vsir_opcode_get_name(instruction->opcode, "<unknown>"), instruction->opcode);
             return;
     }
 
@@ -9935,7 +9814,9 @@ static void spirv_compiler_emit_atomic_instruction(struct spirv_compiler *compil
     op = spirv_compiler_map_atomic_instruction(instruction);
     if (op == SpvOpMax)
     {
-        ERR("Unexpected instruction %#x.\n", instruction->opcode);
+        spirv_compiler_error(compiler, VKD3D_SHADER_ERROR_SPV_NOT_IMPLEMENTED,
+                "Unhandled instruction \"%s\" (%#x).",
+                vsir_opcode_get_name(instruction->opcode, "<unknown>"), instruction->opcode);
         return;
     }
 
@@ -10014,9 +9895,9 @@ static void spirv_compiler_emit_atomic_instruction(struct spirv_compiler *compil
 
     if (instruction->flags & VKD3DARF_VOLATILE)
     {
-        WARN("Ignoring 'volatile' attribute.\n");
         spirv_compiler_warning(compiler, VKD3D_SHADER_WARNING_SPV_IGNORING_FLAG,
-                "Ignoring the 'volatile' attribute flag for atomic instruction %#x.", instruction->opcode);
+                "Ignoring the 'volatile' attribute flag for atomic instruction \"%s\" (%#x).",
+                vsir_opcode_get_name(instruction->opcode, "<unknown>"), instruction->opcode);
     }
 
     memory_semantic = (instruction->flags & VKD3DARF_SEQ_CST)
@@ -11091,9 +10972,9 @@ static int spirv_compiler_handle_instruction(struct spirv_compiler *compiler,
             /* nothing to do */
             break;
         default:
-            FIXME("Unhandled instruction %#x.\n", instruction->opcode);
             spirv_compiler_error(compiler, VKD3D_SHADER_ERROR_SPV_INVALID_HANDLER,
-                    "Encountered invalid/unhandled instruction handler %#x.", instruction->opcode);
+                    "Unhandled instruction \"%s\" (%#x).",
+                    vsir_opcode_get_name(instruction->opcode, "<unknown>"), instruction->opcode);
             break;
     }
 

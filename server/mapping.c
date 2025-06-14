@@ -1397,7 +1397,7 @@ volatile void *alloc_shared_object(void)
 
         if (!(block = find_free_session_block( size ))) return NULL;
         object = (struct session_object *)(block->data + block->used_size);
-        object->offset = (char *)&object->obj - block->data;
+        object->offset = block->offset + (char *)&object->obj - block->data;
         block->used_size += size;
     }
 

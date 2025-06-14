@@ -201,7 +201,7 @@ struct device_file
 
 static void device_file_dump( struct object *obj, int verbose );
 static struct fd *device_file_get_fd( struct object *obj );
-static WCHAR *device_file_get_full_name( struct object *obj, data_size_t *len );
+static WCHAR *device_file_get_full_name( struct object *obj, data_size_t max, data_size_t *len );
 static struct list *device_file_get_kernel_obj_list( struct object *obj );
 static int device_file_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
 static void device_file_destroy( struct object *obj );
@@ -439,6 +439,7 @@ static struct object *device_open_file( struct object *obj, unsigned int access,
     struct device *device = (struct device *)obj;
     struct device_file *file;
     struct unicode_str nt_name;
+    WCHAR *fullname;
 
     if (!(file = alloc_object( &device_file_ops ))) return NULL;
 
@@ -449,11 +450,16 @@ static struct object *device_open_file( struct object *obj, unsigned int access,
     list_add_tail( &device->files, &file->entry );
     if (device->unix_path)
     {
-        mode_t mode = 0666;
-        access = file->obj.ops->map_access( &file->obj, access );
-        nt_name.str = device->obj.ops->get_full_name( &device->obj, &nt_name.len );
-        file->fd = open_fd( NULL, device->unix_path, nt_name, O_NONBLOCK, &mode, access, sharing, options );
-        if (file->fd) set_fd_user( file->fd, &device_file_fd_ops, &file->obj );
+        if ((fullname = device->obj.ops->get_full_name( &device->obj, ~0u, &nt_name.len )))
+        {
+            mode_t mode = 0666;
+            access = file->obj.ops->map_access( &file->obj, access );
+            nt_name.str = fullname;
+            file->fd = open_fd( NULL, device->unix_path, nt_name, O_NONBLOCK, &mode, access, sharing, options );
+            if (file->fd) set_fd_user( file->fd, &device_file_fd_ops, &file->obj );
+            free( fullname );
+        }
+        else file->fd = NULL;
     }
     else file->fd = alloc_pseudo_fd( &device_file_fd_ops, &file->obj, options );
 
@@ -506,10 +512,12 @@ static struct fd *device_file_get_fd( struct object *obj )
     return (struct fd *)grab_object( file->fd );
 }
 
-static WCHAR *device_file_get_full_name( struct object *obj, data_size_t *len )
+static WCHAR *device_file_get_full_name( struct object *obj, data_size_t max, data_size_t *len )
 {
     struct device_file *file = (struct device_file *)obj;
-    return file->device->obj.ops->get_full_name( &file->device->obj, len );
+    WCHAR *ret = file->device->obj.ops->get_full_name( &file->device->obj, max, len );
+    if (*len > max) set_error( STATUS_BUFFER_OVERFLOW );
+    return ret;
 }
 
 static struct list *device_file_get_kernel_obj_list( struct object *obj )

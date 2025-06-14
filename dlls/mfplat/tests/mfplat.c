@@ -5703,6 +5703,13 @@ image_size_tests[] =
     { &MFVideoFormat_IYUV, 4, 2, 12, 0, 384, 12, 128 },
     { &MFVideoFormat_IYUV, 4, 3, 18, 0, 576, 18, 128 },
     { &MFVideoFormat_IYUV, 320, 240, 115200, 0, 138240, 115200, 384 },
+
+    { &MFVideoFormat_P010, 1, 2, 12, 6, 192, 6, 64 },
+    { &MFVideoFormat_P010, 2, 2, 12, 0, 192, 12, 64 },
+    { &MFVideoFormat_P010, 2, 4, 24, 0, 384, 24, 64 },
+    { &MFVideoFormat_P010, 3, 2, 24, 18, 192, 18, 64 },
+    { &MFVideoFormat_P010, 4, 2, 24, 0, 192, 24, 64 },
+    { &MFVideoFormat_P010, 320, 240, 230400, 0, 230400, 230400, 640 },
 };
 
 static void test_MFCalculateImageSize(void)

@@ -197,12 +197,7 @@ struct glx_pixel_format
 struct x11drv_context
 {
     HDC hdc;
-    BOOL has_been_current;
-    BOOL sharing;
-    BOOL gl3_context;
     const struct glx_pixel_format *fmt;
-    int numAttribs; /* This is needed for delaying wglCreateContextAttribsARB */
-    int attribList[16]; /* This is needed for delaying wglCreateContextAttribsARB */
     GLXContext ctx;
     struct gl_drawable *drawables[2];
     struct gl_drawable *new_drawables[2];
@@ -350,9 +345,11 @@ static INT64 (*pglXSwapBuffersMscOML)( Display *dpy, GLXDrawable drawable,
         INT64 target_msc, INT64 divisor, INT64 remainder );
 
 /* Standard OpenGL */
-static void (*pglFinish)(void);
-static void (*pglFlush)(void);
 static const GLubyte *(*pglGetString)(GLenum name);
+
+static void *opengl_handle;
+static const struct opengl_funcs *funcs;
+static const struct opengl_driver_funcs x11drv_driver_funcs;
 
 /* check if the extension is present in the list */
 static BOOL has_extension( const char *list, const char *ext )
@@ -494,9 +491,6 @@ done:
     return ret;
 }
 
-static void *opengl_handle;
-static const struct opengl_driver_funcs x11drv_driver_funcs;
-
 /**********************************************************************
  *           X11DRV_OpenglInit
  */
@@ -509,6 +503,7 @@ UINT X11DRV_OpenGLInit( UINT version, const struct opengl_funcs *opengl_funcs, c
         ERR( "version mismatch, opengl32 wants %u but driver has %u\n", version, WINE_OPENGL_DRIVER_VERSION );
         return STATUS_INVALID_PARAMETER;
     }
+    funcs = opengl_funcs;
 
     /* No need to load any other libraries as according to the ABI, libGL should be self-sufficient
        and include all dependencies */
@@ -527,8 +522,6 @@ UINT X11DRV_OpenGLInit( UINT version, const struct opengl_funcs *opengl_funcs, c
             ERR( "%s not found in libGL, disabling OpenGL.\n", #func ); \
             goto failed; \
         }
-    LOAD_FUNCPTR( glFinish );
-    LOAD_FUNCPTR( glFlush );
     LOAD_FUNCPTR( glGetString );
 #undef LOAD_FUNCPTR
 
@@ -724,10 +717,14 @@ static int get_render_type_from_fbconfig(Display *display, GLXFBConfig fbconfig)
 }
 
 /* Check whether a fbconfig is suitable for Windows-style bitmap rendering */
-static BOOL check_fbconfig_bitmap_capability(Display *display, GLXFBConfig fbconfig)
+static BOOL check_fbconfig_bitmap_capability( GLXFBConfig fbconfig, const XVisualInfo *vis )
 {
     int dbuf, value;
-    pglXGetFBConfigAttrib(display, fbconfig, GLX_DOUBLEBUFFER, &dbuf);
+
+    pglXGetFBConfigAttrib( gdi_display, fbconfig, GLX_BUFFER_SIZE, &value );
+    if (vis && value != vis->depth) return FALSE;
+
+    pglXGetFBConfigAttrib( gdi_display, fbconfig, GLX_DOUBLEBUFFER, &dbuf );
     pglXGetFBConfigAttrib(gdi_display, fbconfig, GLX_DRAWABLE_TYPE, &value);
 
     /* Windows only supports bitmap rendering on single buffered formats, further the fbconfig needs to have
@@ -739,7 +736,7 @@ static UINT x11drv_init_pixel_formats( UINT *onscreen_count )
 {
     struct glx_pixel_format *list;
     int size = 0, onscreen_size = 0;
-    int fmt_id, nCfgs, i, run, bmp_formats;
+    int fmt_id, nCfgs, i, run;
     GLXFBConfig* cfgs;
     XVisualInfo *visinfo;
 
@@ -750,21 +747,7 @@ static UINT x11drv_init_pixel_formats( UINT *onscreen_count )
         return 0;
     }
 
-    /* Bitmap rendering on Windows implies the use of the Microsoft GDI software renderer.
-     * Further most GLX drivers only offer pixmap rendering using indirect rendering (except for modern drivers which support 'AIGLX' / composite).
-     * Indirect rendering can indicate software rendering (on Nvidia it is hw accelerated)
-     * Since bitmap rendering implies the use of software rendering we can safely use indirect rendering for bitmaps.
-     *
-     * Below we count the number of formats which are suitable for bitmap rendering. Windows restricts bitmap rendering to single buffered formats.
-     */
-    for(i=0, bmp_formats=0; i<nCfgs; i++)
-    {
-        if(check_fbconfig_bitmap_capability(gdi_display, cfgs[i]))
-            bmp_formats++;
-    }
-    TRACE("Found %d bitmap capable fbconfigs\n", bmp_formats);
-
-    list = calloc( 1, (nCfgs + bmp_formats) * sizeof(*list) );
+    list = calloc( 1, (nCfgs * 2) * sizeof(*list) );
 
     /* Fill the pixel format list. Put onscreen formats at the top and offscreen ones at the bottom.
      * Do this as GLX doesn't guarantee that the list is sorted */
@@ -801,7 +784,7 @@ static UINT x11drv_init_pixel_formats( UINT *onscreen_count )
                 onscreen_size++;
 
                 /* Clone a format if it is bitmap capable for indirect rendering to bitmaps */
-                if(check_fbconfig_bitmap_capability(gdi_display, cfgs[i]))
+                if (check_fbconfig_bitmap_capability( cfgs[i], visinfo ))
                 {
                     TRACE("Found bitmap capable format FBCONFIG_ID 0x%x corresponding to iPixelFormat %d at GLX index %d\n", fmt_id, size+1, i);
                     list[size].fbconfig = cfgs[i];
@@ -832,7 +815,8 @@ static UINT x11drv_init_pixel_formats( UINT *onscreen_count )
                 list[size].fbconfig = cfgs[i];
                 list[size].fmt_id = fmt_id;
                 list[size].render_type = get_render_type_from_fbconfig(gdi_display, cfgs[i]);
-                list[size].dwFlags = 0;
+                if (!check_fbconfig_bitmap_capability( cfgs[i], NULL )) list[size].dwFlags = 0;
+                else list[size].dwFlags = PFD_DRAW_TO_BITMAP | PFD_SUPPORT_GDI | PFD_GENERIC_FORMAT;
                 size++;
             }
             else if (visinfo) XFree(visinfo);
@@ -1025,17 +1009,12 @@ static struct gl_drawable *get_gl_drawable( HWND hwnd, HDC hdc )
     return gl;
 }
 
-static GLXContext create_glxcontext(Display *display, struct x11drv_context *context, GLXContext shareList)
+static GLXContext create_glxcontext(Display *display, struct x11drv_context *context, GLXContext shareList, const int *attribs)
 {
     GLXContext ctx;
 
-    if(context->gl3_context)
-    {
-        if(context->numAttribs)
-            ctx = pglXCreateContextAttribsARB(gdi_display, context->fmt->fbconfig, shareList, GL_TRUE, context->attribList);
-        else
-            ctx = pglXCreateContextAttribsARB(gdi_display, context->fmt->fbconfig, shareList, GL_TRUE, NULL);
-    }
+    if(attribs)
+        ctx = pglXCreateContextAttribsARB(gdi_display, context->fmt->fbconfig, shareList, GL_TRUE, attribs);
     else if(context->fmt->visual)
         ctx = pglXCreateContext(gdi_display, context->fmt->visual, shareList, GL_TRUE);
     else /* Create a GLX Context for a pbuffer */
@@ -1147,7 +1126,7 @@ static struct gl_drawable *create_gl_drawable( HWND hwnd, const struct glx_pixel
 static BOOL x11drv_set_pixel_format( HWND hwnd, int old_format, int new_format, BOOL internal )
 {
     const struct glx_pixel_format *fmt;
-    struct gl_drawable *old, *gl;
+    struct gl_drawable *gl;
 
     /* Even for internal pixel format fail setting it if the app has already set a
      * different pixel format. Let wined3d create a backup GL context instead.
@@ -1161,25 +1140,14 @@ static BOOL x11drv_set_pixel_format( HWND hwnd, int old_format, int new_format, 
         return FALSE;
     }
 
-    if (!(old = get_gl_drawable( hwnd, 0 )) || old->format != fmt)
-    {
-        if (!(gl = create_gl_drawable( hwnd, fmt, FALSE )))
-        {
-            release_gl_drawable( old );
-            return FALSE;
-        }
+    if (!(gl = create_gl_drawable( hwnd, fmt, FALSE ))) return FALSE;
 
-        TRACE( "created GL drawable %lx for win %p %s\n",
-               gl->drawable, hwnd, debugstr_fbconfig( fmt->fbconfig ));
+    TRACE( "created GL drawable %lx for win %p %s\n",
+           gl->drawable, hwnd, debugstr_fbconfig( fmt->fbconfig ));
 
-        if (old)
-            mark_drawable_dirty( old, gl );
+    XFlush( gdi_display );
+    release_gl_drawable( gl );
 
-        XFlush( gdi_display );
-        release_gl_drawable( gl );
-    }
-
-    release_gl_drawable( old );
     return TRUE;
 }
 
@@ -1495,32 +1463,6 @@ static BOOL x11drv_describe_pixel_format( int iPixelFormat, struct wgl_pixel_for
 }
 
 /***********************************************************************
- *		glxdrv_wglCopyContext
- */
-static BOOL x11drv_context_copy(void *src_private, void *dst_private, UINT mask)
-{
-    struct x11drv_context *src = src_private, *dst = dst_private;
-    TRACE("%p -> %p mask %#x\n", src, dst, mask);
-
-    X11DRV_expect_error( gdi_display, GLXErrorHandler, NULL );
-    pglXCopyContext( gdi_display, src->ctx, dst->ctx, mask );
-    XSync( gdi_display, False );
-    if (X11DRV_check_error())
-    {
-        static unsigned int once;
-
-        if (!once++)
-        {
-            ERR("glXCopyContext failed. glXCopyContext() for direct rendering contexts not "
-                "implemented in the host graphics driver?\n");
-        }
-        return FALSE;
-    }
-
-    return TRUE;
-}
-
-/***********************************************************************
  *		glxdrv_wglDeleteContext
  */
 static BOOL x11drv_context_destroy(void *private)
@@ -1589,7 +1531,6 @@ static BOOL x11drv_context_make_current( HDC draw_hdc, HDC read_hdc, void *priva
         else ret = pglXMakeContextCurrent( gdi_display, draw_gl->drawable, read_gl ? read_gl->drawable : 0, ctx->ctx );
         if (ret)
         {
-            ctx->has_been_current = TRUE;
             ctx->hdc = draw_hdc;
             set_context_drawables( ctx, draw_gl, read_gl );
             NtCurrentTeb()->glReserved2 = ctx;
@@ -1604,55 +1545,6 @@ done:
     release_gl_drawable( draw_gl );
     TRACE( "%p,%p,%p returning %d\n", draw_hdc, read_hdc, ctx, ret );
     return ret;
-}
-
-/***********************************************************************
- *		glxdrv_wglShareLists
- */
-static BOOL x11drv_context_share(void *src_private, void *dst_private)
-{
-    struct x11drv_context *org = src_private, *dest = dst_private;
-    struct x11drv_context *keep, *clobber;
-
-    TRACE("(%p, %p)\n", org, dest);
-
-    /* Sharing of display lists works differently in GLX and WGL. In case of GLX it is done
-     * at context creation time but in case of WGL it is done using wglShareLists.
-     * In the past we tried to emulate wglShareLists by delaying GLX context creation until
-     * either a wglMakeCurrent or wglShareLists. This worked fine for most apps but it causes
-     * issues for OpenGL 3 because there wglCreateContextAttribsARB can fail in a lot of cases,
-     * so there delaying context creation doesn't work.
-     *
-     * The new approach is to create a GLX context in wglCreateContext / wglCreateContextAttribsARB
-     * and when a program requests sharing we recreate the destination or source context if it
-     * hasn't been made current and it hasn't shared display lists before.
-     */
-
-    if (!dest->has_been_current && !dest->sharing)
-    {
-        keep = org;
-        clobber = dest;
-    }
-    else if (!org->has_been_current && !org->sharing)
-    {
-        keep = dest;
-        clobber = org;
-    }
-    else
-    {
-        ERR("Could not share display lists because both of the contexts have already been current or shared\n");
-        return FALSE;
-    }
-
-    pglXDestroyContext(gdi_display, clobber->ctx);
-    clobber->ctx = create_glxcontext(gdi_display, clobber, keep->ctx);
-    TRACE("re-created context (%p) for Wine context %p (%s) sharing lists with ctx %p (%s)\n",
-          clobber->ctx, clobber, debugstr_fbconfig(clobber->fmt->fbconfig),
-          keep->ctx, debugstr_fbconfig(keep->fmt->fbconfig));
-
-    org->sharing = TRUE;
-    dest->sharing = TRUE;
-    return TRUE;
 }
 
 static void present_gl_drawable( HWND hwnd, HDC hdc, struct gl_drawable *gl, BOOL flush, BOOL gl_finish )
@@ -1674,7 +1566,7 @@ static void present_gl_drawable( HWND hwnd, HDC hdc, struct gl_drawable *gl, BOO
     window = get_dc_drawable( hdc, &rect );
     region = get_dc_monitor_region( hwnd, hdc );
 
-    if (gl_finish) pglFinish();
+    if (gl_finish) funcs->p_glFinish();
     if (flush) XFlush( gdi_display );
 
     NtUserGetClientRect( hwnd, &rect_dst, NtUserGetWinMonitorDpi( hwnd, MDT_RAW_DPI ) );
@@ -1697,7 +1589,7 @@ static void present_gl_drawable( HWND hwnd, HDC hdc, struct gl_drawable *gl, BOO
     if (region) NtGdiDeleteObjectApp( region );
 }
 
-static BOOL x11drv_context_flush( void *private, HWND hwnd, HDC hdc, int interval, BOOL finish )
+static BOOL x11drv_context_flush( void *private, HWND hwnd, HDC hdc, int interval, void (*flush)(void) )
 {
     struct gl_drawable *gl;
     struct x11drv_context *ctx = private;
@@ -1709,10 +1601,9 @@ static BOOL x11drv_context_flush( void *private, HWND hwnd, HDC hdc, int interva
     set_swap_interval( gl, interval );
     pthread_mutex_unlock( &context_mutex );
 
-    if (finish) pglFinish();
-    else pglFlush();
+    if (flush) flush();
 
-    present_gl_drawable( hwnd, ctx->hdc, gl, TRUE, !finish );
+    present_gl_drawable( hwnd, ctx->hdc, gl, TRUE, flush != funcs->p_glFinish );
     release_gl_drawable( gl );
     return TRUE;
 }
@@ -1723,6 +1614,7 @@ static BOOL x11drv_context_flush( void *private, HWND hwnd, HDC hdc, int interva
 static BOOL x11drv_context_create( HDC hdc, int format, void *share_private, const int *attribList, void **private )
 {
     struct x11drv_context *ret, *hShareContext = share_private;
+    int glx_attribs[16] = {0}, *pContextAttribList = glx_attribs;
     int err = 0;
 
     TRACE("(%p %d %p %p)\n", hdc, format, hShareContext, attribList);
@@ -1733,8 +1625,6 @@ static BOOL x11drv_context_create( HDC hdc, int format, void *share_private, con
         ret->fmt = &pixel_formats[format - 1];
         if (attribList)
         {
-            int *pContextAttribList = &ret->attribList[0];
-            ret->gl3_context = TRUE;
             /* attribList consists of pairs {token, value] terminated with 0 */
             while(attribList[0] != 0)
             {
@@ -1745,13 +1635,11 @@ static BOOL x11drv_context_create( HDC hdc, int format, void *share_private, con
                     pContextAttribList[0] = GLX_CONTEXT_MAJOR_VERSION_ARB;
                     pContextAttribList[1] = attribList[1];
                     pContextAttribList += 2;
-                    ret->numAttribs++;
                     break;
                 case WGL_CONTEXT_MINOR_VERSION_ARB:
                     pContextAttribList[0] = GLX_CONTEXT_MINOR_VERSION_ARB;
                     pContextAttribList[1] = attribList[1];
                     pContextAttribList += 2;
-                    ret->numAttribs++;
                     break;
                 case WGL_CONTEXT_LAYER_PLANE_ARB:
                     break;
@@ -1759,25 +1647,21 @@ static BOOL x11drv_context_create( HDC hdc, int format, void *share_private, con
                     pContextAttribList[0] = GLX_CONTEXT_FLAGS_ARB;
                     pContextAttribList[1] = attribList[1];
                     pContextAttribList += 2;
-                    ret->numAttribs++;
                     break;
                 case WGL_CONTEXT_OPENGL_NO_ERROR_ARB:
                     pContextAttribList[0] = GLX_CONTEXT_OPENGL_NO_ERROR_ARB;
                     pContextAttribList[1] = attribList[1];
                     pContextAttribList += 2;
-                    ret->numAttribs++;
                     break;
                 case WGL_CONTEXT_PROFILE_MASK_ARB:
                     pContextAttribList[0] = GLX_CONTEXT_PROFILE_MASK_ARB;
                     pContextAttribList[1] = attribList[1];
                     pContextAttribList += 2;
-                    ret->numAttribs++;
                     break;
                 case WGL_RENDERER_ID_WINE:
                     pContextAttribList[0] = GLX_RENDERER_ID_MESA;
                     pContextAttribList[1] = attribList[1];
                     pContextAttribList += 2;
-                    ret->numAttribs++;
                     break;
                 default:
                     ERR("Unhandled attribList pair: %#x %#x\n", attribList[0], attribList[1]);
@@ -1787,7 +1671,8 @@ static BOOL x11drv_context_create( HDC hdc, int format, void *share_private, con
         }
 
         X11DRV_expect_error(gdi_display, GLXErrorHandler, NULL);
-        ret->ctx = create_glxcontext(gdi_display, ret, hShareContext ? hShareContext->ctx : NULL);
+        ret->ctx = create_glxcontext( gdi_display, ret, hShareContext ? hShareContext->ctx : NULL,
+                                      attribList ? glx_attribs : NULL );
         XSync(gdi_display, False);
         if ((err = X11DRV_check_error()) || !ret->ctx)
         {
@@ -2033,14 +1918,14 @@ static BOOL x11drv_swap_buffers( void *private, HWND hwnd, HDC hdc, int interval
             /* (glX)SwapBuffers has an implicit glFlush effect, however
              * GLX_MESA_copy_sub_buffer doesn't. Make sure GL is flushed before
              * copying */
-            pglFlush();
+            funcs->p_glFlush();
             pglXCopySubBufferMESA( gdi_display, gl->drawable, 0, 0,
                                    gl->rect.right, gl->rect.bottom );
             break;
         }
         if (ctx && pglXSwapBuffersMscOML)
         {
-            pglFlush();
+            funcs->p_glFlush();
             target_sbc = pglXSwapBuffersMscOML( gdi_display, gl->drawable, 0, 0, 0 );
             break;
         }
@@ -2054,7 +1939,7 @@ static BOOL x11drv_swap_buffers( void *private, HWND hwnd, HDC hdc, int interval
     default:
         if (ctx && drawable && pglXSwapBuffersMscOML)
         {
-            pglFlush();
+            funcs->p_glFlush();
             target_sbc = pglXSwapBuffersMscOML( gdi_display, gl->drawable, 0, 0, 0 );
             break;
         }
@@ -2081,8 +1966,6 @@ static const struct opengl_driver_funcs x11drv_driver_funcs =
     .p_swap_buffers = x11drv_swap_buffers,
     .p_context_create = x11drv_context_create,
     .p_context_destroy = x11drv_context_destroy,
-    .p_context_copy = x11drv_context_copy,
-    .p_context_share = x11drv_context_share,
     .p_context_flush = x11drv_context_flush,
     .p_context_make_current = x11drv_context_make_current,
     .p_pbuffer_create = x11drv_pbuffer_create,

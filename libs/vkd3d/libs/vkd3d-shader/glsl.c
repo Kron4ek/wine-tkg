@@ -421,6 +421,9 @@ static void shader_glsl_print_src(struct vkd3d_string_buffer *buffer, struct vkd
         case VKD3DSPSM_ABS:
             vkd3d_string_buffer_printf(buffer, "abs(%s)", str->buffer);
             break;
+        case VKD3DSPSM_ABSNEG:
+            vkd3d_string_buffer_printf(buffer, "-abs(%s)", str->buffer);
+            break;
         default:
             vkd3d_string_buffer_printf(buffer, "<unhandled modifier %#x>(%s)",
                     vsir_src->modifiers, str->buffer);
@@ -495,6 +498,9 @@ static void VKD3D_PRINTF_FUNC(4, 0) shader_glsl_vprint_assignment(struct vkd3d_g
     uint32_t modifiers = dst->vsir->modifiers;
     bool close = true;
 
+    /* It is always legitimate to ignore _pp. */
+    modifiers &= ~VKD3DSPDM_PARTIALPRECISION;
+
     if (dst->vsir->shift)
         vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
                 "Internal compiler error: Unhandled destination shift %#x.", dst->vsir->shift);
@@ -555,10 +561,12 @@ static void VKD3D_PRINTF_FUNC(4, 5) shader_glsl_print_assignment_ext(struct vkd3
 
 static void shader_glsl_unhandled(struct vkd3d_glsl_generator *gen, const struct vkd3d_shader_instruction *ins)
 {
+    const char *name = vsir_opcode_get_name(ins->opcode, "<unknown>");
+
     shader_glsl_print_indent(gen->buffer, gen->indent);
-    vkd3d_string_buffer_printf(gen->buffer, "/* <unhandled instruction %#x> */\n", ins->opcode);
+    vkd3d_string_buffer_printf(gen->buffer, "/* <unhandled instruction \"%s\" (%#x)> */\n", name, ins->opcode);
     vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
-            "Internal compiler error: Unhandled instruction %#x.", ins->opcode);
+            "Internal compiler error: Unhandled instruction \"%s\" (%#x).", name, ins->opcode);
 }
 
 static void shader_glsl_binop(struct vkd3d_glsl_generator *gen,
@@ -2313,7 +2321,7 @@ static void shader_glsl_handle_global_flags(struct vkd3d_string_buffer *buffer,
         flags &= ~VKD3DSGF_FORCE_EARLY_DEPTH_STENCIL;
     }
 
-    if (flags)
+    if (flags & ~VKD3DSGF_REFACTORING_ALLOWED)
         vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
                 "Internal compiler error: Unhandled global flags %#"PRIx64".", (uint64_t)flags);
 }
