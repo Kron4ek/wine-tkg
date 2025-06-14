@@ -24,6 +24,8 @@
 #include "winbase.h"
 #include "ntuser.h"
 
+#define MAX_ATOM_LEN  255
+
 #define check_member_( file, line, val, exp, fmt, member )                                         \
     ok_(file, line)( (val).member == (exp).member, "got " #member " " fmt "\n", (val).member )
 #define check_member( val, exp, fmt, member )                                                      \
@@ -177,10 +179,77 @@ static void test_window_props(void)
 
 static void test_class(void)
 {
+    struct pinned_atom
+    {
+        ATOM atom;
+        const WCHAR *name;
+        BOOL class;
+    };
+    static const struct pinned_atom user_atoms[] =
+    {
+        { 0xc001, L"USER32" },
+        { 0xc002, L"ObjectLink" },
+        { 0xc003, L"OwnerLink" },
+        { 0xc004, L"Native" },
+        { 0xc005, L"Binary" },
+        { 0xc006, L"FileName" },
+        { 0xc007, L"FileNameW" },
+        { 0xc008, L"NetworkName" },
+        { 0xc009, L"DataObject" },
+        { 0xc00a, L"Embedded Object" },
+        { 0xc00b, L"Embed Source" },
+        { 0xc00c, L"Custom Link Source" },
+        { 0xc00d, L"Link Source" },
+        { 0xc00e, L"Object Descriptor" },
+        { 0xc00f, L"Link Source Descriptor" },
+        { 0xc010, L"OleDraw" },
+        { 0xc011, L"PBrush" },
+        { 0xc012, L"MSDraw" },
+        { 0xc013, L"Ole Private Data" },
+        { 0xc014, L"Screen Picture" },
+        { 0xc015, L"OleClipboardPersistOnFlush" },
+        { 0xc016, L"MoreOlePrivateData" },
+        { 0xc017, L"Button", TRUE },
+        { 0xc018, L"Edit", TRUE },
+        { 0xc019, L"Static", TRUE },
+        { 0xc01a, L"ListBox", TRUE },
+        { 0xc01b, L"ScrollBar", TRUE },
+        { 0xc01c, L"ComboBox", TRUE },
+    };
+    static const struct pinned_atom global_atoms[] =
+    {
+        { 0xc001, L"StdExit" },
+        { 0xc002, L"StdNewDocument" },
+        { 0xc003, L"StdOpenDocument" },
+        { 0xc004, L"StdEditDocument" },
+        { 0xc005, L"StdNewfromTemplate" },
+        { 0xc006, L"StdCloseDocument" },
+        { 0xc007, L"StdShowItem" },
+        { 0xc008, L"StdDoVerbItem" },
+        { 0xc009, L"System" },
+        { 0xc00a, L"OLEsystem" },
+        { 0xc00b, L"StdDocumentName" },
+        { 0xc00c, L"Protocols" },
+        { 0xc00d, L"Topics" },
+        { 0xc00e, L"Formats" },
+        { 0xc00f, L"Status" },
+        { 0xc010, L"EditEnvItems" },
+        { 0xc011, L"True" },
+        { 0xc012, L"False" },
+        { 0xc013, L"Change" },
+        { 0xc014, L"Save" },
+        { 0xc015, L"Close" },
+        { 0xc016, L"MSDraw" },
+        { 0xc017, L"CC32SubclassInfo" },
+    };
+    char DECLSPEC_ALIGN(8) abi_buf[sizeof(ATOM_BASIC_INFORMATION) + MAX_ATOM_LEN * sizeof(WCHAR)];
+    ATOM_BASIC_INFORMATION *abi = (ATOM_BASIC_INFORMATION *)abi_buf;
+    HWINSTA old_winstation, winstation;
     UNICODE_STRING name;
+    ATOM class, global;
+    NTSTATUS status;
     WCHAR buf[64];
     WNDCLASSW cls;
-    ATOM class;
     HWND hwnd;
     ULONG ret;
 
@@ -197,6 +266,10 @@ static void test_class(void)
 
     hwnd = CreateWindowW( L"test", L"test name", WS_OVERLAPPEDWINDOW | WS_HSCROLL | WS_VSCROLL,
                           CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, 0, 0, NULL, 0 );
+
+    status = NtQueryInformationAtom( class, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
+    ok( status == STATUS_INVALID_HANDLE || !status, "NtQueryInformationAtom returned %#lx\n", status );
+    if (!status) todo_wine ok( wcscmp( abi->Name, L"test" ), "buf = %s\n", debugstr_w(abi->Name) );
 
     memset( buf, 0xcc, sizeof(buf) );
     name.Buffer = buf;
@@ -268,6 +341,105 @@ static void test_class(void)
         "NtUserGetAtomName returned %lx %lu\n", ret, GetLastError() );
     ok( buf[0] == 0xcccc, "buf = %s\n", debugstr_w(buf) );
 
+    for (int i = 0; i < ARRAY_SIZE(global_atoms); i++)
+    {
+        winetest_push_context( "%#x: %s", global_atoms[i].atom, debugstr_w(global_atoms[i].name) );
+
+        status = NtQueryInformationAtom( global_atoms[i].atom, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
+        ok( !status, "NtQueryInformationAtom returned %#lx\n", status );
+        todo_wine ok( !wcscmp( abi->Name, global_atoms[i].name ), "buf = %s\n", debugstr_w(abi->Name) );
+
+        memset( buf, 0xcc, sizeof(buf) );
+        name.Buffer = buf;
+        name.Length = 0xdead;
+        name.MaximumLength = sizeof(buf);
+        ret = NtUserGetAtomName( global_atoms[i].atom, &name );
+        ok( ret != wcslen( global_atoms[i].name ), "NtUserGetAtomName returned %lu\n", ret );
+        ok( name.Length == 0xdead, "Length = %u\n", name.Length );
+        ok( name.MaximumLength == sizeof(buf), "MaximumLength = %u\n", name.MaximumLength );
+        ok( wcscmp( buf, global_atoms[i].name ), "buf = %s\n", debugstr_w(buf) );
+
+        winetest_pop_context();
+    }
+
+    for (int i = 0; i < ARRAY_SIZE(user_atoms); i++)
+    {
+        winetest_push_context( "%#x: %s", user_atoms[i].atom, debugstr_w(user_atoms[i].name) );
+
+        status = NtQueryInformationAtom( user_atoms[i].atom, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
+        ok( !status, "NtQueryInformationAtom returned %#lx\n", status );
+        ok( wcscmp( abi->Name, user_atoms[i].name ), "buf = %s\n", debugstr_w(abi->Name) );
+
+        memset( buf, 0xcc, sizeof(buf) );
+        name.Buffer = buf;
+        name.Length = 0xdead;
+        name.MaximumLength = sizeof(buf);
+        ret = NtUserGetAtomName( user_atoms[i].atom, &name );
+        if (!wcscmp( buf, L"AdditionalFGBoostProp" ))
+        {
+            /* W11 has an extra 0xc017 atom instead of Button, and shifts the predefined classes */
+            win_skip( "Skipping user atoms check on W11\n" );
+            break;
+        }
+        todo_wine_if( i != 0 && i != 2 && i != 6 )
+        ok( ret == wcslen( user_atoms[i].name ), "NtUserGetAtomName returned %lu\n", ret );
+        ok( name.Length == 0xdead, "Length = %u\n", name.Length );
+        ok( name.MaximumLength == sizeof(buf), "MaximumLength = %u\n", name.MaximumLength );
+        todo_wine ok( !wcscmp( buf, user_atoms[i].name ), "buf = %s\n", debugstr_w(buf) );
+
+        SetLastError( 0xdeadbeef );
+        hwnd = CreateWindowW( MAKEINTRESOURCEW(user_atoms[i].atom), NULL, WS_OVERLAPPEDWINDOW | WS_HSCROLL | WS_VSCROLL,
+                              CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, 0, 0, NULL, 0 );
+        if (!user_atoms[i].class)
+        {
+            todo_wine_if( i < 9 ) ok( !hwnd, "CreateWindowW succeeded\n" );
+            todo_wine ok( GetLastError() == ERROR_CANNOT_FIND_WND_CLASS, "got error %lu\n", GetLastError() );
+            if (hwnd) DestroyWindow( hwnd );
+        }
+        else
+        {
+            todo_wine ok( !!hwnd, "CreateWindowW failed: %lu\n", GetLastError() );
+            if (hwnd) DestroyWindow( hwnd );
+        }
+
+        winetest_pop_context();
+    }
+
+    status = NtAddAtom( L"WineTestGlobal", sizeof(L"WineTestGlobal"), &global );
+    ok( !status, "NtAddAtom returned %#lx\n", status );
+    cls.lpszClassName = L"WineTestClass";
+    class = RegisterClassW( &cls );
+    ok( class, "RegisterClassW failed: %lu\n", GetLastError() );
+
+    old_winstation = GetProcessWindowStation();
+    winstation = CreateWindowStationW( L"WineTest", 0, WINSTA_ALL_ACCESS, NULL );
+    ok( !!winstation && winstation != old_winstation, "CreateWindowStationW failed, error %#lx.\n", GetLastError() );
+    ret = SetProcessWindowStation( winstation );
+    ok( ret, "SetProcessWindowStation failed, error %#lx.\n", GetLastError() );
+    ok( winstation == GetProcessWindowStation(), "Expected %p, got %p.\n", GetProcessWindowStation(), winstation );
+
+    status = NtQueryInformationAtom( global, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
+    ok( !status, "NtQueryInformationAtom returned %#lx\n", status );
+    ok( !wcscmp( abi->Name, L"WineTestGlobal" ), "buf = %s\n", debugstr_w(abi->Name) );
+
+    memset( buf, 0xcc, sizeof(buf) );
+    name.Buffer = buf;
+    name.Length = 0xdead;
+    name.MaximumLength = sizeof(buf);
+    ret = NtUserGetAtomName( class, &name );
+    ok( ret == wcslen( L"WineTestClass" ), "NtUserGetAtomName returned %lu\n", ret );
+    ok( name.Length == 0xdead, "Length = %u\n", name.Length );
+    ok( name.MaximumLength == sizeof(buf), "MaximumLength = %u\n", name.MaximumLength );
+    ok( !wcscmp( buf, L"WineTestClass" ), "buf = %s\n", debugstr_w(buf) );
+
+    ret = SetProcessWindowStation( old_winstation );
+    ok( ret, "SetProcessWindowStation failed, error %#lx.\n", GetLastError() );
+    ok( old_winstation == GetProcessWindowStation(), "Expected %p, got %p.\n", GetProcessWindowStation(), old_winstation );
+
+    status = NtDeleteAtom( global );
+    ok( !status, "NtDeleteAtom returned %#lx\n", status );
+    ret = UnregisterClassW( MAKEINTRESOURCEW(class), GetModuleHandleW( NULL ) );
+    ok( ret, "UnregisterClassW failed: %lu\n", GetLastError() );
 }
 
 static LRESULT CALLBACK test_adjust_window_style_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
@@ -2592,6 +2764,104 @@ static void test_NtUserSetProcessDpiAwarenessContext( ULONG context )
     winetest_pop_context();
 }
 
+static void test_RegisterClipboardFormat(void)
+{
+    char DECLSPEC_ALIGN(8) abi_buf[sizeof(ATOM_BASIC_INFORMATION) + MAX_ATOM_LEN * sizeof(WCHAR)];
+    ATOM_BASIC_INFORMATION *abi = (ATOM_BASIC_INFORMATION *)abi_buf;
+    UNICODE_STRING name;
+    NTSTATUS status;
+    WCHAR buf[64];
+    ATOM atom;
+
+    SetLastError( 0xdeadbeef );
+    atom = RegisterClipboardFormatW( NULL );
+    ok( atom == 0, "got %#x\n", atom );
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got %#lx\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    atom = RegisterClipboardFormatW( L"" );
+    ok( atom == 0, "got %#x\n", atom );
+    todo_wine ok( GetLastError() == 0xdeadbeef, "got %#lx\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    atom = RegisterClipboardFormatW( L"#123" );
+    ok( atom == 123, "got %#x\n", atom );
+    ok( GetLastError() == 0xdeadbeef, "got %#lx\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    atom = RegisterClipboardFormatW( L"#49152" );
+    ok( atom == 0, "got %#x\n", atom );
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got %#lx\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    atom = RegisterClipboardFormatW( L"#0xabc" );
+    ok( atom != 0, "got %#x\n", atom );
+    ok( GetLastError() == 0xdeadbeef, "got %#lx\n", GetLastError() );
+    status = NtQueryInformationAtom( atom, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
+    todo_wine ok( status == STATUS_INVALID_HANDLE, "got %#lx\n", status );
+
+    memset( buf, 0xcc, sizeof(buf) );
+    name.Buffer = buf;
+    name.Length = 0xdead;
+    name.MaximumLength = sizeof(buf);
+    status = NtUserGetAtomName( atom, &name );
+    ok( status == 6, "NtUserGetAtomName returned %lu\n", status );
+    ok( name.Length == 0xdead, "Length = %u\n", name.Length );
+    ok( name.MaximumLength == sizeof(buf), "MaximumLength = %u\n", name.MaximumLength );
+    ok( !wcscmp( buf, L"#0xabc" ), "buf = %s\n", debugstr_w(buf) );
+}
+
+static void test_NtUserRegisterWindowMessage(void)
+{
+    char DECLSPEC_ALIGN(8) abi_buf[sizeof(ATOM_BASIC_INFORMATION) + MAX_ATOM_LEN * sizeof(WCHAR)];
+    ATOM_BASIC_INFORMATION *abi = (ATOM_BASIC_INFORMATION *)abi_buf;
+    UNICODE_STRING name;
+    NTSTATUS status;
+    WCHAR buf[64];
+    ATOM atom;
+
+    SetLastError( 0xdeadbeef );
+    atom = NtUserRegisterWindowMessage( NULL );
+    ok( atom == 0, "got %#x\n", atom );
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got %#lx\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    RtlInitUnicodeString( &name, L"" );
+    atom = NtUserRegisterWindowMessage( &name );
+    ok( atom == 0, "got %#x\n", atom );
+    todo_wine ok( GetLastError() == 0xdeadbeef, "got %#lx\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    RtlInitUnicodeString( &name, L"#123" );
+    atom = NtUserRegisterWindowMessage( &name );
+    ok( atom == 123, "got %#x\n", atom );
+    ok( GetLastError() == 0xdeadbeef, "got %#lx\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    RtlInitUnicodeString( &name, L"#49152" );
+    atom = NtUserRegisterWindowMessage( &name );
+    ok( atom == 0, "got %#x\n", atom );
+    ok( GetLastError() == ERROR_INVALID_PARAMETER, "got %#lx\n", GetLastError() );
+
+    SetLastError( 0xdeadbeef );
+    RtlInitUnicodeString( &name, L"#0xabc" );
+    atom = NtUserRegisterWindowMessage( &name );
+    ok( atom != 0, "got %#x\n", atom );
+    ok( GetLastError() == 0xdeadbeef, "got %#lx\n", GetLastError() );
+    status = NtQueryInformationAtom( atom, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
+    todo_wine ok( status == STATUS_INVALID_HANDLE, "got %#lx\n", status );
+
+    memset( buf, 0xcc, sizeof(buf) );
+    name.Buffer = buf;
+    name.Length = 0xdead;
+    name.MaximumLength = sizeof(buf);
+    status = NtUserGetAtomName( atom, &name );
+    ok( status == 6, "NtUserGetAtomName returned %lu\n", status );
+    ok( name.Length == 0xdead, "Length = %u\n", name.Length );
+    ok( name.MaximumLength == sizeof(buf), "MaximumLength = %u\n", name.MaximumLength );
+    ok( !wcscmp( buf, L"#0xabc" ), "buf = %s\n", debugstr_w(buf) );
+}
+
 START_TEST(win32u)
 {
     char **argv;
@@ -2641,6 +2911,8 @@ START_TEST(win32u)
     test_NtUserCloseWindowStation();
     test_NtUserDisplayConfigGetDeviceInfo();
     test_NtUserQueryWindow();
+    test_RegisterClipboardFormat();
+    test_NtUserRegisterWindowMessage();
 
     run_in_process( argv, "NtUserEnableMouseInPointer 0" );
     run_in_process( argv, "NtUserEnableMouseInPointer 1" );

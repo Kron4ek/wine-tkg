@@ -223,6 +223,7 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_DXIL_INVALID_PROPERTIES          = 8017,
     VKD3D_SHADER_ERROR_DXIL_INVALID_RESOURCES           = 8018,
     VKD3D_SHADER_ERROR_DXIL_INVALID_RESOURCE_HANDLE     = 8019,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_CONSTANT            = 8020,
 
     VKD3D_SHADER_WARNING_DXIL_UNKNOWN_MAGIC_NUMBER      = 8300,
     VKD3D_SHADER_WARNING_DXIL_UNKNOWN_SHADER_TYPE       = 8301,
@@ -552,10 +553,12 @@ enum vkd3d_shader_opcode
     VKD3DSIH_TEXBEM,
     VKD3DSIH_TEXBEML,
     VKD3DSIH_TEXCOORD,
+    VKD3DSIH_TEXCRD,
     VKD3DSIH_TEXDEPTH,
     VKD3DSIH_TEXDP3,
     VKD3DSIH_TEXDP3TEX,
     VKD3DSIH_TEXKILL,
+    VKD3DSIH_TEXLD,
     VKD3DSIH_TEXLDD,
     VKD3DSIH_TEXLDL,
     VKD3DSIH_TEXM3x2DEPTH,
@@ -608,6 +611,8 @@ enum vkd3d_shader_opcode
 
     VKD3DSIH_COUNT,
 };
+
+const char *vsir_opcode_get_name(enum vkd3d_shader_opcode op, const char *error);
 
 enum vkd3d_shader_register_type
 {
@@ -966,7 +971,7 @@ struct vkd3d_shader_register
     enum vsir_dimension dimension;
     /* known address alignment for optimisation, or zero */
     unsigned int alignment;
-    union
+    union vsir_immediate_constant
     {
         uint32_t immconst_u32[VKD3D_VEC4_SIZE];
         float immconst_f32[VKD3D_VEC4_SIZE];
@@ -1332,12 +1337,6 @@ static inline bool register_is_undef(const struct vkd3d_shader_register *reg)
 static inline bool register_is_constant_or_undef(const struct vkd3d_shader_register *reg)
 {
     return register_is_constant(reg) || register_is_undef(reg);
-}
-
-static inline bool register_is_scalar_constant_zero(const struct vkd3d_shader_register *reg)
-{
-    return register_is_constant(reg) && reg->dimension == VSIR_DIMENSION_SCALAR
-            && (data_type_is_64_bit(reg->data_type) ? !reg->u.immconst_u64[0] : !reg->u.immconst_u32[0]);
 }
 
 static inline bool register_is_numeric_array(const struct vkd3d_shader_register *reg)
@@ -1779,14 +1778,6 @@ static inline enum vkd3d_data_type vkd3d_data_type_from_component_type(
 static inline bool component_type_is_64_bit(enum vkd3d_shader_component_type component_type)
 {
     return component_type == VKD3D_SHADER_COMPONENT_DOUBLE || component_type == VKD3D_SHADER_COMPONENT_UINT64;
-}
-
-enum vkd3d_shader_input_sysval_semantic vkd3d_siv_from_sysval_indexed(enum vkd3d_shader_sysval_semantic sysval,
-        unsigned int index);
-
-static inline enum vkd3d_shader_input_sysval_semantic vkd3d_siv_from_sysval(enum vkd3d_shader_sysval_semantic sysval)
-{
-    return vkd3d_siv_from_sysval_indexed(sysval, 0);
 }
 
 static inline unsigned int vsir_write_mask_get_component_idx(uint32_t write_mask)

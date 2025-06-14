@@ -97,7 +97,7 @@ static BOOL read_acquire_user_entry( HANDLE handle, unsigned short type, const v
     dst->offset = src->offset;
     dst->tid = src->tid;
     dst->pid = src->pid;
-    dst->padding = src->padding;
+    dst->id = src->id;
     __SHARED_READ_FENCE;
     dst->uniq = ReadNoFence64( &src->uniq );
     return dst->uniq == uniq;
@@ -121,6 +121,33 @@ static BOOL get_user_entry_at( WORD index, unsigned short type, struct user_entr
     if (!read_acquire_user_entry( 0, type, entries + index, entry )) return FALSE;
     *full = USER_HANDLE_FROM_INDEX( index, entry->generation );
     return TRUE;
+}
+
+static NTSTATUS get_shared_window( HANDLE handle, struct object_lock *lock, const window_shm_t **window_shm )
+{
+    const shared_object_t *object;
+    struct user_entry entry;
+
+    TRACE( "handle %p, lock %p, window_shm %p\n", handle, lock, window_shm );
+
+    if (!get_user_entry( handle, NTUSER_OBJ_WINDOW, &entry, &handle )) return STATUS_INVALID_HANDLE;
+
+    if (lock->id) object = CONTAINING_RECORD( *window_shm, shared_object_t, shm.window );
+    else
+    {
+        object = find_shared_session_object( entry.id, entry.offset );
+        if (!object) return STATUS_INVALID_HANDLE;
+    }
+
+    if (!lock->id || !shared_object_release_seqlock( object, lock->seq ))
+    {
+        shared_object_acquire_seqlock( object, &lock->seq );
+        *window_shm = &object->shm.window;
+        lock->id = object->id;
+        return STATUS_PENDING;
+    }
+
+    return STATUS_SUCCESS;
 }
 
 /***********************************************************************
@@ -236,7 +263,7 @@ HWND get_full_window_handle( HWND hwnd )
     /* do sign extension for -2 and -3 */
     if (LOWORD(hwnd) >= (WORD)-3) return (HWND)(LONG_PTR)(INT16)LOWORD(hwnd);
 
-    if (!get_user_entry( hwnd, NTUSER_OBJ_WINDOW, &entry, &handle )) return 0;
+    if (!get_user_entry( hwnd, NTUSER_OBJ_WINDOW, &entry, &handle )) return hwnd;
     return handle;
 }
 
@@ -441,7 +468,6 @@ HWND WINAPI NtUserSetParent( HWND hwnd, HWND parent )
         {
             old_parent = wine_server_ptr_handle( reply->old_parent );
             win->parent = parent = wine_server_ptr_handle( reply->full_parent );
-            win->dpi_context = reply->dpi_context;
         }
 
     }
@@ -851,63 +877,25 @@ BOOL is_window_enabled( HWND hwnd )
 /* see GetWindowDpiAwarenessContext */
 UINT get_window_dpi_awareness_context( HWND hwnd )
 {
-    UINT ret = 0;
-    WND *win;
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const window_shm_t *window_shm;
+    UINT status, ctx = 0;
 
-    if (!(win = get_win_ptr( hwnd )))
+    while ((status = get_shared_window( hwnd, &lock, &window_shm )) == STATUS_PENDING)
+        ctx = window_shm->dpi_context;
+    if (status)
     {
         RtlSetLastWin32Error( ERROR_INVALID_WINDOW_HANDLE );
         return 0;
     }
-    if (win == WND_DESKTOP) return NTUSER_DPI_PER_MONITOR_AWARE;
-    if (win != WND_OTHER_PROCESS)
-    {
-        ret = win->dpi_context;
-        release_win_ptr( win );
-    }
-    else
-    {
-        SERVER_START_REQ( get_window_info )
-        {
-            req->handle = wine_server_user_handle( hwnd );
-            if (!wine_server_call_err( req )) ret = reply->dpi_context;
-        }
-        SERVER_END_REQ;
-    }
-    return ret;
+
+    return ctx;
 }
 
 /* see GetDpiForWindow */
 UINT get_dpi_for_window( HWND hwnd )
 {
-    WND *win;
-    UINT raw_dpi, context = 0;
-
-    if (!(win = get_win_ptr( hwnd )))
-    {
-        RtlSetLastWin32Error( ERROR_INVALID_WINDOW_HANDLE );
-        return 0;
-    }
-    if (win == WND_DESKTOP)
-    {
-        RECT rect = {0};
-        return monitor_dpi_from_rect( rect, get_thread_dpi(), &raw_dpi );
-    }
-    if (win != WND_OTHER_PROCESS)
-    {
-        context = win->dpi_context;
-        release_win_ptr( win );
-    }
-    else
-    {
-        SERVER_START_REQ( get_window_info )
-        {
-            req->handle = wine_server_user_handle( hwnd );
-            if (!wine_server_call_err( req )) context = reply->dpi_context;
-        }
-        SERVER_END_REQ;
-    }
-
+    UINT raw_dpi, context = get_window_dpi_awareness_context( hwnd );
     if (NTUSER_DPI_CONTEXT_IS_MONITOR_AWARE( context )) return get_win_monitor_dpi( hwnd, &raw_dpi );
     return NTUSER_DPI_CONTEXT_GET_DPI( context );
 }
@@ -1025,27 +1013,12 @@ static LONG_PTR get_window_long_size( HWND hwnd, INT offset, UINT size, BOOL ans
             RtlSetLastWin32Error( ERROR_ACCESS_DENIED );
             return 0;
         }
-        SERVER_START_REQ( set_window_info )
+        SERVER_START_REQ( get_window_info )
         {
             req->handle = wine_server_user_handle( hwnd );
-            req->flags  = 0;  /* don't set anything, just retrieve */
-            req->extra_offset = (offset >= 0) ? offset : -1;
-            req->extra_size = (offset >= 0) ? size : 0;
-            if (!wine_server_call_err( req ))
-            {
-                switch(offset)
-                {
-                case GWL_STYLE:      retval = reply->old_style; break;
-                case GWL_EXSTYLE:    retval = reply->old_ex_style; break;
-                case GWLP_ID:        retval = reply->old_id; break;
-                case GWLP_HINSTANCE: retval = (ULONG_PTR)wine_server_get_ptr( reply->old_instance ); break;
-                case GWLP_USERDATA:  retval = reply->old_user_data; break;
-                default:
-                    if (offset >= 0) retval = get_win_data( &reply->old_extra_value, size );
-                    else RtlSetLastWin32Error( ERROR_INVALID_INDEX );
-                    break;
-                }
-            }
+            req->offset = offset;
+            req->size = size;
+            if (!wine_server_call_err( req )) retval = reply->info;
         }
         SERVER_END_REQ;
         return retval;
@@ -1139,12 +1112,11 @@ UINT set_window_style_bits( HWND hwnd, UINT set_bits, UINT clear_bits )
     SERVER_START_REQ( set_window_info )
     {
         req->handle = wine_server_user_handle( hwnd );
-        req->flags  = SET_WIN_STYLE;
-        req->style  = style.styleNew;
-        req->extra_offset = -1;
+        req->offset = GWL_STYLE;
+        req->new_info = style.styleNew;
         if ((ok = !wine_server_call( req )))
         {
-            style.styleOld = reply->old_style;
+            style.styleOld = reply->old_info;
             win->dwStyle = style.styleNew;
         }
     }
@@ -1329,74 +1301,45 @@ LONG_PTR set_window_long( HWND hwnd, INT offset, UINT size, LONG_PTR newval, BOO
         break;
     }
 
+    if (offset == GWLP_WNDPROC) newval = !!(win->flags & WIN_ISUNICODE);
+    if (offset == GWLP_USERDATA && size == sizeof(WORD)) newval = MAKELONG( newval, win->userdata >> 16 );
+
     SERVER_START_REQ( set_window_info )
     {
         req->handle = wine_server_user_handle( hwnd );
-        req->extra_offset = -1;
-        switch(offset)
-        {
-        case GWL_STYLE:
-            req->flags = SET_WIN_STYLE | SET_WIN_EXSTYLE;
-            req->style = newval;
-            req->ex_style = fix_exstyle(newval, win->dwExStyle);
-            break;
-        case GWL_EXSTYLE:
-            req->flags = SET_WIN_EXSTYLE;
-            req->ex_style = newval;
-            break;
-        case GWLP_ID:
-            req->flags = SET_WIN_ID;
-            req->extra_value = newval;
-            break;
-        case GWLP_HINSTANCE:
-            req->flags = SET_WIN_INSTANCE;
-            req->instance = wine_server_client_ptr( (void *)newval );
-            break;
-        case GWLP_WNDPROC:
-            req->flags = SET_WIN_UNICODE;
-            req->is_unicode = (win->flags & WIN_ISUNICODE) != 0;
-            break;
-        case GWLP_USERDATA:
-            if (size == sizeof(WORD)) newval = MAKELONG( newval, win->userdata >> 16 );
-            req->flags = SET_WIN_USERDATA;
-            req->user_data = newval;
-            break;
-        default:
-            req->flags = SET_WIN_EXTRA;
-            req->extra_offset = offset;
-            req->extra_size = size;
-            set_win_data( &req->extra_value, newval, size );
-        }
+        req->offset = offset;
+        req->new_info = newval;
+        req->size = size;
         if ((ok = !wine_server_call_err( req )))
         {
-            switch(offset)
+            switch (offset)
             {
             case GWL_STYLE:
                 win->dwStyle = newval;
                 win->dwExStyle = fix_exstyle(win->dwStyle, win->dwExStyle);
-                retval = reply->old_style;
+                retval = reply->old_info;
                 break;
             case GWL_EXSTYLE:
                 win->dwExStyle = newval;
-                retval = reply->old_ex_style;
+                retval = reply->old_info;
                 break;
             case GWLP_ID:
                 win->wIDmenu = newval;
-                retval = reply->old_id;
+                retval = reply->old_info;
                 break;
             case GWLP_HINSTANCE:
                 win->hInstance = (HINSTANCE)newval;
-                retval = (ULONG_PTR)wine_server_get_ptr( reply->old_instance );
+                retval = reply->old_info;
                 break;
             case GWLP_WNDPROC:
                 break;
             case GWLP_USERDATA:
                 win->userdata = newval;
-                retval = reply->old_user_data;
+                retval = reply->old_info;
                 break;
             default:
-                retval = get_win_data( (char *)win->wExtra + offset, size );
                 set_win_data( (char *)win->wExtra + offset, newval, size );
+                retval = reply->old_info;
                 break;
             }
         }
@@ -5212,16 +5155,43 @@ BOOL WINAPI NtUserDestroyWindow( HWND hwnd )
  */
 void destroy_thread_windows(void)
 {
-    WND *win, *free_list = NULL;
+    struct list vulkan_surfaces = LIST_INIT(vulkan_surfaces);
+    struct destroy_entry
+    {
+        HWND handle;
+        HMENU menu;
+        HMENU sys_menu;
+        struct window_surface *surface;
+        struct destroy_entry *next;
+    } *entry, *free_list = NULL;
     HANDLE handle = 0;
+    WND *win;
+
+    /* recycle WND structs as destroy_entry structs */
+    C_ASSERT( sizeof(struct destroy_entry) <= sizeof(WND) );
 
     user_lock();
     while ((win = next_thread_user_object( GetCurrentThreadId(), &handle, NTUSER_OBJ_WINDOW )))
     {
+        BOOL is_child = (win->dwStyle & (WS_CHILD | WS_POPUP)) == WS_CHILD;
+        struct destroy_entry tmp = {0};
+
         free_dce( win->dce, win->handle );
         set_user_handle_ptr( handle, NULL );
-        win->userdata = (UINT_PTR)free_list;
-        free_list = win;
+        free( win->pScroll );
+        free( win->text );
+
+        /* recycle the WND struct as a destroy_entry struct */
+        entry = (struct destroy_entry *)win;
+        tmp.handle = win->handle;
+        list_move_tail( &vulkan_surfaces, &win->vulkan_surfaces );
+        if (!is_child) tmp.menu = (HMENU)win->wIDmenu;
+        tmp.sys_menu = win->hSysMenu;
+        tmp.surface = win->surface;
+        *entry = tmp;
+
+        entry->next = free_list;
+        free_list = entry;
     }
     if (free_list)
     {
@@ -5234,26 +5204,24 @@ void destroy_thread_windows(void)
     }
     user_unlock();
 
-    while ((win = free_list))
+    while ((entry = free_list))
     {
-        free_list = (WND *)win->userdata;
-        TRACE( "destroying %p\n", win );
+        free_list = entry->next;
+        TRACE( "destroying %p\n", entry );
 
-        user_driver->pDestroyWindow( win->handle );
-        vulkan_detach_surfaces( &win->vulkan_surfaces );
+        user_driver->pDestroyWindow( entry->handle );
 
-        if ((win->dwStyle & (WS_CHILD | WS_POPUP)) != WS_CHILD && win->wIDmenu)
-            NtUserDestroyMenu( UlongToHandle(win->wIDmenu) );
-        if (win->hSysMenu) NtUserDestroyMenu( win->hSysMenu );
-        if (win->surface)
+        NtUserDestroyMenu( entry->menu );
+        NtUserDestroyMenu( entry->sys_menu );
+        if (entry->surface)
         {
-            register_window_surface( win->surface, NULL );
-            window_surface_release( win->surface );
+            register_window_surface( entry->surface, NULL );
+            window_surface_release( entry->surface );
         }
-        free( win->pScroll );
-        free( win->text );
-        free( win );
+        free( entry );
     }
+
+    vulkan_detach_surfaces( &vulkan_surfaces );
 }
 
 /***********************************************************************
@@ -5261,9 +5229,8 @@ void destroy_thread_windows(void)
  *
  * Create a window handle with the server.
  */
-static WND *create_window_handle( HWND parent, HWND owner, UNICODE_STRING *name,
-                                  HINSTANCE instance, BOOL ansi,
-                                  DWORD style, DWORD ex_style )
+static WND *create_window_handle( HWND parent, HWND owner, UNICODE_STRING *name, HINSTANCE class_instance,
+                                  HINSTANCE instance, BOOL ansi, DWORD style, DWORD ex_style )
 {
     UINT dpi_context = get_thread_dpi_awareness_context();
     HWND handle = 0, full_parent = 0, full_owner = 0;
@@ -5273,12 +5240,13 @@ static WND *create_window_handle( HWND parent, HWND owner, UNICODE_STRING *name,
 
     SERVER_START_REQ( create_window )
     {
-        req->parent    = wine_server_user_handle( parent );
-        req->owner     = wine_server_user_handle( owner );
-        req->instance  = wine_server_client_ptr( instance );
-        req->dpi_context = dpi_context;
-        req->style     = style;
-        req->ex_style  = ex_style;
+        req->parent          = wine_server_user_handle( parent );
+        req->owner           = wine_server_user_handle( owner );
+        req->class_instance  = wine_server_client_ptr( class_instance );
+        req->instance        = wine_server_client_ptr( instance );
+        req->dpi_context     = dpi_context;
+        req->style           = style;
+        req->ex_style        = ex_style;
         if (!(req->atom = get_int_atom_value( name )) && name->Length)
             wine_server_add_data( req, name->Buffer, name->Length );
         if (!wine_server_call_err( req ))
@@ -5287,7 +5255,6 @@ static WND *create_window_handle( HWND parent, HWND owner, UNICODE_STRING *name,
             full_parent = wine_server_ptr_handle( reply->parent );
             full_owner  = wine_server_ptr_handle( reply->owner );
             extra_bytes = reply->extra;
-            dpi_context = reply->dpi_context;
             class       = wine_server_get_ptr( reply->class_ptr );
         }
     }
@@ -5337,8 +5304,8 @@ static WND *create_window_handle( HWND parent, HWND owner, UNICODE_STRING *name,
     win->owner      = full_owner;
     win->class      = class;
     win->winproc    = get_class_winproc( class );
+    win->hInstance  = instance;
     win->cbWndExtra = extra_bytes;
-    win->dpi_context = dpi_context;
     list_init( &win->vulkan_surfaces );
     set_user_handle_ptr( handle, win );
     if (is_winproc_unicode( win->winproc, !ansi )) win->flags |= WIN_ISUNICODE;
@@ -5432,8 +5399,8 @@ static void map_dpi_create_struct( CREATESTRUCTW *cs, UINT dpi_to )
 HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
                                   UNICODE_STRING *version, UNICODE_STRING *window_name,
                                   DWORD style, INT x, INT y, INT cx, INT cy,
-                                  HWND parent, HMENU menu, HINSTANCE instance, void *params,
-                                  DWORD flags, HINSTANCE client_instance, DWORD unk, BOOL ansi )
+                                  HWND parent, HMENU menu, HINSTANCE class_instance, void *params,
+                                  DWORD flags, HINSTANCE instance, DWORD unk, BOOL ansi )
 {
     UINT win_dpi, context;
     struct window_surface *surface;
@@ -5448,7 +5415,7 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
     static const WCHAR messageW[] = {'M','e','s','s','a','g','e'};
 
     cs.lpCreateParams = params;
-    cs.hInstance  = client_instance ? client_instance : instance;
+    cs.hInstance  = instance ? instance : class_instance;
     cs.hMenu      = menu;
     cs.hwndParent = parent;
     cs.style      = style;
@@ -5505,13 +5472,13 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
 
     style = cs.style & ~WS_VISIBLE;
     ex_style = cs.dwExStyle & ~WS_EX_LAYERED;
-    if (!(win = create_window_handle( parent, owner, class_name, instance, ansi, style, ex_style )))
+    if (!(win = create_window_handle( parent, owner, class_name, class_instance,
+                                      cs.hInstance, ansi, style, ex_style )))
         return 0;
     hwnd = win->handle;
 
     /* Fill the window structure */
 
-    win->hInstance   = cs.hInstance;
     win->text        = NULL;
     win->dwStyle     = style;
     win->dwExStyle   = ex_style;
@@ -5565,15 +5532,12 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
 
     if (!(win->dwStyle & (WS_CHILD | WS_POPUP))) win->flags |= WIN_NEED_SIZE;
 
-    SERVER_START_REQ( set_window_info )
+    SERVER_START_REQ( init_window_info )
     {
         req->handle     = wine_server_user_handle( hwnd );
-        req->flags      = SET_WIN_STYLE | SET_WIN_EXSTYLE | SET_WIN_INSTANCE | SET_WIN_UNICODE;
         req->style      = win->dwStyle;
         req->ex_style   = win->dwExStyle;
-        req->instance   = wine_server_client_ptr( win->hInstance );
         req->is_unicode = (win->flags & WIN_ISUNICODE) != 0;
-        req->extra_offset = -1;
         wine_server_call( req );
     }
     SERVER_END_REQ;
@@ -5591,9 +5555,9 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
     }
     else NtUserSetWindowLongPtr( hwnd, GWLP_ID, (ULONG_PTR)cs.hMenu, FALSE );
 
-    win_dpi = NTUSER_DPI_CONTEXT_GET_DPI( win->dpi_context );
     release_win_ptr( win );
 
+    win_dpi = get_dpi_for_window( hwnd );
     if (parent) map_dpi_create_struct( &cs, win_dpi );
 
     context = set_thread_dpi_awareness_context( get_window_dpi_awareness_context( hwnd ));

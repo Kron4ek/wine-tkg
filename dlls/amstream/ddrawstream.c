@@ -637,49 +637,83 @@ static HRESULT WINAPI ddraw_IDirectDrawMediaStream_SetFormat(IDirectDrawMediaStr
     if (format->dwFlags & DDSD_PIXELFORMAT)
     {
         if (format->ddpfPixelFormat.dwSize != sizeof(DDPIXELFORMAT))
+        {
+            WARN("Invalid size %#lx, returning DDERR_INVALIDSURFACETYPE.\n", format->ddpfPixelFormat.dwSize);
             return DDERR_INVALIDSURFACETYPE;
+        }
 
         if (format->ddpfPixelFormat.dwFlags & DDPF_FOURCC)
         {
             if (!format->ddpfPixelFormat.dwRGBBitCount)
+            {
+                WARN("Invalid zero bit count, returning E_INVALIDARG.\n");
                 return E_INVALIDARG;
+            }
         }
         else
         {
             if (format->ddpfPixelFormat.dwFlags & (DDPF_YUV | DDPF_PALETTEINDEXED1 |
                     DDPF_PALETTEINDEXED2 | DDPF_PALETTEINDEXED4 | DDPF_PALETTEINDEXEDTO8))
+            {
+                WARN("Rejecting flags %#lx.\n", format->ddpfPixelFormat.dwFlags);
                 return DDERR_INVALIDSURFACETYPE;
+            }
 
             if (!(format->ddpfPixelFormat.dwFlags & DDPF_RGB))
+            {
+                WARN("Rejecting non-RGB flags %#lx.\n", format->ddpfPixelFormat.dwFlags);
                 return DDERR_INVALIDSURFACETYPE;
+            }
 
             switch (format->ddpfPixelFormat.dwRGBBitCount)
             {
             case 8:
                 if (!(format->ddpfPixelFormat.dwFlags & DDPF_PALETTEINDEXED8))
+                {
+                    WARN("Rejecting non-palettized 8-bit format.\n");
                     return DDERR_INVALIDSURFACETYPE;
+                }
                 break;
             case 16:
                 if (format->ddpfPixelFormat.dwFlags & DDPF_PALETTEINDEXED8)
+                {
+                    WARN("Rejecting palettized 16-bit format.\n");
                     return DDERR_INVALIDSURFACETYPE;
+                }
                 if ((format->ddpfPixelFormat.dwRBitMask != 0x7c00 ||
                     format->ddpfPixelFormat.dwGBitMask != 0x03e0 ||
                     format->ddpfPixelFormat.dwBBitMask != 0x001f) &&
                     (format->ddpfPixelFormat.dwRBitMask != 0xf800 ||
                     format->ddpfPixelFormat.dwGBitMask != 0x07e0 ||
                     format->ddpfPixelFormat.dwBBitMask != 0x001f))
+                {
+                    WARN("Rejecting bit masks %08lx, %08lx, %08lx.\n",
+                            format->ddpfPixelFormat.dwRBitMask,
+                            format->ddpfPixelFormat.dwGBitMask,
+                            format->ddpfPixelFormat.dwBBitMask);
                     return DDERR_INVALIDSURFACETYPE;
+                }
                 break;
             case 24:
             case 32:
                 if (format->ddpfPixelFormat.dwFlags & DDPF_PALETTEINDEXED8)
+                {
+                    WARN("Rejecting palettized %lu-bit format.\n", format->ddpfPixelFormat.dwRGBBitCount);
                     return DDERR_INVALIDSURFACETYPE;
+                }
                 if (format->ddpfPixelFormat.dwRBitMask != 0xff0000 ||
                     format->ddpfPixelFormat.dwGBitMask != 0x00ff00 ||
                     format->ddpfPixelFormat.dwBBitMask != 0x0000ff)
+                {
+                    WARN("Rejecting bit masks %08lx, %08lx, %08lx.\n",
+                            format->ddpfPixelFormat.dwRBitMask,
+                            format->ddpfPixelFormat.dwGBitMask,
+                            format->ddpfPixelFormat.dwBBitMask);
                     return DDERR_INVALIDSURFACETYPE;
+                }
                 break;
             default:
+                WARN("Unknown bit count %lu.\n", format->ddpfPixelFormat.dwRGBBitCount);
                 return DDERR_INVALIDSURFACETYPE;
             }
         }
@@ -703,6 +737,7 @@ static HRESULT WINAPI ddraw_IDirectDrawMediaStream_SetFormat(IDirectDrawMediaStr
 
         if (stream->sample_refs > 0)
         {
+            WARN("Outstanding sample references, returning MS_E_SAMPLEALLOC.\n");
             stream->format = old_format;
             LeaveCriticalSection(&stream->cs);
             return MS_E_SAMPLEALLOC;
@@ -1027,6 +1062,7 @@ static HRESULT WINAPI ddraw_sink_ReceiveConnection(IPin *iface, IPin *peer, cons
     DDPIXELFORMAT pf = {sizeof(DDPIXELFORMAT)};
 
     TRACE("stream %p, peer %p, mt %p.\n", stream, peer, mt);
+    strmbase_dump_media_type(mt);
 
     EnterCriticalSection(&stream->cs);
 
@@ -1394,6 +1430,9 @@ static HRESULT WINAPI ddraw_mem_allocator_SetProperties(IMemAllocator *iface,
 
     TRACE("stream %p, req_props %p, ret_props %p.\n", stream, req_props, ret_props);
 
+    TRACE("Requested %ld buffers, size %ld, prefix %ld, alignment %ld.\n",
+            req_props->cBuffers, req_props->cbBuffer, req_props->cbPrefix, req_props->cbAlign);
+
     if (!req_props->cbAlign)
         return VFW_E_BADALIGN;
 
@@ -1456,6 +1495,7 @@ static HRESULT WINAPI ddraw_mem_allocator_Decommit(IMemAllocator *iface)
 
     EnterCriticalSection(&stream->cs);
     stream->committed = false;
+    WakeAllConditionVariable(&stream->allocator_cv);
     /* We have nothing to actually decommit; all of our samples are created by
      * CreateSample(). */
     LeaveCriticalSection(&stream->cs);
@@ -1487,14 +1527,14 @@ static HRESULT WINAPI ddraw_mem_allocator_GetBuffer(IMemAllocator *iface,
 
     EnterCriticalSection(&stream->cs);
 
+    while (stream->committed && !(sample = get_pending_sample(stream)))
+        SleepConditionVariableCS(&stream->allocator_cv, &stream->cs, INFINITE);
+
     if (!stream->committed)
     {
         LeaveCriticalSection(&stream->cs);
         return VFW_E_NOT_COMMITTED;
     }
-
-    while (!(sample = get_pending_sample(stream)))
-        SleepConditionVariableCS(&stream->allocator_cv, &stream->cs, INFINITE);
 
     sample->surface_desc.dwSize = sizeof(DDSURFACEDESC);
     if ((FAILED(hr = IDirectDrawSurface_Lock(sample->surface,
@@ -1831,6 +1871,9 @@ static ULONG WINAPI ddraw_sample_Release(IDirectDrawStreamSample *iface)
     if (!ref)
     {
         EnterCriticalSection(&sample->parent->cs);
+
+        if (sample->pending)
+            remove_queued_update(sample);
 
         while (sample->media_sample_refcount)
             SleepConditionVariableCS(&sample->parent->allocator_cv, &sample->parent->cs, INFINITE);
@@ -2335,6 +2378,22 @@ static HRESULT ddrawstreamsample_create(struct ddraw_stream *parent, IDirectDraw
 
     TRACE("(%p)\n", ddraw_stream_sample);
 
+    if (surface)
+    {
+        desc.dwSize = sizeof(desc);
+        if (FAILED(hr = IDirectDrawSurface_GetSurfaceDesc(surface, &desc)))
+            return hr;
+
+        if (rect)
+        {
+            desc.dwWidth = rect->right - rect->left;
+            desc.dwHeight = rect->bottom - rect->top;
+        }
+
+        if (FAILED(hr = IDirectDrawMediaStream_SetFormat(&parent->IDirectDrawMediaStream_iface, &desc, NULL)))
+            return hr;
+    }
+
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
@@ -2353,6 +2412,11 @@ static HRESULT ddrawstreamsample_create(struct ddraw_stream *parent, IDirectDraw
     {
         object->surface = surface;
         IDirectDrawSurface_AddRef(surface);
+
+        if (rect)
+            object->rect = *rect;
+        else
+            SetRect(&object->rect, 0, 0, desc.dwWidth, desc.dwHeight);
     }
     else
     {
@@ -2394,32 +2458,6 @@ static HRESULT ddrawstreamsample_create(struct ddraw_stream *parent, IDirectDraw
             IDirectDrawStreamSample_Release(&object->IDirectDrawStreamSample_iface);
             return hr;
         }
-    }
-
-    desc.dwSize = sizeof(desc);
-    hr = IDirectDrawSurface_GetSurfaceDesc(object->surface, &desc);
-    if (FAILED(hr))
-    {
-        IDirectDrawStreamSample_Release(&object->IDirectDrawStreamSample_iface);
-        return hr;
-    }
-
-    if (rect)
-    {
-        object->rect = *rect;
-        desc.dwWidth = rect->right - rect->left;
-        desc.dwHeight = rect->bottom - rect->top;
-    }
-    else
-    {
-        SetRect(&object->rect, 0, 0, desc.dwWidth, desc.dwHeight);
-    }
-
-    hr = IDirectDrawMediaStream_SetFormat(&parent->IDirectDrawMediaStream_iface, &desc, NULL);
-    if (FAILED(hr))
-    {
-        IDirectDrawStreamSample_Release(&object->IDirectDrawStreamSample_iface);
-        return hr;
     }
 
     *ddraw_stream_sample = &object->IDirectDrawStreamSample_iface;

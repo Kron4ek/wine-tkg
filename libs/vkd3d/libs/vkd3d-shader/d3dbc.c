@@ -382,11 +382,11 @@ static const struct vkd3d_sm1_opcode_info ps_opcode_table[] =
     {VKD3D_SM1_OP_LABEL,        0, 1, VKD3DSIH_LABEL,        {2, 1}},
     /* Texture */
     {VKD3D_SM1_OP_TEXCOORD,     1, 0, VKD3DSIH_TEXCOORD,     {0, 0}, {1, 3}},
-    {VKD3D_SM1_OP_TEXCOORD,     1, 1, VKD3DSIH_TEXCOORD,     {1, 4}, {1, 4}},
+    {VKD3D_SM1_OP_TEXCOORD,     1, 1, VKD3DSIH_TEXCRD,       {1, 4}, {1, 4}},
     {VKD3D_SM1_OP_TEXKILL,      1, 0, VKD3DSIH_TEXKILL,      {1, 0}},
     {VKD3D_SM1_OP_TEX,          1, 0, VKD3DSIH_TEX,          {0, 0}, {1, 3}},
-    {VKD3D_SM1_OP_TEX,          1, 1, VKD3DSIH_TEX,          {1, 4}, {1, 4}},
-    {VKD3D_SM1_OP_TEX,          1, 2, VKD3DSIH_TEX,          {2, 0}},
+    {VKD3D_SM1_OP_TEX,          1, 1, VKD3DSIH_TEXLD,        {1, 4}, {1, 4}},
+    {VKD3D_SM1_OP_TEX,          1, 2, VKD3DSIH_TEXLD,        {2, 0}},
     {VKD3D_SM1_OP_TEXBEM,       1, 1, VKD3DSIH_TEXBEM,       {0, 0}, {1, 3}},
     {VKD3D_SM1_OP_TEXBEML,      1, 1, VKD3DSIH_TEXBEML,      {1, 0}, {1, 3}},
     {VKD3D_SM1_OP_TEXREG2AR,    1, 1, VKD3DSIH_TEXREG2AR,    {1, 0}, {1, 3}},
@@ -1681,7 +1681,8 @@ static const struct vkd3d_sm1_opcode_info *shader_sm1_get_opcode_info_from_vsir_
     if (!(info = shader_sm1_get_opcode_info_from_vsir(d3dbc, ins->opcode)))
     {
         vkd3d_shader_error(d3dbc->message_context, &ins->location, VKD3D_SHADER_ERROR_D3DBC_INVALID_OPCODE,
-                "Opcode %#x not supported for shader profile.", ins->opcode);
+                "Instruction \"%s\" (%#x) is not supported for the current target.",
+                vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode);
         d3dbc->failed = true;
         return NULL;
     }
@@ -1689,16 +1690,16 @@ static const struct vkd3d_sm1_opcode_info *shader_sm1_get_opcode_info_from_vsir_
     if (ins->dst_count != info->dst_count)
     {
         vkd3d_shader_error(d3dbc->message_context, &ins->location, VKD3D_SHADER_ERROR_D3DBC_INVALID_REGISTER_COUNT,
-                "Invalid destination count %u for vsir instruction %#x (expected %u).",
-                ins->dst_count, ins->opcode, info->dst_count);
+                "Invalid destination parameter count %u for instruction \"%s\" (%#x); expected %u.",
+                ins->dst_count, vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode, info->dst_count);
         d3dbc->failed = true;
         return NULL;
     }
     if (ins->src_count != info->src_count)
     {
         vkd3d_shader_error(d3dbc->message_context, &ins->location, VKD3D_SHADER_ERROR_D3DBC_INVALID_REGISTER_COUNT,
-                "Invalid source count %u for vsir instruction %#x (expected %u).",
-                ins->src_count, ins->opcode, info->src_count);
+                "Invalid source parameter count %u for instruction \"%s\" (%#x); expected %u.",
+                ins->src_count, vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode, info->src_count);
         d3dbc->failed = true;
         return NULL;
     }
@@ -2014,7 +2015,7 @@ static void d3dbc_write_vsir_instruction(struct d3dbc_compiler *d3dbc, const str
         case VKD3DSIH_MUL:
         case VKD3DSIH_SINCOS:
         case VKD3DSIH_SLT:
-        case VKD3DSIH_TEX:
+        case VKD3DSIH_TEXLD:
         case VKD3DSIH_TEXLDD:
             d3dbc_write_instruction(d3dbc, ins);
             break;
@@ -2029,8 +2030,8 @@ static void d3dbc_write_vsir_instruction(struct d3dbc_compiler *d3dbc, const str
             {
                 vkd3d_shader_error(d3dbc->message_context, &ins->location,
                         VKD3D_SHADER_ERROR_D3DBC_INVALID_WRITEMASK,
-                        "writemask %#x for vsir instruction with opcode %#x is not single component.",
-                        writemask, ins->opcode);
+                        "Writemask %#x for instruction \"%s\" (%#x) is not single component.",
+                        writemask, vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode);
                 d3dbc->failed = true;
             }
             d3dbc_write_instruction(d3dbc, ins);
@@ -2038,7 +2039,8 @@ static void d3dbc_write_vsir_instruction(struct d3dbc_compiler *d3dbc, const str
 
         default:
             vkd3d_shader_error(d3dbc->message_context, &ins->location, VKD3D_SHADER_ERROR_D3DBC_INVALID_OPCODE,
-                   "vsir instruction with opcode %#x.", ins->opcode);
+                   "Internal compiler error: Unhandled instruction \"%s\" (%#x).",
+                   vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode);
             d3dbc->failed = true;
             break;
     }

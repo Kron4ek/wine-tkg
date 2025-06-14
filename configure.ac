@@ -47,7 +47,6 @@ AC_ARG_WITH(netapi,    AS_HELP_STRING([--without-netapi],[do not use the Samba N
 AC_ARG_WITH(opencl,    AS_HELP_STRING([--without-opencl],[do not use OpenCL]),
             [if test "x$withval" = "xno"; then ac_cv_header_CL_cl_h=no; ac_cv_header_CL_opencl_h=no; fi])
 AC_ARG_WITH(opengl,    AS_HELP_STRING([--without-opengl],[do not use OpenGL]))
-AC_ARG_WITH(osmesa,     AS_HELP_STRING([--without-osmesa],[do not use the OSMesa library]))
 AC_ARG_WITH(oss,       AS_HELP_STRING([--without-oss],[do not use the OSS sound support]))
 AC_ARG_WITH(pcap,      AS_HELP_STRING([--without-pcap],[do not use the Packet Capture library]),
             [if test "x$withval" = "xno"; then ac_cv_header_pcap_pcap_h=no; fi])
@@ -160,6 +159,14 @@ if test "x$enable_win64" = "xyes"
 then
     test -z "$with_wine64" || AC_MSG_ERROR([--enable-win64 and --with-wine64 are mutually exclusive.
 --enable-win64 should be used in the 64-bit build tree, --with-wine64 in the 32-bit Wow64 build tree.])
+elif test -n "$with_wine64"
+then
+    test -f "$with_wine64/Makefile" || AC_MSG_ERROR([the 64-bit tree in $with_wine64 has not been configured yet.])
+    libdir64=$(grep "^libdir *=" "$with_wine64/Makefile" | sed 's/^libdir *= *//')
+    if test "$libdir64" != "$libdir"; then
+        AS_ECHO(["$as_me:${as_lineno-$LINENO}: libdir64: $libdir64"]) >&AS_MESSAGE_LOG_FD
+        AC_MSG_ERROR([when using --with-wine64 you must use the same --libdir in both build trees.])
+    fi
 fi
 
 case $build_os in
@@ -182,13 +189,8 @@ AC_MSG_CHECKING([for the directory containing the Wine tools])
 if test -z "$toolsdir"; then
     if test "$cross_compiling" = "yes"; then
         AC_MSG_ERROR([you must use the --with-wine-tools option when cross-compiling.])
-    elif test -n "$with_wine64"; then
+    elif test -n "$with_wine64" -a "x$enable_tools" != xyes; then
         toolsdir="$with_wine64"
-        libdir64=$(grep "^libdir *=" $with_wine64/Makefile | sed 's/^libdir *= *//')
-        if test "$libdir64" != "$libdir"; then
-            AS_ECHO(["$as_me:${as_lineno-$LINENO}: libdir64: $libdir64"]) >&AS_MESSAGE_LOG_FD
-            AC_MSG_ERROR([when using --with-wine64 you must use the same --libdir in both build trees.])
-        fi
     fi
 fi
 if test -z "$toolsdir"; then
@@ -584,13 +586,18 @@ This is an error since --enable-archs=$wine_arch was requested.])])
     wine_crossdebug=$CROSSDEBUG
     if test -z "$wine_crossdebug"
     then
+      ac_g_flag_seen=""
       for ac_flag in $CFLAGS; do
         case $ac_flag in
-         -gdwarf*)    wine_crossdebug=dwarf ;;
-         -gcodeview)  wine_crossdebug=pdb ;;
-         -g)          wine_crossdebug=${wine_crossdebug:-dwarf} ;;
+         -gdwarf*)    AS_VAR_APPEND(wine_crossdebug, " dwarf") ;;
+         -gcodeview)  AS_VAR_APPEND(wine_crossdebug, " pdb") ;;
+         -g)          ac_g_flag_seen=$ac_flag ;;
         esac
       done
+      if test -n "$ac_g_flag_seen" -a -z "$wine_crossdebug"
+      then
+        wine_crossdebug=dwarf
+      fi
     fi
 
     ac_debug_format_seen=""
@@ -601,13 +608,16 @@ This is an error since --enable-archs=$wine_arch was requested.])])
     done
     if test "x$ac_debug_format_seen" = x
     then
-      case $wine_crossdebug in
-        *dwarf)  dnl clang emits a warning without -Wl,-debug:dwarf, so ensure linker option is present
-                 WINE_TRY_PE_CFLAGS([-Wl,-debug:dwarf],[AS_VAR_APPEND([${wine_arch}_LDFLAGS],[" -Wl,-debug:dwarf"])
-                                                        CFLAGS="$CFLAGS -Wl,-debug:dwarf"])
-                 WINE_TRY_PE_CFLAGS([-gdwarf-4]) ;;
-        pdb)     WINE_TRY_PE_CFLAGS([-gcodeview]) ;;
-      esac
+      for wine_debug_format in $wine_crossdebug
+      do
+        case $wine_debug_format in
+          *dwarf)  dnl clang emits a warning without -Wl,-debug:dwarf, so ensure linker option is present
+                   WINE_TRY_PE_CFLAGS([-Wl,-debug:dwarf],[AS_VAR_APPEND([${wine_arch}_LDFLAGS],[" -Wl,-debug:dwarf"])
+                                                          CFLAGS="$CFLAGS -Wl,-debug:dwarf"])
+                   WINE_TRY_PE_CFLAGS([-gdwarf-4]) ;;
+          pdb)     WINE_TRY_PE_CFLAGS([-gcodeview]) ;;
+        esac
+      done
     fi
     AS_VAR_SET([${wine_arch}_DEBUG],[$wine_crossdebug])
 
@@ -917,7 +927,6 @@ case $host_os in
     AC_SUBST(COREFOUNDATION_LIBS,"-framework CoreFoundation")
     AC_SUBST(DISKARBITRATION_LIBS,"-framework DiskArbitration -framework CoreFoundation")
     AC_SUBST(IOKIT_LIBS,"-framework IOKit -framework CoreFoundation")
-    AC_SUBST(METAL_LIBS,"-framework Metal")
     AC_SUBST(APPLICATIONSERVICES_LIBS,"-framework ApplicationServices")
     AC_SUBST(CORESERVICES_LIBS,"-framework CoreServices")
     AC_SUBST(APPKIT_LIBS,"-framework AppKit")
@@ -967,13 +976,13 @@ case $host_os in
     fi
 
     dnl Check for MTLDevice registryID property
-    AC_MSG_CHECKING([whether MTLDevice protocol supports registryID property])
     AC_LANG_PUSH([Objective C])
-    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <Metal/Metal.h>]], [[id<MTLDevice> device; device.registryID;]])],
-                          [AC_MSG_RESULT(yes)
-                           AC_DEFINE(HAVE_MTLDEVICE_REGISTRYID, 1, [Define if MTLDevice protocol has registryID property.])],
-                          [AC_MSG_RESULT(no)])
+    AC_CACHE_CHECK([whether MTLDevice protocol supports registryID property], ac_cv_mtldevice_registryid,
+                   [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <Metal/Metal.h>]], [[id<MTLDevice> device; device.registryID;]])],
+                                      [ac_cv_mtldevice_registryid=yes],
+                                      [ac_cv_mtldevice_registryid=no])])
     AC_LANG_POP([Objective C])
+    test $ac_cv_mtldevice_registryid != yes || AC_DEFINE(HAVE_MTLDEVICE_REGISTRYID, 1, [Define if MTLDevice protocol has registryID property.])
 
     UNIXLDFLAGS="-dynamiclib -install_name @rpath/\$(UNIXLIB) -Wl,-rpath,@loader_path\/"
     AC_SUBST(WINELOADER_DEPENDS,"wine_info.plist")
@@ -1385,12 +1394,6 @@ This probably prevents linking to OpenGL. Try deleting the file and restarting c
                             fi],
 			    $X_LIBS -lm -dylib_file /System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGL.dylib:/System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/libGL.dylib)],
 		     $X_LIBS -lm)
-        if test "x$with_osmesa" != "xno"
-        then
-            WINE_CHECK_SONAME(OSMesa,OSMesaGetProcAddress,,,[$X_LIBS -lm])
-            WINE_NOTICE_WITH(osmesa,[test "x$ac_cv_lib_soname_OSMesa" = "x"],
-                             [libOSMesa ${notice_platform}development files not found (or too old), OpenGL rendering in bitmaps won't be supported.])
-        fi
     fi
     WINE_WARNING_WITH(opengl,[test -n "$opengl_msg"],[$opengl_msg
 OpenGL and Direct3D won't be supported.])
@@ -3740,7 +3743,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-10.9.r0.gb4006fc0\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-10.10.r0.gc37f9f50\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

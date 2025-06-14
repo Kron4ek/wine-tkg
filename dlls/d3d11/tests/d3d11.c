@@ -2441,6 +2441,17 @@ static void test_immediate_context(void)
     ok(refcount == expected_refcount, "Got unexpected refcount %lu.\n", refcount);
     previous_immediate_context = immediate_context;
 
+    check_interface(immediate_context, &IID_IUnknown, TRUE, FALSE);
+    check_interface(immediate_context, &IID_ID3D11DeviceChild, TRUE, FALSE);
+    check_interface(immediate_context, &IID_ID3D11DeviceContext, TRUE, FALSE);
+    check_interface(immediate_context, &IID_ID3D11DeviceContext1, TRUE, FALSE);
+    check_interface(immediate_context, &IID_ID3D11DeviceContext2, TRUE, TRUE); /* Not available on all Windows versions. */
+    check_interface(immediate_context, &IID_ID3D11DeviceContext3, TRUE, TRUE); /* Not available on all Windows versions. */
+    check_interface(immediate_context, &IID_ID3D11DeviceContext4, TRUE, TRUE); /* Not available on all Windows versions. */
+    check_interface(immediate_context, &IID_ID3D11Multithread, TRUE, FALSE);
+    check_interface(immediate_context, &IID_ID3D11VideoContext, TRUE, FALSE);
+    check_interface(immediate_context, &IID_ID3DUserDefinedAnnotation, TRUE, FALSE);
+
     ID3D11Device_GetImmediateContext(device, &immediate_context);
     ok(immediate_context == previous_immediate_context, "Got different immediate device context objects.\n");
     refcount = get_refcount(device);
@@ -2546,7 +2557,12 @@ static void test_create_deferred_context(void)
     check_interface(context, &IID_IUnknown, TRUE, FALSE);
     check_interface(context, &IID_ID3D11DeviceChild, TRUE, FALSE);
     check_interface(context, &IID_ID3D11DeviceContext, TRUE, FALSE);
+    check_interface(context, &IID_ID3D11DeviceContext1, TRUE, FALSE);
+    check_interface(context, &IID_ID3D11DeviceContext2, TRUE, TRUE); /* Not available on all Windows versions. */
+    check_interface(context, &IID_ID3D11DeviceContext3, TRUE, TRUE); /* Not available on all Windows versions. */
+    check_interface(context, &IID_ID3D11DeviceContext4, TRUE, TRUE); /* Not available on all Windows versions. */
     check_interface(context, &IID_ID3D11Multithread, FALSE, FALSE);
+    check_interface(context, &IID_ID3DUserDefinedAnnotation, TRUE, FALSE);
 
     refcount = ID3D11DeviceContext_Release(context);
     ok(!refcount, "Got unexpected refcount %lu.\n", refcount);
@@ -5865,6 +5881,7 @@ static void test_create_rasterizer_state(void)
     D3D11_RASTERIZER_DESC desc;
     ID3D11Device *device, *tmp;
     ID3D11Device1 *device1;
+    ID3D11Device3 *device3;
     HRESULT hr;
 
     if (!(device = create_device(NULL)))
@@ -5951,6 +5968,33 @@ static void test_create_rasterizer_state(void)
         ID3D11RasterizerState1_Release(state_ex1);
 
         ID3D11Device1_Release(device1);
+    }
+
+    if (ID3D11Device_QueryInterface(device, &IID_ID3D11Device3, (void **)&device3) == S_OK)
+    {
+        ID3D11RasterizerState2 *state_ex2;
+        D3D11_RASTERIZER_DESC2 desc2;
+
+        hr = ID3D11RasterizerState_QueryInterface(rast_state1, &IID_ID3D11RasterizerState2, (void **)&state_ex2);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        memset(&desc2, 0xcc, sizeof(desc2));
+        ID3D11RasterizerState2_GetDesc2(state_ex2, &desc2);
+        ok(!memcmp(&desc2, &desc, sizeof(desc)), "D3D11 desc didn't match.\n");
+        ok(!desc2.ForcedSampleCount, "Got forced sample count %u.\n", desc2.ForcedSampleCount);
+        ok(!desc2.ConservativeRaster, "Got conservative raster %u.\n", desc2.ConservativeRaster);
+
+        ID3D11RasterizerState2_Release(state_ex2);
+
+        memcpy(&desc2, &desc, sizeof(desc));
+        desc2.ForcedSampleCount = 0;
+        desc2.ConservativeRaster = D3D11_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+        hr = ID3D11Device3_CreateRasterizerState2(device3, &desc2, &state_ex2);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        ID3D11RasterizerState2_Release(state_ex2);
+
+        ID3D11Device3_Release(device3);
     }
 
     refcount = ID3D11RasterizerState_Release(rast_state2);

@@ -1129,8 +1129,24 @@ static void test_sharelists(HDC winhdc)
 
                     if (source_current)
                     {
+                        float floats[4] = {1.0f,0.0f,1.0f,0.0f};
+
                         res = wglMakeCurrent(winhdc, source);
                         ok(res, "Make source current failed\n");
+
+                        glViewport(0, 0, 256, 256);
+                        glLightModelfv(GL_LIGHT_MODEL_AMBIENT, floats);
+                        glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, 0);
+                        glEnable(GL_NORMALIZE);
+                        glEnable(GL_DEPTH_TEST);
+                        glEnable(GL_CULL_FACE);
+                        glEnable(GL_LIGHTING);
+                        glDisable(GL_FOG);
+                        glDisable(GL_DITHER);
+                        glDepthFunc(GL_LESS);
+                        glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+                        glShadeModel(GL_SMOOTH);
+                        glClearColor(0.1, 0.2, 0.3, 1.0);
                     }
                     if (source_sharing)
                     {
@@ -1139,20 +1155,119 @@ static void test_sharelists(HDC winhdc)
                     }
                     if (dest_current)
                     {
+                        float floats[4] = {0.0f,1.0f,0.0f,1.0f};
+
                         res = wglMakeCurrent(winhdc, dest);
                         ok(res, "Make dest current failed\n");
+
+                        glViewport(0, 0, 128, 128);
+                        glLightModelfv(GL_LIGHT_MODEL_AMBIENT, floats);
+                        glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, 1);
+                        glDisable(GL_NORMALIZE);
+                        glDisable(GL_DEPTH_TEST);
+                        glDisable(GL_CULL_FACE);
+                        glDisable(GL_LIGHTING);
+                        glEnable(GL_FOG);
+                        glEnable(GL_DITHER);
+                        glDepthFunc(GL_GREATER);
+                        glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+                        glShadeModel(GL_FLAT);
+                        glClearColor(0.3, 0.2, 0.1, 1.0);
                     }
                     if (dest_sharing)
                     {
                         res = wglShareLists(other, dest);
-                        todo_wine_if(source_sharing && dest_current)
                         ok(res, "Sharing of display lists from other to dest failed\n");
                     }
 
                     res = wglShareLists(source, dest);
-                    todo_wine_if((source_current || source_sharing) && (dest_current || dest_sharing))
                     ok(res || broken(nvidia && !source_sharing && dest_sharing),
                        "Sharing of display lists from source to dest failed\n");
+
+                    if (source_current)
+                    {
+                        float floats[4];
+                        int ints[4];
+
+                        res = wglMakeCurrent(winhdc, source);
+                        ok(res, "Make source current failed\n");
+
+                        glGetIntegerv(GL_VIEWPORT, ints);
+                        ok(ints[0] == 0, "got %d\n", ints[0]);
+                        ok(ints[1] == 0, "got %d\n", ints[1]);
+                        ok(ints[2] == 256, "got %d\n", ints[2]);
+                        ok(ints[3] == 256, "got %d\n", ints[3]);
+                        glGetFloatv(GL_LIGHT_MODEL_AMBIENT, floats);
+                        ok(floats[0] == 1.0f, "got %f\n", floats[0]);
+                        ok(floats[1] == 0.0f, "got %f\n", floats[1]);
+                        ok(floats[2] == 1.0f, "got %f\n", floats[2]);
+                        ok(floats[3] == 0.0f, "got %f\n", floats[3]);
+                        glGetIntegerv(GL_LIGHT_MODEL_TWO_SIDE, ints);
+                        ok(ints[0] == 0, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_NORMALIZE);
+                        ok(ints[0] == 1, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_DEPTH_TEST);
+                        ok(ints[0] == 1, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_CULL_FACE);
+                        ok(ints[0] == 1, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_LIGHTING);
+                        ok(ints[0] == 1, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_FOG);
+                        ok(ints[0] == 0, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_DITHER);
+                        ok(ints[0] == 0, "got %d\n", ints[0]);
+                        glGetIntegerv(GL_DEPTH_FUNC, ints);
+                        ok(ints[0] == GL_LESS, "got %d\n", ints[0]);
+                        glGetIntegerv(GL_SHADE_MODEL, ints);
+                        ok(ints[0] == GL_SMOOTH, "got %d\n", ints[0]);
+                        glGetFloatv(GL_COLOR_CLEAR_VALUE, floats);
+                        ok(floats[0] == 0.1f, "got %f\n", floats[0]);
+                        ok(floats[1] == 0.2f, "got %f\n", floats[1]);
+                        ok(floats[2] == 0.3f, "got %f\n", floats[2]);
+                        ok(floats[3] == 1.0f, "got %f\n", floats[3]);
+                    }
+                    if (dest_current)
+                    {
+                        float floats[4];
+                        int ints[4];
+
+                        res = wglMakeCurrent(winhdc, dest);
+                        ok(res, "Make dest current failed\n");
+
+                        glGetIntegerv(GL_VIEWPORT, ints);
+                        ok(ints[0] == 0, "got %d\n", ints[0]);
+                        ok(ints[1] == 0, "got %d\n", ints[1]);
+                        ok(ints[2] == 128, "got %d\n", ints[2]);
+                        ok(ints[3] == 128, "got %d\n", ints[3]);
+                        glGetFloatv(GL_LIGHT_MODEL_AMBIENT, floats);
+                        ok(floats[0] == 0.0f, "got %f\n", floats[0]);
+                        ok(floats[1] == 1.0f, "got %f\n", floats[1]);
+                        ok(floats[2] == 0.0f, "got %f\n", floats[2]);
+                        ok(floats[3] == 1.0f, "got %f\n", floats[3]);
+                        glGetIntegerv(GL_LIGHT_MODEL_TWO_SIDE, ints);
+                        ok(ints[0] == 1, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_NORMALIZE);
+                        ok(ints[0] == 0, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_DEPTH_TEST);
+                        ok(ints[0] == 0, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_CULL_FACE);
+                        ok(ints[0] == 0, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_LIGHTING);
+                        ok(ints[0] == 0, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_FOG);
+                        ok(ints[0] == 1, "got %d\n", ints[0]);
+                        ints[0] = glIsEnabled(GL_DITHER);
+                        ok(ints[0] == 1, "got %d\n", ints[0]);
+                        glGetIntegerv(GL_DEPTH_FUNC, ints);
+                        ok(ints[0] == GL_GREATER, "got %d\n", ints[0]);
+                        glGetIntegerv(GL_SHADE_MODEL, ints);
+                        ok(ints[0] == GL_FLAT, "got %d\n", ints[0]);
+                        glGetFloatv(GL_COLOR_CLEAR_VALUE, floats);
+                        ok(floats[0] == 0.3f, "got %f\n", floats[0]);
+                        ok(floats[1] == 0.2f, "got %f\n", floats[1]);
+                        ok(floats[2] == 0.1f, "got %f\n", floats[2]);
+                        ok(floats[3] == 1.0f, "got %f\n", floats[3]);
+                    }
 
                     if (source_current || dest_current)
                     {
@@ -1424,7 +1539,7 @@ static void test_bitmap_rendering( BOOL use_dib )
         ok( ret == count, "got %d\n", ret );
 
         if ((pfd.dwFlags & PFD_DRAW_TO_BITMAP) && (pfd.dwFlags & PFD_SUPPORT_OPENGL) &&
-            pfd.cColorBits == bpp && pfd.cAlphaBits == 8)
+            pfd.cColorBits == bpp && pfd.cAlphaBits > 0)
         {
             ret = SetPixelFormat( hdc, i, &pfd );
             if (pixel_format) ok( !ret, "SetPixelFormat succeeded\n" );
@@ -1482,7 +1597,7 @@ static void test_bitmap_rendering( BOOL use_dib )
     ok( EqualRect( (RECT *)viewport, &expect_rect ), "got viewport %s\n", wine_dbgstr_rect( (RECT *)viewport ) );
 
     glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
-    todo_wine ok( (pixel & 0xffffff) == 0xcdcdcd, "got %#x\n", pixel );
+    ok( (pixel & 0xffffff) == 0xcdcdcd, "got %#x\n", pixel );
 
     glClearColor( (float)0x22 / 0xff, (float)0x33 / 0xff, (float)0x44 / 0xff, (float)0x11 / 0xff );
     glClear( GL_COLOR_BUFFER_BIT );
@@ -1527,7 +1642,7 @@ static void test_bitmap_rendering( BOOL use_dib )
     ok( (pixel & 0xffffff) == 0x443322, "got %#x\n", pixel );
     if (pixels == buffer) read_bitmap_pixels( hdc, bmp, pixels, 4, 4, bpp );
     if (pixels2 == buffer2) read_bitmap_pixels( hdc, bmp2, pixels2, 12, 12, bpp );
-    todo_wine ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
+    ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
     ok( (pixels2[0] & 0xffffff) == 0xdcdcdc, "got %#x\n", pixels2[0] );
 
 
@@ -1542,13 +1657,13 @@ static void test_bitmap_rendering( BOOL use_dib )
     /* pixels are read from the selected bitmap */
 
     glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
-    todo_wine ok( (pixel & 0xffffff) == 0xdcdcdc, "got %#x\n", pixel );
+    ok( (pixel & 0xffffff) == 0xdcdcdc, "got %#x\n", pixel );
 
     if (use_dib)
     {
         memset( buffer2, 0xa5, sizeof(buffer2) );
         glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
-        todo_wine ok( (pixel & 0xffffff) == 0xdcdcdc, "got %#x\n", pixel );
+        ok( (pixel & 0xffffff) == 0xdcdcdc, "got %#x\n", pixel );
         memset( buffer2, 0xdc, sizeof(buffer2) );
     }
 
@@ -1561,7 +1676,7 @@ static void test_bitmap_rendering( BOOL use_dib )
 
     if (pixels == buffer) read_bitmap_pixels( hdc, bmp, pixels, 4, 4, bpp );
     if (pixels2 == buffer2) read_bitmap_pixels( hdc, bmp2, pixels2, 12, 12, bpp );
-    todo_wine ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
+    ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
     ok( (pixels2[0] & 0xffffff) == 0xdcdcdc, "got %#x\n", pixels2[0] );
 
     glFinish();
@@ -1570,8 +1685,8 @@ static void test_bitmap_rendering( BOOL use_dib )
     ok( (pixel & 0xffffff) == 0x223344, "got %#x\n", pixel );
     if (pixels == buffer) read_bitmap_pixels( hdc, bmp, pixels, 4, 4, bpp );
     if (pixels2 == buffer2) read_bitmap_pixels( hdc, bmp2, pixels2, 12, 12, bpp );
-    todo_wine ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
-    todo_wine ok( (pixels2[0] & 0xffffff) == 0x443322, "got %#x\n", pixels2[0] );
+    ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
+    ok( (pixels2[0] & 0xffffff) == 0x443322, "got %#x\n", pixels2[0] );
 
 
     ret = wglMakeCurrent( NULL, NULL );
@@ -1589,7 +1704,7 @@ static void test_bitmap_rendering( BOOL use_dib )
 
     if (pixels == buffer) read_bitmap_pixels( hdc, bmp, pixels, 4, 4, bpp );
     if (pixels2 == buffer2) read_bitmap_pixels( hdc, bmp2, pixels2, 12, 12, bpp );
-    todo_wine ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
+    ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
     ok( (pixels2[0] & 0xffffff) == 0x445566, "got %#x\n", pixels2[0] );
 
 
@@ -1611,7 +1726,7 @@ static void test_bitmap_rendering( BOOL use_dib )
 
     if (pixels == buffer) read_bitmap_pixels( hdc, bmp, pixels, 4, 4, bpp );
     if (pixels2 == buffer2) read_bitmap_pixels( hdc, bmp2, pixels2, 12, 12, bpp );
-    todo_wine ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
+    ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
     if (use_dib) todo_wine ok( (pixels2[0] & 0xffffff) == 0x03148, "got %#x\n", pixels2[0] );
     else ok( (pixels2[0] & 0xffffff) == 0x665544, "got %#x\n", pixels2[0] );
 
@@ -1628,7 +1743,7 @@ static void test_bitmap_rendering( BOOL use_dib )
 
     if (pixels == buffer) read_bitmap_pixels( hdc, bmp, pixels, 4, 4, bpp );
     if (pixels2 == buffer2) read_bitmap_pixels( hdc, bmp2, pixels2, 12, 12, bpp );
-    todo_wine ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
+    ok( (pixels[0] & 0xffffff) == 0x223344, "got %#x\n", pixels[0] );
     ok( (pixels2[0] & 0xffffff) == 0x667788, "got %#x\n", pixels2[0] );
 
 
@@ -1674,6 +1789,7 @@ static void test_d3dkmt_rendering(void)
     NTSTATUS status;
     HGLRC hglrc;
 
+    memset( (void *)pixels, 0xcd, sizeof(*pixels) * 4 * 4 );
     create.pMemory = pixels;
     create.Format = D3DDDIFMT_A8R8G8B8;
     create.Width = 4;
@@ -1710,7 +1826,7 @@ static void test_d3dkmt_rendering(void)
         ok( ret == count, "got %d\n", ret );
 
         if ((pfd.dwFlags & PFD_DRAW_TO_BITMAP) && (pfd.dwFlags & PFD_SUPPORT_OPENGL) &&
-            pfd.cColorBits == 32 && pfd.cAlphaBits == 8)
+            pfd.cColorBits == 32 && pfd.cAlphaBits > 0)
         {
             ret = SetPixelFormat( desc.hDc, i, &pfd );
             if (pixel_format) ok( !ret, "SetPixelFormat succeeded\n" );
@@ -1743,7 +1859,7 @@ static void test_d3dkmt_rendering(void)
 
     memset( (void *)pixels, 0xcd, sizeof(*pixels) * 4 * 4 );
     glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
-    todo_wine ok( (pixel & 0xffffff) == 0xcdcdcd, "got %#x\n", pixel );
+    ok( (pixel & 0xffffff) == 0xcdcdcd, "got %#x\n", pixel );
 
     glClearColor( (float)0x44 / 0xff, (float)0x33 / 0xff, (float)0x22 / 0xff, (float)0x11 / 0xff );
     glClear( GL_COLOR_BUFFER_BIT );
@@ -1766,7 +1882,7 @@ static void test_d3dkmt_rendering(void)
     ok( (pixels[0] & 0xffffff) == 0x556677, "got %#x\n", pixels[0] );
     glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
     ok( (pixel & 0xffffff) == 0x223344, "got %#x\n", pixel );
-    todo_wine ok( (pixels[0] & 0xffffff) == 0x443322, "got %#x\n", pixels[0] );
+    ok( (pixels[0] & 0xffffff) == 0x443322, "got %#x\n", pixels[0] );
 
     glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
     ok( (pixel & 0xffffff) == 0x223344, "got %#x\n", pixel );
@@ -2893,7 +3009,7 @@ static void test_wglChoosePixelFormatARB(HDC hdc)
 static void test_copy_context(HDC hdc)
 {
     HGLRC ctx, ctx2, old_ctx;
-    BOOL ret;
+    GLint ret;
 
     old_ctx = wglGetCurrentContext();
     ok(!!old_ctx, "wglGetCurrentContext failed, last error %#lx.\n", GetLastError());
@@ -2902,12 +3018,51 @@ static void test_copy_context(HDC hdc)
     ok(!!ctx, "Failed to create GL context, last error %#lx.\n", GetLastError());
     ret = wglMakeCurrent(hdc, ctx);
     ok(ret, "wglMakeCurrent failed, last error %#lx.\n", GetLastError());
+
+    ret = glIsEnabled(GL_DEPTH_TEST);
+    ok(ret == 0, "got %d\n", ret);
+    glGetIntegerv(GL_DEPTH_FUNC, &ret);
+    ok(ret == GL_LESS, "got %d\n", ret);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GREATER);
+
     ctx2 = wglCreateContext(hdc);
     ok(!!ctx2, "Failed to create GL context, last error %#lx.\n", GetLastError());
 
-    ret = wglCopyContext(ctx, ctx2, GL_ALL_ATTRIB_BITS);
-    todo_wine
+    ret = wglCopyContext(ctx, ctx2, GL_ENABLE_BIT);
     ok(ret, "Failed to copy GL context, last error %#lx.\n", GetLastError());
+    ret = glIsEnabled(GL_DEPTH_TEST);
+    ok(ret == 1, "got %d\n", ret);
+    glGetIntegerv(GL_DEPTH_FUNC, &ret);
+    ok(ret == GL_GREATER, "got %d\n", ret);
+
+    ret = wglMakeCurrent(hdc, ctx2);
+    ok(ret, "wglMakeCurrent failed, last error %#lx.\n", GetLastError());
+    ret = glIsEnabled(GL_DEPTH_TEST);
+    ok(ret == 1, "got %d\n", ret);
+    glGetIntegerv(GL_DEPTH_FUNC, &ret);
+    ok(ret == GL_LESS, "got %d\n", ret);
+    glDepthFunc(GL_LEQUAL);
+
+    ret = wglCopyContext(ctx, ctx2, GL_ALL_ATTRIB_BITS);
+    ok(!ret, "succeeded to copy GL context.\n");
+    ok(GetLastError() == ERROR_INVALID_HANDLE, "got error %#lx.\n", GetLastError());
+
+    ret = wglMakeCurrent(hdc, ctx);
+    ok(ret, "wglMakeCurrent failed, last error %#lx.\n", GetLastError());
+    ret = glIsEnabled(GL_DEPTH_TEST);
+    ok(ret == 1, "got %d\n", ret);
+    glGetIntegerv(GL_DEPTH_FUNC, &ret);
+    ok(ret == GL_GREATER, "got %d\n", ret);
+
+    ret = wglCopyContext(ctx, ctx2, GL_ALL_ATTRIB_BITS);
+    ok(ret, "Failed to copy GL context, last error %#lx.\n", GetLastError());
+    ret = wglMakeCurrent(hdc, ctx2);
+    ok(ret, "wglMakeCurrent failed, last error %#lx.\n", GetLastError());
+    ret = glIsEnabled(GL_DEPTH_TEST);
+    ok(ret == 1, "got %d\n", ret);
+    glGetIntegerv(GL_DEPTH_FUNC, &ret);
+    ok(ret == GL_GREATER, "got %d\n", ret);
 
     ret = wglMakeCurrent(NULL, NULL);
     ok(ret, "wglMakeCurrent failed, last error %#lx.\n", GetLastError());

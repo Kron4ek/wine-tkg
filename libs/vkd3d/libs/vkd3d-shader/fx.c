@@ -54,6 +54,19 @@ enum state_property_component_type
     FX_COMPONENT_TYPE_COUNT,
 };
 
+enum fxlvm_constants
+{
+    FX_FXLC_COMP_COUNT_MASK = 0xffff,
+    FX_FXLC_OPCODE_MASK = 0x7ff,
+    FX_FXLC_OPCODE_SHIFT = 20,
+    FX_FXLC_IS_SCALAR_MASK = 0x80000000,
+
+    FX_FXLC_REG_LITERAL = 1,
+    FX_FXLC_REG_CB = 2,
+    FX_FXLC_REG_OUTPUT = 4,
+    FX_FXLC_REG_TEMP = 7,
+};
+
 struct rhs_named_value
 {
     const char *name;
@@ -287,15 +300,6 @@ static void set_status(struct fx_write_context *fx, int status)
         return;
     if (status < 0)
         fx->status = status;
-}
-
-static void fx_print_string(struct vkd3d_string_buffer *buffer, const char *prefix,
-        const char *s, size_t len)
-{
-    if (len)
-        --len; /* Trim terminating null. */
-    vkd3d_string_buffer_printf(buffer, "%s", prefix);
-    vkd3d_string_buffer_print_string_escaped(buffer, s, len);
 }
 
 static uint32_t write_string(const char *string, struct fx_write_context *fx)
@@ -770,7 +774,7 @@ static const struct rhs_named_value fx_2_filter_values[] =
     { NULL }
 };
 
-static const struct fx_2_state
+struct fx_2_state
 {
     const char *name;
     enum hlsl_type_class class;
@@ -779,8 +783,9 @@ static const struct fx_2_state
     uint32_t array_size;
     uint32_t id;
     const struct rhs_named_value *values;
-}
-fx_2_states[] =
+};
+
+static const struct fx_2_state fx_2_pass_states[] =
 {
     { "ZEnable",          HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 0, fx_2_zenable_values },
     { "FillMode",         HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 1, fx_2_fillmode_values },
@@ -873,7 +878,7 @@ fx_2_states[] =
     { "AdaptiveTess_Y",            HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 84 },
     { "AdaptiveTess_Z",            HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 85 },
     { "AdaptiveTess_W",            HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 86 },
-    { "EnableAdaptiveTesselation", HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 87 },
+    { "EnableAdaptiveTessellation",HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 87 },
     { "TwoSidedStencilMode",       HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 88 },
     { "StencilFail",               HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 89, fx_2_stencilcaps_values },
     { "StencilZFail",              HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 90, fx_2_stencilcaps_values },
@@ -904,17 +909,17 @@ fx_2_states[] =
     { "BumpEnvMat01",          HLSL_CLASS_SCALAR, FX_FLOAT, 1, 8, 113 },
     { "BumpEnvMat10",          HLSL_CLASS_SCALAR, FX_FLOAT, 1, 8, 114 },
     { "BumpEnvMat11",          HLSL_CLASS_SCALAR, FX_FLOAT, 1, 8, 115 },
-    { "TextCoordIndex",        HLSL_CLASS_SCALAR, FX_UINT, 1, 8, 116 },
+    { "TexCoordIndex",         HLSL_CLASS_SCALAR, FX_UINT, 1, 8, 116 },
     { "BumpEnvLScale",         HLSL_CLASS_SCALAR, FX_FLOAT, 1, 8, 117 },
     { "BumpEnvLOffset",        HLSL_CLASS_SCALAR, FX_FLOAT, 1, 8, 118 },
     { "TextureTransformFlags", HLSL_CLASS_SCALAR, FX_UINT, 1, 8, 119, fx_2_texturetransform_values },
     { "Constant",              HLSL_CLASS_SCALAR, FX_UINT, 1, 8, 120 },
-    { "NPatchMode",            HLSL_CLASS_SCALAR, FX_UINT, 1, 1, 121 },
+    { "PatchSegments",         HLSL_CLASS_SCALAR, FX_UINT, 1, 1, 121 },
     { "FVF",                   HLSL_CLASS_SCALAR, FX_UINT, 1, 1, 122 },
 
     { "ProjectionTransform", HLSL_CLASS_MATRIX, FX_FLOAT, 4, 1, 123 },
     { "ViewTransform",       HLSL_CLASS_MATRIX, FX_FLOAT, 4, 1, 124 },
-    { "WorldTransform",      HLSL_CLASS_MATRIX, FX_FLOAT, 4, 1, 125 },
+    { "WorldTransform",      HLSL_CLASS_MATRIX, FX_FLOAT, 4, 256, 125 },
     { "TextureTransform",    HLSL_CLASS_MATRIX, FX_FLOAT, 4, 8, 126 },
 
     { "MaterialAmbient",   HLSL_CLASS_VECTOR, FX_FLOAT, 4, 1, 127 },
@@ -923,42 +928,59 @@ fx_2_states[] =
     { "MaterialEmissive",  HLSL_CLASS_VECTOR, FX_FLOAT, 4, 1, 130 },
     { "MaterialPower",     HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 131 },
 
-    { "LightType",         HLSL_CLASS_SCALAR, FX_UINT,  1, 1, 132, fx_2_lighttype_values },
-    { "LightDiffuse",      HLSL_CLASS_VECTOR, FX_FLOAT, 4, 1, 133 },
-    { "LightSpecular",     HLSL_CLASS_VECTOR, FX_FLOAT, 4, 1, 134 },
-    { "LightAmbient",      HLSL_CLASS_VECTOR, FX_FLOAT, 4, 1, 135 },
-    { "LightPosition",     HLSL_CLASS_VECTOR, FX_FLOAT, 3, 1, 136 },
-    { "LightDirection",    HLSL_CLASS_VECTOR, FX_FLOAT, 3, 1, 137 },
-    { "LightRange",        HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 138 },
-    { "LightFalloff",      HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 139 },
-    { "LightAttenuation0", HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 140 },
-    { "LightAttenuation1", HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 141 },
-    { "LightAttenuation2", HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 142 },
-    { "LightTheta",        HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 143 },
-    { "LightPhi",          HLSL_CLASS_SCALAR, FX_FLOAT, 1, 1, 144 },
-    { "LightEnable",       HLSL_CLASS_SCALAR, FX_FLOAT, 1, 8, 145 },
+    { "LightType",         HLSL_CLASS_SCALAR, FX_UINT,  1, ~0u, 132, fx_2_lighttype_values },
+    { "LightDiffuse",      HLSL_CLASS_VECTOR, FX_FLOAT, 4, ~0u, 133 },
+    { "LightSpecular",     HLSL_CLASS_VECTOR, FX_FLOAT, 4, ~0u, 134 },
+    { "LightAmbient",      HLSL_CLASS_VECTOR, FX_FLOAT, 4, ~0u, 135 },
+    { "LightPosition",     HLSL_CLASS_VECTOR, FX_FLOAT, 3, ~0u, 136 },
+    { "LightDirection",    HLSL_CLASS_VECTOR, FX_FLOAT, 3, ~0u, 137 },
+    { "LightRange",        HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 138 },
+    { "LightFalloff",      HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 139 },
+    { "LightAttenuation0", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 140 },
+    { "LightAttenuation1", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 141 },
+    { "LightAttenuation2", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 142 },
+    { "LightTheta",        HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 143 },
+    { "LightPhi",          HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 144 },
+    { "LightEnable",       HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 145 },
 
     { "VertexShader",      HLSL_CLASS_SCALAR, FX_VERTEXSHADER, 1, 1, 146 },
     { "PixelShader",       HLSL_CLASS_SCALAR, FX_PIXELSHADER,  1, 1, 147 },
 
-    { "VertexShaderConstantF", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 148 },
-    { "VertexShaderConstantB", HLSL_CLASS_SCALAR, FX_BOOL,  1, ~0u-1, 149 },
-    { "VertexShaderConstantI", HLSL_CLASS_SCALAR, FX_UINT,  1, ~0u-1, 150 },
-    { "VertexShaderConstant",  HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 151 },
-    { "VertexShaderConstant1", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 152 },
-    { "VertexShaderConstant2", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 153 },
-    { "VertexShaderConstant3", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 154 },
-    { "VertexShaderConstant4", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 155 },
+    { "VertexShaderConstantF", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 148 },
+    { "VertexShaderConstantB", HLSL_CLASS_SCALAR, FX_BOOL,  1, ~0u, 149 },
+    { "VertexShaderConstantI", HLSL_CLASS_SCALAR, FX_UINT,  1, ~0u, 150 },
+    { "VertexShaderConstant",  HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 151 },
+    { "VertexShaderConstant1", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 152 },
+    { "VertexShaderConstant2", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 153 },
+    { "VertexShaderConstant3", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 154 },
+    { "VertexShaderConstant4", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 155 },
 
-    { "PixelShaderConstantF", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 156 },
-    { "PixelShaderConstantB", HLSL_CLASS_SCALAR, FX_BOOL,  1, ~0u-1, 157 },
-    { "PixelShaderConstantI", HLSL_CLASS_SCALAR, FX_UINT,  1, ~0u-1, 158 },
-    { "PixelShaderConstant",  HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 159 },
-    { "PixelShaderConstant1", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 160 },
-    { "PixelShaderConstant2", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 161 },
-    { "PixelShaderConstant3", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 162 },
-    { "PixelShaderConstant4", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u-1, 163 },
+    { "PixelShaderConstantF", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 156 },
+    { "PixelShaderConstantB", HLSL_CLASS_SCALAR, FX_BOOL,  1, ~0u, 157 },
+    { "PixelShaderConstantI", HLSL_CLASS_SCALAR, FX_UINT,  1, ~0u, 158 },
+    { "PixelShaderConstant",  HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 159 },
+    { "PixelShaderConstant1", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 160 },
+    { "PixelShaderConstant2", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 161 },
+    { "PixelShaderConstant3", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 162 },
+    { "PixelShaderConstant4", HLSL_CLASS_SCALAR, FX_FLOAT, 1, ~0u, 163 },
 
+    { "Texture",           HLSL_CLASS_SCALAR, FX_TEXTURE, 1, 261, 164 },
+    { "AddressU",          HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 165, fx_2_address_values },
+    { "AddressV",          HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 166, fx_2_address_values },
+    { "AddressW",          HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 167, fx_2_address_values },
+    { "BorderColor",       HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 168 },
+    { "MagFilter",         HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 169, fx_2_filter_values },
+    { "MinFilter",         HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 170, fx_2_filter_values },
+    { "MipFilter",         HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 171, fx_2_filter_values },
+    { "MipMapLodBias",     HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 172 },
+    { "MaxMipLevel",       HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 173 },
+    { "MaxAnisotropy",     HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 174 },
+    { "SRGBTexture",       HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 175 },
+    { "ElementIndex",      HLSL_CLASS_SCALAR, FX_UINT,    1, 261, 176 },
+};
+
+static const struct fx_2_state fx_2_sampler_states[] =
+{
     { "Texture",           HLSL_CLASS_SCALAR, FX_TEXTURE, 1, 1, 164 },
     { "AddressU",          HLSL_CLASS_SCALAR, FX_UINT,    1, 1, 165, fx_2_address_values },
     { "AddressV",          HLSL_CLASS_SCALAR, FX_UINT,    1, 1, 166, fx_2_address_values },
@@ -970,7 +992,7 @@ fx_2_states[] =
     { "MipMapLodBias",     HLSL_CLASS_SCALAR, FX_UINT,    1, 1, 172 },
     { "MaxMipLevel",       HLSL_CLASS_SCALAR, FX_UINT,    1, 1, 173 },
     { "MaxAnisotropy",     HLSL_CLASS_SCALAR, FX_UINT,    1, 1, 174 },
-    { "SRBTexture",        HLSL_CLASS_SCALAR, FX_UINT,    1, 1, 175 },
+    { "SRGBTexture",       HLSL_CLASS_SCALAR, FX_UINT,    1, 1, 175 },
     { "ElementIndex",      HLSL_CLASS_SCALAR, FX_UINT,    1, 1, 176 },
 };
 
@@ -994,16 +1016,6 @@ static void write_fx_2_pass(struct hlsl_ir_var *var, struct fx_write_context *fx
     fx->shader_count++;
 }
 
-static uint32_t get_fx_4_type_size(const struct hlsl_type *type)
-{
-    uint32_t elements_count;
-
-    elements_count = hlsl_get_multiarray_size(type);
-    type = hlsl_get_multiarray_element_type(type);
-
-    return type->reg_size[HLSL_REGSET_NUMERIC] * sizeof(float) * elements_count;
-}
-
 enum fx_4_type_constants
 {
     /* Numeric types encoding */
@@ -1020,6 +1032,9 @@ enum fx_4_type_constants
     FX_4_NUMERIC_ROWS_SHIFT = 8,
     FX_4_NUMERIC_COLUMNS_SHIFT = 11,
     FX_4_NUMERIC_COLUMN_MAJOR_MASK = 0x4000,
+
+    /* Variable flags */
+    FX_4_HAS_EXPLICIT_BIND_POINT = 0x4,
 
     /* Object types */
     FX_4_OBJECT_TYPE_STRING = 0x1,
@@ -1077,17 +1092,6 @@ enum fx_4_type_constants
     FX_4_ASSIGNMENT_VALUE_EXPRESSION = 0x6,
     FX_4_ASSIGNMENT_INLINE_SHADER = 0x7,
     FX_5_ASSIGNMENT_INLINE_SHADER = 0x8,
-
-    /* FXLVM constants */
-    FX_4_FXLC_COMP_COUNT_MASK = 0xffff,
-    FX_4_FXLC_OPCODE_MASK = 0x7ff,
-    FX_4_FXLC_OPCODE_SHIFT = 20,
-    FX_4_FXLC_IS_SCALAR_MASK = 0x80000000,
-
-    FX_4_FXLC_REG_LITERAL = 1,
-    FX_4_FXLC_REG_CB = 2,
-    FX_4_FXLC_REG_OUTPUT = 4,
-    FX_4_FXLC_REG_TEMP = 7,
 };
 
 static const uint32_t fx_4_numeric_base_types[] =
@@ -2140,13 +2144,9 @@ static void write_fx_4_numeric_variable(struct hlsl_ir_var *var, bool shared, st
     struct vkd3d_bytecode_buffer *buffer = &fx->structured;
     uint32_t name_offset, type_offset, value_offset;
     uint32_t semantic_offset, flags = 0;
-    enum fx_4_numeric_variable_flags
-    {
-        HAS_EXPLICIT_BIND_POINT = 0x4,
-    };
 
     if (var->has_explicit_bind_point)
-        flags |= HAS_EXPLICIT_BIND_POINT;
+        flags |= FX_4_HAS_EXPLICIT_BIND_POINT;
 
     type_offset = write_type(var->data_type, fx);
     name_offset = write_string(var->name, fx);
@@ -3295,6 +3295,8 @@ static void write_fx_4_buffer(struct hlsl_buffer *b, struct fx_write_context *fx
     size = 0;
     LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
     {
+        uint32_t unpacked_size;
+
         if (!is_numeric_fx_4_type(var->data_type))
             continue;
 
@@ -3302,7 +3304,9 @@ static void write_fx_4_buffer(struct hlsl_buffer *b, struct fx_write_context *fx
             continue;
 
         write_fx_4_numeric_variable(var, shared, fx);
-        size = max(size, get_fx_4_type_size(var->data_type) + var->buffer_offset * 4);
+
+        unpacked_size = var->data_type->reg_size[HLSL_REGSET_NUMERIC] * sizeof(float);
+        size = max(size, unpacked_size + var->buffer_offset * 4);
         ++count;
     }
 
@@ -3655,20 +3659,43 @@ static void parse_fx_print_indent(struct fx_parser *parser)
     vkd3d_string_buffer_printf(&parser->buffer, "%*s", 4 * parser->indent, "");
 }
 
-static const char *fx_2_get_string(struct fx_parser *parser, uint32_t offset, uint32_t *size)
+static void fx_2_print_string_literal(struct fx_parser *parser, const char *prefix,
+        const char *s, uint32_t max_len, const char *suffix)
 {
-    const char *ptr;
+    uint32_t len;
 
-    fx_parser_read_unstructured(parser, size, offset, sizeof(*size));
-    ptr = fx_parser_get_unstructured_ptr(parser, offset + 4, *size);
-
-    if (!ptr)
+    if (s)
+        len = strnlen(s, max_len);
+    if (!s || len == max_len)
     {
-        parser->failed = true;
-        return "<invalid>";
+        fx_parser_error(parser, VKD3D_SHADER_ERROR_FX_INVALID_DATA, "Failed to parse a string entry.");
+        return;
     }
 
-    return ptr;
+    vkd3d_string_buffer_printf(&parser->buffer, "%s", prefix);
+    vkd3d_string_buffer_print_string_escaped(&parser->buffer, s, len);
+    vkd3d_string_buffer_printf(&parser->buffer, "%s", suffix);
+}
+
+static void fx_2_parse_string_literal(struct fx_parser *parser, uint32_t offset,
+        bool unstructured, const char *prefix, const char *suffix)
+{
+    uint32_t max_len;
+    const char *s;
+
+    if (unstructured)
+    {
+        fx_parser_read_unstructured(parser, &max_len, offset, sizeof(max_len));
+        s = fx_parser_get_unstructured_ptr(parser, offset + 4, max_len);
+    }
+    else
+    {
+        max_len = fx_parser_read_u32(parser);
+        s = fx_parser_get_ptr(parser, max_len);
+        fx_parser_skip(parser, align(max_len, 4));
+    }
+
+    fx_2_print_string_literal(parser, prefix, s, max_len, suffix);
 }
 
 static unsigned int fx_get_fx_2_type_size(struct fx_parser *parser, uint32_t *offset)
@@ -3825,15 +3852,12 @@ static void fx_parse_fx_2_parameter(struct fx_parser *parser, uint32_t offset)
         uint32_t semantic;
         uint32_t element_count;
     } var;
-    const char *name;
-    uint32_t size;
 
     fx_parser_read_unstructured(parser, &var, offset, sizeof(var));
 
     fx_parse_fx_2_type(parser, offset);
 
-    name = fx_2_get_string(parser, var.name, &size);
-    fx_print_string(&parser->buffer, " ", name, size);
+    fx_2_parse_string_literal(parser, var.name, true, " ", "");
     if (var.element_count)
         vkd3d_string_buffer_printf(&parser->buffer, "[%u]", var.element_count);
 }
@@ -3847,7 +3871,8 @@ static bool is_fx_2_sampler(uint32_t type)
             || type == D3DXPT_SAMPLERCUBE;
 }
 
-static void fx_parse_fx_2_assignment(struct fx_parser *parser, const struct fx_assignment *entry);
+static void fx_parse_fx_2_assignment(struct fx_parser *parser, enum hlsl_type_class container,
+        const struct fx_assignment *entry);
 
 static void parse_fx_2_sampler(struct fx_parser *parser, uint32_t element_count,
         uint32_t offset)
@@ -3872,7 +3897,7 @@ static void parse_fx_2_sampler(struct fx_parser *parser, uint32_t element_count,
             fx_parser_read_unstructured(parser, &entry, offset, sizeof(entry));
 
             parse_fx_print_indent(parser);
-            fx_parse_fx_2_assignment(parser, &entry);
+            fx_parse_fx_2_assignment(parser, HLSL_CLASS_SAMPLER, &entry);
         }
         parse_fx_end_indent(parser);
         parse_fx_print_indent(parser);
@@ -3950,15 +3975,29 @@ static void fx_parse_fx_2_annotations(struct fx_parser *parser, uint32_t count)
     vkd3d_string_buffer_printf(&parser->buffer, ">");
 }
 
-static void fx_parse_fx_2_assignment(struct fx_parser *parser, const struct fx_assignment *entry)
+static const struct fx_2_state *fx_2_get_state_by_id(enum hlsl_type_class container, uint32_t id)
+{
+    const struct fx_2_state *table;
+    unsigned int count;
+
+    count = container == HLSL_CLASS_PASS ? ARRAY_SIZE(fx_2_pass_states) : ARRAY_SIZE(fx_2_sampler_states);
+    table = container == HLSL_CLASS_PASS ? fx_2_pass_states : fx_2_sampler_states;
+
+    /* State identifiers are sequential, no gaps */
+    if (id >= table[0].id && id <= table[count - 1].id)
+        return &table[id - table[0].id];
+
+    return NULL;
+}
+
+static void fx_parse_fx_2_assignment(struct fx_parser *parser, enum hlsl_type_class container,
+        const struct fx_assignment *entry)
 {
     const struct rhs_named_value *named_value = NULL;
-    const struct fx_2_state *state = NULL;
+    const struct fx_2_state *state;
 
-    if (entry->id <= ARRAY_SIZE(fx_2_states))
+    if ((state = fx_2_get_state_by_id(container, entry->id)))
     {
-        state = &fx_2_states[entry->id];
-
         vkd3d_string_buffer_printf(&parser->buffer, "%s", state->name);
         if (state->array_size > 1)
             vkd3d_string_buffer_printf(&parser->buffer, "[%u]", entry->lhs_index);
@@ -3969,7 +4008,7 @@ static void fx_parse_fx_2_assignment(struct fx_parser *parser, const struct fx_a
     }
     vkd3d_string_buffer_printf(&parser->buffer, " = ");
 
-    if (state && state->type == FX_UINT)
+    if (state && state->type == FX_UINT && state->values)
     {
         const struct rhs_named_value *ptr = state->values;
         uint32_t value;
@@ -3993,13 +4032,14 @@ static void fx_parse_fx_2_assignment(struct fx_parser *parser, const struct fx_a
     }
     else if (state)
     {
-        if (state->type == FX_UINT || state->type == FX_FLOAT)
+        if (state->type == FX_UINT || state->type == FX_FLOAT || state->type == FX_BOOL)
         {
-            uint32_t offset = entry->type;
+            uint32_t offset = entry->type, base_type;
             unsigned int size;
 
             size = fx_get_fx_2_type_size(parser, &offset);
-            parse_fx_2_numeric_value(parser, entry->value, size, entry->type);
+            fx_parser_read_unstructured(parser, &base_type, entry->type, sizeof(base_type));
+            parse_fx_2_numeric_value(parser, entry->value, size, base_type);
         }
         else if (state->type == FX_VERTEXSHADER || state->type == FX_PIXELSHADER)
         {
@@ -4034,18 +4074,14 @@ static void fx_parse_fx_2_technique(struct fx_parser *parser)
         uint32_t annotation_count;
         uint32_t assignment_count;
     } pass;
-    const char *name;
-    uint32_t size;
 
     if (parser->failed)
         return;
 
     fx_parser_read_u32s(parser, &technique, sizeof(technique));
 
-    name = fx_2_get_string(parser, technique.name, &size);
-
     parse_fx_print_indent(parser);
-    fx_print_string(&parser->buffer, "technique ", name, size);
+    fx_2_parse_string_literal(parser, technique.name, true, "technique ", "");
     fx_parse_fx_2_annotations(parser, technique.annotation_count);
 
     vkd3d_string_buffer_printf(&parser->buffer, "\n");
@@ -4056,10 +4092,9 @@ static void fx_parse_fx_2_technique(struct fx_parser *parser)
     for (uint32_t i = 0; i < technique.pass_count; ++i)
     {
         fx_parser_read_u32s(parser, &pass, sizeof(pass));
-        name = fx_2_get_string(parser, pass.name, &size);
 
         parse_fx_print_indent(parser);
-        fx_print_string(&parser->buffer, "pass ", name, size);
+        fx_2_parse_string_literal(parser, pass.name, true, "pass ", "");
         fx_parse_fx_2_annotations(parser, pass.annotation_count);
 
         vkd3d_string_buffer_printf(&parser->buffer, "\n");
@@ -4073,7 +4108,7 @@ static void fx_parse_fx_2_technique(struct fx_parser *parser)
 
             parse_fx_print_indent(parser);
             fx_parser_read_u32s(parser, &entry, sizeof(entry));
-            fx_parse_fx_2_assignment(parser, &entry);
+            fx_parse_fx_2_assignment(parser, HLSL_CLASS_PASS, &entry);
         }
         parse_fx_end_indent(parser);
 
@@ -4195,8 +4230,7 @@ static void fx_parse_fx_2_data_blob(struct fx_parser *parser)
                     {
                         parse_fx_start_indent(parser);
                         parse_fx_print_indent(parser);
-                        fx_print_string(&parser->buffer, "\"", (const char *)data, size);
-                        vkd3d_string_buffer_printf(&parser->buffer, "\"");
+                        fx_2_print_string_literal(parser, "\"", (const char *)data, size, "\"");
                         parse_fx_end_indent(parser);
                     }
                     else if (type == D3DXPT_PIXELSHADER || type == D3DXPT_VERTEXSHADER)
@@ -4236,20 +4270,18 @@ static void fx_dump_blob(struct fx_parser *parser, const void *blob, uint32_t si
     }
 }
 
-static void fx_parse_fx_2_array_selector(struct fx_parser *parser, uint32_t size)
+static void fx_2_parse_fxlvm_expression(struct fx_parser *parser, const uint32_t *blob, uint32_t size);
+
+static void fx_parse_fx_2_array_selector(struct fx_parser *parser)
 {
-    const uint8_t *end = parser->ptr + size;
-    uint32_t name_size, blob_size = 0;
+    uint32_t size, blob_size = 0;
     const void *blob = NULL;
-    const char *name;
+    const uint8_t *end;
 
-    name_size = fx_parser_read_u32(parser);
-    name = fx_parser_get_ptr(parser, name_size);
-    fx_parser_skip(parser, name_size);
+    size = fx_parser_read_u32(parser);
+    end = parser->ptr + size;
 
-    if (!name || (uint8_t *)name >= end)
-        fx_parser_error(parser, VKD3D_SHADER_ERROR_FX_INVALID_DATA,
-                "Malformed name entry in the array selector.");
+    fx_2_parse_string_literal(parser, 0, false, "array \"", "\"\n");
 
     if (parser->ptr <= end)
     {
@@ -4263,16 +4295,11 @@ static void fx_parse_fx_2_array_selector(struct fx_parser *parser, uint32_t size
                 "Malformed blob entry in the array selector.");
     }
 
-    if (name)
-    {
-        fx_print_string(&parser->buffer, "array \"", name, name_size);
-        vkd3d_string_buffer_printf(&parser->buffer, "\"\n");
-    }
     if (blob)
     {
         parse_fx_print_indent(parser);
         vkd3d_string_buffer_printf(&parser->buffer, "selector blob size %u\n", blob_size);
-        fx_dump_blob(parser, blob, blob_size);
+        fx_2_parse_fxlvm_expression(parser, blob, blob_size);
     }
 }
 
@@ -4302,23 +4329,19 @@ static void fx_parse_fx_2_complex_state(struct fx_parser *parser)
                 state.technique, state.index, state.state);
     }
 
-    size = fx_parser_read_u32(parser);
-
     parse_fx_print_indent(parser);
 
     if (state.assignment_type == FX_2_ASSIGNMENT_PARAMETER)
     {
-        data = fx_parser_get_ptr(parser, size);
-        fx_print_string(&parser->buffer, "parameter \"", data, size);
-        vkd3d_string_buffer_printf(&parser->buffer, "\"\n");
-        fx_parser_skip(parser, align(size, 4));
+        fx_2_parse_string_literal(parser, 0, false, "parameter \"", "\"\n");
     }
     else if (state.assignment_type == FX_2_ASSIGNMENT_ARRAY_SELECTOR)
     {
-        fx_parse_fx_2_array_selector(parser, size);
+        fx_parse_fx_2_array_selector(parser);
     }
     else
     {
+        size = fx_parser_read_u32(parser);
         vkd3d_string_buffer_printf(&parser->buffer, "blob size %u\n", size);
         data = fx_parser_get_ptr(parser, size);
         fx_dump_blob(parser, data, size);
@@ -4540,6 +4563,11 @@ static void fx_parse_fx_4_numeric_variables(struct fx_parser *parser, uint32_t c
             semantic = fx_4_get_string(parser, var.semantic);
             vkd3d_string_buffer_printf(&parser->buffer, " : %s", semantic);
         }
+        if (var.flags & FX_4_HAS_EXPLICIT_BIND_POINT)
+        {
+            vkd3d_string_buffer_printf(&parser->buffer, " : packoffset(c%u.%c)",
+                    var.offset / 16, "xyzw"[(var.offset % 16) / 4]);
+        }
         fx_parse_fx_4_annotations(parser);
 
         if (var.value)
@@ -4575,6 +4603,8 @@ static void fx_parse_buffers(struct fx_parser *parser)
         name = fx_4_get_string(parser, buffer.name);
 
         vkd3d_string_buffer_printf(&parser->buffer, "cbuffer %s", name);
+        if (buffer.bind_point != ~0u)
+            vkd3d_string_buffer_printf(&parser->buffer, " : register(b%u)", buffer.bind_point);
         fx_parse_fx_4_annotations(parser);
 
         vkd3d_string_buffer_printf(&parser->buffer, "\n{\n");
@@ -4692,7 +4722,7 @@ static const struct
     uint32_t opcode;
     const char *name;
 }
-fx_4_fxlc_opcodes[] =
+fxlc_opcodes[] =
 {
     { 0x100, "mov"   },
     { 0x101, "neg"   },
@@ -4717,6 +4747,8 @@ fx_4_fxlc_opcodes[] =
     { 0x13a, "ceil"  },
     { 0x200, "min"   },
     { 0x201, "max"   },
+    { 0x202, "lt"    },
+    { 0x203, "ge"    },
     { 0x204, "add"   },
     { 0x205, "mul"   },
     { 0x206, "atan2" },
@@ -4745,14 +4777,14 @@ fx_4_fxlc_opcodes[] =
     { 0x70e, "d3ds_dotswiz" },
 };
 
-static const char *fx_4_get_fxlc_opcode_name(uint32_t opcode)
+static const char *get_fxlc_opcode_name(uint32_t opcode)
 {
     size_t i;
 
-    for (i = 0; i < ARRAY_SIZE(fx_4_fxlc_opcodes); ++i)
+    for (i = 0; i < ARRAY_SIZE(fxlc_opcodes); ++i)
     {
-        if (fx_4_fxlc_opcodes[i].opcode == opcode)
-            return fx_4_fxlc_opcodes[i].name;
+        if (fxlc_opcodes[i].opcode == opcode)
+            return fxlc_opcodes[i].name;
     }
 
     return "<unrecognized>";
@@ -4776,10 +4808,29 @@ struct fx_4_ctab_entry
     uint32_t default_value;
 };
 
+struct fxlc_arg
+{
+    uint32_t reg_type;
+    uint32_t address;
+    bool indexed;
+    struct
+    {
+        uint32_t reg_type;
+        uint32_t address;
+    } index;
+};
+
 struct fxlvm_code
 {
-    const float *cli4;
-    uint32_t cli4_count;
+    const uint32_t *ptr, *end;
+    bool failed;
+
+    union
+    {
+        const float *_4;
+        const double *_8;
+    } cli;
+    uint32_t cli_count;
 
     const struct fx_4_ctab_entry *constants;
     uint32_t ctab_offset;
@@ -4790,7 +4841,45 @@ struct fxlvm_code
     bool scalar;
 };
 
-static void fx_4_parse_print_swizzle(struct fx_parser *parser, const struct fxlvm_code *code, unsigned int addr)
+static uint32_t fxlvm_read_u32(struct fxlvm_code *code)
+{
+    if (code->end == code->ptr)
+    {
+        code->failed = true;
+        return 0;
+    }
+
+    return *code->ptr++;
+}
+
+static const uint32_t *find_d3dbc_section(const uint32_t *ptr, uint32_t count, uint32_t tag, uint32_t *size)
+{
+    if (!count)
+        return NULL;
+
+    /* Skip version tag */
+    ptr++;
+    count--;
+
+    while (count > 2 && (*ptr & 0xffff) == 0xfffe)
+    {
+        unsigned int section_size;
+
+        section_size = (*ptr >> 16);
+        if (!section_size || section_size + 1 > count)
+            break;
+        if (*(ptr + 1) == tag)
+        {
+            *size = section_size;
+            return ptr + 2;
+        }
+        count -= section_size + 1;
+        ptr += section_size + 1;
+    }
+    return NULL;
+}
+
+static void fx_parse_print_swizzle(struct fx_parser *parser, const struct fxlvm_code *code, unsigned int addr)
 {
     unsigned int comp_count = code->scalar ? 1 : code->comp_count;
     static const char comp[] = "xyzw";
@@ -4799,44 +4888,76 @@ static void fx_4_parse_print_swizzle(struct fx_parser *parser, const struct fxlv
         vkd3d_string_buffer_printf(&parser->buffer, ".%.*s", comp_count, &comp[addr % 4]);
 }
 
-static void fx_4_parse_fxlc_constant_argument(struct fx_parser *parser,
-        const struct fx_4_fxlc_argument *arg, const struct fxlvm_code *code)
+static void fx_parse_fxlc_constant_argument(struct fx_parser *parser,
+        const struct fxlc_arg *arg, const struct fxlvm_code *code)
 {
-    uint32_t i, offset, register_index = arg->address / 4; /* Address counts in components. */
+    uint32_t register_index = arg->address / 4; /* Address counts in components. */
 
-    for (i = 0; i < code->ctab_count; ++i)
+    if (code->ctab_count)
     {
-        const struct fx_4_ctab_entry *c = &code->constants[i];
+        uint32_t i, offset;
 
-        if (register_index < c->register_index || register_index - c->register_index >= c->register_count)
-            continue;
+        for (i = 0; i < code->ctab_count; ++i)
+        {
+            const struct fx_4_ctab_entry *c = &code->constants[i];
 
-        vkd3d_string_buffer_printf(&parser->buffer, "%s", &code->ctab[c->name]);
+            if (register_index < c->register_index || register_index - c->register_index >= c->register_count)
+                continue;
 
-        /* Register offset within variable */
-        offset = arg->address - c->register_index * 4;
+            vkd3d_string_buffer_printf(&parser->buffer, "%s", &code->ctab[c->name]);
 
-        if (offset / 4)
-            vkd3d_string_buffer_printf(&parser->buffer, "[%u]", offset / 4);
-        fx_4_parse_print_swizzle(parser, code, offset);
-        return;
+            /* Register offset within variable */
+            offset = arg->address - c->register_index * 4;
+
+            if (offset / 4)
+                vkd3d_string_buffer_printf(&parser->buffer, "[%u]", offset / 4);
+            fx_parse_print_swizzle(parser, code, offset);
+            return;
+        }
+
+        vkd3d_string_buffer_printf(&parser->buffer, "(var-not-found)");
     }
-
-    vkd3d_string_buffer_printf(&parser->buffer, "(var-not-found)");
+    else
+    {
+        vkd3d_string_buffer_printf(&parser->buffer, "c%u", register_index);
+        fx_parse_print_swizzle(parser, code, arg->address);
+    }
 }
 
-static void fx_4_parse_fxlc_argument(struct fx_parser *parser, uint32_t offset, const struct fxlvm_code *code)
+static void fx_parse_fxlc_argument(struct fx_parser *parser, struct fxlc_arg *arg, struct fxlvm_code *code)
 {
-    struct fx_4_fxlc_argument arg;
+    uint32_t flags;
+
+    memset(arg, 0, sizeof(*arg));
+
+    flags = fxlvm_read_u32(code);
+    if (flags)
+    {
+        arg->indexed = true;
+        arg->index.reg_type = fxlvm_read_u32(code);
+        arg->index.address  = fxlvm_read_u32(code);
+    }
+    arg->reg_type = fxlvm_read_u32(code);
+    arg->address  = fxlvm_read_u32(code);
+}
+
+static void fx_print_fxlc_literal(struct fx_parser *parser, uint32_t address, struct fxlvm_code *code)
+{
+    if (parser->version.major >= 4)
+        vkd3d_string_buffer_print_f32(&parser->buffer, code->cli._4[address]);
+    else
+        vkd3d_string_buffer_print_f64(&parser->buffer, code->cli._8[address]);
+}
+
+static void fx_print_fxlc_argument(struct fx_parser *parser, const struct fxlc_arg *arg, struct fxlvm_code *code)
+{
     uint32_t count;
 
-    fx_parser_read_unstructured(parser, &arg, offset, sizeof(arg));
-
-    switch (arg.reg_type)
+    switch (arg->reg_type)
     {
-        case FX_4_FXLC_REG_LITERAL:
+        case FX_FXLC_REG_LITERAL:
             count = code->scalar ? 1 : code->comp_count;
-            if (arg.address >= code->cli4_count || count > code->cli4_count - arg.address)
+            if (arg->address >= code->cli_count || count > code->cli_count - arg->address)
             {
                 vkd3d_string_buffer_printf(&parser->buffer, "(<out-of-bounds>)");
                 parser->failed = true;
@@ -4844,42 +4965,120 @@ static void fx_4_parse_fxlc_argument(struct fx_parser *parser, uint32_t offset, 
             }
 
             vkd3d_string_buffer_printf(&parser->buffer, "(");
-            vkd3d_string_buffer_print_f32(&parser->buffer, code->cli4[arg.address]);
+            fx_print_fxlc_literal(parser, arg->address, code);
             for (unsigned int i = 1; i < code->comp_count; ++i)
             {
                 vkd3d_string_buffer_printf(&parser->buffer, ", ");
-                vkd3d_string_buffer_print_f32(&parser->buffer, code->cli4[arg.address + (code->scalar ? 0 : i)]);
+                fx_print_fxlc_literal(parser, arg->address + (code->scalar ? 0 : i), code);
             }
             vkd3d_string_buffer_printf(&parser->buffer, ")");
             break;
 
-        case FX_4_FXLC_REG_CB:
-            fx_4_parse_fxlc_constant_argument(parser, &arg, code);
+        case FX_FXLC_REG_CB:
+            fx_parse_fxlc_constant_argument(parser, arg, code);
             break;
 
-        case FX_4_FXLC_REG_OUTPUT:
-        case FX_4_FXLC_REG_TEMP:
-            if (arg.reg_type == FX_4_FXLC_REG_OUTPUT)
+        case FX_FXLC_REG_OUTPUT:
+        case FX_FXLC_REG_TEMP:
+            if (arg->reg_type == FX_FXLC_REG_OUTPUT)
                 vkd3d_string_buffer_printf(&parser->buffer, "expr");
             else
-                vkd3d_string_buffer_printf(&parser->buffer, "r%u", arg.address / 4);
-            fx_4_parse_print_swizzle(parser, code, arg.address);
+                vkd3d_string_buffer_printf(&parser->buffer, "r%u", arg->address / 4);
+            fx_parse_print_swizzle(parser, code, arg->address);
             break;
 
         default:
-            vkd3d_string_buffer_printf(&parser->buffer, "<unknown register %u>", arg.reg_type);
+            vkd3d_string_buffer_printf(&parser->buffer, "<unknown register %u>", arg->reg_type);
             break;
     }
+}
+
+static void fx_parse_fxlvm_expression(struct fx_parser *parser, struct fxlvm_code *code)
+{
+    struct fxlc_arg args[9];
+    uint32_t ins_count;
+    size_t i, j;
+
+    ins_count = fxlvm_read_u32(code);
+
+    parse_fx_start_indent(parser);
+
+    for (i = 0; i < ins_count; ++i)
+    {
+        uint32_t instr, opcode, src_count;
+
+        instr = fxlvm_read_u32(code);
+        src_count = fxlvm_read_u32(code);
+
+        if (src_count >= ARRAY_SIZE(args))
+        {
+            fx_parser_error(parser, VKD3D_SHADER_ERROR_FX_INVALID_DATA,
+                    "Unexpected instruction source count %u.", src_count);
+            break;
+        }
+
+        /* Sources entries are followed by the destination, first read them all.
+           Output format is "opcode dst, src[0]...src[n]". */
+        for (j = 0; j < src_count; ++j)
+            fx_parse_fxlc_argument(parser, &args[j], code);
+        fx_parse_fxlc_argument(parser, &args[src_count], code);
+
+        opcode = (instr >> FX_FXLC_OPCODE_SHIFT) & FX_FXLC_OPCODE_MASK;
+        code->comp_count = instr & FX_FXLC_COMP_COUNT_MASK;
+
+        parse_fx_print_indent(parser);
+        vkd3d_string_buffer_printf(&parser->buffer, "%s ", get_fxlc_opcode_name(opcode));
+
+        code->scalar = false;
+        fx_print_fxlc_argument(parser, &args[src_count], code);
+        vkd3d_string_buffer_printf(&parser->buffer, ", ");
+
+        for (j = 0; j < src_count; ++j)
+        {
+            /* Scalar modifier applies only to the first source. */
+            code->scalar = j == 0 && !!(instr & FX_FXLC_IS_SCALAR_MASK);
+            fx_print_fxlc_argument(parser, &args[j], code);
+            if (j < src_count - 1)
+                vkd3d_string_buffer_printf(&parser->buffer, ", ");
+        }
+
+        vkd3d_string_buffer_printf(&parser->buffer, "\n");
+    }
+
+    parse_fx_end_indent(parser);
+}
+
+static void fx_2_parse_fxlvm_expression(struct fx_parser *parser, const uint32_t *blob, uint32_t size)
+{
+    uint32_t count = size / sizeof(uint32_t);
+    struct fxlvm_code code = { 0 };
+    uint32_t section_size;
+    const uint32_t *data;
+
+    /* Literal constants, using 64-bit floats. */
+    if ((data = find_d3dbc_section(blob, count, TAG_CLIT, &section_size)))
+    {
+        code.cli_count = *data++;
+        code.cli._8 = (const double *)data;
+    }
+
+    /* CTAB does not contain variable names */
+
+    /* Code blob */
+    code.ptr = find_d3dbc_section(blob, count, TAG_FXLC, &count);
+    code.end = code.ptr + count;
+
+    fx_parse_fxlvm_expression(parser, &code);
 }
 
 static void fx_4_parse_fxlvm_expression(struct fx_parser *parser, uint32_t offset)
 {
     struct vkd3d_shader_dxbc_section_desc *section, fxlc, cli4, ctab;
     struct vkd3d_shader_dxbc_desc dxbc_desc;
+    struct fxlvm_code code = { 0 };
     struct vkd3d_shader_code dxbc;
-    uint32_t size, ins_count;
-    struct fxlvm_code code;
-    size_t i, j;
+    uint32_t size;
+    size_t i;
 
     offset = fx_parser_read_unstructured(parser, &size, offset, sizeof(size));
 
@@ -4915,8 +5114,8 @@ static void fx_4_parse_fxlvm_expression(struct fx_parser *parser, uint32_t offse
     {
         uint32_t cli4_offset = offset + (size_t)cli4.data.code - (size_t)dxbc.code;
 
-        fx_parser_read_unstructured(parser, &code.cli4_count, cli4_offset, sizeof(code.cli4_count));
-        code.cli4 = fx_parser_get_unstructured_ptr(parser, cli4_offset + 4, code.cli4_count * sizeof(float));
+        fx_parser_read_unstructured(parser, &code.cli_count, cli4_offset, sizeof(code.cli_count));
+        code.cli._4 = fx_parser_get_unstructured_ptr(parser, cli4_offset + 4, code.cli_count * sizeof(float));
     }
 
     if (ctab.data.code)
@@ -4932,47 +5131,10 @@ static void fx_4_parse_fxlvm_expression(struct fx_parser *parser, uint32_t offse
                 ctab_offset + consts_offset, code.ctab_count * sizeof(*code.constants));
     }
 
-    offset += (size_t)fxlc.data.code - (size_t)dxbc.code;
-    offset = fx_parser_read_unstructured(parser, &ins_count, offset, sizeof(ins_count));
+    code.ptr = fxlc.data.code;
+    code.end = (uint32_t *)((uint8_t *)fxlc.data.code + fxlc.data.size);
 
-    parse_fx_start_indent(parser);
-
-    for (i = 0; i < ins_count; ++i)
-    {
-        uint32_t instr, opcode, src_count;
-        struct fx_4_fxlc_argument arg;
-
-        offset = fx_parser_read_unstructured(parser, &instr, offset, sizeof(instr));
-        offset = fx_parser_read_unstructured(parser, &src_count, offset, sizeof(src_count));
-
-        opcode = (instr >> FX_4_FXLC_OPCODE_SHIFT) & FX_4_FXLC_OPCODE_MASK;
-        code.comp_count = instr & FX_4_FXLC_COMP_COUNT_MASK;
-        code.scalar = false;
-
-        parse_fx_print_indent(parser);
-        vkd3d_string_buffer_printf(&parser->buffer, "%s ", fx_4_get_fxlc_opcode_name(opcode));
-
-        /* Destination first. */
-        fx_4_parse_fxlc_argument(parser, offset + sizeof(arg) * src_count, &code);
-
-        for (j = 0; j < src_count; ++j)
-        {
-            vkd3d_string_buffer_printf(&parser->buffer, ", ");
-
-            /* Scalar modifier applies only to first source. */
-            code.scalar = j == 0 && !!(instr & FX_4_FXLC_IS_SCALAR_MASK);
-            fx_4_parse_fxlc_argument(parser, offset, &code);
-
-            offset += sizeof(arg);
-        }
-
-        /* Destination */
-        offset += sizeof(arg);
-
-        vkd3d_string_buffer_printf(&parser->buffer, "\n");
-    }
-
-    parse_fx_end_indent(parser);
+    fx_parse_fxlvm_expression(parser, &code);
 }
 
 static void fx_4_parse_state_object_initializer(struct fx_parser *parser, uint32_t count,
