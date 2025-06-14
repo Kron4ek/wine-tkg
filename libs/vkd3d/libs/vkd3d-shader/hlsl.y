@@ -2559,6 +2559,9 @@ static void declare_var(struct hlsl_ctx *ctx, struct parse_variable_def *v)
             hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
                     "Variable '%s' is declared as both \"uniform\" and \"static\".", var->name);
 
+        if (modifiers & HLSL_STORAGE_GROUPSHARED)
+            hlsl_fixme(ctx, &var->loc, "Group shared variables.");
+
         /* Mark it as uniform. We need to do this here since synthetic
             * variables also get put in the global scope, but shouldn't be
             * considered uniforms, and we have no way of telling otherwise. */

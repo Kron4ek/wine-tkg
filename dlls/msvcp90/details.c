@@ -367,7 +367,7 @@ void __thiscall _Concurrent_queue_base_v4_dummy(_Concurrent_queue_base_v4 *this)
     ERR("unexpected call\n");
 }
 
-DEFINE_RTTI_DATA0(_Concurrent_queue_base_v4, 0, ".?AV_Concurrent_queue_base_v4@details@Concurrency@@")
+DEFINE_RTTI_DATA(_Concurrent_queue_base_v4, 0, ".?AV_Concurrent_queue_base_v4@details@Concurrency@@")
 
 static LONG _Runtime_object_id;
 
@@ -408,7 +408,7 @@ int __thiscall _Runtime_object__GetId(_Runtime_object *this)
     return this->id;
 }
 
-DEFINE_RTTI_DATA0(_Runtime_object, 0, ".?AV_Runtime_object@details@Concurrency@@")
+DEFINE_RTTI_DATA(_Runtime_object, 0, ".?AV_Runtime_object@details@Concurrency@@")
 
 typedef struct __Concurrent_vector_base_v4
 {
@@ -1118,10 +1118,8 @@ __ASM_BLOCK_END
 
 void init_concurrency_details(void *base)
 {
-#ifdef RTTI_USE_RVA
-    init__Concurrent_queue_base_v4_rtti(base);
-    init__Runtime_object_rtti(base);
-#endif
+    INIT_RTTI(_Concurrent_queue_base_v4, base);
+    INIT_RTTI(_Runtime_object, base);
 }
 #endif
 

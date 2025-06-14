@@ -312,6 +312,7 @@ SOURCES = \
 	dxvahd.idl \
 	dyngraph.idl \
 	endpointvolume.idl \
+	errhandlingapi.h \
 	errorrep.h \
 	errors.h \
 	errrec.idl \
@@ -860,6 +861,7 @@ SOURCES = \
 	windows.data.json.idl \
 	windows.data.xml.dom.idl \
 	windows.devices.bluetooth.idl \
+	windows.devices.bluetooth.rfcomm.idl \
 	windows.devices.enumeration.idl \
 	windows.devices.geolocation.idl \
 	windows.devices.haptics.idl \
@@ -897,6 +899,7 @@ SOURCES = \
 	windows.media.speechsynthesis.idl \
 	windows.networking.connectivity.idl \
 	windows.networking.idl \
+	windows.networking.sockets.idl \
 	windows.perception.spatial.idl \
 	windows.perception.spatial.surfaces.idl \
 	windows.security.authentication.onlineid.idl \

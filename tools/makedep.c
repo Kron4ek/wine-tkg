@@ -168,8 +168,8 @@ static const char *arch_dirs[MAX_ARCHS];
 static const char *arch_pe_dirs[MAX_ARCHS];
 static const char *arch_install_dirs[MAX_ARCHS];
 static const char *strip_progs[MAX_ARCHS];
-static const char *debug_flags[MAX_ARCHS];
 static const char *delay_load_flags[MAX_ARCHS];
+static struct strarray debug_flags[MAX_ARCHS];
 static struct strarray target_flags[MAX_ARCHS];
 static struct strarray extra_cflags[MAX_ARCHS];
 static struct strarray extra_cflags_extlib[MAX_ARCHS];
@@ -2444,16 +2444,22 @@ static struct strarray remove_warning_flags( struct strarray flags )
 
 
 /*******************************************************************
- *         get_debug_file
+ *         get_debug_files
  */
-static const char *get_debug_file( struct makefile *make, const char *name, unsigned int arch )
+static void output_debug_files( struct makefile *make, const char *name, unsigned int arch )
 {
-    const char *debug_file = NULL;
-    if (!debug_flags[arch]) return NULL;
-    if (!strcmp( debug_flags[arch], "pdb" )) debug_file = strmake( "%s.pdb", get_base_name( name ));
-    else if (!strncmp( debug_flags[arch], "split", 5 )) debug_file = strmake( "%s.debug", name );
-    if (debug_file) strarray_add( &make->debug_files, debug_file );
-    return debug_file;
+    unsigned int i;
+
+    for (i = 0; i < debug_flags[arch].count; i++)
+    {
+        const char *debug_file = NULL;
+        const char *flag = debug_flags[arch].str[i];
+        if (!strcmp( flag, "pdb" )) debug_file = strmake( "%s.pdb", get_base_name( name ));
+        else if (!strncmp( flag, "split", 5 )) debug_file = strmake( "%s.debug", name );
+        if (!debug_file) continue;
+        strarray_add( &make->debug_files, debug_file );
+        output_filename( strmake( "-Wl,--debug-file,%s", obj_dir_path( make, debug_file )));
+    }
 }
 
 
@@ -3137,7 +3143,7 @@ static void output_source_testdll( struct makefile *make, struct incl_file *sour
     struct strarray dll_flags = empty_strarray;
     struct strarray default_imports = empty_strarray;
     struct strarray all_libs, dep_libs;
-    const char *dll_name, *obj_name, *res_name, *output_rsrc, *output_file, *debug_file, *ext = ".dll";
+    const char *dll_name, *obj_name, *res_name, *output_rsrc, *output_file, *ext = ".dll";
     struct incl_file *spec_file = find_src_file( make, strmake( "%s.spec", obj ));
     unsigned int arch, link_arch;
 
@@ -3194,8 +3200,7 @@ static void output_source_testdll( struct makefile *make, struct incl_file *sour
         output_filename( obj_name );
         if (hybrid_obj_name) output_filename( hybrid_obj_name );
         if (res_name) output_filename( res_name );
-        if ((debug_file = get_debug_file( make, dll_name, link_arch )))
-            output_filename( strmake( "-Wl,--debug-file,%s", obj_dir_path( make, debug_file )));
+        output_debug_files( make, dll_name, link_arch );
         output_filenames( all_libs );
         output_filename( arch_make_variable( "LDFLAGS", link_arch ));
         output( "\n" );
@@ -3472,7 +3477,6 @@ static void output_module( struct makefile *make, unsigned int arch )
     struct strarray dep_libs = empty_strarray;
     struct strarray imports = make->imports;
     const char *module_name;
-    const char *debug_file;
     char *spec_file = NULL;
     unsigned int i, link_arch;
 
@@ -3546,8 +3550,7 @@ static void output_module( struct makefile *make, unsigned int arch )
     output_filenames_obj_dir( make, make->object_files[arch] );
     if (link_arch != arch) output_filenames_obj_dir( make, make->object_files[link_arch] );
     output_filenames_obj_dir( make, make->res_files[arch] );
-    debug_file = get_debug_file( make, module_name, link_arch );
-    if (debug_file) output_filename( strmake( "-Wl,--debug-file,%s", obj_dir_path( make, debug_file )));
+    output_debug_files( make, module_name, link_arch );
     output_filenames( all_libs );
     output_filename( arch_make_variable( "LDFLAGS", link_arch ));
     output( "\n" );
@@ -3661,7 +3664,6 @@ static void output_test_module( struct makefile *make, unsigned int arch )
     struct strarray dep_libs = empty_strarray;
     struct strarray all_libs = empty_strarray;
     struct makefile *parent = get_parent_makefile( make );
-    const char *debug_file;
     unsigned int link_arch;
 
     if (!get_link_arch( make, arch, &link_arch )) return;
@@ -3677,8 +3679,7 @@ static void output_test_module( struct makefile *make, unsigned int arch )
     output_filenames_obj_dir( make, make->object_files[arch] );
     if (link_arch != arch) output_filenames_obj_dir( make, make->object_files[link_arch] );
     output_filenames_obj_dir( make, make->res_files[arch] );
-    if ((debug_file = get_debug_file( make, testmodule, arch )))
-        output_filename( strmake( "-Wl,--debug-file,%s", obj_dir_path( make, debug_file )));
+    output_debug_files( make, testmodule, arch );
     output_filenames( all_libs );
     output_filename( arch_make_variable( "LDFLAGS", link_arch ));
     output( "\n" );
@@ -4732,13 +4733,13 @@ int main( int argc, char *argv[] )
         disabled_dirs[arch] = get_expanded_arch_var_array( top_makefile, "DISABLED_SUBDIRS", arch );
         if (!is_multiarch( arch )) continue;
         delay_load_flags[arch] = get_expanded_arch_var( top_makefile, "DELAYLOADFLAG", arch );
-        debug_flags[arch] = get_expanded_arch_var( top_makefile, "DEBUG", arch );
+        debug_flags[arch] = get_expanded_arch_var_array( top_makefile, "DEBUG", arch );
     }
 
     if (unix_lib_supported)
     {
         delay_load_flags[0] = "-Wl,-delayload,";
-        debug_flags[0] = NULL;
+        debug_flags[0].count = 0;
     }
 
     top_makefile->src_dir = root_src_dir;

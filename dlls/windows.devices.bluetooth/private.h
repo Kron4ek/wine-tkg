@@ -32,10 +32,15 @@
 #define WIDL_using_Windows_Foundation
 #define WIDL_using_Windows_Foundation_Collections
 #include "windows.foundation.h"
+#define WIDL_using_Windows_Networking
+#include "windows.networking.connectivity.h"
+#include "windows.networking.h"
 #define WIDL_using_Windows_Devices_Bluetooth
+#include "windows.devices.bluetooth.rfcomm.h"
 #include "windows.devices.bluetooth.h"
 
 extern IActivationFactory *bluetoothadapter_factory;
+extern IActivationFactory *bluetoothdevice_statics_factory;
 
 #define DEFINE_IINSPECTABLE_( pfx, iface_type, impl_type, impl_from, iface_mem, expr )             \
     static inline impl_type *impl_from( iface_type *iface )                                        \

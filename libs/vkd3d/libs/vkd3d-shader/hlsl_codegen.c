@@ -288,7 +288,8 @@ static bool types_are_semantic_equivalent(struct hlsl_ctx *ctx, const struct hls
 
 static struct hlsl_ir_var *add_semantic_var(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *func,
         struct hlsl_ir_var *var, struct hlsl_type *type, uint32_t modifiers, struct hlsl_semantic *semantic,
-        uint32_t index, bool output, bool force_align, bool create, const struct vkd3d_shader_location *loc)
+        uint32_t index, uint32_t stream_index, bool output, bool force_align, bool create,
+        const struct vkd3d_shader_location *loc)
 {
     struct hlsl_semantic new_semantic;
     struct hlsl_ir_var *ext_var;
@@ -300,7 +301,12 @@ static struct hlsl_ir_var *add_semantic_var(struct hlsl_ctx *ctx, struct hlsl_ir
     else
         prefix = output ? "output" : "input";
 
-    if (!(new_name = hlsl_sprintf_alloc(ctx, "<%s-%s%u>", prefix, semantic->name, index)))
+    if (stream_index)
+        new_name = hlsl_sprintf_alloc(ctx, "<%s-m%u:%s%u>", prefix, stream_index, semantic->name, index);
+    else
+        new_name = hlsl_sprintf_alloc(ctx, "<%s-%s%u>", prefix, semantic->name, index);
+
+    if (!new_name)
         return NULL;
 
     LIST_FOR_EACH_ENTRY(ext_var, &func->extern_vars, struct hlsl_ir_var, extern_entry)
@@ -353,6 +359,7 @@ static struct hlsl_ir_var *add_semantic_var(struct hlsl_ctx *ctx, struct hlsl_ir
         return NULL;
     }
     new_semantic.index = index;
+    new_semantic.stream_index = stream_index;
     if (!(ext_var = hlsl_new_var(ctx, new_name, type, loc, &new_semantic, modifiers, NULL)))
     {
         vkd3d_free(new_name);
@@ -435,7 +442,7 @@ static void prepend_input_copy(struct hlsl_ctx *ctx, struct hlsl_ir_function_dec
             prim_type_src->modifiers = var->data_type->modifiers & HLSL_PRIMITIVE_MODIFIERS_MASK;
 
             if (!(input = add_semantic_var(ctx, func, var, prim_type_src,
-                    modifiers, semantic, semantic_index + i, false, force_align, true, loc)))
+                    modifiers, semantic, semantic_index + i, 0, false, force_align, true, loc)))
                 return;
             hlsl_init_simple_deref_from_var(&prim_deref, input);
 
@@ -448,7 +455,7 @@ static void prepend_input_copy(struct hlsl_ctx *ctx, struct hlsl_ir_function_dec
         else
         {
             if (!(input = add_semantic_var(ctx, func, var, vector_type_src,
-                    modifiers, semantic, semantic_index + i, false, force_align, true, loc)))
+                    modifiers, semantic, semantic_index + i, 0, false, force_align, true, loc)))
                 return;
 
             if (!(load = hlsl_new_var_load(ctx, input, &var->loc)))
@@ -558,7 +565,7 @@ static void prepend_input_var_copy(struct hlsl_ctx *ctx, struct hlsl_ir_function
 
 static void append_output_copy(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_ir_function_decl *func, struct hlsl_ir_load *rhs, uint32_t modifiers,
-        struct hlsl_semantic *semantic, uint32_t semantic_index, bool force_align, bool create)
+        struct hlsl_semantic *semantic, uint32_t semantic_index, uint32_t stream_index, bool force_align, bool create)
 {
     struct hlsl_type *type = rhs->node.data_type, *vector_type;
     struct vkd3d_shader_location *loc = &rhs->node.loc;
@@ -588,7 +595,7 @@ static void append_output_copy(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_ir_node *load;
 
         if (!(output = add_semantic_var(ctx, func, var, vector_type,
-                modifiers, semantic, semantic_index + i, true, force_align, create, loc)))
+                modifiers, semantic, semantic_index + i, stream_index, true, force_align, create, loc)))
             return;
 
         if (type->class == HLSL_CLASS_MATRIX)
@@ -609,7 +616,7 @@ static void append_output_copy(struct hlsl_ctx *ctx, struct hlsl_block *block,
 
 static void append_output_copy_recurse(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_ir_function_decl *func, const struct hlsl_type *type, struct hlsl_ir_load *rhs, uint32_t modifiers,
-        struct hlsl_semantic *semantic, uint32_t semantic_index, bool force_align, bool create)
+        struct hlsl_semantic *semantic, uint32_t semantic_index, uint32_t stream_index, bool force_align, bool create)
 {
     struct vkd3d_shader_location *loc = &rhs->node.loc;
     struct hlsl_ir_var *var = rhs->src.var;
@@ -654,12 +661,13 @@ static void append_output_copy_recurse(struct hlsl_ctx *ctx, struct hlsl_block *
             hlsl_block_add_instr(block, &element_load->node);
 
             append_output_copy_recurse(ctx, block, func, element_type, element_load, element_modifiers, semantic,
-                    elem_semantic_index, force_align, create);
+                    elem_semantic_index, stream_index, force_align, create);
         }
     }
     else
     {
-        append_output_copy(ctx, block, func, rhs, modifiers, semantic, semantic_index, force_align, create);
+        append_output_copy(ctx, block, func, rhs, modifiers, semantic,
+                semantic_index, stream_index, force_align, create);
     }
 }
 
@@ -676,7 +684,7 @@ static void append_output_var_copy(struct hlsl_ctx *ctx, struct hlsl_ir_function
     hlsl_block_add_instr(&func->body, &load->node);
 
     append_output_copy_recurse(ctx, &func->body, func, var->data_type, load, var->storage_modifiers,
-            &var->semantic, var->semantic.index, false, true);
+            &var->semantic, var->semantic.index, 0, false, true);
 }
 
 bool hlsl_transform_ir(struct hlsl_ctx *ctx, bool (*func)(struct hlsl_ctx *ctx, struct hlsl_ir_node *, void *),
@@ -3360,7 +3368,7 @@ static bool split_struct_copies(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr
 struct stream_append_ctx
 {
     struct hlsl_ir_function_decl *func;
-    bool created;
+    bool created[VKD3D_MAX_STREAM_COUNT];
 };
 
 static bool lower_stream_appends(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
@@ -3371,6 +3379,7 @@ static bool lower_stream_appends(struct hlsl_ctx *ctx, struct hlsl_ir_node *inst
     const struct hlsl_type *type;
     struct hlsl_ir_var *var;
     struct hlsl_block block;
+    uint32_t stream_index;
 
     if (instr->type != HLSL_IR_RESOURCE_STORE)
         return false;
@@ -3390,18 +3399,17 @@ static bool lower_stream_appends(struct hlsl_ctx *ctx, struct hlsl_ir_node *inst
     }
 
     VKD3D_ASSERT(var->regs[HLSL_REGSET_STREAM_OUTPUTS].allocated);
+    stream_index = var->regs[HLSL_REGSET_STREAM_OUTPUTS].index;
 
-    if (var->regs[HLSL_REGSET_STREAM_OUTPUTS].index)
-    {
-        hlsl_fixme(ctx, &instr->loc, "Append to an output stream with a nonzero stream index.");
-        return false;
-    }
+    VKD3D_ASSERT(stream_index < ARRAY_SIZE(append_ctx->created));
 
     hlsl_block_init(&block);
 
-    append_output_copy_recurse(ctx, &block, append_ctx->func, type->e.so.type, hlsl_ir_load(rhs), var->storage_modifiers,
-            &var->semantic, var->semantic.index, false, !append_ctx->created);
-    append_ctx->created = true;
+    append_output_copy_recurse(ctx, &block, append_ctx->func, type->e.so.type, hlsl_ir_load(rhs),
+            var->storage_modifiers, &var->semantic, var->semantic.index,
+            var->regs[HLSL_REGSET_STREAM_OUTPUTS].index, false, !append_ctx->created[stream_index]);
+
+    append_ctx->created[stream_index] = true;
 
     list_move_before(&instr->entry, &block.instrs);
     hlsl_src_remove(&store->value);
@@ -6456,6 +6464,8 @@ static void allocate_semantic_register(struct hlsl_ctx *ctx, struct hlsl_ir_var 
 
         if ((!output && !var->last_read) || (output && !var->first_write))
             return;
+
+        optimize = false;
     }
     else
     {
@@ -6518,8 +6528,8 @@ static void allocate_semantic_register(struct hlsl_ctx *ctx, struct hlsl_ir_var 
 static void allocate_semantic_registers(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl *entry_func,
         uint32_t *output_reg_count)
 {
+    struct register_allocator input_allocator = {0}, output_allocators[VKD3D_MAX_STREAM_COUNT] = {{0}};
     struct register_allocator in_prim_allocator = {0}, patch_constant_out_patch_allocator = {0};
-    struct register_allocator input_allocator = {0}, output_allocator = {0};
     bool is_vertex_shader = ctx->profile->type == VKD3D_SHADER_TYPE_VERTEX;
     bool is_pixel_shader = ctx->profile->type == VKD3D_SHADER_TYPE_PIXEL;
     struct hlsl_ir_var *var;
@@ -6527,7 +6537,8 @@ static void allocate_semantic_registers(struct hlsl_ctx *ctx, struct hlsl_ir_fun
     in_prim_allocator.prioritize_smaller_writemasks = true;
     patch_constant_out_patch_allocator.prioritize_smaller_writemasks = true;
     input_allocator.prioritize_smaller_writemasks = true;
-    output_allocator.prioritize_smaller_writemasks = true;
+    for (unsigned int i = 0; i < ARRAY_SIZE(output_allocators); ++i)
+        output_allocators[i].prioritize_smaller_writemasks = true;
 
     LIST_FOR_EACH_ENTRY(var, &entry_func->extern_vars, struct hlsl_ir_var, extern_entry)
     {
@@ -6550,15 +6561,22 @@ static void allocate_semantic_registers(struct hlsl_ctx *ctx, struct hlsl_ir_fun
         }
 
         if (var->is_output_semantic)
-            allocate_semantic_register(ctx, var, &output_allocator, true, !is_pixel_shader);
+        {
+            VKD3D_ASSERT(var->semantic.stream_index < ARRAY_SIZE(output_allocators));
+            allocate_semantic_register(ctx, var, &output_allocators[var->semantic.stream_index],
+                    true, !is_pixel_shader);
+        }
     }
 
-    *output_reg_count = output_allocator.reg_count;
+    *output_reg_count = output_allocators[0].reg_count;
+    for (unsigned int i = 1; i < ARRAY_SIZE(output_allocators); ++i)
+        *output_reg_count = max(*output_reg_count, output_allocators[i].reg_count);
 
     vkd3d_free(in_prim_allocator.allocations);
     vkd3d_free(patch_constant_out_patch_allocator.allocations);
     vkd3d_free(input_allocator.allocations);
-    vkd3d_free(output_allocator.allocations);
+    for (unsigned int i = 0; i < ARRAY_SIZE(output_allocators); ++i)
+        vkd3d_free(output_allocators[i].allocations);
 }
 
 static const struct hlsl_buffer *get_reserved_buffer(struct hlsl_ctx *ctx,
@@ -8018,6 +8036,7 @@ static void generate_vsir_signature_entry(struct hlsl_ctx *ctx, struct vsir_prog
         return;
     }
     element->semantic_index = var->semantic.index;
+    element->stream_index = var->semantic.stream_index;
     element->sysval_semantic = sysval;
     element->component_type = component_type;
     element->register_index = register_index;
@@ -8483,6 +8502,14 @@ static bool sm4_generate_vsir_reg_from_deref(struct hlsl_ctx *ctx, struct vsir_p
                 reg->idx_count = 1;
             }
             VKD3D_ASSERT(regset == HLSL_REGSET_SAMPLERS);
+            *writemask = VKD3DSP_WRITEMASK_ALL;
+        }
+        else if (regset == HLSL_REGSET_STREAM_OUTPUTS)
+        {
+            reg->type = VKD3DSPR_STREAM;
+            reg->dimension = VSIR_DIMENSION_NONE;
+            reg->idx[0].offset = var->regs[HLSL_REGSET_STREAM_OUTPUTS].index;
+            reg->idx_count = 1;
             *writemask = VKD3DSP_WRITEMASK_ALL;
         }
         else
@@ -9279,16 +9306,16 @@ static void sm1_generate_vsir_instr_resource_load(struct hlsl_ctx *ctx,
     switch (load->load_type)
     {
         case HLSL_RESOURCE_SAMPLE:
-            opcode = VKD3DSIH_TEX;
+            opcode = VKD3DSIH_TEXLD;
             break;
 
         case HLSL_RESOURCE_SAMPLE_PROJ:
-            opcode = VKD3DSIH_TEX;
+            opcode = VKD3DSIH_TEXLD;
             flags |= VKD3DSI_TEXLD_PROJECT;
             break;
 
         case HLSL_RESOURCE_SAMPLE_LOD_BIAS:
-            opcode = VKD3DSIH_TEX;
+            opcode = VKD3DSIH_TEXLD;
             flags |= VKD3DSI_TEXLD_BIAS;
             break;
 
@@ -9920,6 +9947,57 @@ static void sm1_generate_ctab(struct hlsl_ctx *ctx, struct vkd3d_shader_code *ct
     }
     ctab->code = buffer.data;
     ctab->size = buffer.size;
+}
+
+static enum vkd3d_shader_input_sysval_semantic vkd3d_siv_from_sysval_indexed(enum vkd3d_shader_sysval_semantic sysval,
+        unsigned int index)
+{
+    switch (sysval)
+    {
+        case VKD3D_SHADER_SV_COVERAGE:
+        case VKD3D_SHADER_SV_DEPTH:
+        case VKD3D_SHADER_SV_DEPTH_GREATER_EQUAL:
+        case VKD3D_SHADER_SV_DEPTH_LESS_EQUAL:
+        case VKD3D_SHADER_SV_NONE:
+        case VKD3D_SHADER_SV_STENCIL_REF:
+        case VKD3D_SHADER_SV_TARGET:
+            return VKD3D_SIV_NONE;
+        case VKD3D_SHADER_SV_POSITION:
+            return VKD3D_SIV_POSITION;
+        case VKD3D_SHADER_SV_CLIP_DISTANCE:
+            return VKD3D_SIV_CLIP_DISTANCE;
+        case VKD3D_SHADER_SV_CULL_DISTANCE:
+            return VKD3D_SIV_CULL_DISTANCE;
+        case VKD3D_SHADER_SV_INSTANCE_ID:
+            return VKD3D_SIV_INSTANCE_ID;
+        case VKD3D_SHADER_SV_IS_FRONT_FACE:
+            return VKD3D_SIV_IS_FRONT_FACE;
+        case VKD3D_SHADER_SV_PRIMITIVE_ID:
+            return VKD3D_SIV_PRIMITIVE_ID;
+        case VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX:
+            return VKD3D_SIV_RENDER_TARGET_ARRAY_INDEX;
+        case VKD3D_SHADER_SV_SAMPLE_INDEX:
+            return VKD3D_SIV_SAMPLE_INDEX;
+        case VKD3D_SHADER_SV_TESS_FACTOR_QUADEDGE:
+            return VKD3D_SIV_QUAD_U0_TESS_FACTOR + index;
+        case VKD3D_SHADER_SV_TESS_FACTOR_QUADINT:
+            return VKD3D_SIV_QUAD_U_INNER_TESS_FACTOR + index;
+        case VKD3D_SHADER_SV_TESS_FACTOR_TRIEDGE:
+            return VKD3D_SIV_TRIANGLE_U_TESS_FACTOR + index;
+        case VKD3D_SHADER_SV_TESS_FACTOR_TRIINT:
+            return VKD3D_SIV_TRIANGLE_INNER_TESS_FACTOR;
+        case VKD3D_SHADER_SV_TESS_FACTOR_LINEDET:
+            return VKD3D_SIV_LINE_DETAIL_TESS_FACTOR;
+        case VKD3D_SHADER_SV_TESS_FACTOR_LINEDEN:
+            return VKD3D_SIV_LINE_DENSITY_TESS_FACTOR;
+        case VKD3D_SHADER_SV_VERTEX_ID:
+            return VKD3D_SIV_VERTEX_ID;
+        case VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX:
+            return VKD3D_SIV_VIEWPORT_ARRAY_INDEX;
+        default:
+            FIXME("Unhandled sysval %#x, index %u.\n", sysval, index);
+            return VKD3D_SIV_NONE;
+    }
 }
 
 static void sm4_generate_vsir_instr_dcl_semantic(struct hlsl_ctx *ctx, struct vsir_program *program,
@@ -10835,20 +10913,27 @@ static bool sm4_generate_vsir_instr_resource_store(struct hlsl_ctx *ctx,
 
     if (store->store_type != HLSL_RESOURCE_STORE)
     {
-        enum vkd3d_shader_opcode opcode = store->store_type == HLSL_RESOURCE_STREAM_APPEND
-                ? VKD3DSIH_EMIT : VKD3DSIH_CUT;
+        enum vkd3d_shader_opcode opcode;
 
         VKD3D_ASSERT(!store->value.node && !store->coords.node);
         VKD3D_ASSERT(store->resource.var->regs[HLSL_REGSET_STREAM_OUTPUTS].allocated);
 
-        if (store->resource.var->regs[HLSL_REGSET_STREAM_OUTPUTS].index)
+        if (hlsl_version_lt(ctx, 5, 0))
         {
-            hlsl_fixme(ctx, &instr->loc, "Stream output operation with a nonzero stream index.");
-            return false;
+            opcode = store->store_type == HLSL_RESOURCE_STREAM_APPEND ? VKD3DSIH_EMIT : VKD3DSIH_CUT;
+            ins = generate_vsir_add_program_instruction(ctx, program, &store->node.loc, opcode, 0, 0);
+            return !!ins;
         }
 
-        ins = generate_vsir_add_program_instruction(ctx, program, &store->node.loc, opcode, 0, 0);
-        return !!ins;
+        opcode = store->store_type == HLSL_RESOURCE_STREAM_APPEND ? VKD3DSIH_EMIT_STREAM : VKD3DSIH_CUT_STREAM;
+        if (!(ins = generate_vsir_add_program_instruction(ctx, program, &store->node.loc, opcode, 0, 1)))
+            return false;
+
+        if (!sm4_generate_vsir_init_src_param_from_deref(ctx, program, &ins->src[0],
+                &store->resource, VKD3DSP_WRITEMASK_ALL, &instr->loc))
+            return false;
+
+        return true;
     }
 
     if (!store->resource.var->is_uniform)
@@ -12029,14 +12114,11 @@ static void sm4_generate_vsir_add_dcl_texture(struct hlsl_ctx *ctx,
         bool uav)
 {
     enum hlsl_regset regset = uav ? HLSL_REGSET_UAVS : HLSL_REGSET_TEXTURES;
-    struct vkd3d_shader_structured_resource *structured_resource;
-    struct vkd3d_shader_dst_param *dst_param;
-    struct vkd3d_shader_semantic *semantic;
     struct vkd3d_shader_instruction *ins;
     struct hlsl_type *component_type;
     enum vkd3d_shader_opcode opcode;
     bool multisampled;
-    unsigned int i, j;
+    unsigned int i;
 
     VKD3D_ASSERT(resource->regset == regset);
     VKD3D_ASSERT(hlsl_version_lt(ctx, 5, 1) || resource->bind_count == 1);
@@ -12047,6 +12129,7 @@ static void sm4_generate_vsir_add_dcl_texture(struct hlsl_ctx *ctx,
     {
         unsigned int array_first = resource->index + i;
         unsigned int array_last = resource->index + i; /* FIXME: array end. */
+        struct vkd3d_shader_resource *vsir_resource;
 
         if (resource->var && !resource->var->objects_usage[regset][i].used)
             continue;
@@ -12084,13 +12167,16 @@ static void sm4_generate_vsir_add_dcl_texture(struct hlsl_ctx *ctx,
             ctx->result = VKD3D_ERROR_OUT_OF_MEMORY;
             return;
         }
-        semantic = &ins->declaration.semantic;
-        structured_resource = &ins->declaration.structured_resource;
-        dst_param = &semantic->resource.reg;
-        vsir_dst_param_init(dst_param, uav ? VKD3DSPR_UAV : VKD3DSPR_RESOURCE, VKD3D_DATA_UNUSED, 0);
 
-        if (uav && component_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
-            structured_resource->byte_stride = 4 * component_type->e.resource.format->reg_size[HLSL_REGSET_NUMERIC];
+        if (component_type->sampler_dim == HLSL_SAMPLER_DIM_RAW_BUFFER)
+            vsir_resource = &ins->declaration.raw_resource.resource;
+        else if (component_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
+            vsir_resource = &ins->declaration.structured_resource.resource;
+        else
+            vsir_resource = &ins->declaration.semantic.resource;
+
+        vsir_dst_param_init(&vsir_resource->reg, uav ? VKD3DSPR_UAV : VKD3DSPR_RESOURCE, VKD3D_DATA_UNUSED, 0);
+
         if (uav && component_type->e.resource.rasteriser_ordered)
             ins->flags = VKD3DSUF_RASTERISER_ORDERED_VIEW;
 
@@ -12104,30 +12190,52 @@ static void sm4_generate_vsir_add_dcl_texture(struct hlsl_ctx *ctx,
                     ctx->profile->major_version, ctx->profile->minor_version);
         }
 
-        for (j = 0; j < 4; ++j)
-            semantic->resource_data_type[j] = sm4_generate_vsir_get_format_type(component_type);
+        vsir_resource->range.first = array_first;
+        vsir_resource->range.last = array_last;
+        vsir_resource->range.space = resource->space;
 
-        semantic->resource.range.first = array_first;
-        semantic->resource.range.last = array_last;
-        semantic->resource.range.space = resource->space;
-
-        dst_param->reg.idx[0].offset = resource->id;
-        dst_param->reg.idx[1].offset = array_first;
-        dst_param->reg.idx[2].offset = array_last;
-        dst_param->reg.idx_count = 3;
+        vsir_resource->reg.reg.idx[0].offset = resource->id;
+        vsir_resource->reg.reg.idx[1].offset = array_first;
+        vsir_resource->reg.reg.idx[2].offset = array_last;
+        vsir_resource->reg.reg.idx_count = 3;
 
         ins->resource_type = sm4_generate_vsir_get_resource_type(resource->component_type);
-        if (resource->component_type->sampler_dim == HLSL_SAMPLER_DIM_RAW_BUFFER)
+
+        if (component_type->sampler_dim == HLSL_SAMPLER_DIM_RAW_BUFFER)
+        {
             ins->raw = true;
-        if (resource->component_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
+        }
+        else if (component_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
         {
             ins->structured = true;
             ins->resource_stride = 4 * component_type->e.resource.format->reg_size[HLSL_REGSET_NUMERIC];
+            ins->declaration.structured_resource.byte_stride = ins->resource_stride;
         }
+        else
+        {
+            for (unsigned int j = 0; j < 4; ++j)
+                ins->declaration.semantic.resource_data_type[j] = sm4_generate_vsir_get_format_type(component_type);
 
-        if (multisampled)
-            semantic->sample_count = component_type->sample_count;
+            if (multisampled)
+                ins->declaration.semantic.sample_count = component_type->sample_count;
+        }
     }
+}
+
+static void sm4_generate_vsir_add_dcl_stream(struct hlsl_ctx *ctx,
+        struct vsir_program *program, const struct hlsl_ir_var *var)
+{
+    struct vkd3d_shader_instruction *ins;
+
+    if (!(ins = generate_vsir_add_program_instruction(ctx, program, &var->loc, VKD3DSIH_DCL_STREAM, 0, 1)))
+    {
+        ctx->result = VKD3D_ERROR_OUT_OF_MEMORY;
+        return;
+    }
+
+    vsir_src_param_init(&ins->src[0], VKD3DSPR_STREAM, VKD3D_DATA_OPAQUE, 1);
+    ins->src[0].reg.dimension = VSIR_DIMENSION_NONE;
+    ins->src[0].reg.idx[0].offset = var->regs[HLSL_REGSET_STREAM_OUTPUTS].index;
 }
 
 /* OBJECTIVE: Translate all the information from ctx and entry_func to the
@@ -12203,6 +12311,17 @@ static void sm4_generate_vsir(struct hlsl_ctx *ctx, struct hlsl_ir_function_decl
             sm4_generate_vsir_add_dcl_texture(ctx, program, resource, true);
     }
     sm4_free_extern_resources(extern_resources, extern_resources_count);
+
+    if (version.type == VKD3D_SHADER_TYPE_GEOMETRY && version.major >= 5)
+    {
+        const struct hlsl_ir_var *var;
+
+        LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+        {
+            if (var->bind_count[HLSL_REGSET_STREAM_OUTPUTS])
+                sm4_generate_vsir_add_dcl_stream(ctx, program, var);
+        }
+    }
 
     if (version.type == VKD3D_SHADER_TYPE_HULL)
         generate_vsir_add_program_instruction(ctx, program,

@@ -59,7 +59,7 @@
 @ stub NdrProxyForwardingFunction31
 @ stub NdrProxyForwardingFunction32
 @ stub NdrOleInitializeExtension
-@ stub RoFailFastWithErrorContextInternal2
+@ stdcall RoFailFastWithErrorContextInternal2(long long ptr)
 @ stub RoFailFastWithErrorContextInternal
 @ stub UpdateProcessTracing
 @ stdcall CLIPFORMAT_UserFree(ptr ptr)
@@ -294,7 +294,7 @@
 @ stdcall RoGetActivationFactory(ptr ptr ptr)
 @ stdcall RoGetAgileReference(long ptr ptr ptr)
 @ stdcall RoGetApartmentIdentifier(ptr)
-@ stub RoGetErrorReportingFlags
+@ stdcall RoGetErrorReportingFlags(ptr)
 @ stub RoGetMatchingRestrictedErrorInfo
 @ stdcall RoGetParameterizedTypeInstanceIID(long ptr ptr ptr ptr)
 @ stdcall RoGetServerActivatableClasses(ptr ptr ptr)
@@ -309,7 +309,7 @@
 @ stdcall RoRegisterForApartmentShutdown(ptr ptr ptr)
 @ stub RoReportCapabilityCheckFailure
 @ stub RoReportFailedDelegate
-@ stub RoReportUnhandledError
+@ stdcall RoReportUnhandledError(ptr)
 @ stub RoResolveRestrictedErrorInfoReference
 @ stub RoRevokeActivationFactories
 @ stdcall RoSetErrorReportingFlags(long)

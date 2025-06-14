@@ -74,8 +74,6 @@ struct macdrv_context
     macdrv_view             read_view;
     RECT                    read_rect;
     CGLPBufferObj           read_pbuffer;
-    BOOL                    has_been_current;
-    BOOL                    sharing;
     int                     swap_interval;
     LONG                    view_moved;
     unsigned int            last_flush_time;
@@ -88,12 +86,13 @@ static pthread_mutex_t context_mutex = PTHREAD_MUTEX_INITIALIZER;
 static CFMutableDictionaryRef dc_pbuffers;
 static pthread_mutex_t dc_pbuffers_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+static void *opengl_handle;
+static const struct opengl_funcs *funcs;
 static const struct opengl_driver_funcs macdrv_driver_funcs;
 
 static void (*pglCopyColorTable)(GLenum target, GLenum internalformat, GLint x, GLint y,
                                  GLsizei width);
 static void (*pglCopyPixels)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum type);
-static void (*pglFlush)(void);
 static void (*pglFlushRenderAPPLE)(void);
 static const GLubyte *(*pglGetString)(GLenum name);
 static PFN_glGetIntegerv pglGetIntegerv;
@@ -232,9 +231,6 @@ C_ASSERT(sizeof(((pixel_format_or_code*)0)->format) <= sizeof(((pixel_format_or_
 
 static pixel_format *pixel_formats;
 static int nb_formats, nb_displayable_formats;
-
-
-static void *opengl_handle;
 
 
 static const char* debugstr_attrib(int attrib, int value)
@@ -2070,7 +2066,7 @@ static void macdrv_glCopyPixels(GLint x, GLint y, GLsizei width, GLsizei height,
 }
 
 
-static BOOL macdrv_context_flush( void *private, HWND hwnd, HDC hdc, int interval, BOOL finish )
+static BOOL macdrv_context_flush( void *private, HWND hwnd, HDC hdc, int interval, void (*flush)(void) )
 {
     struct macdrv_context *context = private;
 
@@ -2176,7 +2172,7 @@ static UINT macdrv_pbuffer_bind(HDC hdc, void *private, GLenum source)
     TRACE("hdc %p pbuffer %p source 0x%x\n", hdc, pbuffer, source);
 
     if (!context->draw_view && context->draw_pbuffer == pbuffer && source != GL_NONE)
-        pglFlush();
+        funcs->p_glFlush();
 
     err = CGLTexImagePBuffer(context->cglcontext, pbuffer, source);
     if (err != kCGLNoError)
@@ -2483,7 +2479,6 @@ static BOOL macdrv_context_make_current(HDC draw_hdc, HDC read_hdc, void *privat
           context->read_view, wine_dbgstr_rect(&context->read_rect), context->read_pbuffer, context->format);
 
     make_context_current(context, FALSE);
-    context->has_been_current = TRUE;
     NtCurrentTeb()->glReserved2 = context;
 
     return TRUE;
@@ -2785,6 +2780,7 @@ UINT macdrv_OpenGLInit(UINT version, const struct opengl_funcs *opengl_funcs, co
         ERR("version mismatch, opengl32 wants %u but macdrv has %u\n", version, WINE_OPENGL_DRIVER_VERSION);
         return STATUS_INVALID_PARAMETER;
     }
+    funcs = opengl_funcs;
 
     dc_pbuffers = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
     if (!dc_pbuffers)
@@ -2813,7 +2809,6 @@ UINT macdrv_OpenGLInit(UINT version, const struct opengl_funcs *opengl_funcs, co
     LOAD_FUNCPTR(glReadPixels);
     LOAD_FUNCPTR(glViewport);
     LOAD_FUNCPTR(glCopyColorTable);
-    LOAD_FUNCPTR(glFlush);
 
     if (!init_gl_info())
         goto failed;
@@ -2945,19 +2940,6 @@ static BOOL macdrv_describe_pixel_format(int format, struct wgl_pixel_format *de
     return TRUE;
 }
 
-static BOOL macdrv_context_copy(void *src_private, void *dst_private, UINT mask)
-{
-    struct macdrv_context *src = src_private, *dst = dst_private;
-    CGLError err;
-
-    TRACE("src %p dst %p mask %x\n", src, dst, mask);
-
-    err = CGLCopyContext(src->cglcontext, dst->cglcontext, mask);
-    if (err != kCGLNoError)
-        WARN("CGLCopyContext() failed with err %d %s\n", err, CGLErrorString(err));
-    return (err == kCGLNoError);
-}
-
 static BOOL macdrv_context_destroy(void *private)
 {
     struct macdrv_context *context = private;
@@ -2970,57 +2952,6 @@ static BOOL macdrv_context_destroy(void *private)
 
     macdrv_dispose_opengl_context(context->context);
     free(context);
-    return TRUE;
-}
-
-static BOOL macdrv_context_share(void *src_private, void *dst_private)
-{
-    struct macdrv_context *org = src_private, *dest = dst_private;
-    macdrv_opengl_context saved_context;
-    CGLContextObj saved_cglcontext;
-
-    TRACE("org %p dest %p\n", org, dest);
-
-    /* Sharing of display lists works differently in Mac OpenGL and WGL.  In Mac OpenGL it is done
-     * at context creation time but in case of WGL it is done using wglShareLists.
-     *
-     * The approach is to create a Mac OpenGL context in wglCreateContext / wglCreateContextAttribsARB
-     * and when a program requests sharing we recreate the destination context if it hasn't been made
-     * current or when it hasn't shared display lists before.
-     */
-
-    if (dest->has_been_current)
-    {
-        WARN("could not share display lists, the destination context has been current already\n");
-        return FALSE;
-    }
-    else if (dest->sharing)
-    {
-        WARN("could not share display lists because dest has already shared lists before\n");
-        return FALSE;
-    }
-
-    /* Re-create the Mac context and share display lists */
-    saved_context = dest->context;
-    saved_cglcontext = dest->cglcontext;
-    dest->context = NULL;
-    dest->cglcontext = NULL;
-    if (!create_context(dest, org->cglcontext, dest->major))
-    {
-        dest->context = saved_context;
-        dest->cglcontext = saved_cglcontext;
-        return FALSE;
-    }
-
-    /* Implicitly disposes of saved_cglcontext. */
-    macdrv_dispose_opengl_context(saved_context);
-
-    TRACE("re-created OpenGL context %p/%p/%p sharing lists with context %p/%p/%p\n",
-          dest, dest->context, dest->cglcontext, org, org->context, org->cglcontext);
-
-    org->sharing = TRUE;
-    dest->sharing = TRUE;
-
     return TRUE;
 }
 
@@ -3104,8 +3035,6 @@ static const struct opengl_driver_funcs macdrv_driver_funcs =
     .p_swap_buffers = macdrv_swap_buffers,
     .p_context_create = macdrv_context_create,
     .p_context_destroy = macdrv_context_destroy,
-    .p_context_copy = macdrv_context_copy,
-    .p_context_share = macdrv_context_share,
     .p_context_flush = macdrv_context_flush,
     .p_context_make_current = macdrv_context_make_current,
     .p_pbuffer_create = macdrv_pbuffer_create,

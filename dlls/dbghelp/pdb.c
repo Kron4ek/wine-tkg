@@ -150,6 +150,7 @@ struct pdb_reader
     unsigned num_action_entries;
     struct pdb_action_entry *action_store;
     struct pdb_dbi_hash_entry *dbi_symbols_hash;
+    unsigned short dbi_substreams[16]; /* 0 means non existing stream */
 
     /* compilands */
     unsigned num_compilands;
@@ -521,7 +522,7 @@ failure:
     return result;
 }
 
-void pdb_reader_dispose(struct pdb_reader *pdb)
+static void pdb_reader_dispose(struct pdb_reader *pdb)
 {
     CloseHandle(pdb->file);
     /* note: pdb is allocated inside its pool, so this must be last line */
@@ -1050,6 +1051,16 @@ static enum pdb_result pdb_reader_get_line_from_address_internal(struct pdb_read
     return R_PDB_NOT_FOUND;
 }
 
+struct pdb_module_info
+{
+    struct pdb_reader pdb_reader;
+};
+
+static inline struct pdb_reader *pdb_get_current_reader(const struct module_format *modfmt)
+{
+    return &modfmt->u.pdb_info->pdb_reader;
+}
+
 static enum method_result pdb_method_result(enum pdb_result result)
 {
     switch (result)
@@ -1067,7 +1078,7 @@ static enum method_result pdb_method_get_line_from_address(struct module_format 
     struct pdb_reader *pdb;
     pdbsize_t compiland_offset;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
+    pdb = pdb_get_current_reader(modfmt);
     result = pdb_reader_get_line_from_address_internal(pdb, address, line_info, &compiland_offset);
     return pdb_method_result(result);
 }
@@ -1141,7 +1152,7 @@ static enum method_result pdb_method_advance_line_info(struct module_format *mod
 {
     struct pdb_reader *pdb;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
+    pdb = pdb_get_current_reader(modfmt);
     return pdb_reader_advance_line_info(pdb, line_info, forward) == R_PDB_SUCCESS ? MR_SUCCESS : MR_FAILURE;
 }
 
@@ -1260,8 +1271,7 @@ static enum method_result pdb_method_enumerate_lines(struct module_format *modfm
 {
     struct pdb_reader *pdb;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
-
+    pdb = pdb_get_current_reader(modfmt);
     return pdb_method_result(pdb_method_enumerate_lines_internal(pdb, compiland_regex, source_file_regex, cb, user));
 }
 
@@ -1307,7 +1317,7 @@ static enum method_result pdb_method_enumerate_sources(struct module_format *mod
 {
     struct pdb_reader *pdb;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
+    pdb = pdb_get_current_reader(modfmt);
 
     /* Note: in PDB, each compiland lists its used files, which are all in global string table,
      * but there's no global source files table AFAICT.
@@ -1779,12 +1789,100 @@ static enum pdb_result pdb_reader_read_DBI_codeview_symbol_by_name(struct pdb_re
     return R_PDB_NOT_FOUND;
 }
 
+struct pdb_reader_whole_stream
+{
+    unsigned short stream_id;
+    const BYTE *data;
+};
+
+static enum pdb_result pdb_reader_alloc_and_load_whole_stream(struct pdb_reader *pdb, unsigned short stream_id, struct pdb_reader_whole_stream *whole)
+{
+    enum pdb_result result;
+    const uint32_t *blocks;
+    unsigned num_blocks, i, j;
+    BYTE *buffer;
+
+    memset(whole, 0, sizeof(*whole));
+    if (stream_id >= pdb->toc->num_streams) return R_PDB_INVALID_ARGUMENT;
+    if (pdb->toc->stream_size[stream_id] == 0 || pdb->toc->stream_size[stream_id] == 0xFFFFFFFF) return R_PDB_NOT_FOUND;
+
+    blocks = pdb->streams[stream_id].blocks;
+    num_blocks = ((pdboff_t)pdb->toc->stream_size[stream_id] + pdb->block_size - 1) / pdb->block_size;
+    buffer = HeapAlloc(GetProcessHeap(), 0, num_blocks * pdb->block_size);
+    if (!buffer) return R_PDB_OUT_OF_MEMORY;
+
+    for (i = 0; i < num_blocks; i = j)
+    {
+        /* find all contiguous blocks to read them at once */
+        for (j = i + 1; j < num_blocks && blocks[j] == blocks[j - 1] + 1; j++) {}
+        if ((result = pdb_reader_fetch_file_no_cache(pdb, buffer + i * pdb->block_size,
+                                                     (pdboff_t)blocks[i] * pdb->block_size, (j - i) * pdb->block_size)))
+        {
+            HeapFree(GetProcessHeap(), 0, buffer);
+            return result;
+        }
+    }
+    whole->stream_id = stream_id;
+    whole->data = buffer;
+    return R_PDB_SUCCESS;
+}
+
+static enum pdb_result pdb_reader_dispose_whole_stream(struct pdb_reader *pdb, struct pdb_reader_whole_stream *whole)
+{
+    HeapFree(GetProcessHeap(), 0, (void *)whole->data);
+    return R_PDB_SUCCESS;
+}
+
+static enum pdb_result pdb_reader_whole_stream_access_codeview_symbol(struct pdb_reader *pdb, struct pdb_reader_whole_stream *whole,
+                                                                      unsigned offset, const union codeview_symbol **cv_symbol)
+{
+    const union codeview_symbol *cv = (const void *)(whole->data + offset);
+    if (!whole->data ||
+        offset + sizeof(cv->generic) > pdb->toc->stream_size[whole->stream_id] ||
+        offset + sizeof(cv->generic.len) + cv->generic.len > pdb->toc->stream_size[whole->stream_id]) return R_PDB_INVALID_ARGUMENT;
+    *cv_symbol = cv;
+    return R_PDB_SUCCESS;
+}
+
+static int my_action_global_obj_cmp(const void *p1, const void *p2)
+{
+    pdbsize_t o1 = ((const struct pdb_action_entry *)p1)->stream_offset;
+    pdbsize_t o2 = ((const struct pdb_action_entry *)p2)->stream_offset;
+
+    if (o1 < o2) return -1;
+    if (o1 > o2) return +1;
+    return 0;
+}
+
+static enum pdb_result pdb_reader_init_DBI_substreams(struct pdb_reader *pdb)
+{
+    enum pdb_result result;
+    struct pdb_reader_walker walker;
+    PDB_SYMBOLS dbi_header;
+    unsigned i;
+    unsigned short streamid;
+
+    if ((result = pdb_reader_read_DBI_header(pdb, &dbi_header, &walker))) return result;
+    walker.offset += dbi_header.module_size + dbi_header.sectcontrib_size +
+        dbi_header.segmap_size + dbi_header.srcmodule_size +
+        dbi_header.pdbimport_size + dbi_header.unknown2_size;
+    walker.last = walker.offset + dbi_header.stream_index_size;
+    for (i = 0; i < ARRAY_SIZE(pdb->dbi_substreams); i++)
+    {
+        if (pdb_reader_READ(pdb, &walker, &streamid)) streamid = 0xffff;
+        pdb->dbi_substreams[i] = streamid;
+    }
+    return R_PDB_SUCCESS;
+}
+
 static enum pdb_result pdb_reader_init_DBI(struct pdb_reader *pdb)
 {
     enum pdb_result result;
     struct pdb_reader_compiland_iterator compiland_iter;
     struct pdb_reader_walker walker;
-    union codeview_symbol cv_symbol;
+    struct pdb_reader_whole_stream whole;
+    const union codeview_symbol *cv_global_symbol, *cv_global_symbol2;
+    unsigned hash;
     symref_t symref;
     unsigned i;
 
@@ -1811,40 +1909,43 @@ static enum pdb_result pdb_reader_init_DBI(struct pdb_reader *pdb)
     }
     if ((result = pdb_reader_load_DBI_hash_table(pdb))) return result;
 
-    /* register the globals entries not bound to a compiland */
-    if ((result = pdb_reader_walker_init(pdb, pdb->dbi_header.gsym_stream, &walker))) return result;
-    while (pdb_reader_READ(pdb, &walker, &cv_symbol.generic) == R_PDB_SUCCESS)
-    {
-        switch (cv_symbol.generic.id)
-        {
-        case S_UDT:
-            if ((result = pdb_reader_push_action(pdb, action_type_globals, walker.offset - sizeof(cv_symbol.generic),
-                                                 cv_symbol.generic.len + sizeof(cv_symbol.generic.len), 0, &symref))) return result;
-            break;
-        case S_GDATA32:
-            {
-                DWORD64 address;
-                symref_t type_symref;
-                union codeview_symbol *cv_global_symbol;
-                union codeview_symbol zzcv;
-                struct pdb_reader_walker global_walker = walker;
-                pdbsize_t global_hash_offset, global_offset;
+    if ((result = pdb_reader_alloc_and_load_whole_stream(pdb, pdb->dbi_header.gsym_stream, &whole))) return result;
 
-                /* There are cases (incremental linking) where we have several entries of same name, but
-                 * only one is valid.
-                 * We discriminate valid with:
-                 * - the hash for that name points to this global entry
-                 * - the address is valid
-                 * - the typeid is valid
-                 * Note: checking address map doesn't bring nothing as the invalid entries are also listed
-                 * there.
-                 */
-                global_walker.offset -= sizeof(cv_symbol.generic);
-                global_offset = global_walker.offset;
-                if (!pdb_reader_alloc_and_read_full_codeview_symbol(pdb, &global_walker, &cv_global_symbol))
+    for (hash = 0; hash < DBI_MAX_HASH; hash++)
+    {
+        struct pdb_dbi_hash_entry *entry, *entry2;
+        DWORD64 address;
+        symref_t type_symref;
+        BOOL found;
+
+        if (pdb->dbi_symbols_hash[hash].next == &pdb->dbi_symbols_hash[hash]) continue;
+        for (entry = &pdb->dbi_symbols_hash[hash]; entry; entry = entry->next)
+        {
+            if (!pdb_reader_whole_stream_access_codeview_symbol(pdb, &whole, entry->dbi_stream_offset, &cv_global_symbol))
+            {
+                switch (cv_global_symbol->generic.id)
                 {
-                    if (!pdb_reader_read_DBI_codeview_symbol_by_name(pdb, cv_global_symbol->data_v3.name, &global_hash_offset, &zzcv) &&
-                        global_hash_offset == global_offset &&
+                case S_UDT:
+                    if ((result = pdb_reader_push_action(pdb, action_type_globals, entry->dbi_stream_offset,
+                                                         cv_global_symbol->generic.len + sizeof(cv_global_symbol->generic.len), 0, &symref))) return result;
+                    break;
+                case S_GDATA32:
+                    /* There are cases (incremental linking) where we have several entries of same name, but
+                     * only one is valid.
+                     * We discriminate valid with:
+                     * - there's no other entry with same name before this entry in hash bucket,
+                     * - the address is valid
+                     * - the typeid is valid
+                     * Note: checking address map doesn't bring nothing as the invalid entries are also listed
+                     * there.
+                     */
+                    found = FALSE;
+                    for (entry2 = &pdb->dbi_symbols_hash[hash]; !found && entry2 && entry2 != entry; entry2 = entry2->next)
+                    {
+                        if (!pdb_reader_whole_stream_access_codeview_symbol(pdb, &whole, entry2->dbi_stream_offset, &cv_global_symbol2))
+                            found = !strcmp(cv_global_symbol->data_v3.name, cv_global_symbol2->data_v3.name);
+                    }
+                    if (!found &&
                         !pdb_reader_get_segment_address(pdb, cv_global_symbol->data_v3.segment, cv_global_symbol->data_v3.offset, &address) &&
                         !pdb_reader_symref_from_cv_typeid(pdb, cv_global_symbol->data_v3.symtype, &type_symref))
                     {
@@ -1852,14 +1953,18 @@ static enum pdb_result pdb_reader_init_DBI(struct pdb_reader *pdb)
                         symt_new_global_variable(pdb->module, 0, cv_global_symbol->data_v3.name,
                                                  FALSE, loc, 0, type_symref);
                     }
-                    pdb_reader_free(pdb, cv_global_symbol);
+                    break;
                 }
             }
-            break;
         }
-        walker.offset += cv_symbol.generic.len - sizeof(cv_symbol.generic.id);
     }
+    if ((result = pdb_reader_dispose_whole_stream(pdb, &whole))) return result;
     pdb->num_action_globals = pdb->num_action_entries;
+    /* as we walked the DBI stream according to hash order, resort by stream_offset */
+    qsort(pdb->action_store, pdb->num_action_globals, sizeof(pdb->action_store[0]),
+          &my_action_global_obj_cmp);
+
+    if ((result = pdb_reader_init_DBI_substreams(pdb))) return result;
 
     return R_PDB_SUCCESS;
 }
@@ -1879,7 +1984,7 @@ static void pdb_method_location_compute(const struct module_format* modfmt,
     loc->kind = loc_error;
     loc->reg = loc_err_internal;
 
-    if (!pdb_hack_get_main_info((struct module_format *)modfmt, &pdb, NULL)) return;
+    pdb = pdb_get_current_reader(modfmt);
     if (in_loc.kind != loc_cv_defrange || pdb_reader_walker_init(pdb, in_loc.reg, &walker)) return;
     walker.offset = in_loc.offset;
 
@@ -2486,7 +2591,7 @@ static enum method_result pdb_method_find_type(struct module_format *modfmt, con
     struct pdb_type_details *type_details;
     pdbsize_t stream_offset;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
+    pdb = pdb_get_current_reader(modfmt);
     if ((result = pdb_reader_init_TPI(pdb))) return pdb_method_result(result);
     /* search in TPI hash table */
     if ((result = pdb_reader_read_codeview_type_by_name(pdb, name, &walker, &cv_type, &cv_typeid)) == R_PDB_SUCCESS)
@@ -2610,7 +2715,7 @@ static enum method_result pdb_method_enumerate_types(struct module_format *modfm
     VARIANT v;
     BOOL ret;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
+    pdb = pdb_get_current_reader(modfmt);
     if ((result = pdb_reader_init_TPI(pdb))) return pdb_method_result(result);
     walker = pdb->tpi_types_walker;
     /* Note: walking the types through the hash table may not be the most efficient */
@@ -3502,7 +3607,7 @@ static enum method_result pdb_method_request_symref_t(struct module_format *modf
 {
     struct pdb_reader *pdb;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
+    pdb = pdb_get_current_reader(modfmt);
     if (pdb_reader_init_TPI(pdb)) return MR_FAILURE;
     return pdb_reader_request_symref_t(pdb, symref, req, data);
 }
@@ -3951,8 +4056,7 @@ static enum method_result pdb_method_get_line_from_inlined_address(struct module
 {
     struct pdb_reader *pdb;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
-
+    pdb = pdb_get_current_reader(modfmt);
     return pdb_method_result(pdb_method_get_line_from_inlined_address_internal(pdb, inlined, address, line_info));
 }
 
@@ -4566,7 +4670,7 @@ static enum method_result pdb_method_lookup_symbol_by_address(struct module_form
     struct pdb_reader *pdb;
     unsigned segment, offset;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
+    pdb = pdb_get_current_reader(modfmt);
     if ((result = pdb_reader_get_segment_offset_from_address(pdb, address, &segment, &offset))) return MR_FAILURE;
     return pdb_method_result(pdb_reader_lookup_top_symbol_by_segment_offset(pdb, segment, offset, symref));
 }
@@ -4621,7 +4725,7 @@ static enum method_result pdb_method_lookup_symbol_by_name(struct module_format 
     unsigned segment;
     unsigned offset;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
+    pdb = pdb_get_current_reader(modfmt);
 
     if ((result = pdb_reader_read_DBI_codeview_symbol_by_name(pdb, name, &globals_offset, &cv_symbol)))
         return pdb_method_result(result);
@@ -4660,7 +4764,7 @@ static enum method_result pdb_method_enumerate_symbols(struct module_format *mod
     unsigned offset;
     char *symbol_name;
 
-    if (!pdb_hack_get_main_info(modfmt, &pdb, NULL)) return MR_FAILURE;
+    pdb = pdb_get_current_reader(modfmt);
 
     /* FIXME could be optimized if match doesn't contain wild cards */
     /* this is currently ugly, but basically we just ensure that all the compilands which contain matching symbols
@@ -4717,9 +4821,15 @@ static enum method_result pdb_method_enumerate_symbols(struct module_format *mod
     return MR_FAILURE;
 }
 
+static void pdb_module_remove(struct module_format* modfmt)
+{
+    pdb_reader_dispose(&modfmt->u.pdb_info->pdb_reader);
+    HeapFree(GetProcessHeap(), 0, modfmt);
+}
+
 static struct module_format_vtable pdb_module_format_vtable =
 {
-    NULL,/*pdb_module_remove*/
+    pdb_module_remove,
     pdb_method_request_symref_t,
     pdb_method_lookup_symbol_by_address,
     pdb_method_lookup_symbol_by_name,
@@ -4734,24 +4844,44 @@ static struct module_format_vtable pdb_module_format_vtable =
     pdb_method_enumerate_sources,
 };
 
-struct pdb_reader *pdb_hack_reader_init(struct module *module, HANDLE file, const IMAGE_SECTION_HEADER *sections, unsigned num_sections)
+BOOL pdb_init_modfmt(const struct process *pcs,
+                     const struct msc_debug_info *msc_dbg,
+                     const WCHAR *filename, BOOL *has_linenumber_info)
 {
-    struct pdb_reader *pdb = pool_alloc(&module->pool, sizeof(*pdb) + num_sections * sizeof(*sections));
-    if (pdb)
-    {
-        IMAGE_SECTION_HEADER *new_sections = (void*)(pdb + 1);
-        memcpy(new_sections, sections, num_sections * sizeof(*sections));
-        if (pdb_reader_init(pdb, module, file, new_sections, num_sections) == R_PDB_SUCCESS)
-        {
-            /* hack (copy old pdb methods until they are moved here) */
-            pdb_module_format_vtable.remove = module->format_info[DFI_PDB]->vtable->remove;
+    struct module_format     *modfmt;
+    struct pdb_module_info   *pdb_module_info;
+    IMAGE_SECTION_HEADER     *new_sections;
+    HANDLE                    file;
 
-            module->format_info[DFI_PDB]->vtable = &pdb_module_format_vtable;
-            return pdb;
-        }
+    if (!(modfmt = HeapAlloc(GetProcessHeap(), 0,
+                             sizeof(struct module_format) + sizeof(struct pdb_module_info) + msc_dbg->nsect * sizeof(msc_dbg->sectp[0]))))
+        return FALSE;
+
+    if ((file = CreateFileW(filename, GENERIC_READ, FILE_SHARE_READ, NULL,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)) == INVALID_HANDLE_VALUE)
+    {
+        HeapFree(GetProcessHeap(), 0, modfmt);
+        return FALSE;
     }
-    pool_free(&module->pool, pdb);
-    return NULL;
+
+    pdb_module_info = (void*)(modfmt + 1);
+    msc_dbg->module->format_info[DFI_PDB] = modfmt;
+    modfmt->module      = msc_dbg->module;
+    modfmt->vtable      = &pdb_module_format_vtable;
+    modfmt->u.pdb_info  = pdb_module_info;
+
+    new_sections = (void*)(pdb_module_info + 1);
+    memcpy(new_sections, msc_dbg->sectp, msc_dbg->nsect * sizeof(*new_sections));
+    if (pdb_reader_init(&pdb_module_info->pdb_reader, msc_dbg->module, file, new_sections, msc_dbg->nsect) == R_PDB_SUCCESS)
+    {
+        /* FIXME */
+        *has_linenumber_info = TRUE;
+        return TRUE;
+    }
+    msc_dbg->module->format_info[DFI_PDB] = NULL;
+    HeapFree(GetProcessHeap(), 0, modfmt);
+    CloseHandle(file);
+    return FALSE;
 }
 
 /*========================================================================
@@ -4974,8 +5104,7 @@ static BOOL  pev_assign(struct pevaluator* pev)
 }
 
 /* initializes the postfix evaluator */
-static void  pev_init(struct pevaluator* pev, struct cpu_stack_walk* csw,
-                      const PDB_FPO_DATA* fpoext, struct pdb_cmd_pair* cpair)
+static void pev_init(struct pevaluator* pev, struct cpu_stack_walk* csw)
 {
     pev->csw = csw;
     pool_init(&pev->pool, 512);
@@ -4983,29 +5112,41 @@ static void  pev_init(struct pevaluator* pev, struct cpu_stack_walk* csw,
     pev->stk_index = 0;
     hash_table_init(&pev->pool, &pev->values, 8);
     pev->error[0] = '\0';
-    for (; cpair->name; cpair++)
-        pev_set_value(pev, cpair->name, *cpair->pvalue);
+}
+
+static void pev_push_context(struct pevaluator *pev, const WOW64_CONTEXT *context)
+{
+    pev_set_value(pev, "$ebp", context->Ebp);
+    pev_set_value(pev, "$esp", context->Esp);
+    pev_set_value(pev, "$eip", context->Eip);
+}
+
+static void pev_pop_context(struct pevaluator *pev, WOW64_CONTEXT *context)
+{
+    DWORD_PTR val;
+
+    if (pev_get_val(pev, "$ebp", &val)) context->Ebp = val;
+    if (pev_get_val(pev, "$esp", &val)) context->Esp = val;
+    if (pev_get_val(pev, "$eip", &val)) context->Eip = val;
+}
+
+static void pev_push_fpodata(struct pevaluator *pev, const PDB_FPO_DATA* fpoext)
+{
+
     pev_set_value(pev, ".raSearchStart", fpoext->start);
     pev_set_value(pev, ".cbLocals",      fpoext->locals_size);
     pev_set_value(pev, ".cbParams",      fpoext->params_size);
     pev_set_value(pev, ".cbSavedRegs",   fpoext->savedregs_size);
 }
 
-static BOOL  pev_free(struct pevaluator* pev, struct pdb_cmd_pair* cpair)
+static BOOL  pev_free(struct pevaluator* pev)
 {
-    DWORD_PTR   val;
-
-    if (cpair) for (; cpair->name; cpair++)
-    {
-        if (pev_get_val(pev, cpair->name, &val))
-            *cpair->pvalue = val;
-    }
     pool_destroy(&pev->pool);
     return TRUE;
 }
 
-BOOL  pdb_fpo_unwind_parse_cmd_string(struct cpu_stack_walk* csw, PDB_FPO_DATA* fpoext,
-                                      const char* cmd, struct pdb_cmd_pair* cpair)
+BOOL pdb_fpo_unwind_parse_cmd_string(struct cpu_stack_walk* csw, PDB_FPO_DATA* fpoext,
+                                     const char* cmd, WOW64_CONTEXT *context)
 {
     char                token[PEV_MAX_LEN];
     char*               ptok = token;
@@ -5014,7 +5155,9 @@ BOOL  pdb_fpo_unwind_parse_cmd_string(struct cpu_stack_walk* csw, PDB_FPO_DATA* 
     struct pevaluator   pev;
 
     if (!cmd) return FALSE;
-    pev_init(&pev, csw, fpoext, cpair);
+    pev_init(&pev, csw);
+    pev_push_context(&pev, context);
+    pev_push_fpodata(&pev, fpoext);
     for (ptr = cmd; !over; ptr++)
     {
         if (*ptr == ' ' || (over = *ptr == '\0'))
@@ -5050,16 +5193,16 @@ BOOL  pdb_fpo_unwind_parse_cmd_string(struct cpu_stack_walk* csw, PDB_FPO_DATA* 
             *ptok++ = *ptr;
         }
     }
-    pev_free(&pev, cpair);
+    pev_pop_context(&pev, context);
+    pev_free(&pev);
     return TRUE;
 done:
     FIXME("Couldn't evaluate %s => %s\n", debugstr_a(cmd), pev.error);
-    pev_free(&pev, NULL);
+    pev_free(&pev);
     return FALSE;
 }
 
-BOOL pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
-                        union ctx *context, struct pdb_cmd_pair *cpair)
+BOOL pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip, union ctx *context)
 {
     struct pdb_reader          *pdb;
     struct pdb_reader_walker    walker;
@@ -5069,13 +5212,13 @@ BOOL pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
     BOOL                        ret = FALSE;
 
     if (!module_init_pair(&pair, csw->hProcess, ip)) return FALSE;
-    if (!pdb_hack_get_main_info(pair.effective->format_info[DFI_PDB], &pdb, &fpoext_stream)) return FALSE;
+    if (!pair.effective->format_info[DFI_PDB]) return FALSE;
+    pdb = pdb_get_current_reader(pair.effective->format_info[DFI_PDB]);
 
-    if (!pdb)
-        return pdb_old_virtual_unwind(csw, ip, context, cpair);
     TRACE("searching %Ix => %Ix\n", ip, ip - (DWORD_PTR)pair.effective->module.BaseOfImage);
     ip -= (DWORD_PTR)pair.effective->module.BaseOfImage;
 
+    fpoext_stream = pdb->dbi_substreams[PDB_SIDX_FPOEXT];
     if (!pdb_reader_walker_init(pdb, fpoext_stream, &walker) &&
         (walker.last % sizeof(fpoext)) == 0)
     {
@@ -5093,7 +5236,7 @@ BOOL pdb_virtual_unwind(struct cpu_stack_walk *csw, DWORD_PTR ip,
                       fpoext.savedregs_size, fpoext.flags,
                       debugstr_a(cmd));
 
-                ret = pdb_fpo_unwind_parse_cmd_string(csw, &fpoext, cmd, cpair);
+                ret = pdb_fpo_unwind_parse_cmd_string(csw, &fpoext, cmd, &context->x86);
                 pdb_reader_free(pdb, cmd);
                 break;
             }

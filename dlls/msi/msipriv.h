@@ -43,6 +43,8 @@
 
 static const BOOL is_64bit = sizeof(void *) > sizeof(int);
 extern BOOL is_wow64;
+extern WCHAR sysdir[MAX_PATH];
+extern SIZE_T sysdir_len;
 
 #define MSI_DATASIZEMASK 0x00ff
 #define MSITYPE_VALID    0x0100
@@ -1114,7 +1116,7 @@ extern BOOL msi_set_file_attributes( MSIPACKAGE *, const WCHAR *, DWORD );
 extern HANDLE msi_find_first_file( MSIPACKAGE *, const WCHAR *, WIN32_FIND_DATAW * );
 extern BOOL msi_find_next_file( MSIPACKAGE *, HANDLE, WIN32_FIND_DATAW * );
 extern BOOL msi_move_file( MSIPACKAGE *, const WCHAR *, const WCHAR *, DWORD );
-extern DWORD msi_get_file_version_info( MSIPACKAGE *, const WCHAR *, DWORD, BYTE * );
+extern BYTE *msi_get_file_version_info( MSIPACKAGE *, const WCHAR * );
 extern BOOL msi_create_full_path( MSIPACKAGE *, const WCHAR * );
 extern DWORD msi_get_disk_file_size( MSIPACKAGE *, const WCHAR * );
 extern VS_FIXEDFILEINFO *msi_get_disk_file_version( MSIPACKAGE *, const WCHAR * );
