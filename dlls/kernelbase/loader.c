@@ -533,9 +533,16 @@ HMODULE WINAPI DECLSPEC_HOTPATCH LoadLibraryW( LPCWSTR name )
 HMODULE WINAPI DECLSPEC_HOTPATCH LoadLibraryExA( LPCSTR name, HANDLE file, DWORD flags )
 {
     WCHAR *nameW;
+    HMODULE module;
 
-    if (!(nameW = file_name_AtoW( name, FALSE ))) return 0;
-    return LoadLibraryExW( nameW, file, flags );
+    /* A new allocation is necessary due to TP Shell Service
+     * calling LoadLibraryExA from an LdrLoadDll hook */
+    if (!(nameW = file_name_AtoW( name, TRUE ))) return 0;
+
+    module = LoadLibraryExW( nameW, file, flags );
+
+    HeapFree( GetProcessHeap(), 0, nameW );
+    return module;
 }
 
 
@@ -553,7 +560,7 @@ HMODULE WINAPI DECLSPEC_HOTPATCH LoadLibraryExW( LPCWSTR name, HANDLE file, DWOR
         return 0;
     }
     RtlInitUnicodeString( &str, name );
-    if (str.Buffer[str.Length/sizeof(WCHAR) - 1] != ' ') return load_library( &str, flags );
+    if (str.Length && str.Buffer[str.Length/sizeof(WCHAR) - 1] != ' ') return load_library( &str, flags );
 
     /* library name has trailing spaces */
     RtlCreateUnicodeString( &str, name );
@@ -1166,7 +1173,7 @@ void WINAPI DECLSPEC_HOTPATCH AddRefActCtx( HANDLE context )
  */
 HANDLE WINAPI DECLSPEC_HOTPATCH CreateActCtxW( PCACTCTXW ctx )
 {
-    HANDLE context;
+    struct _ACTIVATION_CONTEXT *context;
 
     TRACE( "%p %08lx\n", ctx, ctx ? ctx->dwFlags : 0 );
 
@@ -1218,7 +1225,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH FindActCtxSectionStringW( DWORD flags, const GUID 
  */
 BOOL WINAPI DECLSPEC_HOTPATCH GetCurrentActCtx( HANDLE *pcontext )
 {
-    return set_ntstatus( RtlGetActiveActivationContext( pcontext ));
+    return set_ntstatus( RtlGetActiveActivationContext( (struct _ACTIVATION_CONTEXT **)pcontext ));
 }
 
 

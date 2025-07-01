@@ -590,9 +590,10 @@ static void shader_print_double_literal(struct vkd3d_d3d_asm_compiler *compiler,
 static void shader_print_int_literal(struct vkd3d_d3d_asm_compiler *compiler,
         const char *prefix, int i, const char *suffix)
 {
+    /* Note that we need to handle INT_MIN here as well. */
     if (i < 0)
-        vkd3d_string_buffer_printf(&compiler->buffer, "%s-%s%d%s%s",
-                prefix, compiler->colours.literal, -i, compiler->colours.reset, suffix);
+        vkd3d_string_buffer_printf(&compiler->buffer, "%s-%s%u%s%s",
+                prefix, compiler->colours.literal, -(unsigned int)i, compiler->colours.reset, suffix);
     else
         vkd3d_string_buffer_printf(&compiler->buffer, "%s%s%d%s%s",
                 prefix, compiler->colours.literal, i, compiler->colours.reset, suffix);
@@ -714,8 +715,8 @@ static void shader_print_register(struct vkd3d_d3d_asm_compiler *compiler, const
 
         switch (compiler->current->opcode)
         {
-            case VKD3DSIH_MOV:
-            case VKD3DSIH_MOVC:
+            case VSIR_OP_MOV:
+            case VSIR_OP_MOVC:
                 untyped = true;
                 break;
 
@@ -1283,11 +1284,11 @@ static void shader_dump_instruction_flags(struct vkd3d_d3d_asm_compiler *compile
 
     switch (ins->opcode)
     {
-        case VKD3DSIH_BREAKP:
-        case VKD3DSIH_CONTINUEP:
-        case VKD3DSIH_DISCARD:
-        case VKD3DSIH_IF:
-        case VKD3DSIH_RETP:
+        case VSIR_OP_BREAKP:
+        case VSIR_OP_CONTINUEP:
+        case VSIR_OP_DISCARD:
+        case VSIR_OP_IF:
+        case VSIR_OP_RETP:
             switch (ins->flags)
             {
                 case VKD3D_SHADER_CONDITIONAL_OP_NZ:
@@ -1302,8 +1303,8 @@ static void shader_dump_instruction_flags(struct vkd3d_d3d_asm_compiler *compile
             }
             break;
 
-        case VKD3DSIH_IFC:
-        case VKD3DSIH_BREAKC:
+        case VSIR_OP_IFC:
+        case VSIR_OP_BREAKC:
             switch (ins->flags)
             {
                 case VKD3D_SHADER_REL_OP_GT:
@@ -1330,7 +1331,7 @@ static void shader_dump_instruction_flags(struct vkd3d_d3d_asm_compiler *compile
             }
             break;
 
-        case VKD3DSIH_RESINFO:
+        case VSIR_OP_RESINFO:
             switch (ins->flags)
             {
                 case VKD3DSI_NONE:
@@ -1347,7 +1348,7 @@ static void shader_dump_instruction_flags(struct vkd3d_d3d_asm_compiler *compile
             }
             break;
 
-        case VKD3DSIH_SAMPLE_INFO:
+        case VSIR_OP_SAMPLE_INFO:
             switch (ins->flags)
             {
                 case VKD3DSI_NONE:
@@ -1361,24 +1362,24 @@ static void shader_dump_instruction_flags(struct vkd3d_d3d_asm_compiler *compile
             }
             break;
 
-        case VKD3DSIH_IMM_ATOMIC_CMP_EXCH:
-        case VKD3DSIH_IMM_ATOMIC_IADD:
-        case VKD3DSIH_IMM_ATOMIC_AND:
-        case VKD3DSIH_IMM_ATOMIC_IMAX:
-        case VKD3DSIH_IMM_ATOMIC_IMIN:
-        case VKD3DSIH_IMM_ATOMIC_OR:
-        case VKD3DSIH_IMM_ATOMIC_UMAX:
-        case VKD3DSIH_IMM_ATOMIC_UMIN:
-        case VKD3DSIH_IMM_ATOMIC_EXCH:
-        case VKD3DSIH_IMM_ATOMIC_XOR:
+        case VSIR_OP_IMM_ATOMIC_CMP_EXCH:
+        case VSIR_OP_IMM_ATOMIC_IADD:
+        case VSIR_OP_IMM_ATOMIC_AND:
+        case VSIR_OP_IMM_ATOMIC_IMAX:
+        case VSIR_OP_IMM_ATOMIC_IMIN:
+        case VSIR_OP_IMM_ATOMIC_OR:
+        case VSIR_OP_IMM_ATOMIC_UMAX:
+        case VSIR_OP_IMM_ATOMIC_UMIN:
+        case VSIR_OP_IMM_ATOMIC_EXCH:
+        case VSIR_OP_IMM_ATOMIC_XOR:
             shader_dump_atomic_op_flags(compiler, ins->flags);
             break;
 
-        case VKD3DSIH_SYNC:
+        case VSIR_OP_SYNC:
             shader_dump_sync_flags(compiler, ins->flags);
             break;
 
-        case VKD3DSIH_TEXLD:
+        case VSIR_OP_TEXLD:
             if (vkd3d_shader_ver_ge(&compiler->shader_version, 2, 0))
             {
                 if (ins->flags & VKD3DSI_TEXLD_PROJECT)
@@ -1388,20 +1389,20 @@ static void shader_dump_instruction_flags(struct vkd3d_d3d_asm_compiler *compile
             }
             break;
 
-        case VKD3DSIH_WAVE_OP_ADD:
-        case VKD3DSIH_WAVE_OP_IMAX:
-        case VKD3DSIH_WAVE_OP_IMIN:
-        case VKD3DSIH_WAVE_OP_MAX:
-        case VKD3DSIH_WAVE_OP_MIN:
-        case VKD3DSIH_WAVE_OP_MUL:
-        case VKD3DSIH_WAVE_OP_UMAX:
-        case VKD3DSIH_WAVE_OP_UMIN:
+        case VSIR_OP_WAVE_OP_ADD:
+        case VSIR_OP_WAVE_OP_IMAX:
+        case VSIR_OP_WAVE_OP_IMIN:
+        case VSIR_OP_WAVE_OP_MAX:
+        case VSIR_OP_WAVE_OP_MIN:
+        case VSIR_OP_WAVE_OP_MUL:
+        case VSIR_OP_WAVE_OP_UMAX:
+        case VSIR_OP_WAVE_OP_UMIN:
             vkd3d_string_buffer_printf(&compiler->buffer, (ins->flags & VKD3DSI_WAVE_PREFIX) ? "_prefix" : "_active");
             break;
 
-        case VKD3DSIH_ISHL:
-        case VKD3DSIH_ISHR:
-        case VKD3DSIH_USHR:
+        case VSIR_OP_ISHL:
+        case VSIR_OP_ISHR:
+        case VSIR_OP_USHR:
             if (ins->flags & VKD3DSI_SHIFT_UNMASKED)
                 vkd3d_string_buffer_printf(buffer, "_unmasked");
             /* fall through */
@@ -1472,8 +1473,8 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
 
     switch (ins->opcode)
     {
-        case VKD3DSIH_DCL:
-        case VKD3DSIH_DCL_UAV_TYPED:
+        case VSIR_OP_DCL:
+        case VSIR_OP_DCL_UAV_TYPED:
             vkd3d_string_buffer_printf(buffer, "%s", compiler->colours.opcode);
             shader_print_dcl_usage(compiler, "_", &ins->declaration.semantic, ins->flags, "");
             shader_dump_ins_modifiers(compiler, &ins->declaration.semantic.resource.reg);
@@ -1482,7 +1483,7 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
             shader_dump_register_space(compiler, ins->declaration.semantic.resource.range.space);
             break;
 
-        case VKD3DSIH_DCL_CONSTANT_BUFFER:
+        case VSIR_OP_DCL_CONSTANT_BUFFER:
             shader_print_register(compiler, " ", &ins->declaration.cb.src.reg, true, "");
             if (vkd3d_shader_ver_ge(&compiler->shader_version, 6, 0))
                 shader_print_subscript(compiler, ins->declaration.cb.size, NULL);
@@ -1493,33 +1494,33 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
             shader_dump_register_space(compiler, ins->declaration.cb.range.space);
             break;
 
-        case VKD3DSIH_DCL_FUNCTION_BODY:
+        case VSIR_OP_DCL_FUNCTION_BODY:
             vkd3d_string_buffer_printf(buffer, " fb%u", ins->declaration.index);
             break;
 
-        case VKD3DSIH_DCL_FUNCTION_TABLE:
+        case VSIR_OP_DCL_FUNCTION_TABLE:
             vkd3d_string_buffer_printf(buffer, " ft%u = {...}", ins->declaration.index);
             break;
 
-        case VKD3DSIH_DCL_GLOBAL_FLAGS:
+        case VSIR_OP_DCL_GLOBAL_FLAGS:
             vkd3d_string_buffer_printf(buffer, " ");
             shader_dump_global_flags(compiler, ins->declaration.global_flags);
             break;
 
-        case VKD3DSIH_DCL_HS_MAX_TESSFACTOR:
+        case VSIR_OP_DCL_HS_MAX_TESSFACTOR:
             shader_print_float_literal(compiler, " ", ins->declaration.max_tessellation_factor, "");
             break;
 
-        case VKD3DSIH_DCL_IMMEDIATE_CONSTANT_BUFFER:
+        case VSIR_OP_DCL_IMMEDIATE_CONSTANT_BUFFER:
             shader_dump_icb(compiler, ins->declaration.icb);
             break;
 
-        case VKD3DSIH_DCL_INDEX_RANGE:
+        case VSIR_OP_DCL_INDEX_RANGE:
             shader_print_dst_param(compiler, " ", &ins->declaration.index_range.dst, true, "");
             shader_print_uint_literal(compiler, " ", ins->declaration.index_range.register_count, "");
             break;
 
-        case VKD3DSIH_DCL_INDEXABLE_TEMP:
+        case VSIR_OP_DCL_INDEXABLE_TEMP:
             vkd3d_string_buffer_printf(buffer, " %sx%u%s", compiler->colours.reg,
                     ins->declaration.indexable_temp.register_idx, compiler->colours.reset);
             shader_print_subscript(compiler, ins->declaration.indexable_temp.register_size, NULL);
@@ -1530,113 +1531,113 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
                 shader_dump_icb(compiler, ins->declaration.indexable_temp.initialiser);
             break;
 
-        case VKD3DSIH_DCL_INPUT_PS:
+        case VSIR_OP_DCL_INPUT_PS:
             shader_print_interpolation_mode(compiler, " ", ins->flags, "");
             shader_print_dst_param(compiler, " ", &ins->declaration.dst, true, "");
             break;
 
-        case VKD3DSIH_DCL_INPUT_PS_SGV:
-        case VKD3DSIH_DCL_INPUT_SGV:
-        case VKD3DSIH_DCL_INPUT_SIV:
-        case VKD3DSIH_DCL_OUTPUT_SGV:
-        case VKD3DSIH_DCL_OUTPUT_SIV:
+        case VSIR_OP_DCL_INPUT_PS_SGV:
+        case VSIR_OP_DCL_INPUT_SGV:
+        case VSIR_OP_DCL_INPUT_SIV:
+        case VSIR_OP_DCL_OUTPUT_SGV:
+        case VSIR_OP_DCL_OUTPUT_SIV:
             shader_print_dst_param(compiler, " ", &ins->declaration.register_semantic.reg, true, "");
             shader_print_input_sysval_semantic(compiler, ", ", ins->declaration.register_semantic.sysval_semantic, "");
             break;
 
-        case VKD3DSIH_DCL_INPUT_PS_SIV:
+        case VSIR_OP_DCL_INPUT_PS_SIV:
             shader_print_interpolation_mode(compiler, " ", ins->flags, "");
             shader_print_dst_param(compiler, " ", &ins->declaration.register_semantic.reg, true, "");
             shader_print_input_sysval_semantic(compiler, ", ", ins->declaration.register_semantic.sysval_semantic, "");
             break;
 
-        case VKD3DSIH_DCL_INPUT:
-        case VKD3DSIH_DCL_OUTPUT:
+        case VSIR_OP_DCL_INPUT:
+        case VSIR_OP_DCL_OUTPUT:
             shader_print_dst_param(compiler, " ", &ins->declaration.dst, true, "");
             break;
 
-        case VKD3DSIH_DCL_INPUT_PRIMITIVE:
-        case VKD3DSIH_DCL_OUTPUT_TOPOLOGY:
+        case VSIR_OP_DCL_INPUT_PRIMITIVE:
+        case VSIR_OP_DCL_OUTPUT_TOPOLOGY:
             shader_print_primitive_type(compiler, " ", &ins->declaration.primitive_type, "");
             break;
 
-        case VKD3DSIH_DCL_INTERFACE:
+        case VSIR_OP_DCL_INTERFACE:
             vkd3d_string_buffer_printf(buffer, " fp%u", ins->declaration.fp.index);
             shader_print_subscript(compiler, ins->declaration.fp.array_size, NULL);
             shader_print_subscript(compiler, ins->declaration.fp.body_count, NULL);
             vkd3d_string_buffer_printf(buffer, " = {...}");
             break;
 
-        case VKD3DSIH_DCL_RESOURCE_RAW:
+        case VSIR_OP_DCL_RESOURCE_RAW:
             shader_print_dst_param(compiler, " ", &ins->declaration.raw_resource.resource.reg, true, "");
             shader_dump_register_space(compiler, ins->declaration.raw_resource.resource.range.space);
             break;
 
-        case VKD3DSIH_DCL_RESOURCE_STRUCTURED:
+        case VSIR_OP_DCL_RESOURCE_STRUCTURED:
             shader_print_dst_param(compiler, " ", &ins->declaration.structured_resource.resource.reg, true, "");
             shader_print_uint_literal(compiler, ", ", ins->declaration.structured_resource.byte_stride, "");
             shader_dump_register_space(compiler, ins->declaration.structured_resource.resource.range.space);
             break;
 
-        case VKD3DSIH_DCL_SAMPLER:
+        case VSIR_OP_DCL_SAMPLER:
             shader_print_register(compiler, " ", &ins->declaration.sampler.src.reg, true,
                     ins->flags == VKD3DSI_SAMPLER_COMPARISON_MODE ? ", comparisonMode" : "");
             shader_dump_register_space(compiler, ins->declaration.sampler.range.space);
             break;
 
-        case VKD3DSIH_DCL_TEMPS:
-        case VKD3DSIH_DCL_GS_INSTANCES:
-        case VKD3DSIH_DCL_HS_FORK_PHASE_INSTANCE_COUNT:
-        case VKD3DSIH_DCL_HS_JOIN_PHASE_INSTANCE_COUNT:
-        case VKD3DSIH_DCL_INPUT_CONTROL_POINT_COUNT:
-        case VKD3DSIH_DCL_OUTPUT_CONTROL_POINT_COUNT:
-        case VKD3DSIH_DCL_VERTICES_OUT:
+        case VSIR_OP_DCL_TEMPS:
+        case VSIR_OP_DCL_GS_INSTANCES:
+        case VSIR_OP_DCL_HS_FORK_PHASE_INSTANCE_COUNT:
+        case VSIR_OP_DCL_HS_JOIN_PHASE_INSTANCE_COUNT:
+        case VSIR_OP_DCL_INPUT_CONTROL_POINT_COUNT:
+        case VSIR_OP_DCL_OUTPUT_CONTROL_POINT_COUNT:
+        case VSIR_OP_DCL_VERTICES_OUT:
             shader_print_uint_literal(compiler, " ", ins->declaration.count, "");
             break;
 
-        case VKD3DSIH_DCL_TESSELLATOR_DOMAIN:
+        case VSIR_OP_DCL_TESSELLATOR_DOMAIN:
             shader_print_tessellator_domain(compiler, " ", ins->declaration.tessellator_domain, "");
             break;
 
-        case VKD3DSIH_DCL_TESSELLATOR_OUTPUT_PRIMITIVE:
+        case VSIR_OP_DCL_TESSELLATOR_OUTPUT_PRIMITIVE:
             shader_print_tessellator_output_primitive(compiler, " ", ins->declaration.tessellator_output_primitive, "");
             break;
 
-        case VKD3DSIH_DCL_TESSELLATOR_PARTITIONING:
+        case VSIR_OP_DCL_TESSELLATOR_PARTITIONING:
             shader_print_tessellator_partitioning(compiler, " ", ins->declaration.tessellator_partitioning, "");
             break;
 
-        case VKD3DSIH_DCL_TGSM_RAW:
+        case VSIR_OP_DCL_TGSM_RAW:
             shader_print_dst_param(compiler, " ", &ins->declaration.tgsm_raw.reg, true, "");
             shader_print_uint_literal(compiler, ", ", ins->declaration.tgsm_raw.byte_count, "");
             break;
 
-        case VKD3DSIH_DCL_TGSM_STRUCTURED:
+        case VSIR_OP_DCL_TGSM_STRUCTURED:
             shader_print_dst_param(compiler, " ", &ins->declaration.tgsm_structured.reg, true, "");
             shader_print_uint_literal(compiler, ", ", ins->declaration.tgsm_structured.byte_stride, "");
             shader_print_uint_literal(compiler, ", ", ins->declaration.tgsm_structured.structure_count, "");
             break;
 
-        case VKD3DSIH_DCL_THREAD_GROUP:
+        case VSIR_OP_DCL_THREAD_GROUP:
             shader_print_uint_literal(compiler, " ", ins->declaration.thread_group_size.x, "");
             shader_print_uint_literal(compiler, ", ", ins->declaration.thread_group_size.y, "");
             shader_print_uint_literal(compiler, ", ", ins->declaration.thread_group_size.z, "");
             break;
 
-        case VKD3DSIH_DCL_UAV_RAW:
+        case VSIR_OP_DCL_UAV_RAW:
             shader_dump_uav_flags(compiler, ins->flags);
             shader_print_dst_param(compiler, " ", &ins->declaration.raw_resource.resource.reg, true, "");
             shader_dump_register_space(compiler, ins->declaration.raw_resource.resource.range.space);
             break;
 
-        case VKD3DSIH_DCL_UAV_STRUCTURED:
+        case VSIR_OP_DCL_UAV_STRUCTURED:
             shader_dump_uav_flags(compiler, ins->flags);
             shader_print_dst_param(compiler, " ", &ins->declaration.structured_resource.resource.reg, true, "");
             shader_print_uint_literal(compiler, ", ", ins->declaration.structured_resource.byte_stride, "");
             shader_dump_register_space(compiler, ins->declaration.structured_resource.resource.range.space);
             break;
 
-        case VKD3DSIH_DEF:
+        case VSIR_OP_DEF:
             vkd3d_string_buffer_printf(buffer, " %sc%u%s", compiler->colours.reg,
                     ins->dst[0].reg.idx[0].offset, compiler->colours.reset);
             shader_print_float_literal(compiler, " = ", ins->src[0].reg.u.immconst_f32[0], "");
@@ -1645,7 +1646,7 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
             shader_print_float_literal(compiler, ", ", ins->src[0].reg.u.immconst_f32[3], "");
             break;
 
-        case VKD3DSIH_DEFI:
+        case VSIR_OP_DEFI:
             vkd3d_string_buffer_printf(buffer, " %si%u%s", compiler->colours.reg,
                     ins->dst[0].reg.idx[0].offset, compiler->colours.reset);
             shader_print_int_literal(compiler, " = ", ins->src[0].reg.u.immconst_u32[0], "");
@@ -1654,7 +1655,7 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
             shader_print_int_literal(compiler, ", ", ins->src[0].reg.u.immconst_u32[3], "");
             break;
 
-        case VKD3DSIH_DEFB:
+        case VSIR_OP_DEFB:
             vkd3d_string_buffer_printf(buffer, " %sb%u%s", compiler->colours.reg,
                     ins->dst[0].reg.idx[0].offset, compiler->colours.reset);
             shader_print_bool_literal(compiler, " = ", ins->src[0].reg.u.immconst_u32[0], "");
@@ -2047,19 +2048,19 @@ enum vkd3d_result d3d_asm_compile(const struct vsir_program *program,
 
         switch (ins->opcode)
         {
-            case VKD3DSIH_ELSE:
-            case VKD3DSIH_ENDIF:
-            case VKD3DSIH_ENDLOOP:
-            case VKD3DSIH_ENDSWITCH:
+            case VSIR_OP_ELSE:
+            case VSIR_OP_ENDIF:
+            case VSIR_OP_ENDLOOP:
+            case VSIR_OP_ENDSWITCH:
                 if (indent)
                     --indent;
                 break;
 
-            case VKD3DSIH_LABEL:
-            case VKD3DSIH_HS_DECLS:
-            case VKD3DSIH_HS_CONTROL_POINT_PHASE:
-            case VKD3DSIH_HS_FORK_PHASE:
-            case VKD3DSIH_HS_JOIN_PHASE:
+            case VSIR_OP_LABEL:
+            case VSIR_OP_HS_DECLS:
+            case VSIR_OP_HS_CONTROL_POINT_PHASE:
+            case VSIR_OP_HS_FORK_PHASE:
+            case VSIR_OP_HS_JOIN_PHASE:
                 indent = 0;
                 break;
 
@@ -2076,12 +2077,12 @@ enum vkd3d_result d3d_asm_compile(const struct vsir_program *program,
 
         switch (ins->opcode)
         {
-            case VKD3DSIH_ELSE:
-            case VKD3DSIH_IF:
-            case VKD3DSIH_IFC:
-            case VKD3DSIH_LOOP:
-            case VKD3DSIH_SWITCH:
-            case VKD3DSIH_LABEL:
+            case VSIR_OP_ELSE:
+            case VSIR_OP_IF:
+            case VSIR_OP_IFC:
+            case VSIR_OP_LOOP:
+            case VSIR_OP_SWITCH:
+            case VSIR_OP_LABEL:
                 ++indent;
                 break;
 

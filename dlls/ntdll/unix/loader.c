@@ -90,8 +90,6 @@
 #include "winioctl.h"
 #include "winternl.h"
 #include "unix_private.h"
-#include "esync.h"
-#include "fsync.h"
 #include "wine/list.h"
 #include "ntsyscalls.h"
 #include "wine/debug.h"
@@ -1028,7 +1026,7 @@ static NTSTATUS load_so_dll( void *args )
     struct load_so_dll_params *params = args;
     UNICODE_STRING *nt_name = &params->nt_name;
     OBJECT_ATTRIBUTES attr;
-    UNICODE_STRING redir;
+    UNICODE_STRING true_nt_name;
     struct pe_image_info info;
     char *unix_name;
     NTSTATUS status;
@@ -1036,21 +1034,18 @@ static NTSTATUS load_so_dll( void *args )
 
     if (get_load_order( nt_name ) == LO_DISABLED) return STATUS_DLL_NOT_FOUND;
     InitializeObjectAttributes( &attr, nt_name, OBJ_CASE_INSENSITIVE, 0, 0 );
-    get_redirect( &attr, &redir );
-
-    if (nt_to_unix_file_name( &attr, &unix_name, FILE_OPEN ))
+    if (!get_nt_and_unix_names( &attr, &true_nt_name, &unix_name, FILE_OPEN ))
     {
-        free( redir.Buffer );
-        return STATUS_DLL_NOT_FOUND;
+        /* remove .so extension from Windows name */
+        len = nt_name->Length / sizeof(WCHAR);
+        if (len > 3 && !wcsicmp( nt_name->Buffer + len - 3, soW )) nt_name->Length -= 3 * sizeof(WCHAR);
+
+        status = dlopen_dll( unix_name, nt_name, params->module, &info, FALSE );
     }
+    else status = STATUS_DLL_NOT_FOUND;
 
-    /* remove .so extension from Windows name */
-    len = nt_name->Length / sizeof(WCHAR);
-    if (len > 3 && !wcsicmp( nt_name->Buffer + len - 3, soW )) nt_name->Length -= 3 * sizeof(WCHAR);
-
-    status = dlopen_dll( unix_name, nt_name, params->module, &info, FALSE );
     free( unix_name );
-    free( redir.Buffer );
+    free( true_nt_name.Buffer );
     return status;
 }
 
@@ -1215,34 +1210,6 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
 };
 
 #endif  /* _WIN64 */
-
-BOOL ac_odyssey;
-BOOL fsync_simulate_sched_quantum;
-
-static void hacks_init(void)
-{
-    static const char upc_exe[] = "Ubisoft Game Launcher\\upc.exe";
-    static const char ac_odyssey_exe[] = "ACOdyssey.exe";
-    const char *env_str;
-
-    if (main_argc > 1 && strstr(main_argv[1], ac_odyssey_exe))
-    {
-        ERR("HACK: AC Odyssey sync tweak on.\n");
-        ac_odyssey = TRUE;
-        return;
-    }
-    env_str = getenv("WINE_FSYNC_SIMULATE_SCHED_QUANTUM");
-    if (env_str)
-        fsync_simulate_sched_quantum = !!atoi(env_str);
-    else if (main_argc > 1)
-        fsync_simulate_sched_quantum = !!strstr(main_argv[1], upc_exe);
-    if (fsync_simulate_sched_quantum)
-        ERR("HACK: Simulating sched quantum in fsync.\n");
-
-    env_str = getenv("SteamGameId");
-    if (env_str && !strcmp(env_str, "50130"))
-        setenv("WINESTEAMNOEXEC", "1", 0);
-}
 
 
 static inline char *prepend( char *buffer, const char *str, size_t len )
@@ -1543,21 +1510,20 @@ BOOL is_builtin_path( const UNICODE_STRING *path, WORD *machine )
 /***********************************************************************
  *           open_main_image
  */
-static NTSTATUS open_main_image( WCHAR *image, void **module, SECTION_IMAGE_INFORMATION *info,
+static NTSTATUS open_main_image( UNICODE_STRING *nt_name, void **module, SECTION_IMAGE_INFORMATION *info,
                                  enum loadorder loadorder, USHORT machine )
 {
-    UNICODE_STRING nt_name;
     OBJECT_ATTRIBUTES attr;
     SIZE_T size = 0;
     char *unix_name;
     NTSTATUS status;
     HANDLE mapping;
+    UNICODE_STRING true_nt_name;
 
     if (loadorder == LO_DISABLED) NtTerminateProcess( GetCurrentProcess(), STATUS_DLL_NOT_FOUND );
 
-    init_unicode_string( &nt_name, image );
-    InitializeObjectAttributes( &attr, &nt_name, OBJ_CASE_INSENSITIVE, 0, NULL );
-    if (nt_to_unix_file_name( &attr, &unix_name, FILE_OPEN )) return STATUS_DLL_NOT_FOUND;
+    InitializeObjectAttributes( &attr, nt_name, OBJ_CASE_INSENSITIVE, 0, NULL );
+    if (get_nt_and_unix_names( &attr, &true_nt_name, &unix_name, FILE_OPEN )) return STATUS_DLL_NOT_FOUND;
 
     status = open_dll_file( unix_name, &attr, &mapping );
     if (!status)
@@ -1572,9 +1538,10 @@ static NTSTATUS open_main_image( WCHAR *image, void **module, SECTION_IMAGE_INFO
     }
     else if (status == STATUS_INVALID_IMAGE_NOT_MZ && loadorder != LO_NATIVE)
     {
-        status = open_main_image_so_file( unix_name, &nt_name, module, info );
+        status = open_main_image_so_file( unix_name, attr.ObjectName, module, info );
     }
     free( unix_name );
+    free( true_nt_name.Buffer );
     return status;
 }
 
@@ -1582,61 +1549,21 @@ static NTSTATUS open_main_image( WCHAR *image, void **module, SECTION_IMAGE_INFO
 /***********************************************************************
  *           load_main_exe
  */
-NTSTATUS load_main_exe( const WCHAR *dos_name, const char *unix_name, const WCHAR *curdir,
-                        USHORT load_machine, WCHAR **image, void **module )
+NTSTATUS load_main_exe( UNICODE_STRING *nt_name, USHORT load_machine, void **module )
 {
-    enum loadorder loadorder = LO_INVALID;
-    UNICODE_STRING nt_name;
-    WCHAR *tmp = NULL;
-    BOOL contains_path;
+    enum loadorder loadorder = get_load_order( nt_name );
     unsigned int status;
     SIZE_T size;
-    struct stat st;
     USHORT search_machine;
 
-    /* special case for Unix file name */
-    if (unix_name && unix_name[0] == '/' && !stat( unix_name, &st ))
-    {
-        if ((status = unix_to_nt_file_name( unix_name, image ))) goto failed;
-        init_unicode_string( &nt_name, *image );
-        loadorder = get_load_order( &nt_name );
-        status = open_main_image( *image, module, &main_image_info, loadorder, load_machine );
-        if (status != STATUS_DLL_NOT_FOUND) return status;
-        free( *image );
-    }
-
-    if (!dos_name)
-    {
-        dos_name = tmp = malloc( (strlen(unix_name) + 1) * sizeof(WCHAR) );
-        ntdll_umbstowcs( unix_name, strlen(unix_name) + 1, tmp, strlen(unix_name) + 1 );
-    }
-    contains_path = (wcschr( dos_name, '/' ) ||
-                     wcschr( dos_name, '\\' ) ||
-                     (dos_name[0] && dos_name[1] == ':'));
-
-    if ((status = get_full_path( dos_name, curdir, image ))) goto failed;
-    free( tmp );
-
-    init_unicode_string( &nt_name, *image );
-    if (loadorder == LO_INVALID) loadorder = get_load_order( &nt_name );
-
-    status = open_main_image( *image, module, &main_image_info, loadorder, load_machine );
+    status = open_main_image( nt_name, module, &main_image_info, loadorder, load_machine );
     if (status != STATUS_DLL_NOT_FOUND) return status;
 
     /* if path is in system dir, we can load the builtin even if the file itself doesn't exist */
-    if (loadorder != LO_NATIVE && is_builtin_path( &nt_name, &search_machine ))
-    {
-        status = find_builtin_dll( &nt_name, module, &size, &main_image_info, 0, 0,
+    if (loadorder != LO_NATIVE && is_builtin_path( nt_name, &search_machine ))
+        status = find_builtin_dll( nt_name, module, &size, &main_image_info, 0, 0,
                                    search_machine, load_machine, FALSE );
-        if (status != STATUS_DLL_NOT_FOUND) return status;
-    }
-    if (!contains_path) return STATUS_DLL_NOT_FOUND;
-
-failed:
-    MESSAGE( "wine: failed to open %s: %x\n",
-             unix_name ? debugstr_a(unix_name) : debugstr_w(dos_name), status );
-    NtTerminateProcess( GetCurrentProcess(), status );
-    return status;  /* unreached */
+    return status;
 }
 
 
@@ -1645,18 +1572,17 @@ failed:
  *
  * Load start.exe as main image.
  */
-NTSTATUS load_start_exe( WCHAR **image, void **module )
+NTSTATUS load_start_exe( UNICODE_STRING *nt_name, void **module )
 {
     static const WCHAR startW[] = {'s','t','a','r','t','.','e','x','e',0};
-    UNICODE_STRING nt_name;
     unsigned int status;
     SIZE_T size;
+    WCHAR *image = malloc( sizeof("\\??\\C:\\windows\\system32\\start.exe") * sizeof(WCHAR) );
 
-    *image = malloc( sizeof("\\??\\C:\\windows\\system32\\start.exe") * sizeof(WCHAR) );
-    wcscpy( *image, get_machine_wow64_dir( current_machine ));
-    wcscat( *image, startW );
-    init_unicode_string( &nt_name, *image );
-    status = find_builtin_dll( &nt_name, module, &size, &main_image_info, 0, 0, current_machine, 0, FALSE );
+    wcscpy( image, get_machine_wow64_dir( current_machine ));
+    wcscat( image, startW );
+    init_unicode_string( nt_name, image );
+    status = find_builtin_dll( nt_name, module, &size, &main_image_info, 0, 0, current_machine, 0, FALSE );
     if (!NT_SUCCESS(status))
     {
         MESSAGE( "wine: failed to load start.exe: %x\n", status );
@@ -2025,9 +1951,6 @@ static void start_main_thread(void)
     signal_alloc_thread( teb );
     dbg_init();
     startup_info_size = server_init_process();
-    hacks_init();
-    fsync_init();
-    esync_init();
     virtual_map_user_shared_data();
     init_cpu_info();
     init_files();

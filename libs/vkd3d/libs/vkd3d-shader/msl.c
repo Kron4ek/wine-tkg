@@ -55,8 +55,16 @@ struct msl_generator
 
 struct msl_resource_type_info
 {
-    size_t read_coord_size;
+    /* The number of coordinates needed to address/sample the resource type. */
+    size_t coord_size;
+    /* Whether the resource type is an array type. */
     bool array;
+    /* Whether the resource type has a shadow/comparison variant. */
+    bool comparison;
+    /* Whether the resource type supports texel sample offsets. */
+    bool offset;
+    /* The type suffix for the resource type. I.e., the "2d_ms" part of
+     * "texture2d_ms_array" or "depth2d_ms_array". */
     const char *type_suffix;
 };
 
@@ -78,17 +86,17 @@ static const struct msl_resource_type_info *msl_get_resource_type_info(enum vkd3
 {
     static const struct msl_resource_type_info info[] =
     {
-        [VKD3D_SHADER_RESOURCE_NONE]              = {0, 0, "none"},
-        [VKD3D_SHADER_RESOURCE_BUFFER]            = {1, 0, "_buffer"},
-        [VKD3D_SHADER_RESOURCE_TEXTURE_1D]        = {1, 0, "1d"},
-        [VKD3D_SHADER_RESOURCE_TEXTURE_2D]        = {2, 0, "2d"},
-        [VKD3D_SHADER_RESOURCE_TEXTURE_2DMS]      = {2, 0, "2d_ms"},
-        [VKD3D_SHADER_RESOURCE_TEXTURE_3D]        = {3, 0, "3d"},
-        [VKD3D_SHADER_RESOURCE_TEXTURE_CUBE]      = {2, 0, "cube"},
-        [VKD3D_SHADER_RESOURCE_TEXTURE_1DARRAY]   = {1, 1, "1d_array"},
-        [VKD3D_SHADER_RESOURCE_TEXTURE_2DARRAY]   = {2, 1, "2d_array"},
-        [VKD3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY] = {2, 1, "2d_ms_array"},
-        [VKD3D_SHADER_RESOURCE_TEXTURE_CUBEARRAY] = {2, 1, "cube_array"},
+        [VKD3D_SHADER_RESOURCE_NONE]              = {0, 0, 0, 0, "none"},
+        [VKD3D_SHADER_RESOURCE_BUFFER]            = {1, 0, 0, 0, "_buffer"},
+        [VKD3D_SHADER_RESOURCE_TEXTURE_1D]        = {1, 0, 0, 0, "1d"},
+        [VKD3D_SHADER_RESOURCE_TEXTURE_2D]        = {2, 0, 1, 1, "2d"},
+        [VKD3D_SHADER_RESOURCE_TEXTURE_2DMS]      = {2, 0, 1, 0, "2d_ms"},
+        [VKD3D_SHADER_RESOURCE_TEXTURE_3D]        = {3, 0, 0, 1, "3d"},
+        [VKD3D_SHADER_RESOURCE_TEXTURE_CUBE]      = {3, 0, 1, 0, "cube"},
+        [VKD3D_SHADER_RESOURCE_TEXTURE_1DARRAY]   = {1, 1, 0, 0, "1d"},
+        [VKD3D_SHADER_RESOURCE_TEXTURE_2DARRAY]   = {2, 1, 1, 1, "2d"},
+        [VKD3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY] = {2, 1, 1, 0, "2d_ms"},
+        [VKD3D_SHADER_RESOURCE_TEXTURE_CUBEARRAY] = {3, 1, 1, 0, "cube"},
     };
 
     if (!t || t >= ARRAY_SIZE(info))
@@ -228,6 +236,35 @@ static const struct vkd3d_shader_descriptor_binding *msl_get_cbv_binding(const s
     return NULL;
 }
 
+static const struct vkd3d_shader_descriptor_binding *msl_get_sampler_binding(const struct msl_generator *gen,
+        unsigned int register_space, unsigned int register_idx)
+{
+    const struct vkd3d_shader_interface_info *interface_info = gen->interface_info;
+    const struct vkd3d_shader_resource_binding *binding;
+    unsigned int i;
+
+    if (!interface_info)
+        return NULL;
+
+    for (i = 0; i < interface_info->binding_count; ++i)
+    {
+        binding = &interface_info->bindings[i];
+
+        if (binding->type != VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER)
+            continue;
+        if (binding->register_space != register_space)
+            continue;
+        if (binding->register_index != register_idx)
+            continue;
+        if (!msl_check_shader_visibility(gen, binding->shader_visibility))
+            continue;
+
+        return &binding->binding;
+    }
+
+    return NULL;
+}
+
 static const struct vkd3d_shader_descriptor_binding *msl_get_srv_binding(const struct msl_generator *gen,
         unsigned int register_space, unsigned int register_idx, enum vkd3d_shader_resource_type resource_type)
 {
@@ -267,11 +304,17 @@ static void msl_print_cbv_name(struct vkd3d_string_buffer *buffer, unsigned int 
     vkd3d_string_buffer_printf(buffer, "descriptors[%u].buf<vkd3d_vec4>()", binding);
 }
 
-static void msl_print_srv_name(struct vkd3d_string_buffer *buffer, struct msl_generator *gen, unsigned int binding,
-        const struct msl_resource_type_info *resource_type_info, enum vkd3d_data_type resource_data_type)
+static void msl_print_sampler_name(struct vkd3d_string_buffer *buffer, unsigned int binding)
 {
-    vkd3d_string_buffer_printf(buffer, "descriptors[%u].tex<texture%s<",
-            binding, resource_type_info->type_suffix);
+    vkd3d_string_buffer_printf(buffer, "descriptors[%u].as<sampler>()", binding);
+}
+
+static void msl_print_srv_name(struct vkd3d_string_buffer *buffer, struct msl_generator *gen, unsigned int binding,
+        const struct msl_resource_type_info *resource_type_info, enum vkd3d_data_type resource_data_type, bool compare)
+{
+    vkd3d_string_buffer_printf(buffer, "descriptors[%u].as<%s%s%s<",
+            binding, compare ? "depth" : "texture", resource_type_info->type_suffix,
+            resource_type_info->array ? "_array" : "");
     msl_print_resource_datatype(gen, buffer, resource_data_type);
     vkd3d_string_buffer_printf(buffer, ">>()");
 }
@@ -793,6 +836,12 @@ static void msl_break(struct msl_generator *gen)
     vkd3d_string_buffer_printf(gen->buffer, "break;\n");
 }
 
+static void msl_continue(struct msl_generator *gen)
+{
+    msl_print_indent(gen->buffer, gen->indent);
+    vkd3d_string_buffer_printf(gen->buffer, "continue;\n");
+}
+
 static void msl_switch(struct msl_generator *gen, const struct vkd3d_shader_instruction *ins)
 {
     struct msl_src src;
@@ -822,6 +871,27 @@ static void msl_default(struct msl_generator *gen)
 {
     msl_print_indent(gen->buffer, gen->indent);
     vkd3d_string_buffer_printf(gen->buffer, "default:\n");
+}
+
+static void msl_print_texel_offset(struct vkd3d_string_buffer *buffer, struct msl_generator *gen,
+        unsigned int offset_size, const struct vkd3d_shader_texel_offset *offset)
+{
+    switch (offset_size)
+    {
+        case 1:
+            vkd3d_string_buffer_printf(buffer, "%d", offset->u);
+            break;
+        case 2:
+            vkd3d_string_buffer_printf(buffer, "int2(%d, %d)", offset->u, offset->v);
+            break;
+        default:
+            msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
+                    "Internal compiler error: Invalid texel offset size %u.", offset_size);
+            /* fall through */
+        case 3:
+            vkd3d_string_buffer_printf(buffer, "int3(%d, %d, %d)", offset->u, offset->v, offset->w);
+            break;
+    }
 }
 
 static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruction *ins)
@@ -865,7 +935,7 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
 
     if (resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_CUBE
             || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_CUBEARRAY
-            || (ins->opcode != VKD3DSIH_LD2DMS
+            || (ins->opcode != VSIR_OP_LD2DMS
                     && (resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_2DMS
                     || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY)))
         msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_UNSUPPORTED,
@@ -877,7 +947,7 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
                 "Internal compiler error: Unhandled resource type %#x.", resource_type);
         resource_type_info = msl_get_resource_type_info(VKD3D_SHADER_RESOURCE_TEXTURE_2D);
     }
-    coord_mask = vkd3d_write_mask_from_component_count(resource_type_info->read_coord_size);
+    coord_mask = vkd3d_write_mask_from_component_count(resource_type_info->coord_size);
 
     if ((binding = msl_get_srv_binding(gen, resource_space, resource_idx, resource_type)))
     {
@@ -895,7 +965,7 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
     read = vkd3d_string_buffer_get(&gen->string_buffers);
 
     vkd3d_string_buffer_printf(read, "as_type<uint4>(");
-    msl_print_srv_name(read, gen, srv_binding, resource_type_info, data_type);
+    msl_print_srv_name(read, gen, srv_binding, resource_type_info, data_type, false);
     vkd3d_string_buffer_printf(read, ".read(");
     msl_print_src_with_type(read, gen, &ins->src[0], coord_mask, VKD3D_DATA_UINT);
     if (resource_type_info->array)
@@ -906,7 +976,7 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
     if (resource_type != VKD3D_SHADER_RESOURCE_BUFFER)
     {
         vkd3d_string_buffer_printf(read, ", ");
-        if (ins->opcode != VKD3DSIH_LD2DMS)
+        if (ins->opcode != VSIR_OP_LD2DMS)
             msl_print_src_with_type(read, gen, &ins->src[0], VKD3DSP_WRITEMASK_3, VKD3D_DATA_UINT);
         else
             msl_print_src_with_type(read, gen, &ins->src[2], VKD3DSP_WRITEMASK_0, VKD3D_DATA_UINT);
@@ -917,6 +987,220 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
     msl_print_assignment(gen, &dst, "%s", read->buffer);
 
     vkd3d_string_buffer_release(&gen->string_buffers, read);
+    msl_dst_cleanup(&dst, &gen->string_buffers);
+}
+
+static void msl_sample(struct msl_generator *gen, const struct vkd3d_shader_instruction *ins)
+{
+    bool bias, compare, comparison_sampler, dynamic_offset, gather, grad, lod, lod_zero, offset;
+    const struct msl_resource_type_info *resource_type_info;
+    const struct vkd3d_shader_src_param *resource, *sampler;
+    unsigned int resource_id, resource_idx, resource_space;
+    const struct vkd3d_shader_descriptor_binding *binding;
+    unsigned int sampler_id, sampler_idx, sampler_space;
+    const struct vkd3d_shader_descriptor_info1 *d;
+    enum vkd3d_shader_resource_type resource_type;
+    unsigned int srv_binding, sampler_binding;
+    struct vkd3d_string_buffer *sample;
+    enum vkd3d_data_type data_type;
+    unsigned int component_idx;
+    uint32_t coord_mask;
+    struct msl_dst dst;
+
+    bias = ins->opcode == VSIR_OP_SAMPLE_B;
+    compare = ins->opcode == VSIR_OP_GATHER4_C || ins->opcode == VSIR_OP_SAMPLE_C
+            || ins->opcode == VSIR_OP_SAMPLE_C_LZ;
+    dynamic_offset = ins->opcode == VSIR_OP_GATHER4_PO;
+    gather = ins->opcode == VSIR_OP_GATHER4 || ins->opcode == VSIR_OP_GATHER4_C
+            || ins->opcode == VSIR_OP_GATHER4_PO;
+    grad = ins->opcode == VSIR_OP_SAMPLE_GRAD;
+    lod = ins->opcode == VSIR_OP_SAMPLE_LOD;
+    lod_zero = ins->opcode == VSIR_OP_SAMPLE_C_LZ;
+    offset = dynamic_offset || vkd3d_shader_instruction_has_texel_offset(ins);
+
+    resource = &ins->src[1 + dynamic_offset];
+    sampler = &ins->src[2 + dynamic_offset];
+
+    if (resource->reg.idx[0].rel_addr || resource->reg.idx[1].rel_addr
+            || sampler->reg.idx[0].rel_addr || sampler->reg.idx[1].rel_addr)
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_UNSUPPORTED,
+                "Descriptor indexing is not supported.");
+
+    resource_id = resource->reg.idx[0].offset;
+    resource_idx = resource->reg.idx[1].offset;
+    if ((d = vkd3d_shader_find_descriptor(&gen->program->descriptors,
+            VKD3D_SHADER_DESCRIPTOR_TYPE_SRV, resource_id)))
+    {
+        resource_space = d->register_space;
+        resource_type = d->resource_type;
+        data_type = d->resource_data_type;
+    }
+    else
+    {
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
+                "Internal compiler error: Undeclared resource descriptor %u.", resource_id);
+        resource_space = 0;
+        resource_type = VKD3D_SHADER_RESOURCE_TEXTURE_2D;
+        data_type = VKD3D_DATA_FLOAT;
+    }
+
+    if (resource_type == VKD3D_SHADER_RESOURCE_BUFFER
+            || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_2DMS
+            || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY)
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_UNSUPPORTED,
+                "Sampling resource type %#x is not supported.", resource_type);
+
+    if ((resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_1D || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_1DARRAY)
+            && (bias || grad || lod || lod_zero))
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_UNSUPPORTED,
+                "Resource type %#x does not support mipmapping.", resource_type);
+
+    if ((resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_1D || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_1DARRAY
+            || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_3D) && gather)
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_UNSUPPORTED,
+                "Resource type %#x does not support gather operations.", resource_type);
+
+    if (!(resource_type_info = msl_get_resource_type_info(resource_type)))
+    {
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
+                "Internal compiler error: Unhandled resource type %#x.", resource_type);
+        resource_type_info = msl_get_resource_type_info(VKD3D_SHADER_RESOURCE_TEXTURE_2D);
+    }
+    coord_mask = vkd3d_write_mask_from_component_count(resource_type_info->coord_size);
+
+    if ((binding = msl_get_srv_binding(gen, resource_space, resource_idx, resource_type)))
+    {
+        srv_binding = binding->binding;
+    }
+    else
+    {
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_BINDING_NOT_FOUND,
+                "No descriptor binding specified for SRV %u (index %u, space %u).",
+                resource_id, resource_idx, resource_space);
+        srv_binding = 0;
+    }
+
+    sampler_id = sampler->reg.idx[0].offset;
+    sampler_idx = sampler->reg.idx[1].offset;
+    if ((d = vkd3d_shader_find_descriptor(&gen->program->descriptors,
+            VKD3D_SHADER_DESCRIPTOR_TYPE_SAMPLER, sampler_id)))
+    {
+        sampler_space = d->register_space;
+        comparison_sampler = d->flags & VKD3D_SHADER_DESCRIPTOR_INFO_FLAG_SAMPLER_COMPARISON_MODE;
+
+        if (compare)
+        {
+            if (!comparison_sampler)
+                msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
+                        "Internal compiler error: Sampler %u is not a comparison sampler.", sampler_id);
+        }
+        else
+        {
+            if (comparison_sampler)
+                msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
+                        "Internal compiler error: Sampler %u is a comparison sampler.", sampler_id);
+        }
+    }
+    else
+    {
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
+                "Internal compiler error: Undeclared sampler descriptor %u.", sampler_id);
+        sampler_space = 0;
+    }
+
+    if ((binding = msl_get_sampler_binding(gen, sampler_space, sampler_idx)))
+    {
+        sampler_binding = binding->binding;
+    }
+    else
+    {
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_BINDING_NOT_FOUND,
+                "No descriptor binding specified for sampler %u (index %u, space %u).",
+                sampler_id, sampler_idx, sampler_space);
+        sampler_binding = 0;
+    }
+
+    msl_dst_init(&dst, gen, ins, &ins->dst[0]);
+    sample = vkd3d_string_buffer_get(&gen->string_buffers);
+
+    if (ins->dst[0].reg.data_type == VKD3D_DATA_UINT)
+        vkd3d_string_buffer_printf(sample, "as_type<uint4>(");
+    msl_print_srv_name(sample, gen, srv_binding, resource_type_info, data_type, compare);
+    if (gather && compare)
+        vkd3d_string_buffer_printf(sample, ".gather_compare(");
+    else if (gather)
+        vkd3d_string_buffer_printf(sample, ".gather(");
+    else if (compare)
+        vkd3d_string_buffer_printf(sample, ".sample_compare(");
+    else
+        vkd3d_string_buffer_printf(sample, ".sample(");
+    msl_print_sampler_name(sample, sampler_binding);
+    vkd3d_string_buffer_printf(sample, ", ");
+    msl_print_src_with_type(sample, gen, &ins->src[0], coord_mask, ins->src[0].reg.data_type);
+    if (resource_type_info->array)
+    {
+        vkd3d_string_buffer_printf(sample, ", uint(");
+        msl_print_src_with_type(sample, gen, &ins->src[0], coord_mask + 1, ins->src[0].reg.data_type);
+        vkd3d_string_buffer_printf(sample, ")");
+    }
+    if (compare)
+    {
+        if (!resource_type_info->comparison)
+            msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_UNSUPPORTED,
+                    "Comparison samplers are not supported with resource type %#x.", resource_type);
+        vkd3d_string_buffer_printf(sample, ", ");
+        msl_print_src_with_type(sample, gen, &ins->src[3], VKD3DSP_WRITEMASK_0, ins->src[3].reg.data_type);
+    }
+    if (grad)
+    {
+        vkd3d_string_buffer_printf(sample, ", gradient%s(", resource_type_info->type_suffix);
+        msl_print_src_with_type(sample, gen, &ins->src[3], coord_mask, ins->src[3].reg.data_type);
+        vkd3d_string_buffer_printf(sample, ", ");
+        msl_print_src_with_type(sample, gen, &ins->src[4], coord_mask, ins->src[4].reg.data_type);
+        vkd3d_string_buffer_printf(sample, ")");
+    }
+    if (lod_zero)
+    {
+        vkd3d_string_buffer_printf(sample, ", level(0.0f)");
+    }
+    else if (lod)
+    {
+        vkd3d_string_buffer_printf(sample, ", level(");
+        msl_print_src_with_type(sample, gen, &ins->src[3], VKD3DSP_WRITEMASK_0, ins->src[3].reg.data_type);
+        vkd3d_string_buffer_printf(sample, ")");
+    }
+    if (bias)
+    {
+        vkd3d_string_buffer_printf(sample, ", bias(");
+        msl_print_src_with_type(sample, gen, &ins->src[3], VKD3DSP_WRITEMASK_0, ins->src[3].reg.data_type);
+        vkd3d_string_buffer_printf(sample, ")");
+    }
+    if (offset)
+    {
+        if (!resource_type_info->offset)
+            msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_UNSUPPORTED,
+                    "Texel sample offsets are not supported with resource type %#x.", resource_type);
+        vkd3d_string_buffer_printf(sample, ", ");
+        if (dynamic_offset)
+            msl_print_src_with_type(sample, gen, &ins->src[1], coord_mask, ins->src[1].reg.data_type);
+        else
+            msl_print_texel_offset(sample, gen, resource_type_info->coord_size, &ins->texel_offset);
+    }
+    if (gather && !compare && (component_idx = vsir_swizzle_get_component(sampler->swizzle, 0)))
+    {
+        if (!offset && resource_type_info->offset)
+            vkd3d_string_buffer_printf(sample, ", int2(0)");
+        vkd3d_string_buffer_printf(sample, ", component::%c", "xyzw"[component_idx]);
+    }
+    vkd3d_string_buffer_printf(sample, ")");
+    if (ins->dst[0].reg.data_type == VKD3D_DATA_UINT)
+        vkd3d_string_buffer_printf(sample, ")");
+    if (!compare || gather)
+        msl_print_swizzle(sample, resource->swizzle, ins->dst[0].write_mask);
+
+    msl_print_assignment(gen, &dst, "%s", sample->buffer);
+
+    vkd3d_string_buffer_release(&gen->string_buffers, sample);
     msl_dst_cleanup(&dst, &gen->string_buffers);
 }
 
@@ -975,37 +1259,6 @@ static void msl_movc(struct msl_generator *gen, const struct vkd3d_shader_instru
     msl_dst_cleanup(&dst, &gen->string_buffers);
 }
 
-static void msl_mul64(struct msl_generator *gen, const struct vkd3d_shader_instruction *ins)
-{
-    struct msl_src src[2];
-    struct msl_dst dst;
-    uint32_t mask;
-
-    if (ins->dst[0].reg.type != VKD3DSPR_NULL)
-    {
-        /* TODO: mulhi(). */
-        mask = msl_dst_init(&dst, gen, ins, &ins->dst[0]);
-        msl_print_assignment(gen, &dst, "<unhandled 64-bit multiplication>");
-        msl_dst_cleanup(&dst, &gen->string_buffers);
-
-        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
-                "Internal compiler error: Unhandled 64-bit integer multiplication.");
-    }
-
-    if (ins->dst[1].reg.type != VKD3DSPR_NULL)
-    {
-        mask = msl_dst_init(&dst, gen, ins, &ins->dst[1]);
-        msl_src_init(&src[0], gen, &ins->src[0], mask);
-        msl_src_init(&src[1], gen, &ins->src[1], mask);
-
-        msl_print_assignment(gen, &dst, "%s * %s", src[0].str->buffer, src[1].str->buffer);
-
-        msl_src_cleanup(&src[1], &gen->string_buffers);
-        msl_src_cleanup(&src[0], &gen->string_buffers);
-        msl_dst_cleanup(&dst, &gen->string_buffers);
-    }
-}
-
 static void msl_ret(struct msl_generator *gen, const struct vkd3d_shader_instruction *ins)
 {
     msl_print_indent(gen->buffer, gen->indent);
@@ -1026,158 +1279,187 @@ static void msl_handle_instruction(struct msl_generator *gen, const struct vkd3d
 
     switch (ins->opcode)
     {
-        case VKD3DSIH_ADD:
-        case VKD3DSIH_IADD:
+        case VSIR_OP_ADD:
+        case VSIR_OP_IADD:
             msl_binop(gen, ins, "+");
             break;
-        case VKD3DSIH_AND:
+        case VSIR_OP_AND:
             msl_binop(gen, ins, "&");
             break;
-        case VKD3DSIH_BREAK:
+        case VSIR_OP_BREAK:
             msl_break(gen);
             break;
-        case VKD3DSIH_CASE:
+        case VSIR_OP_CASE:
             msl_case(gen, ins);
             break;
-        case VKD3DSIH_DCL_INDEXABLE_TEMP:
+        case VSIR_OP_CONTINUE:
+            msl_continue(gen);
+            break;
+        case VSIR_OP_DCL_INDEXABLE_TEMP:
             msl_dcl_indexable_temp(gen, ins);
             break;
-        case VKD3DSIH_NOP:
+        case VSIR_OP_NOP:
             break;
-        case VKD3DSIH_DEFAULT:
+        case VSIR_OP_DEFAULT:
             msl_default(gen);
             break;
-        case VKD3DSIH_DISCARD:
+        case VSIR_OP_DISCARD:
             msl_discard(gen, ins);
             break;
-        case VKD3DSIH_DIV:
+        case VSIR_OP_DIV:
             msl_binop(gen, ins, "/");
             break;
-        case VKD3DSIH_DP2:
+        case VSIR_OP_DP2:
             msl_dot(gen, ins, vkd3d_write_mask_from_component_count(2));
             break;
-        case VKD3DSIH_DP3:
+        case VSIR_OP_DP3:
             msl_dot(gen, ins, vkd3d_write_mask_from_component_count(3));
             break;
-        case VKD3DSIH_DP4:
+        case VSIR_OP_DP4:
             msl_dot(gen, ins, VKD3DSP_WRITEMASK_ALL);
             break;
-        case VKD3DSIH_ELSE:
+        case VSIR_OP_DSX:
+        case VSIR_OP_DSX_COARSE:
+        case VSIR_OP_DSX_FINE:
+            /* dfdx() and dfdy() are specified to return "a high precision
+             * partial derivative", which would seem to correspond to
+             * DSX_FINE/DSY_FINE. As of MSL 3.2, coarse/fast variants don't
+             * appear to be available. */
+            msl_intrinsic(gen, ins, "dfdx");
+            break;
+        case VSIR_OP_DSY:
+        case VSIR_OP_DSY_COARSE:
+        case VSIR_OP_DSY_FINE:
+            msl_intrinsic(gen, ins, "dfdy");
+            break;
+        case VSIR_OP_ELSE:
             msl_else(gen);
             break;
-        case VKD3DSIH_ENDIF:
-        case VKD3DSIH_ENDLOOP:
-        case VKD3DSIH_ENDSWITCH:
+        case VSIR_OP_ENDIF:
+        case VSIR_OP_ENDLOOP:
+        case VSIR_OP_ENDSWITCH:
             msl_end_block(gen);
             break;
-        case VKD3DSIH_EQO:
-        case VKD3DSIH_IEQ:
+        case VSIR_OP_EQO:
+        case VSIR_OP_IEQ:
             msl_relop(gen, ins, "==");
             break;
-        case VKD3DSIH_EXP:
+        case VSIR_OP_EXP:
             msl_intrinsic(gen, ins, "exp2");
             break;
-        case VKD3DSIH_FRC:
+        case VSIR_OP_FRC:
             msl_intrinsic(gen, ins, "fract");
             break;
-        case VKD3DSIH_FTOI:
+        case VSIR_OP_FTOI:
             msl_cast(gen, ins, "int");
             break;
-        case VKD3DSIH_FTOU:
+        case VSIR_OP_FTOU:
             msl_cast(gen, ins, "uint");
             break;
-        case VKD3DSIH_GEO:
-        case VKD3DSIH_IGE:
+        case VSIR_OP_GATHER4:
+        case VSIR_OP_GATHER4_C:
+        case VSIR_OP_GATHER4_PO:
+        case VSIR_OP_SAMPLE:
+        case VSIR_OP_SAMPLE_B:
+        case VSIR_OP_SAMPLE_C:
+        case VSIR_OP_SAMPLE_C_LZ:
+        case VSIR_OP_SAMPLE_GRAD:
+        case VSIR_OP_SAMPLE_LOD:
+            msl_sample(gen, ins);
+            break;
+        case VSIR_OP_GEO:
+        case VSIR_OP_IGE:
             msl_relop(gen, ins, ">=");
             break;
-        case VKD3DSIH_IF:
+        case VSIR_OP_IF:
             msl_if(gen, ins);
             break;
-        case VKD3DSIH_ISHL:
+        case VSIR_OP_ISHL:
             msl_binop(gen, ins, "<<");
             break;
-        case VKD3DSIH_ISHR:
-        case VKD3DSIH_USHR:
+        case VSIR_OP_ISHR:
+        case VSIR_OP_USHR:
             msl_binop(gen, ins, ">>");
             break;
-        case VKD3DSIH_ILT:
-        case VKD3DSIH_LTO:
-        case VKD3DSIH_ULT:
+        case VSIR_OP_ILT:
+        case VSIR_OP_LTO:
+        case VSIR_OP_ULT:
             msl_relop(gen, ins, "<");
             break;
-        case VKD3DSIH_MAD:
+        case VSIR_OP_MAD:
             msl_intrinsic(gen, ins, "fma");
             break;
-        case VKD3DSIH_MAX:
+        case VSIR_OP_IMAX:
+        case VSIR_OP_MAX:
             msl_intrinsic(gen, ins, "max");
             break;
-        case VKD3DSIH_MIN:
+        case VSIR_OP_MIN:
             msl_intrinsic(gen, ins, "min");
             break;
-        case VKD3DSIH_IMUL:
-            msl_mul64(gen, ins);
-            break;
-        case VKD3DSIH_INE:
-        case VKD3DSIH_NEU:
-            msl_relop(gen, ins, "!=");
-            break;
-        case VKD3DSIH_INEG:
-            msl_unary_op(gen, ins, "-");
-            break;
-        case VKD3DSIH_ITOF:
-        case VKD3DSIH_UTOF:
-            msl_cast(gen, ins, "float");
-            break;
-        case VKD3DSIH_LD:
-        case VKD3DSIH_LD2DMS:
-            msl_ld(gen, ins);
-            break;
-        case VKD3DSIH_LOG:
-            msl_intrinsic(gen, ins, "log2");
-            break;
-        case VKD3DSIH_LOOP:
-            msl_loop(gen);
-            break;
-        case VKD3DSIH_MOV:
-            msl_mov(gen, ins);
-            break;
-        case VKD3DSIH_MOVC:
-            msl_movc(gen, ins);
-            break;
-        case VKD3DSIH_MUL:
+        case VSIR_OP_IMUL_LOW:
             msl_binop(gen, ins, "*");
             break;
-        case VKD3DSIH_NOT:
+        case VSIR_OP_INE:
+        case VSIR_OP_NEU:
+            msl_relop(gen, ins, "!=");
+            break;
+        case VSIR_OP_INEG:
+            msl_unary_op(gen, ins, "-");
+            break;
+        case VSIR_OP_ITOF:
+        case VSIR_OP_UTOF:
+            msl_cast(gen, ins, "float");
+            break;
+        case VSIR_OP_LD:
+        case VSIR_OP_LD2DMS:
+            msl_ld(gen, ins);
+            break;
+        case VSIR_OP_LOG:
+            msl_intrinsic(gen, ins, "log2");
+            break;
+        case VSIR_OP_LOOP:
+            msl_loop(gen);
+            break;
+        case VSIR_OP_MOV:
+            msl_mov(gen, ins);
+            break;
+        case VSIR_OP_MOVC:
+            msl_movc(gen, ins);
+            break;
+        case VSIR_OP_MUL:
+            msl_binop(gen, ins, "*");
+            break;
+        case VSIR_OP_NOT:
             msl_unary_op(gen, ins, "~");
             break;
-        case VKD3DSIH_OR:
+        case VSIR_OP_OR:
             msl_binop(gen, ins, "|");
             break;
-        case VKD3DSIH_RET:
+        case VSIR_OP_RET:
             msl_ret(gen, ins);
             break;
-        case VKD3DSIH_ROUND_NE:
+        case VSIR_OP_ROUND_NE:
             msl_intrinsic(gen, ins, "rint");
             break;
-        case VKD3DSIH_ROUND_NI:
+        case VSIR_OP_ROUND_NI:
             msl_intrinsic(gen, ins, "floor");
             break;
-        case VKD3DSIH_ROUND_PI:
+        case VSIR_OP_ROUND_PI:
             msl_intrinsic(gen, ins, "ceil");
             break;
-        case VKD3DSIH_ROUND_Z:
+        case VSIR_OP_ROUND_Z:
             msl_intrinsic(gen, ins, "trunc");
             break;
-        case VKD3DSIH_RSQ:
+        case VSIR_OP_RSQ:
             msl_intrinsic(gen, ins, "rsqrt");
             break;
-        case VKD3DSIH_SQRT:
+        case VSIR_OP_SQRT:
             msl_intrinsic(gen, ins, "sqrt");
             break;
-        case VKD3DSIH_SWITCH:
+        case VSIR_OP_SWITCH:
             msl_switch(gen, ins);
             break;
-        case VKD3DSIH_XOR:
+        case VSIR_OP_XOR:
             msl_binop(gen, ins, "^");
             break;
         default:
@@ -1631,7 +1913,7 @@ static int msl_generator_generate(struct msl_generator *gen, struct vkd3d_shader
                 "    const device void *ptr;\n"
                 "\n"
                 "    template<typename T>\n"
-                "    constant T &tex() constant\n"
+                "    constant T &as() constant\n"
                 "    {\n"
                 "        return reinterpret_cast<constant T &>(this->ptr);\n"
                 "    }\n"

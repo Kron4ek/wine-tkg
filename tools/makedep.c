@@ -646,11 +646,11 @@ static int get_link_arch( const struct makefile *make, unsigned int arch, unsign
  *         is_multiarch
  *
  * Check if arch is one of the PE architectures in multiarch.
- * Also return TRUE for native arch iff there's no PE support.
+ * Also return TRUE for native arch iff there's no PE architecture, not even "none".
  */
 static int is_multiarch( unsigned int arch )
 {
-    return archs.count == 1 || arch;
+    return archs.count == 1 || (arch && strcmp( archs.str[arch], "none" ));
 }
 
 
@@ -3239,6 +3239,7 @@ static void output_source_one_arch( struct makefile *make, struct incl_file *sou
     if (arch)
     {
         if (source->file->flags & FLAG_C_UNIX) return;
+        if (!is_multiarch( arch )) return;
         if (!is_using_msvcrt( make ) && !make->staticlib && !(source->file->flags & FLAG_C_IMPLIB)) return;
     }
     else if (source->file->flags & FLAG_C_UNIX)
@@ -3634,6 +3635,7 @@ static void output_static_lib( struct makefile *make, unsigned int arch )
 
     if (make->disabled[arch]) return;
     if (native_archs[arch]) return;
+    if (arch && !is_multiarch( arch )) return;
 
     strarray_add( &make->clean_files, name );
     output( "%s: %s", obj_dir_path( make, name ), tools_path( make, "winebuild" ));
@@ -3779,7 +3781,7 @@ static void output_programs( struct makefile *make )
         strarray_addall( &make->all_targets[arch], symlinks );
 
         install_dir = !strcmp( make->obj_dir, "loader" ) ? arch_install_dirs[arch] : "$(bindir)/";
-        add_install_rule( make, program, arch, program, strmake( "p%s%s", install_dir, program ));
+        add_install_rule( make, make->programs.str[i], arch, program, strmake( "p%s%s", install_dir, program ));
         for (j = 0; j < symlinks.count; j++)
             add_install_rule( make, symlinks.str[j], arch, program,
                               strmake( "y$(bindir)/%s%s", symlinks.str[j], exe_ext ));
@@ -3992,7 +3994,7 @@ static void output_sources( struct makefile *make )
         for (arch = 0; arch < archs.count; arch++)
         {
             if (is_multiarch( arch )) output_module( make, arch );
-            if (make->importlib && (is_multiarch( arch ) || !is_native_arch_disabled( make )))
+            if (make->importlib && (is_multiarch( arch ) || (!arch && !is_native_arch_disabled( make ))))
                 output_import_lib( make, arch );
         }
         if (make->unixlib) output_unix_lib( make );

@@ -373,6 +373,7 @@ AS_VAR_SET_IF([enable_archs],
      do
          case $arch in
            i386|x86_64|arm|aarch64|arm64ec) cross_archs="$cross_archs $arch" ;;
+           no|none) PE_ARCHS=none ;;
            *) AC_MSG_ERROR([Unknown cross-compilation architecture '$arch']) ;;
          esac
      done],
@@ -380,6 +381,8 @@ AS_VAR_SET_IF([enable_archs],
      then
          test $HOST_ARCH = unknown || cross_archs=$HOST_ARCH
      fi])
+
+AS_VAR_IF([PE_ARCHS],[none],[cross_archs=])
 
 saved_CC=$CC
 saved_CFLAGS=$CFLAGS
@@ -670,7 +673,6 @@ AC_CHECK_HEADERS(\
 	link.h \
 	linux/cdrom.h \
 	linux/filter.h \
-	linux/futex.h \
 	linux/fs.h \
 	linux/hdreg.h \
 	linux/hidraw.h \
@@ -707,7 +709,6 @@ AC_CHECK_HEADERS(\
 	sys/cdio.h \
 	sys/epoll.h \
 	sys/event.h \
-	sys/eventfd.h \
 	sys/extattr.h \
 	sys/filio.h \
 	sys/ipc.h \
@@ -2120,7 +2121,6 @@ AC_CHECK_FUNCS(\
 	port_create \
 	posix_fadvise \
 	posix_fallocate \
-	ppoll \
 	prctl \
 	sched_getcpu \
 	sched_yield \
@@ -2139,12 +2139,6 @@ dnl Check for clock_gettime which may be in -lrt
 ac_save_LIBS=$LIBS
 AC_SEARCH_LIBS(clock_gettime, rt,
                [AC_DEFINE(HAVE_CLOCK_GETTIME, 1, [Define to 1 if you have the 'clock_gettime' function.])
-                test "$ac_res" = "none required" || AC_SUBST(RT_LIBS,"$ac_res")])
-LIBS=$ac_save_LIBS
-
-ac_save_LIBS=$LIBS
-AC_SEARCH_LIBS(shm_open, rt,
-               [AC_DEFINE(HAVE_SHM_OPEN, 1, [Define to 1 if you have the `shm_open' function.])
                 test "$ac_res" = "none required" || AC_SUBST(RT_LIBS,"$ac_res")])
 LIBS=$ac_save_LIBS
 
@@ -2804,6 +2798,7 @@ WINE_CONFIG_MAKEFILE(dlls/iphlpapi)
 WINE_CONFIG_MAKEFILE(dlls/iphlpapi/tests)
 WINE_CONFIG_MAKEFILE(dlls/iprop)
 WINE_CONFIG_MAKEFILE(dlls/ir50_32)
+WINE_CONFIG_MAKEFILE(dlls/ir50_32/tests)
 WINE_CONFIG_MAKEFILE(dlls/irprops.cpl)
 WINE_CONFIG_MAKEFILE(dlls/itircl)
 WINE_CONFIG_MAKEFILE(dlls/itss)
@@ -3743,7 +3738,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-10.10.r0.gc37f9f50\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync Fsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-10.11.r0.g3e94d124\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging Esync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.nfo:

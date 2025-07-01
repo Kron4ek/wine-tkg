@@ -741,9 +741,41 @@ BOOL WINAPI SetGestureConfig( HWND hwnd, DWORD reserved, UINT count,
     return FALSE;
 }
 
+BOOL WINAPI GetPointerDeviceProperties( HANDLE device, UINT32 *count,
+                                        POINTER_DEVICE_PROPERTY *properties)
+{
+    FIXME( "device %p, count %p, info %p stub!\n", device, count, properties );
+    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+    return FALSE;
+}
+
+BOOL WINAPI GetPointerDeviceRects( HANDLE device, RECT *device_rect, RECT *display_rect )
+{
+    FIXME( "device %p, device_rect %p, display_rect %p stub!\n",
+           device, device_rect, display_rect );
+    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+    return FALSE;
+}
+
+BOOL WINAPI GetPointerPenInfo( UINT32 id, POINTER_PEN_INFO *info )
+{
+    FIXME( "id %u, info %p stub!\n", id, info );
+    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+    return FALSE;
+}
+
 BOOL WINAPI GetPointerTouchInfo( UINT32 id, POINTER_TOUCH_INFO *info )
 {
     FIXME( "id %u, info %p stub!\n", id, info );
+    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+    return FALSE;
+}
+
+BOOL WINAPI GetRawPointerDeviceData( UINT32 id, UINT32 hist_count, UINT32 prop_count,
+                                     POINTER_DEVICE_PROPERTY *properties, LONG *values )
+{
+    FIXME( "id %u, count %u, prop_count %u, properties %p, values %p stub!\n",
+           id, hist_count, prop_count, properties, values );
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }

@@ -69,11 +69,10 @@ static const struct object_ops object_type_ops =
     no_add_queue,                 /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
-    NULL,                         /* get_esync_fd */
-    NULL,                         /* get_fsync_idx */
     NULL,                         /* satisfied */
     no_signal,                    /* signal */
     no_get_fd,                    /* get_fd */
+    default_get_sync,             /* get_sync */
     default_map_access,           /* map_access */
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
@@ -121,11 +120,10 @@ static const struct object_ops directory_ops =
     no_add_queue,                 /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
-    NULL,                         /* get_esync_fd */
-    NULL,                         /* get_fsync_idx */
     NULL,                         /* satisfied */
     no_signal,                    /* signal */
     no_get_fd,                    /* get_fd */
+    default_get_sync,             /* get_sync */
     default_map_access,           /* map_access */
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
@@ -451,7 +449,7 @@ void init_directories( struct fd *intl_fd )
     static const struct unicode_str session_str = {sessionW, sizeof(sessionW)};
 
     struct directory *dir_driver, *dir_device, *dir_global, *dir_kernel, *dir_nls;
-    struct object *named_pipe_device, *mailslot_device, *null_device;
+    struct object *named_pipe_device, *mailslot_device, *null_device, *atom_table;
     struct mapping *session_mapping;
     unsigned int i;
 
@@ -503,6 +501,14 @@ void init_directories( struct fd *intl_fd )
     session_mapping = create_session_mapping( &dir_kernel->obj, &session_str, OBJ_PERMANENT, NULL );
     set_session_mapping( session_mapping );
     release_object( session_mapping );
+
+    atom_table = create_atom_table();
+    set_global_atom_table( atom_table );
+    release_object( atom_table );
+
+    atom_table = create_atom_table();
+    set_user_atom_table( atom_table );
+    release_object( atom_table );
 
     release_object( named_pipe_device );
     release_object( mailslot_device );

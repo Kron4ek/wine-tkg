@@ -93,7 +93,7 @@
 2579 stub -noname SetWindowShowState  # NtUserSetWindowShowState
 
 2581 stub -noname GetWindowTrackInfoAsync  # NtUserGetWindowTrackInfoAsync
-2582 stub -noname ScheduleDispatchNotification  # NtUserScheduleDispatchNotification
+2582 stdcall -noname ScheduleDispatchNotification(ptr) NtUserScheduleDispatchNotification
 
 2584 stub -noname EnableModernAppWindowKeyboardIntercept  # NtUserEnableModernAppWindowKeyboardIntercept
 2585 stub -noname UpdateWindowTrackingInfo  # NtUserUpdateWindowTrackingInfo
@@ -629,8 +629,8 @@
 # @ stub GetPointerDeviceCursors
 # @ stub GetPointerDeviceInputSpace
 # @ stub GetPointerDeviceOrientation
-# @ stub GetPointerDeviceProperties
-# @ stub GetPointerDeviceRects
+@ stdcall GetPointerDeviceProperties(ptr ptr ptr)
+@ stdcall GetPointerDeviceRects(ptr ptr ptr)
 @ stdcall GetPointerDevices(ptr ptr)
 # @ stub GetPointerFrameInfo
 # @ stub GetPointerFrameInfoHistory
@@ -642,7 +642,7 @@
 @ stdcall GetPointerInfo(long ptr)
 # @ stub GetPointerInfoHistory
 # @ stub GetPointerInputTransform
-# @ stub GetPointerPenInfo
+@ stdcall GetPointerPenInfo(long ptr)
 # @ stub GetPointerPenInfoHistory
 @ stdcall GetPointerTouchInfo(long ptr)
 @ stdcall GetPointerTouchInfoHistory(long ptr ptr)
@@ -660,7 +660,7 @@
 @ stdcall GetRawInputDeviceInfoA(ptr long ptr ptr)
 @ stdcall GetRawInputDeviceInfoW(ptr long ptr ptr) NtUserGetRawInputDeviceInfo
 @ stdcall GetRawInputDeviceList(ptr ptr long) NtUserGetRawInputDeviceList
-# @ stub GetRawPointerDeviceData
+@ stdcall GetRawPointerDeviceData(long long long ptr ptr)
 # @ stub GetReasonTitleFromReasonCode
 @ stdcall GetRegisteredRawInputDevices(ptr ptr long) NtUserGetRegisteredRawInputDevices
 @ stdcall GetScrollBarInfo(long long ptr) NtUserGetScrollBarInfo

@@ -67,6 +67,7 @@ typedef struct tagWND
     HIMC               imc;           /* window's input context */
     struct window_surface *surface;   /* Window surface if any */
     struct list        vulkan_surfaces; /* list of vulkan surfaces created for this window */
+    struct opengl_drawable *opengl_drawable; /* last GL client surface for this window */
     struct tagDIALOGINFO *dlgInfo;    /* Dialog additional info (dialogs only) */
     int                swap_interval; /* OpenGL surface swap interval */
     int                pixel_format;  /* Pixel format set by the graphics driver */
@@ -211,7 +212,7 @@ struct peek_message_filter
     BOOL internal;
 };
 
-extern int peek_message( MSG *msg, const struct peek_message_filter *filter, BOOL waited );
+extern int peek_message( MSG *msg, const struct peek_message_filter *filter );
 
 /* systray.c */
 extern LRESULT system_tray_call( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, void *data );

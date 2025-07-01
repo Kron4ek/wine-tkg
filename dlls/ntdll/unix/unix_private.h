@@ -105,8 +105,6 @@ struct ntdll_thread_data
     SYSTEM_SERVICE_TABLE     *syscall_table; /* 214/0370 syscall table */
     struct syscall_frame     *syscall_frame; /* 218/0378 current syscall frame */
     int                       syscall_trace; /* 21c/0380 syscall trace flag */
-    int                       esync_apc_fd;  /* fd to wait on for user APCs */
-    int                      *fsync_apc_futex;
     int                       request_fd;    /* fd for sending server requests */
     int                       reply_fd;      /* fd for receiving server replies */
     int                       wait_fd[2];    /* fd for sleeping server requests */
@@ -207,9 +205,6 @@ extern struct _KUSER_SHARED_DATA *user_shared_data;
 extern struct ldt_copy __wine_ldt_copy;
 #endif
 
-extern BOOL ac_odyssey;
-extern BOOL fsync_simulate_sched_quantum;
-
 extern void init_environment(void);
 extern void init_startup_info(void);
 extern void *create_startup_info( const UNICODE_STRING *nt_image, ULONG process_flags,
@@ -222,9 +217,8 @@ extern NTSTATUS load_builtin( const struct pe_image_info *image_info, WCHAR *fil
                               SECTION_IMAGE_INFORMATION *info, void **module, SIZE_T *size,
                               ULONG_PTR limit_low, ULONG_PTR limit_high );
 extern BOOL is_builtin_path( const UNICODE_STRING *path, WORD *machine );
-extern NTSTATUS load_main_exe( const WCHAR *name, const char *unix_name, const WCHAR *curdir,
-                               USHORT load_machine, WCHAR **image, void **module );
-extern NTSTATUS load_start_exe( WCHAR **image, void **module );
+extern NTSTATUS load_main_exe( UNICODE_STRING *nt_name, USHORT load_machine, void **module );
+extern NTSTATUS load_start_exe( UNICODE_STRING *nt_name, void **module );
 extern ULONG_PTR redirect_arm64ec_rva( void *module, ULONG_PTR rva, const IMAGE_ARM64EC_METADATA *metadata );
 extern void start_server( BOOL debug );
 
@@ -363,10 +357,10 @@ extern NTSTATUS tape_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTI
 extern struct async_fileio *alloc_fileio( DWORD size, async_callback_t callback, HANDLE handle );
 extern void release_fileio( struct async_fileio *io );
 extern NTSTATUS errno_to_status( int err );
-extern BOOL get_redirect( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *redir );
-extern NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret, UINT disposition );
+extern NTSTATUS get_nt_and_unix_names( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *nt_name,
+                                       char **unix_name, UINT disposition );
 extern NTSTATUS unix_to_nt_file_name( const char *name, WCHAR **nt );
-extern NTSTATUS get_full_path( const WCHAR *name, const WCHAR *curdir, WCHAR **path );
+extern NTSTATUS get_full_path( char *name, const WCHAR *curdir, UNICODE_STRING *nt_name );
 extern NTSTATUS open_unix_file( HANDLE *handle, const char *unix_name, ACCESS_MASK access,
                                 OBJECT_ATTRIBUTES *attr, ULONG attributes, ULONG sharing, ULONG disposition,
                                 ULONG options, void *ea_buffer, ULONG ea_length );

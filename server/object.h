@@ -78,16 +78,14 @@ struct object_ops
     void (*remove_queue)(struct object *,struct wait_queue_entry *);
     /* is object signaled? */
     int  (*signaled)(struct object *,struct wait_queue_entry *);
-    /* return the esync fd for this object */
-    int (*get_esync_fd)(struct object *, enum esync_type *type);
-    /* return the fsync shm idx for this object */
-    unsigned int (*get_fsync_idx)(struct object *, enum fsync_type *type);
     /* wait satisfied */
     void (*satisfied)(struct object *,struct wait_queue_entry *);
     /* signal an object */
     int  (*signal)(struct object *, unsigned int);
     /* return an fd object that can be used to read/write from the object */
     struct fd *(*get_fd)(struct object *);
+    /* return a sync that can be used to wait/signal the object */
+    struct object *(*get_sync)(struct object *);
     /* map access rights to the specific rights for this object */
     unsigned int (*map_access)(struct object *, unsigned int);
     /* returns the security descriptor of the object */
@@ -174,6 +172,8 @@ extern int no_add_queue( struct object *obj, struct wait_queue_entry *entry );
 extern void no_satisfied( struct object *obj, struct wait_queue_entry *entry );
 extern int no_signal( struct object *obj, unsigned int access );
 extern struct fd *no_get_fd( struct object *obj );
+extern struct object *default_get_sync( struct object *obj );
+static inline struct object *get_obj_sync( struct object *obj ) { return obj->ops->get_sync( obj ); }
 extern unsigned int default_map_access( struct object *obj, unsigned int access );
 extern struct security_descriptor *default_get_sd( struct object *obj );
 extern int default_set_sd( struct object *obj, const struct security_descriptor *sd, unsigned int set_info );
@@ -218,8 +218,13 @@ static inline void *mem_append( void *ptr, const void *src, data_size_t len )
 
 /* event functions */
 
+struct event_sync;
 struct event;
 struct keyed_event;
+
+extern struct event_sync *create_event_sync( int manual, int signaled );
+extern void signal_sync( struct event_sync *sync );
+extern void reset_sync( struct event_sync *sync );
 
 extern struct event *create_event( struct object *root, const struct unicode_str *name,
                                    unsigned int attr, int manual_reset, int initial_state,
@@ -282,10 +287,17 @@ extern void init_signals(void);
 
 /* atom functions */
 
-extern atom_t add_global_atom( struct winstation *winstation, const struct unicode_str *str );
-extern atom_t find_global_atom( struct winstation *winstation, const struct unicode_str *str );
-extern int grab_global_atom( struct winstation *winstation, atom_t atom );
-extern void release_global_atom( struct winstation *winstation, atom_t atom );
+extern struct object *create_atom_table(void);
+extern void set_global_atom_table( struct object *obj );
+extern void set_user_atom_table( struct object *obj );
+
+struct atom_table;
+extern struct atom_table *get_global_atom_table(void);
+extern struct atom_table *get_user_atom_table(void);
+extern atom_t add_atom( struct atom_table *table, const struct unicode_str *str );
+extern atom_t find_atom( struct atom_table *table, const struct unicode_str *str );
+extern int grab_atom( struct atom_table *table, atom_t atom );
+extern void release_atom( struct atom_table *table, atom_t atom );
 
 /* directory functions */
 
