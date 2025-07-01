@@ -2725,6 +2725,273 @@ static void test_open_device_interface_key(void)
     ok(ret, "Failed to destroy device list, error %#lx.\n", GetLastError());
 }
 
+static void test_device_interface_properties(void)
+{
+    struct {
+        DEVPROPKEY key;
+        DEVPROPTYPE type;
+    } default_keys[] = {
+        { DEVPKEY_DeviceInterface_Enabled, DEVPROP_TYPE_BOOLEAN },
+        { DEVPKEY_DeviceInterface_ClassGuid, DEVPROP_TYPE_GUID },
+        { DEVPKEY_Device_InstanceId, DEVPROP_TYPE_STRING }
+    };
+    const WCHAR str[] = L"Wine is not an emulator.";
+    const WCHAR instance_id[] = L"ROOT\\LEGACY_BOGUS\\0000";
+    DEVPROPTYPE type = DEVPROP_TYPE_EMPTY;
+    DEVPROP_BOOLEAN boolean = DEVPROP_TRUE;
+    SP_DEVICE_INTERFACE_DATA iface;
+    SP_DEVINFO_DATA device;
+    DEVPROPKEY *keys;
+    DWORD err, req, size, i, rem = ARRAY_SIZE(default_keys);
+    WCHAR buf[50];
+    HDEVINFO set;
+    BOOL ret;
+    GUID guid_val = {0};
+
+    set = SetupDiCreateDeviceInfoList(&guid, NULL);
+    ok(set != INVALID_HANDLE_VALUE, "Failed to create device list, error %#lx\n", GetLastError());
+
+    device.cbSize = sizeof(device);
+    ret = SetupDiCreateDeviceInfoW(set, instance_id, &guid, NULL, NULL, 0, &device);
+    ok(ret, "Failed to create device, error %#lx.\n", GetLastError());
+
+    iface.cbSize = sizeof(iface);
+    ret = SetupDiCreateDeviceInterfaceA(set, &device, &guid, NULL, 0, &iface);
+    ok(ret, "Failed to create interface, error %#lx.\n", GetLastError());
+
+    ret = SetupDiSetDeviceInterfacePropertyW(NULL, NULL, NULL, DEVPROP_TYPE_STRING, NULL, 0, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_HANDLE, "%lu != %d\n", err, ERROR_INVALID_HANDLE);
+
+    ret = SetupDiSetDeviceInterfacePropertyW(set, NULL, NULL, DEVPROP_TYPE_STRING, NULL, 0, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_PARAMETER, "%lu != %d\n", err, ERROR_INVALID_PARAMETER);
+
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, NULL, DEVPROP_TYPE_STRING, NULL, 0, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_DATA, "%lu != %d\n", err, ERROR_INVALID_DATA);
+
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, DEVPROP_TYPE_STRING,
+                                             NULL, 0, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_DATA, "%lu != %d\n", err, ERROR_INVALID_DATA);
+
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, DEVPROP_TYPE_STRING,
+                                             (BYTE *)str, 0, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_DATA, "%lu != %d\n", err, ERROR_INVALID_DATA);
+
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, DEVPROP_TYPE_STRING,
+                                             NULL, 1, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_USER_BUFFER, "%lu != %d\n", err, ERROR_INVALID_USER_BUFFER);
+
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, DEVPROP_TYPE_STRING,
+                                             (BYTE *)str, sizeof(str), 1);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_FLAGS, "%lu != %d\n", err, ERROR_INVALID_FLAGS);
+
+    ret = SetupDiGetDeviceInterfacePropertyW(NULL, NULL, NULL, NULL, NULL, 0, NULL, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_HANDLE, "%lu != %d\n", err, ERROR_INVALID_HANDLE);
+
+    ret = SetupDiGetDeviceInterfacePropertyW(set, NULL, NULL, NULL, NULL, 0, NULL, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_PARAMETER, "%lu != %d\n", err, ERROR_INVALID_PARAMETER);
+
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, NULL, NULL, NULL, 0, NULL, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_USER_BUFFER, "%lu != %d\n", err, ERROR_INVALID_USER_BUFFER);
+
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, NULL, NULL, 0, NULL, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_USER_BUFFER, "%lu != %d\n", err, ERROR_INVALID_USER_BUFFER);
+
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, &type, NULL, sizeof(buf), &req, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_USER_BUFFER, "%lu != %d\n", err, ERROR_INVALID_USER_BUFFER);
+
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, &type, (BYTE *)buf, sizeof(buf), NULL, 1);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_FLAGS, "%lu != %d\n", err, ERROR_INVALID_FLAGS);
+
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, &type, (BYTE *)buf, sizeof(buf), NULL, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_NOT_FOUND, "%lu != %d\n", err, ERROR_NOT_FOUND);
+
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, &type, (BYTE *)buf, sizeof(buf), &req, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_NOT_FOUND, "%lu != %d\n", err, ERROR_NOT_FOUND);
+
+    /* Should return built-in property keys even when the "Properties" subkey for the interface hasn't been created */
+    req = 0;
+    ret = SetupDiGetDeviceInterfacePropertyKeys(set, &iface, NULL, 0, &req, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INSUFFICIENT_BUFFER, "%lu != %d\n", err, ERROR_INSUFFICIENT_BUFFER);
+    ok(req >= ARRAY_SIZE(default_keys), "got req %lu, should be >= %lu\n", req, (DWORD)ARRAY_SIZE(default_keys));
+
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, DEVPROP_TYPE_STRING,
+                                             (const BYTE *)str, sizeof(str), 0);
+    err = GetLastError();
+    ok(ret, "SetupDiSetDeviceInterfacePropertyW failed: %lu\n", err);
+
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, &type, NULL, 0, &req, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INSUFFICIENT_BUFFER, "%lu != %d\n", err, ERROR_INSUFFICIENT_BUFFER);
+    ok(type == DEVPROP_TYPE_STRING, "%#lx != %#x\n", type, DEVPROP_TYPE_STRING);
+    ok(req == sizeof(str), "%lu != %lu\n", req, (DWORD)sizeof(str));
+
+    buf[0] = '\0';
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, &type, (BYTE *)buf,
+                                             sizeof(buf), &req, 0);
+    err = GetLastError();
+    ok(ret, "SetupDiGetDeviceInterfacePropertyW failed: %lu\n", err);
+    ok(!wcscmp(buf, str), "%s != %s\n", debugstr_w(buf), debugstr_w(str));
+
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, DEVPROP_TYPE_EMPTY,
+                                             NULL, 0, 0);
+    err = GetLastError();
+    ok(ret, "SetupDiSetDeviceInterfacePropertyW failed: %lu\n", err);
+
+    /* DEVPKEY_DeviceInterface_Enabled is a "special" key, as it does not seem to be actually stored in the registry. */
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_Enabled, &type, (BYTE *)&boolean,
+                                             sizeof(boolean), &req, 0);
+    err = GetLastError();
+    ok(ret, "SetupDiGetDeviceInterfacePropertyW failed: %lu\n", err);
+    ok(req == sizeof(boolean), "%lu != %lu\n", req, (DWORD)sizeof(boolean));
+    ok(boolean == DEVPROP_FALSE, "%d != %d\n", boolean, DEVPROP_FALSE);
+
+    boolean = DEVPROP_TRUE;
+    /*  DEVPKEY_DeviceInterface_Enabled cannot be toggled for interfaces. */
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_Enabled, DEVPROP_TYPE_BOOLEAN,
+                                             (const BYTE *)&boolean, sizeof(boolean), 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_ACCESS_DENIED, "%lu != %d\n", err, ERROR_ACCESS_DENIED);
+
+    /* Nor can it be set to anything that's not a DEVPROP_TYPE_BOOLEAN. */
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_Enabled, DEVPROP_TYPE_STRING,
+                                             (const BYTE *)str, sizeof(str), 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_DATA, "%lu != %d\n", err, ERROR_INVALID_DATA);
+
+    /* It can however, be "set" to to its current value, i.e whether the interface is enabled. This seems to be a no-op. */
+    boolean = DEVPROP_FALSE;
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_Enabled, DEVPROP_TYPE_BOOLEAN,
+                                             (const BYTE *)&boolean, sizeof(boolean), 0);
+    err = GetLastError();
+    /* Windows 7 returns ERROR_ACCESS_DENIED. */
+    ok(ret || broken(err == ERROR_ACCESS_DENIED), "SetupDiGetDeviceInterfacePropertyW failed: %lu\n", err);
+
+    boolean = 0xde;
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_Enabled, DEVPROP_TYPE_BOOLEAN,
+                                             (const BYTE *)&boolean, sizeof(boolean), 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_DATA, "%lu != %d\n", err, ERROR_INVALID_DATA);
+
+    ret = SetupDiGetDeviceInterfacePropertyKeys(NULL, NULL, NULL, 0, NULL, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_HANDLE, "%lu != %d\n", err, ERROR_INVALID_HANDLE);
+
+    ret = SetupDiGetDeviceInterfacePropertyKeys(set, NULL, NULL, 0, NULL, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_PARAMETER, "%lu != %d\n", err, ERROR_INVALID_PARAMETER);
+
+    ret = SetupDiGetDeviceInterfacePropertyKeys(set, &iface, NULL, 0, NULL, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INSUFFICIENT_BUFFER, "%lu != %d\n", err, ERROR_INSUFFICIENT_BUFFER);
+
+    ret = SetupDiGetDeviceInterfacePropertyKeys(set, &iface, NULL, 0, &req, 1);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_FLAGS, "%lu != %d\n", err, ERROR_INVALID_FLAGS);
+
+    ret = SetupDiGetDeviceInterfacePropertyKeys(set, &iface, NULL, 1, &req, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INVALID_USER_BUFFER, "%lu != %d\n", err, ERROR_INVALID_USER_BUFFER);
+
+    ret = SetupDiSetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_FriendlyName, DEVPROP_TYPE_STRING,
+                                             (const BYTE *)str, sizeof(str), 0);
+    err = GetLastError();
+    ok(ret, "SetupDiSetDeviceInterfacePropertyW failed: %lu\n", err);
+    if (ret) rem += 1;
+
+    req = 0;
+    ret = SetupDiGetDeviceInterfacePropertyKeys(set, &iface, NULL, 0, &req, 0);
+    err = GetLastError();
+    ok(!ret && err == ERROR_INSUFFICIENT_BUFFER, "%lu != %d\n", err, ERROR_INSUFFICIENT_BUFFER);
+
+    size = req;
+    keys = calloc(size, sizeof(*keys));
+    ret = SetupDiGetDeviceInterfacePropertyKeys(set, &iface, keys, size, &req, 0);
+    ok(ret, "SetupDiGetDeviceInterfacePropertyKeys failed: %lu\n", GetLastError());
+    ok(size == req, "%lu != %lu\n", size, req);
+    ok(size >= ARRAY_SIZE(default_keys), "got size %lu, should be >= %lu\n", size, (DWORD)ARRAY_SIZE(default_keys));
+
+    for (i = 0; i < size && rem; i++)
+    {
+        DWORD j;
+        for (j = 0; j < ARRAY_SIZE(default_keys); j++)
+        {
+            DEVPROPKEY key = default_keys[j].key;
+            DEVPROPTYPE exp_type = default_keys[j].type;
+
+            if (IsEqualDevPropKey(key, keys[i]))
+            {
+                BYTE *buf;
+                DWORD size, req = 0;
+
+                winetest_push_context("default_keys[%lu]", j);
+
+                type = DEVPROP_TYPE_EMPTY;
+                ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &key, &type, NULL, 0, &req, 0);
+                err = GetLastError();
+                ok(!ret && err == ERROR_INSUFFICIENT_BUFFER, "%lu != %d\n", err, ERROR_INSUFFICIENT_BUFFER);
+                ok(type == exp_type, "%#lx != %#lx\n", type, exp_type);
+
+                size = req;
+                buf = calloc( 1, size );
+                ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &key, &type, buf, size, &req, 0);
+                err = GetLastError();
+                ok(ret, "SetupDiGetDeviceInterfacePropertyW failed: %lu\n", err);
+                free(buf);
+
+                winetest_pop_context();
+
+                rem--;
+                break;
+            }
+        }
+        if (IsEqualDevPropKey(keys[i], DEVPKEY_DeviceInterface_FriendlyName) && rem) rem--;
+    }
+    free(keys);
+    ok(!rem, "got rem %lu, should be 0\n", rem);
+
+    type = DEVPROP_TYPE_EMPTY;
+    req = 0;
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_DeviceInterface_ClassGuid, &type, (BYTE *)&guid_val,
+                                             sizeof(guid_val), &req, 0);
+    ok(ret, "SetupDiGetDeviceInterfacePropertyW failed: %lu\n", GetLastError());
+    ok(type == DEVPROP_TYPE_GUID, "%#lx != %#x\n", type, DEVPROP_TYPE_GUID);
+    ok(req == sizeof(guid), "%lu != %lu\n", req, (DWORD)sizeof(guid));
+    ok(IsEqualGUID(&guid_val, &guid), "%s != %s", debugstr_guid( &guid_val ), debugstr_guid( &guid ));
+
+    type = DEVPROP_TYPE_EMPTY;
+    req = 0;
+    buf[0] = '\0';
+    ret = SetupDiGetDeviceInterfacePropertyW(set, &iface, &DEVPKEY_Device_InstanceId, &type, (BYTE *)buf,
+                                             sizeof(instance_id), &req, 0);
+    ok(ret, "SetupDiGetDeviceInterfacePropertyW failed: %lu\n", GetLastError());
+    ok(type == DEVPROP_TYPE_STRING, "%#lx != %#x", type, DEVPROP_TYPE_STRING);
+    ok(req == sizeof(instance_id), "%lu != %lu\n", req, (DWORD)sizeof(instance_id));
+    ok(!wcscmp(buf, instance_id), "%s != %s\n", debugstr_w(buf), debugstr_w(instance_id));
+
+    ret = SetupDiRemoveDeviceInterface(set, &iface);
+    ok(ret, "Failed to remove device interface, error %#lx.\n", GetLastError());
+    ret = SetupDiRemoveDevice(set, &device);
+    ok(ret, "Failed to remove device, error %#lx.\n", GetLastError());
+    ret = SetupDiDestroyDeviceInfoList(set);
+    ok(ret, "Failed to destroy device list, error %#lx.\n", GetLastError());
+}
+
 static void test_device_install_params(void)
 {
     SP_DEVINFO_DATA device = {sizeof(device)};
@@ -4845,6 +5112,7 @@ START_TEST(devinst)
     test_devnode();
     test_device_interface_key();
     test_open_device_interface_key();
+    test_device_interface_properties();
     test_device_install_params();
     test_driver_list();
     test_call_class_installer();

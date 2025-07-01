@@ -310,6 +310,9 @@ static ULONG STDMETHODCALLTYPE d3d12_heap_AddRef(ID3D12Heap *iface)
     struct d3d12_heap *heap = impl_from_ID3D12Heap(iface);
     unsigned int refcount = vkd3d_atomic_increment_u32(&heap->refcount);
 
+    if (refcount == 1)
+        vkd3d_atomic_increment_u32(&heap->internal_refcount);
+
     TRACE("%p increasing refcount to %u.\n", heap, refcount);
 
     VKD3D_ASSERT(!heap->is_private);
@@ -342,6 +345,12 @@ static void d3d12_heap_destroy(struct d3d12_heap *heap)
         d3d12_device_release(device);
 }
 
+static void d3d12_heap_decref(struct d3d12_heap *heap)
+{
+    if (!vkd3d_atomic_decrement_u32(&heap->internal_refcount))
+        d3d12_heap_destroy(heap);
+}
+
 static ULONG STDMETHODCALLTYPE d3d12_heap_Release(ID3D12Heap *iface)
 {
     struct d3d12_heap *heap = impl_from_ID3D12Heap(iface);
@@ -350,16 +359,10 @@ static ULONG STDMETHODCALLTYPE d3d12_heap_Release(ID3D12Heap *iface)
     TRACE("%p decreasing refcount to %u.\n", heap, refcount);
 
     /* A heap must not be destroyed until all contained resources are destroyed. */
-    if (!refcount && !heap->resource_count)
-        d3d12_heap_destroy(heap);
+    if (!refcount)
+        d3d12_heap_decref(heap);
 
     return refcount;
-}
-
-static void d3d12_heap_resource_destroyed(struct d3d12_heap *heap)
-{
-    if (!vkd3d_atomic_decrement_u32(&heap->resource_count) && (!heap->refcount || heap->is_private))
-        d3d12_heap_destroy(heap);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d12_heap_GetPrivateData(ID3D12Heap *iface,
@@ -487,7 +490,7 @@ static HRESULT d3d12_heap_init(struct d3d12_heap *heap,
 
     heap->ID3D12Heap_iface.lpVtbl = &d3d12_heap_vtbl;
     heap->refcount = 1;
-    heap->resource_count = 0;
+    heap->internal_refcount = 1;
 
     heap->is_private = !!resource;
 
@@ -555,8 +558,6 @@ static HRESULT d3d12_heap_init(struct d3d12_heap *heap,
     heap->device = device;
     if (!heap->is_private)
         d3d12_device_add_ref(heap->device);
-    else
-        heap->resource_count = 1;
 
     if (d3d12_heap_get_memory_property_flags(heap) & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
     {
@@ -998,7 +999,7 @@ static void d3d12_resource_destroy(struct d3d12_resource *resource, struct d3d12
     d3d12_resource_tile_info_cleanup(resource);
 
     if (resource->heap)
-        d3d12_heap_resource_destroyed(resource->heap);
+        d3d12_heap_decref(resource->heap);
 }
 
 static ULONG d3d12_resource_incref(struct d3d12_resource *resource)
@@ -2200,7 +2201,7 @@ static HRESULT vkd3d_bind_heap_memory(struct d3d12_device *device,
     {
         resource->heap = heap;
         resource->heap_offset = heap_offset;
-        vkd3d_atomic_increment_u32(&heap->resource_count);
+        vkd3d_atomic_increment_u32(&heap->internal_refcount);
     }
     else
     {

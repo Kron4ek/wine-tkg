@@ -275,11 +275,11 @@ static void init_sink_node(IMFStreamSink *stream_sink, MF_CONNECT_METHOD method,
     }
 }
 
-DEFINE_EXPECT(test_source_BeginGetEvent);
-DEFINE_EXPECT(test_source_QueueEvent);
-DEFINE_EXPECT(test_source_Start);
+DEFINE_EXPECT(test_stub_source_BeginGetEvent);
+DEFINE_EXPECT(test_stub_source_QueueEvent);
+DEFINE_EXPECT(test_stub_source_Start);
 
-struct test_source
+struct test_stub_source
 {
     IMFMediaSource IMFMediaSource_iface;
     LONG refcount;
@@ -287,12 +287,12 @@ struct test_source
     IMFPresentationDescriptor *pd;
 };
 
-static struct test_source *impl_from_IMFMediaSource(IMFMediaSource *iface)
+static struct test_stub_source *impl_from_IMFMediaSource(IMFMediaSource *iface)
 {
-    return CONTAINING_RECORD(iface, struct test_source, IMFMediaSource_iface);
+    return CONTAINING_RECORD(iface, struct test_stub_source, IMFMediaSource_iface);
 }
 
-static HRESULT WINAPI test_source_QueryInterface(IMFMediaSource *iface, REFIID riid, void **out)
+static HRESULT WINAPI test_stub_source_QueryInterface(IMFMediaSource *iface, REFIID riid, void **out)
 {
     if (IsEqualIID(riid, &IID_IMFMediaSource)
             || IsEqualIID(riid, &IID_IMFMediaEventGenerator)
@@ -310,15 +310,15 @@ static HRESULT WINAPI test_source_QueryInterface(IMFMediaSource *iface, REFIID r
     return S_OK;
 }
 
-static ULONG WINAPI test_source_AddRef(IMFMediaSource *iface)
+static ULONG WINAPI test_stub_source_AddRef(IMFMediaSource *iface)
 {
-    struct test_source *source = impl_from_IMFMediaSource(iface);
+    struct test_stub_source *source = impl_from_IMFMediaSource(iface);
     return InterlockedIncrement(&source->refcount);
 }
 
-static ULONG WINAPI test_source_Release(IMFMediaSource *iface)
+static ULONG WINAPI test_stub_source_Release(IMFMediaSource *iface)
 {
-    struct test_source *source = impl_from_IMFMediaSource(iface);
+    struct test_stub_source *source = impl_from_IMFMediaSource(iface);
     ULONG refcount = InterlockedDecrement(&source->refcount);
 
     if (!refcount)
@@ -330,92 +330,92 @@ static ULONG WINAPI test_source_Release(IMFMediaSource *iface)
     return refcount;
 }
 
-static HRESULT WINAPI test_source_GetEvent(IMFMediaSource *iface, DWORD flags, IMFMediaEvent **event)
+static HRESULT WINAPI test_stub_source_GetEvent(IMFMediaSource *iface, DWORD flags, IMFMediaEvent **event)
 {
     ok(0, "Unexpected call.\n");
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI test_source_BeginGetEvent(IMFMediaSource *iface, IMFAsyncCallback *callback, IUnknown *state)
+static HRESULT WINAPI test_stub_source_BeginGetEvent(IMFMediaSource *iface, IMFAsyncCallback *callback, IUnknown *state)
 {
-    struct test_source *source = impl_from_IMFMediaSource(iface);
-    CHECK_EXPECT(test_source_BeginGetEvent);
+    struct test_stub_source *source = impl_from_IMFMediaSource(iface);
+    CHECK_EXPECT(test_stub_source_BeginGetEvent);
     return source->begin_get_event_res;
 }
 
-static HRESULT WINAPI test_source_EndGetEvent(IMFMediaSource *iface, IMFAsyncResult *result, IMFMediaEvent **event)
+static HRESULT WINAPI test_stub_source_EndGetEvent(IMFMediaSource *iface, IMFAsyncResult *result, IMFMediaEvent **event)
 {
     ok(0, "Unexpected call.\n");
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI test_source_QueueEvent(IMFMediaSource *iface, MediaEventType event_type, REFGUID ext_type,
+static HRESULT WINAPI test_stub_source_QueueEvent(IMFMediaSource *iface, MediaEventType event_type, REFGUID ext_type,
         HRESULT hr, const PROPVARIANT *value)
 {
-    CHECK_EXPECT(test_source_QueueEvent);
+    CHECK_EXPECT(test_stub_source_QueueEvent);
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI test_source_GetCharacteristics(IMFMediaSource *iface, DWORD *flags)
+static HRESULT WINAPI test_stub_source_GetCharacteristics(IMFMediaSource *iface, DWORD *flags)
 {
     *flags = 0;
     return S_OK;
 }
 
-static HRESULT WINAPI test_source_CreatePresentationDescriptor(IMFMediaSource *iface, IMFPresentationDescriptor **pd)
+static HRESULT WINAPI test_stub_source_CreatePresentationDescriptor(IMFMediaSource *iface, IMFPresentationDescriptor **pd)
 {
-    struct test_source *source = impl_from_IMFMediaSource(iface);
+    struct test_stub_source *source = impl_from_IMFMediaSource(iface);
     return IMFPresentationDescriptor_Clone(source->pd, pd);
 }
 
-static HRESULT WINAPI test_source_Start(IMFMediaSource *iface, IMFPresentationDescriptor *pd, const GUID *time_format,
+static HRESULT WINAPI test_stub_source_Start(IMFMediaSource *iface, IMFPresentationDescriptor *pd, const GUID *time_format,
         const PROPVARIANT *start_position)
 {
-    CHECK_EXPECT(test_source_Start);
+    CHECK_EXPECT(test_stub_source_Start);
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI test_source_Stop(IMFMediaSource *iface)
+static HRESULT WINAPI test_stub_source_Stop(IMFMediaSource *iface)
 {
     ok(0, "Unexpected call.\n");
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI test_source_Pause(IMFMediaSource *iface)
+static HRESULT WINAPI test_stub_source_Pause(IMFMediaSource *iface)
 {
     ok(0, "Unexpected call.\n");
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI test_source_Shutdown(IMFMediaSource *iface)
+static HRESULT WINAPI test_stub_source_Shutdown(IMFMediaSource *iface)
 {
     ok(0, "Unexpected call.\n");
     return E_NOTIMPL;
 }
 
-static const IMFMediaSourceVtbl test_source_vtbl =
+static const IMFMediaSourceVtbl test_stub_source_vtbl =
 {
-    test_source_QueryInterface,
-    test_source_AddRef,
-    test_source_Release,
-    test_source_GetEvent,
-    test_source_BeginGetEvent,
-    test_source_EndGetEvent,
-    test_source_QueueEvent,
-    test_source_GetCharacteristics,
-    test_source_CreatePresentationDescriptor,
-    test_source_Start,
-    test_source_Stop,
-    test_source_Pause,
-    test_source_Shutdown,
+    test_stub_source_QueryInterface,
+    test_stub_source_AddRef,
+    test_stub_source_Release,
+    test_stub_source_GetEvent,
+    test_stub_source_BeginGetEvent,
+    test_stub_source_EndGetEvent,
+    test_stub_source_QueueEvent,
+    test_stub_source_GetCharacteristics,
+    test_stub_source_CreatePresentationDescriptor,
+    test_stub_source_Start,
+    test_stub_source_Stop,
+    test_stub_source_Pause,
+    test_stub_source_Shutdown,
 };
 
-static IMFMediaSource *create_test_source(IMFPresentationDescriptor *pd)
+static IMFMediaSource *create_test_stub_source(IMFPresentationDescriptor *pd)
 {
-    struct test_source *source;
+    struct test_stub_source *source;
 
     source = calloc(1, sizeof(*source));
-    source->IMFMediaSource_iface.lpVtbl = &test_source_vtbl;
+    source->IMFMediaSource_iface.lpVtbl = &test_stub_source_vtbl;
     source->refcount = 1;
     source->begin_get_event_res = E_NOTIMPL;
     IMFPresentationDescriptor_AddRef((source->pd = pd));
@@ -1458,11 +1458,37 @@ static const IMFMediaStreamVtbl test_media_stream_vtbl =
     test_media_stream_RequestSample,
 };
 
+static struct test_media_stream *create_test_stream(DWORD stream_index, IMFMediaSource *source)
+{
+    struct test_media_stream *stream;
+    IMFPresentationDescriptor *pd;
+    BOOL selected;
+    HRESULT hr;
+
+    stream = calloc(1, sizeof(*stream));
+    stream->IMFMediaStream_iface.lpVtbl = &test_media_stream_vtbl;
+    stream->refcount = 1;
+    hr = MFCreateEventQueue(&stream->event_queue);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    stream->source = source;
+    IMFMediaSource_AddRef(stream->source);
+    stream->is_new = TRUE;
+
+    IMFMediaSource_CreatePresentationDescriptor(source, &pd);
+    IMFPresentationDescriptor_GetStreamDescriptorByIndex(pd, stream_index, &selected, &stream->sd);
+    IMFPresentationDescriptor_Release(pd);
+
+    return stream;
+}
+
 #define TEST_SOURCE_NUM_STREAMS 3
 
-struct test_seek_source
+struct test_source
 {
     IMFMediaSource IMFMediaSource_iface;
+    IMFGetService IMFGetService_iface;
+    IMFRateSupport IMFRateSupport_iface;
+    IMFRateControl IMFRateControl_iface;
     IMFMediaEventQueue *event_queue;
     IMFPresentationDescriptor *pd;
     struct test_media_stream *streams[TEST_SOURCE_NUM_STREAMS];
@@ -1470,21 +1496,32 @@ struct test_seek_source
     unsigned stream_count;
     CRITICAL_SECTION cs;
     BOOL seekable;
+    BOOL thinnable;
+    BOOL thin;
+    float rate;
     LONG refcount;
 };
 
-static struct test_seek_source *impl_test_seek_source_from_IMFMediaSource(IMFMediaSource *iface)
+static struct test_source *impl_test_source_from_IMFMediaSource(IMFMediaSource *iface)
 {
-    return CONTAINING_RECORD(iface, struct test_seek_source, IMFMediaSource_iface);
+    return CONTAINING_RECORD(iface, struct test_source, IMFMediaSource_iface);
 }
 
-static HRESULT WINAPI test_seek_source_QueryInterface(IMFMediaSource *iface, REFIID riid, void **out)
+static HRESULT WINAPI test_source_QueryInterface(IMFMediaSource *iface, REFIID riid, void **out)
 {
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
+
     if (IsEqualIID(riid, &IID_IMFMediaSource)
             || IsEqualIID(riid, &IID_IMFMediaEventGenerator)
             || IsEqualIID(riid, &IID_IUnknown))
     {
         *out = iface;
+    }
+    else if (IsEqualIID(riid, &IID_IMFGetService))
+    {
+        IMFGetService_AddRef(&source->IMFGetService_iface);
+        *out = &source->IMFGetService_iface;
+        return S_OK;
     }
     else
     {
@@ -1496,15 +1533,15 @@ static HRESULT WINAPI test_seek_source_QueryInterface(IMFMediaSource *iface, REF
     return S_OK;
 }
 
-static ULONG WINAPI test_seek_source_AddRef(IMFMediaSource *iface)
+static ULONG WINAPI test_source_AddRef(IMFMediaSource *iface)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     return InterlockedIncrement(&source->refcount);
 }
 
-static ULONG WINAPI test_seek_source_Release(IMFMediaSource *iface)
+static ULONG WINAPI test_source_Release(IMFMediaSource *iface)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     ULONG refcount = InterlockedDecrement(&source->refcount);
 
     if (!refcount)
@@ -1516,34 +1553,34 @@ static ULONG WINAPI test_seek_source_Release(IMFMediaSource *iface)
     return refcount;
 }
 
-static HRESULT WINAPI test_seek_source_GetEvent(IMFMediaSource *iface, DWORD flags, IMFMediaEvent **event)
+static HRESULT WINAPI test_source_GetEvent(IMFMediaSource *iface, DWORD flags, IMFMediaEvent **event)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     return IMFMediaEventQueue_GetEvent(source->event_queue, flags, event);
 }
 
-static HRESULT WINAPI test_seek_source_BeginGetEvent(IMFMediaSource *iface, IMFAsyncCallback *callback, IUnknown *state)
+static HRESULT WINAPI test_source_BeginGetEvent(IMFMediaSource *iface, IMFAsyncCallback *callback, IUnknown *state)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     return IMFMediaEventQueue_BeginGetEvent(source->event_queue, callback, state);
 }
 
-static HRESULT WINAPI test_seek_source_EndGetEvent(IMFMediaSource *iface, IMFAsyncResult *result, IMFMediaEvent **event)
+static HRESULT WINAPI test_source_EndGetEvent(IMFMediaSource *iface, IMFAsyncResult *result, IMFMediaEvent **event)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     return IMFMediaEventQueue_EndGetEvent(source->event_queue, result, event);
 }
 
-static HRESULT WINAPI test_seek_source_QueueEvent(IMFMediaSource *iface, MediaEventType event_type, REFGUID ext_type,
+static HRESULT WINAPI test_source_QueueEvent(IMFMediaSource *iface, MediaEventType event_type, REFGUID ext_type,
         HRESULT hr, const PROPVARIANT *value)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     return IMFMediaEventQueue_QueueEventParamVar(source->event_queue, event_type, ext_type, hr, value);
 }
 
-static HRESULT WINAPI test_seek_source_GetCharacteristics(IMFMediaSource *iface, DWORD *flags)
+static HRESULT WINAPI test_source_GetCharacteristics(IMFMediaSource *iface, DWORD *flags)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
 
     if (source->seekable)
         *flags = MFMEDIASOURCE_CAN_PAUSE | MFMEDIASOURCE_CAN_SEEK;
@@ -1552,9 +1589,9 @@ static HRESULT WINAPI test_seek_source_GetCharacteristics(IMFMediaSource *iface,
     return S_OK;
 }
 
-static HRESULT WINAPI test_seek_source_CreatePresentationDescriptor(IMFMediaSource *iface, IMFPresentationDescriptor **pd)
+static HRESULT WINAPI test_source_CreatePresentationDescriptor(IMFMediaSource *iface, IMFPresentationDescriptor **pd)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     IMFStreamDescriptor *sds[ARRAY_SIZE(source->streams)];
     IMFMediaType *media_type;
     HRESULT hr = S_OK;
@@ -1616,10 +1653,10 @@ static BOOL is_stream_selected(IMFPresentationDescriptor *pd, DWORD index)
     return selected;
 }
 
-static HRESULT WINAPI test_seek_source_Start(IMFMediaSource *iface, IMFPresentationDescriptor *pd, const GUID *time_format,
+static HRESULT WINAPI test_source_Start(IMFMediaSource *iface, IMFPresentationDescriptor *pd, const GUID *time_format,
         const PROPVARIANT *start_position)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     MediaEventType event_type;
     PROPVARIANT var;
     HRESULT hr;
@@ -1670,9 +1707,9 @@ static HRESULT WINAPI test_seek_source_Start(IMFMediaSource *iface, IMFPresentat
     return S_OK;
 }
 
-static HRESULT WINAPI test_seek_source_Stop(IMFMediaSource *iface)
+static HRESULT WINAPI test_source_Stop(IMFMediaSource *iface)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     MediaEventType event_type;
     HRESULT hr;
     int i;
@@ -1703,9 +1740,9 @@ static HRESULT WINAPI test_seek_source_Stop(IMFMediaSource *iface)
     return S_OK;
 }
 
-static HRESULT WINAPI test_seek_source_Pause(IMFMediaSource *iface)
+static HRESULT WINAPI test_source_Pause(IMFMediaSource *iface)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     MediaEventType event_type;
     HRESULT hr;
     int i;
@@ -1735,9 +1772,9 @@ static HRESULT WINAPI test_seek_source_Pause(IMFMediaSource *iface)
     return S_OK;
 }
 
-static HRESULT WINAPI test_seek_source_Shutdown(IMFMediaSource *iface)
+static HRESULT WINAPI test_source_Shutdown(IMFMediaSource *iface)
 {
-    struct test_seek_source *source = impl_test_seek_source_from_IMFMediaSource(iface);
+    struct test_source *source = impl_test_source_from_IMFMediaSource(iface);
     HRESULT hr;
 
     add_object_state(&actual_object_state_record, SOURCE_SHUTDOWN);
@@ -1748,22 +1785,212 @@ static HRESULT WINAPI test_seek_source_Shutdown(IMFMediaSource *iface)
     return S_OK;
 }
 
-static const IMFMediaSourceVtbl test_seek_source_vtbl =
+static const IMFMediaSourceVtbl test_source_vtbl =
 {
-    test_seek_source_QueryInterface,
-    test_seek_source_AddRef,
-    test_seek_source_Release,
-    test_seek_source_GetEvent,
-    test_seek_source_BeginGetEvent,
-    test_seek_source_EndGetEvent,
-    test_seek_source_QueueEvent,
-    test_seek_source_GetCharacteristics,
-    test_seek_source_CreatePresentationDescriptor,
-    test_seek_source_Start,
-    test_seek_source_Stop,
-    test_seek_source_Pause,
-    test_seek_source_Shutdown,
+    test_source_QueryInterface,
+    test_source_AddRef,
+    test_source_Release,
+    test_source_GetEvent,
+    test_source_BeginGetEvent,
+    test_source_EndGetEvent,
+    test_source_QueueEvent,
+    test_source_GetCharacteristics,
+    test_source_CreatePresentationDescriptor,
+    test_source_Start,
+    test_source_Stop,
+    test_source_Pause,
+    test_source_Shutdown,
 };
+
+static struct test_source *impl_test_source_from_IMFGetService(IMFGetService *iface)
+{
+    return CONTAINING_RECORD(iface, struct test_source, IMFGetService_iface);
+}
+
+static HRESULT WINAPI test_source_get_service_QueryInterface(IMFGetService *iface, REFIID riid, void **obj)
+{
+    struct test_source *source = impl_test_source_from_IMFGetService(iface);
+    return IMFMediaSource_QueryInterface(&source->IMFMediaSource_iface, riid, obj);
+}
+
+static ULONG WINAPI test_source_get_service_AddRef(IMFGetService *iface)
+{
+    struct test_source *source = impl_test_source_from_IMFGetService(iface);
+    return IMFMediaSource_AddRef(&source->IMFMediaSource_iface);
+}
+
+static ULONG WINAPI test_source_get_service_Release(IMFGetService *iface)
+{
+    struct test_source *source = impl_test_source_from_IMFGetService(iface);
+    return IMFMediaSource_Release(&source->IMFMediaSource_iface);
+}
+
+static HRESULT WINAPI test_source_get_service_GetService(IMFGetService *iface, REFGUID service,
+        REFIID riid, void **obj)
+{
+    struct test_source *source = impl_test_source_from_IMFGetService(iface);
+
+    if (IsEqualGUID(service, &MF_RATE_CONTROL_SERVICE))
+    {
+        if (IsEqualIID(riid, &IID_IMFRateSupport))
+        {
+            IMFRateSupport_AddRef(&source->IMFRateSupport_iface);
+            *obj = &source->IMFRateSupport_iface;
+            return S_OK;
+        }
+        if (IsEqualIID(riid, &IID_IMFRateControl))
+        {
+            IMFRateControl_AddRef(&source->IMFRateControl_iface);
+            *obj = &source->IMFRateControl_iface;
+            return S_OK;
+        }
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static const IMFGetServiceVtbl test_source_get_service_vtbl =
+{
+    test_source_get_service_QueryInterface,
+    test_source_get_service_AddRef,
+    test_source_get_service_Release,
+    test_source_get_service_GetService,
+};
+
+static struct test_source *impl_test_source_from_IMFRateSupport(IMFRateSupport *iface)
+{
+    return CONTAINING_RECORD(iface, struct test_source, IMFRateSupport_iface);
+}
+
+static HRESULT WINAPI test_source_rate_support_QueryInterface(IMFRateSupport *iface, REFIID riid, void **obj)
+{
+    struct test_source *source = impl_test_source_from_IMFRateSupport(iface);
+    return IMFMediaSource_QueryInterface(&source->IMFMediaSource_iface, riid, obj);
+}
+
+static ULONG WINAPI test_source_rate_support_AddRef(IMFRateSupport *iface)
+{
+    struct test_source *source = impl_test_source_from_IMFRateSupport(iface);
+    return IMFMediaSource_AddRef(&source->IMFMediaSource_iface);
+}
+
+static ULONG WINAPI test_source_rate_support_Release(IMFRateSupport *iface)
+{
+    struct test_source *source = impl_test_source_from_IMFRateSupport(iface);
+    return IMFMediaSource_Release(&source->IMFMediaSource_iface);
+}
+
+static HRESULT WINAPI test_source_rate_support_GetSlowestRate(IMFRateSupport *iface,
+        MFRATE_DIRECTION direction, BOOL thin, float *rate)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI test_source_rate_support_GetFastestRate(IMFRateSupport *iface,
+        MFRATE_DIRECTION direction, BOOL thin, float *rate)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI test_source_rate_support_IsRateSupported(IMFRateSupport *iface, BOOL thin,
+        float rate, float *nearest_rate)
+{
+    if (nearest_rate) *nearest_rate = rate;
+    return S_OK;
+}
+
+static const IMFRateSupportVtbl test_source_rate_support_vtbl =
+{
+    test_source_rate_support_QueryInterface,
+    test_source_rate_support_AddRef,
+    test_source_rate_support_Release,
+    test_source_rate_support_GetSlowestRate,
+    test_source_rate_support_GetFastestRate,
+    test_source_rate_support_IsRateSupported,
+};
+
+static struct test_source *impl_test_source_from_IMFRateControl(IMFRateControl *iface)
+{
+    return CONTAINING_RECORD(iface, struct test_source, IMFRateControl_iface);
+}
+
+static HRESULT WINAPI test_source_rate_control_QueryInterface(IMFRateControl *iface, REFIID riid, void **obj)
+{
+    struct test_source *source = impl_test_source_from_IMFRateControl(iface);
+    return IMFMediaSource_QueryInterface(&source->IMFMediaSource_iface, riid, obj);
+}
+
+static ULONG WINAPI test_source_rate_control_AddRef(IMFRateControl *iface)
+{
+    struct test_source *source = impl_test_source_from_IMFRateControl(iface);
+    return IMFMediaSource_AddRef(&source->IMFMediaSource_iface);
+}
+
+static ULONG WINAPI test_source_rate_control_Release(IMFRateControl *iface)
+{
+    struct test_source *source = impl_test_source_from_IMFRateControl(iface);
+    return IMFMediaSource_Release(&source->IMFMediaSource_iface);
+}
+
+static HRESULT WINAPI test_source_rate_control_SetRate(IMFRateControl *iface, BOOL thin, float rate)
+{
+    struct test_source *source = impl_test_source_from_IMFRateControl(iface);
+    HRESULT hr;
+    if (thin && !source->thinnable)
+        return MF_E_THINNING_UNSUPPORTED;
+    EnterCriticalSection(&source->cs);
+    source->thin = thin;
+    source->rate = rate;
+    LeaveCriticalSection(&source->cs);
+    hr = IMFMediaEventQueue_QueueEventParamVar(source->event_queue, MESourceRateChanged, &GUID_NULL, S_OK, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    return S_OK;
+}
+
+static HRESULT WINAPI test_source_rate_control_GetRate(IMFRateControl *iface, BOOL *thin, float *rate)
+{
+    struct test_source *source = impl_test_source_from_IMFRateControl(iface);
+    EnterCriticalSection(&source->cs);
+    *rate = source->rate;
+    if (thin)
+        *thin = source->thin;
+    LeaveCriticalSection(&source->cs);
+    return S_OK;
+}
+
+static const IMFRateControlVtbl test_source_rate_control_vtbl =
+{
+    test_source_rate_control_QueryInterface,
+    test_source_rate_control_AddRef,
+    test_source_rate_control_Release,
+    test_source_rate_control_SetRate,
+    test_source_rate_control_GetRate,
+};
+
+static IMFMediaSource *create_test_source(BOOL seekable)
+{
+    struct test_source *source;
+    int i;
+
+    source = calloc(1, sizeof(*source));
+    source->IMFMediaSource_iface.lpVtbl = &test_source_vtbl;
+    source->IMFGetService_iface.lpVtbl = &test_source_get_service_vtbl;
+    source->IMFRateSupport_iface.lpVtbl = &test_source_rate_support_vtbl;
+    source->IMFRateControl_iface.lpVtbl = &test_source_rate_control_vtbl;
+    source->refcount = 1;
+    source->stream_count = 1;
+    source->seekable = seekable;
+    source->thinnable = FALSE;
+    source->thin = FALSE;
+    source->rate = 1.0;
+    MFCreateEventQueue(&source->event_queue);
+    InitializeCriticalSection(&source->cs);
+    for (i = 0; i < source->stream_count; ++i)
+        source->streams[i] = create_test_stream(i, &source->IMFMediaSource_iface);
+
+    return &source->IMFMediaSource_iface;
+}
 
 static HRESULT WINAPI test_seek_clock_sink_QueryInterface(IMFClockStateSink *iface, REFIID riid, void **obj)
 {
@@ -1831,47 +2058,6 @@ static const IMFClockStateSinkVtbl test_seek_clock_sink_vtbl =
    test_seek_clock_sink_OnClockSetRate,
 };
 
-static struct test_media_stream *create_test_stream(DWORD stream_index, IMFMediaSource *source)
-{
-    struct test_media_stream *stream;
-    IMFPresentationDescriptor *pd;
-    BOOL selected;
-    HRESULT hr;
-
-    stream = calloc(1, sizeof(*stream));
-    stream->IMFMediaStream_iface.lpVtbl = &test_media_stream_vtbl;
-    stream->refcount = 1;
-    hr = MFCreateEventQueue(&stream->event_queue);
-    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    stream->source = source;
-    IMFMediaSource_AddRef(stream->source);
-    stream->is_new = TRUE;
-
-    IMFMediaSource_CreatePresentationDescriptor(source, &pd);
-    IMFPresentationDescriptor_GetStreamDescriptorByIndex(pd, stream_index, &selected, &stream->sd);
-    IMFPresentationDescriptor_Release(pd);
-
-    return stream;
-}
-
-static IMFMediaSource *create_test_seek_source(BOOL seekable)
-{
-    struct test_seek_source *source;
-    int i;
-
-    source = calloc(1, sizeof(*source));
-    source->IMFMediaSource_iface.lpVtbl = &test_seek_source_vtbl;
-    source->refcount = 1;
-    source->stream_count = 1;
-    source->seekable = seekable;
-    MFCreateEventQueue(&source->event_queue);
-    InitializeCriticalSection(&source->cs);
-    for (i = 0; i < source->stream_count; ++i)
-        source->streams[i] = create_test_stream(i, &source->IMFMediaSource_iface);
-
-    return &source->IMFMediaSource_iface;
-}
-
 static void test_media_session_events(void)
 {
     static const media_type_desc audio_float_44100 =
@@ -1898,7 +2084,7 @@ static void test_media_session_events(void)
     struct test_stream_sink stream_sink = test_stream_sink;
     struct test_media_sink media_sink = test_media_sink;
     struct test_handler handler = test_handler;
-    struct test_source *source_impl;
+    struct test_stub_source *source_impl;
     IMFAsyncCallback *callback, *callback2;
     IMFMediaType *input_type, *output_type;
     IMFTopologyNode *src_node, *sink_node;
@@ -2066,7 +2252,7 @@ static void test_media_session_events(void)
     hr = IMFMediaSession_SetTopology(session, 0, topology);
     ok(hr == MF_E_TOPO_MISSING_SOURCE, "Unexpected hr %#lx.\n", hr);
 
-    source = create_test_source(pd);
+    source = create_test_stub_source(pd);
     init_source_node(source, -1, src_node, pd, sd);
 
     hr = IMFMediaSession_SetTopology(session, 0, topology);
@@ -2294,9 +2480,9 @@ static void test_media_session_events(void)
 
     source_impl->begin_get_event_res = 0x80001234;
 
-    SET_EXPECT(test_source_BeginGetEvent);
-    SET_EXPECT(test_source_QueueEvent);
-    SET_EXPECT(test_source_Start);
+    SET_EXPECT(test_stub_source_BeginGetEvent);
+    SET_EXPECT(test_stub_source_QueueEvent);
+    SET_EXPECT(test_stub_source_Start);
 
     propvar.vt = VT_EMPTY;
     hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
@@ -2307,8 +2493,8 @@ static void test_media_session_events(void)
     ok(propvar.punkVal != (IUnknown *)topology, "got punkVal %p\n", propvar.punkVal);
     PropVariantClear(&propvar);
 
-    CHECK_CALLED(test_source_BeginGetEvent);
-    CHECK_NOT_CALLED(test_source_Start);
+    CHECK_CALLED(test_stub_source_BeginGetEvent);
+    CHECK_NOT_CALLED(test_stub_source_Start);
 
     hr = IMFMediaSession_ClearTopologies(session);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -2320,9 +2506,9 @@ static void test_media_session_events(void)
 
     source_impl->begin_get_event_res = E_NOTIMPL;
 
-    CLEAR_CALLED(test_source_BeginGetEvent);
-    CLEAR_CALLED(test_source_QueueEvent);
-    CLEAR_CALLED(test_source_Start);
+    CLEAR_CALLED(test_stub_source_BeginGetEvent);
+    CLEAR_CALLED(test_stub_source_QueueEvent);
+    CLEAR_CALLED(test_stub_source_Start);
 
     /* sometimes briefly leaking */
     IMFMediaSession_Release(session);
@@ -2343,9 +2529,9 @@ static void test_media_session_events(void)
     source_impl = impl_from_IMFMediaSource(source);
     source_impl->begin_get_event_res = S_OK;
 
-    SET_EXPECT(test_source_BeginGetEvent);
-    SET_EXPECT(test_source_QueueEvent);
-    SET_EXPECT(test_source_Start);
+    SET_EXPECT(test_stub_source_BeginGetEvent);
+    SET_EXPECT(test_stub_source_QueueEvent);
+    SET_EXPECT(test_stub_source_Start);
 
     propvar.vt = VT_EMPTY;
     hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
@@ -2356,8 +2542,8 @@ static void test_media_session_events(void)
     ok(propvar.punkVal != (IUnknown *)topology, "got punkVal %p\n", propvar.punkVal);
     PropVariantClear(&propvar);
 
-    CHECK_CALLED(test_source_BeginGetEvent);
-    CHECK_CALLED(test_source_Start);
+    CHECK_CALLED(test_stub_source_BeginGetEvent);
+    CHECK_CALLED(test_stub_source_Start);
 
     hr = IMFMediaSession_ClearTopologies(session);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -2369,9 +2555,9 @@ static void test_media_session_events(void)
 
     source_impl->begin_get_event_res = E_NOTIMPL;
 
-    CLEAR_CALLED(test_source_BeginGetEvent);
-    CLEAR_CALLED(test_source_QueueEvent);
-    CLEAR_CALLED(test_source_Start);
+    CLEAR_CALLED(test_stub_source_BeginGetEvent);
+    CLEAR_CALLED(test_stub_source_QueueEvent);
+    CLEAR_CALLED(test_stub_source_Start);
 
     /* sometimes briefly leaking */
     IMFMediaSession_Release(session);
@@ -6276,7 +6462,7 @@ static void test_media_session_Start(void)
     IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
 
     /* Unseekable media source */
-    source = create_test_seek_source(FALSE);
+    source = create_test_source(FALSE);
     hr = IMFMediaSource_GetCharacteristics(source, &caps);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok((caps & MFMEDIASOURCE_CAN_SEEK) == 0, "Got unexpected caps %#lx.\n", caps);
@@ -6347,7 +6533,7 @@ static void test_media_session_Start(void)
     {
         winetest_push_context("Test %d", initial_state);
 
-        source = create_test_seek_source(TRUE);
+        source = create_test_source(TRUE);
         callback = create_test_callback(TRUE);
 
         grabber_callback = impl_from_IMFSampleGrabberSinkCallback(create_test_grabber_callback());
@@ -6790,6 +6976,148 @@ static void test_media_session_Close(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 }
 
+static void test_media_session_thinning(void)
+{
+    media_type_desc video_rgb32_desc =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32),
+    };
+    IMFRateControl *rate_control, *source_rate_control;
+    IMFMediaSession *session;
+    IMFAsyncCallback *callback;
+    IMFMediaSource *source;
+    IMFTopology *topology;
+    IMFMediaType *output_type;
+    IMFActivate *sink_activate;
+    struct test_source *source_impl;
+    struct test_grabber_callback *grabber_callback;
+    PROPVARIANT propvar;
+    HRESULT hr;
+    float rate;
+    BOOL thin;
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Startup failure, hr %#lx.\n", hr);
+
+    callback = create_test_callback(TRUE);
+
+    source = create_test_source(FALSE);
+    source_impl = impl_test_source_from_IMFMediaSource(source);
+
+    hr = MFCreateMediaSession(NULL, &session);
+    ok(hr == S_OK, "Failed to create media session, hr %#lx.\n", hr);
+
+    hr = MFGetService((IUnknown *)session, &MF_RATE_CONTROL_SERVICE, &IID_IMFRateControl, (void **)&rate_control);
+    ok(hr == S_OK, "Failed to get rate control interface, hr %#lx.\n", hr);
+    hr = MFGetService((IUnknown *) source, &MF_RATE_CONTROL_SERVICE, &IID_IMFRateControl, (void **)&source_rate_control);
+    ok(hr == S_OK, "Failed to get rate control interface, hr %#lx.\n", hr);
+
+    grabber_callback = impl_from_IMFSampleGrabberSinkCallback(create_test_grabber_callback());
+    hr = MFCreateMediaType(&output_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    init_media_type(output_type, video_rgb32_desc, -1);
+    hr = MFCreateSampleGrabberSinkActivate(output_type, &grabber_callback->IMFSampleGrabberSinkCallback_iface, &sink_activate);
+    ok(hr == S_OK, "Failed to create grabber sink, hr %#lx.\n", hr);
+    IMFMediaType_Release(output_type);
+
+    topology = create_test_topology(source, sink_activate, NULL);
+    hr = IMFMediaSession_SetTopology(session, 0, topology);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFTopology_Release(topology);
+    IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
+    IMFActivate_Release(sink_activate);
+
+    propvar.vt = VT_EMPTY;
+    hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event_until_blocking(session, callback, MESessionStarted, 5000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* thinning unsupported, try enable thinning */
+
+    source_impl->thinnable = FALSE;
+
+    hr = IMFRateControl_SetRate(rate_control, TRUE, 2.0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event_until_blocking(session, callback, MESessionRateChanged, 1000, &propvar);
+    ok(hr == MF_E_THINNING_UNSUPPORTED, "Unexpected hr %#lx.\n", hr);
+    ok(propvar.vt == VT_EMPTY, "got vt %u\n", propvar.vt);
+    PropVariantClear(&propvar);
+
+    hr = IMFRateControl_GetRate(rate_control, &thin, &rate);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(thin == FALSE, "got thin %d\n", !!thin);
+    ok(rate == 1.0, "got rate %f\n", rate);
+
+    hr = IMFRateControl_GetRate(source_rate_control, &thin, &rate);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(thin == FALSE, "got source thin %d\n", !!thin);
+    ok(rate == 1.0, "got source rate %f\n", rate);
+
+    /* thinning supported, enable thinning */
+
+    source_impl->thinnable = TRUE;
+
+    hr = IMFRateControl_SetRate(rate_control, TRUE, 2.0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event_until_blocking(session, callback, MESessionRateChanged, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(propvar.vt == VT_R4, "got vt %u\n", propvar.vt);
+    ok(propvar.fltVal == 2.0, "got fltVal %f\n", propvar.fltVal);
+    PropVariantClear(&propvar);
+
+    hr = IMFRateControl_GetRate(rate_control, &thin, &rate);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(thin == TRUE, "got thin %d\n", !!thin);
+    ok(rate == 2.0, "got rate %f\n", rate);
+
+    hr = IMFRateControl_GetRate(source_rate_control, &thin, &rate);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(thin == TRUE, "got source thin %d\n", !!thin);
+    ok(rate == 2.0, "got source rate %f\n", rate);
+
+    /* disable thinning */
+
+    hr = IMFRateControl_SetRate(rate_control, FALSE, 3.0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event_until_blocking(session, callback, MESessionRateChanged, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(propvar.vt == VT_R4, "got vt %u\n", propvar.vt);
+    ok(propvar.fltVal == 3.0, "got fltVal %f\n", propvar.fltVal);
+    PropVariantClear(&propvar);
+
+    hr = IMFRateControl_GetRate(rate_control, &thin, &rate);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(thin == FALSE, "got thin %d\n", !!thin);
+    ok(rate == 3.0, "got rate %f\n", rate);
+
+    hr = IMFRateControl_GetRate(source_rate_control, &thin, &rate);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(thin == FALSE, "got source thin %d\n", !!thin);
+    ok(rate == 3.0, "got source rate %f\n", rate);
+
+    hr = IMFMediaSession_Stop(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaSession_Close(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event(session, callback, MESessionClosed, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaSession_Shutdown(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaSource_Shutdown(source);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    IMFAsyncCallback_Release(callback);
+    IMFMediaSource_Release(source);
+    IMFRateControl_Release(rate_control);
+    IMFRateControl_Release(source_rate_control);
+    IMFMediaSession_Release(session);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Shutdown failure, hr %#lx.\n", hr);
+}
+
 static void test_network_bytestream(void)
 {
     static const WCHAR *URL = L"http://test.winehq.org/tests/test.mp3";
@@ -7155,4 +7483,5 @@ START_TEST(mf)
     test_media_session_Close();
     test_network_bytestream();
     test_media_session_source_shutdown();
+    test_media_session_thinning();
 }

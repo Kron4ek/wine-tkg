@@ -3531,21 +3531,7 @@ static void dump_deref(struct vkd3d_string_buffer *buffer, const struct hlsl_der
 
 const char *debug_hlsl_writemask(unsigned int writemask)
 {
-    static const char components[] = {'x', 'y', 'z', 'w'};
-    char string[5];
-    unsigned int i = 0, pos = 0;
-
-    VKD3D_ASSERT(!(writemask & ~VKD3DSP_WRITEMASK_ALL));
-
-    while (writemask)
-    {
-        if (writemask & 1)
-            string[pos++] = components[i];
-        writemask >>= 1;
-        i++;
-    }
-    string[pos] = '\0';
-    return vkd3d_dbg_sprintf(".%s", string);
+    return debug_vsir_writemask(writemask);
 }
 
 const char *debug_hlsl_swizzle(uint32_t swizzle, unsigned int size)
@@ -3652,6 +3638,7 @@ const char *debug_hlsl_expr_op(enum hlsl_ir_expr_op op)
         [HLSL_OP1_LOG2]         = "log2",
         [HLSL_OP1_LOGIC_NOT]    = "!",
         [HLSL_OP1_NEG]          = "-",
+        [HLSL_OP1_NOISE]        = "noise",
         [HLSL_OP1_RCP]          = "rcp",
         [HLSL_OP1_REINTERPRET]  = "reinterpret",
         [HLSL_OP1_ROUND]        = "round",
@@ -3844,11 +3831,11 @@ static void dump_ir_string(struct vkd3d_string_buffer *buffer, const struct hlsl
     vkd3d_string_buffer_printf(buffer, "\"%s\"", debugstr_a(string->string));
 }
 
-static void dump_ir_store(struct vkd3d_string_buffer *buffer, const struct hlsl_ir_store *store)
+static void dump_ir_store(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer, const struct hlsl_ir_store *store)
 {
     vkd3d_string_buffer_printf(buffer, "= (");
     dump_deref(buffer, &store->lhs);
-    if (store->writemask != VKD3DSP_WRITEMASK_ALL)
+    if (store->writemask != VKD3DSP_WRITEMASK_ALL && type_is_single_reg(hlsl_deref_get_type(ctx, &store->lhs)))
         vkd3d_string_buffer_printf(buffer, "%s", debug_hlsl_writemask(store->writemask));
     vkd3d_string_buffer_printf(buffer, " ");
     dump_src(buffer, &store->rhs);
@@ -4046,7 +4033,7 @@ static void dump_instr(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer,
             break;
 
         case HLSL_IR_STORE:
-            dump_ir_store(buffer, hlsl_ir_store(instr));
+            dump_ir_store(ctx, buffer, hlsl_ir_store(instr));
             break;
 
         case HLSL_IR_SWITCH:
@@ -4137,7 +4124,7 @@ void hlsl_replace_node(struct hlsl_ir_node *old, struct hlsl_ir_node *new)
     const struct hlsl_type *old_type = old->data_type, *new_type = new->data_type;
     struct hlsl_src *src, *next;
 
-    if (hlsl_is_numeric_type(old_type))
+    if (old_type && hlsl_is_numeric_type(old_type))
     {
         VKD3D_ASSERT(hlsl_is_numeric_type(new_type));
         VKD3D_ASSERT(old_type->e.numeric.dimx == new_type->e.numeric.dimx);

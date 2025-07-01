@@ -38,6 +38,9 @@ WINE_DECLARE_DEBUG_CHANNEL(win);
 
 SYSTEM_BASIC_INFORMATION system_info;
 
+#define MAX_ATOM_LEN  255
+#define IS_INTATOM(x) (((ULONG_PTR)(x) >> 16) == 0)
+
 #define MAX_WINPROCS  4096
 #define WINPROC_PROC16  ((void *)1)  /* placeholder for 16-bit window procs */
 
@@ -297,9 +300,52 @@ ATOM get_int_atom_value( UNICODE_STRING *name )
     {
         if (*ptr < '0' || *ptr > '9') return 0;
         ret = ret * 10 + *ptr++ - '0';
-        if (ret > 0xffff) return 0;
+        if (ret >= MAXINTATOM) return 0;
     }
     return ret;
+}
+
+static unsigned int is_integral_atom( const WCHAR *atomstr, ULONG len, RTL_ATOM *ret_atom )
+{
+    RTL_ATOM atom;
+
+    if ((ULONG_PTR)atomstr >> 16)
+    {
+        const WCHAR* ptr = atomstr;
+        if (!len) return STATUS_OBJECT_NAME_INVALID;
+
+        if (*ptr++ == '#')
+        {
+            atom = 0;
+            while (ptr < atomstr + len && *ptr >= '0' && *ptr <= '9')
+            {
+                atom = atom * 10 + *ptr++ - '0';
+            }
+            if (ptr > atomstr + 1 && ptr == atomstr + len) goto done;
+        }
+        if (len > MAX_ATOM_LEN) return STATUS_INVALID_PARAMETER;
+        return STATUS_MORE_ENTRIES;
+    }
+    else if ((atom = LOWORD( atomstr )) >= MAXINTATOM) return STATUS_INVALID_PARAMETER;
+done:
+    if (atom >= MAXINTATOM) atom = 0;
+    if (!(*ret_atom = atom)) return STATUS_INVALID_PARAMETER;
+    return STATUS_SUCCESS;
+}
+
+static ULONG integral_atom_name( WCHAR *buffer, ULONG len, RTL_ATOM atom )
+{
+    char tmp[16];
+    int ret = snprintf( tmp, sizeof(tmp), "#%u", atom );
+
+    len /= sizeof(WCHAR);
+    if (len)
+    {
+        if (len <= ret) ret = len - 1;
+        ascii_to_unicode( buffer, tmp, ret );
+        buffer[ret] = 0;
+    }
+    return ret * sizeof(WCHAR);
 }
 
 /***********************************************************************
@@ -575,13 +621,34 @@ ATOM WINAPI NtUserGetClassInfoEx( HINSTANCE instance, UNICODE_STRING *name, WNDC
  */
 ULONG WINAPI NtUserGetAtomName( ATOM atom, UNICODE_STRING *name )
 {
-    char buf[sizeof(ATOM_BASIC_INFORMATION) + MAX_ATOM_LEN * sizeof(WCHAR)];
-    ATOM_BASIC_INFORMATION *abi = (ATOM_BASIC_INFORMATION *)buf;
-    UINT size;
+    WCHAR buffer[MAX_ATOM_LEN];
+    UINT size = 0;
 
-    if (!set_ntstatus( NtQueryInformationAtom( atom, AtomBasicInformation,
-                                               buf, sizeof(buf), NULL )))
-        return 0;
+    if (atom < MAXINTATOM)
+    {
+        if (!atom)
+        {
+            set_ntstatus( STATUS_INVALID_PARAMETER );
+            return 0;
+        }
+
+        size = integral_atom_name( buffer, sizeof(buffer), atom );
+    }
+    else
+    {
+        SERVER_START_REQ( get_user_atom_name )
+        {
+            req->atom = atom;
+            wine_server_set_reply( req, buffer, sizeof(buffer) );
+            if (!wine_server_call_err( req ))
+            {
+                size = wine_server_reply_size( reply );
+                buffer[size / sizeof(WCHAR)] = 0;
+            }
+        }
+        SERVER_END_REQ;
+        if (!size) return 0;
+    }
 
     if (name->MaximumLength < sizeof(WCHAR))
     {
@@ -589,8 +656,8 @@ ULONG WINAPI NtUserGetAtomName( ATOM atom, UNICODE_STRING *name )
         return 0;
     }
 
-    size = min( abi->NameLength, name->MaximumLength - sizeof(WCHAR) );
-    if (size) memcpy( name->Buffer, abi->Name, size );
+    size = min( size, name->MaximumLength - sizeof(WCHAR) );
+    if (size) memcpy( name->Buffer, buffer, size );
     name->Buffer[size / sizeof(WCHAR)] = 0;
     return size / sizeof(WCHAR);
 }
@@ -600,7 +667,8 @@ ULONG WINAPI NtUserGetAtomName( ATOM atom, UNICODE_STRING *name )
  */
 ATOM WINAPI NtUserRegisterWindowMessage( UNICODE_STRING *name )
 {
-    RTL_ATOM atom;
+    unsigned int status;
+    RTL_ATOM atom = 0;
 
     TRACE( "%s\n", debugstr_us(name) );
 
@@ -609,7 +677,21 @@ ATOM WINAPI NtUserRegisterWindowMessage( UNICODE_STRING *name )
         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
         return 0;
     }
-    if (!set_ntstatus( NtAddAtom( name->Buffer, name->Length, &atom ) )) return 0;
+
+    status = is_integral_atom( name->Buffer, name->Length / sizeof(WCHAR), &atom );
+    if (status == STATUS_MORE_ENTRIES)
+    {
+        SERVER_START_REQ( add_user_atom )
+        {
+            wine_server_add_data( req, name->Buffer, name->Length );
+            status = wine_server_call( req );
+            atom = reply->atom;
+        }
+        SERVER_END_REQ;
+    }
+
+    TRACE( "%s -> %x\n", debugstr_us(name), status == STATUS_SUCCESS ? atom : 0 );
+    set_ntstatus( status );
     return atom;
 }
 

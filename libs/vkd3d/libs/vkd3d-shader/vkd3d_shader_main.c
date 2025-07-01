@@ -1041,11 +1041,11 @@ static bool vkd3d_shader_instruction_is_uav_read(const struct vkd3d_shader_instr
 {
     enum vkd3d_shader_opcode opcode = instruction->opcode;
 
-    return (VKD3DSIH_ATOMIC_AND <= opcode && opcode <= VKD3DSIH_ATOMIC_XOR)
-            || (VKD3DSIH_IMM_ATOMIC_ALLOC <= opcode && opcode <= VKD3DSIH_IMM_ATOMIC_XOR)
-            || opcode == VKD3DSIH_LD_UAV_TYPED
-            || (opcode == VKD3DSIH_LD_RAW && instruction->src[1].reg.type == VKD3DSPR_UAV)
-            || (opcode == VKD3DSIH_LD_STRUCTURED && instruction->src[2].reg.type == VKD3DSPR_UAV);
+    return (VSIR_OP_ATOMIC_AND <= opcode && opcode <= VSIR_OP_ATOMIC_XOR)
+            || (VSIR_OP_IMM_ATOMIC_ALLOC <= opcode && opcode <= VSIR_OP_IMM_ATOMIC_XOR)
+            || opcode == VSIR_OP_LD_UAV_TYPED
+            || (opcode == VSIR_OP_LD_RAW && instruction->src[1].reg.type == VKD3DSPR_UAV)
+            || (opcode == VSIR_OP_LD_STRUCTURED && instruction->src[2].reg.type == VKD3DSPR_UAV);
 }
 
 static void vkd3d_shader_scan_record_uav_read(struct vkd3d_shader_scan_context *context,
@@ -1058,7 +1058,7 @@ static bool vkd3d_shader_instruction_is_uav_counter(const struct vkd3d_shader_in
 {
     enum vkd3d_shader_opcode opcode = instruction->opcode;
 
-    return opcode == VKD3DSIH_IMM_ATOMIC_ALLOC || opcode == VKD3DSIH_IMM_ATOMIC_CONSUME;
+    return opcode == VSIR_OP_IMM_ATOMIC_ALLOC || opcode == VSIR_OP_IMM_ATOMIC_CONSUME;
 }
 
 static void vkd3d_shader_scan_record_uav_counter(struct vkd3d_shader_scan_context *context,
@@ -1071,8 +1071,8 @@ static bool vkd3d_shader_instruction_is_uav_atomic_op(const struct vkd3d_shader_
 {
     enum vkd3d_shader_opcode opcode = instruction->opcode;
 
-    return (VKD3DSIH_ATOMIC_AND <= opcode && opcode <= VKD3DSIH_ATOMIC_XOR)
-            || (VKD3DSIH_IMM_ATOMIC_ALLOC <= opcode && opcode <= VKD3DSIH_IMM_ATOMIC_XOR);
+    return (VSIR_OP_ATOMIC_AND <= opcode && opcode <= VSIR_OP_ATOMIC_XOR)
+            || (VSIR_OP_IMM_ATOMIC_ALLOC <= opcode && opcode <= VSIR_OP_IMM_ATOMIC_XOR);
 }
 
 static void vkd3d_shader_scan_record_uav_atomic_op(struct vkd3d_shader_scan_context *context,
@@ -1283,13 +1283,13 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
 
     switch (instruction->opcode)
     {
-        case VKD3DSIH_DCL_CONSTANT_BUFFER:
+        case VSIR_OP_DCL_CONSTANT_BUFFER:
             vkd3d_shader_scan_constant_buffer_declaration(context, instruction);
             break;
-        case VKD3DSIH_DCL_SAMPLER:
+        case VSIR_OP_DCL_SAMPLER:
             vkd3d_shader_scan_sampler_declaration(context, instruction);
             break;
-        case VKD3DSIH_DCL:
+        case VSIR_OP_DCL:
             if (instruction->declaration.semantic.resource_type == VKD3D_SHADER_RESOURCE_NONE)
                 break;
 
@@ -1299,33 +1299,33 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
                 break;
             }
             /* fall through */
-        case VKD3DSIH_DCL_UAV_TYPED:
+        case VSIR_OP_DCL_UAV_TYPED:
             vkd3d_shader_scan_typed_resource_declaration(context, instruction);
             break;
-        case VKD3DSIH_DCL_RESOURCE_RAW:
-        case VKD3DSIH_DCL_UAV_RAW:
+        case VSIR_OP_DCL_RESOURCE_RAW:
+        case VSIR_OP_DCL_UAV_RAW:
             vkd3d_shader_scan_resource_declaration(context, &instruction->declaration.raw_resource.resource,
                     VKD3D_SHADER_RESOURCE_BUFFER, VKD3D_DATA_UINT, 0, 0, true, instruction->flags);
             break;
-        case VKD3DSIH_DCL_RESOURCE_STRUCTURED:
-        case VKD3DSIH_DCL_UAV_STRUCTURED:
+        case VSIR_OP_DCL_RESOURCE_STRUCTURED:
+        case VSIR_OP_DCL_UAV_STRUCTURED:
             vkd3d_shader_scan_resource_declaration(context, &instruction->declaration.structured_resource.resource,
                     VKD3D_SHADER_RESOURCE_BUFFER, VKD3D_DATA_UINT, 0,
                     instruction->declaration.structured_resource.byte_stride, false, instruction->flags);
             break;
-        case VKD3DSIH_DCL_TESSELLATOR_OUTPUT_PRIMITIVE:
+        case VSIR_OP_DCL_TESSELLATOR_OUTPUT_PRIMITIVE:
             context->output_primitive = instruction->declaration.tessellator_output_primitive;
             break;
-        case VKD3DSIH_DCL_TESSELLATOR_PARTITIONING:
+        case VSIR_OP_DCL_TESSELLATOR_PARTITIONING:
             context->partitioning = instruction->declaration.tessellator_partitioning;
             break;
-        case VKD3DSIH_IF:
-        case VKD3DSIH_IFC:
+        case VSIR_OP_IF:
+        case VSIR_OP_IFC:
             cf_info = vkd3d_shader_scan_push_cf_info(context);
             cf_info->type = VKD3D_SHADER_BLOCK_IF;
             cf_info->inside_block = true;
             break;
-        case VKD3DSIH_ELSE:
+        case VSIR_OP_ELSE:
             if (!(cf_info = vkd3d_shader_scan_get_current_cf_info(context)) || cf_info->type != VKD3D_SHADER_BLOCK_IF)
             {
                 vkd3d_shader_scan_error(context, VKD3D_SHADER_ERROR_TPF_MISMATCHED_CF,
@@ -1334,7 +1334,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             }
             cf_info->inside_block = true;
             break;
-        case VKD3DSIH_ENDIF:
+        case VSIR_OP_ENDIF:
             if (!(cf_info = vkd3d_shader_scan_get_current_cf_info(context)) || cf_info->type != VKD3D_SHADER_BLOCK_IF)
             {
                 vkd3d_shader_scan_error(context, VKD3D_SHADER_ERROR_TPF_MISMATCHED_CF,
@@ -1343,12 +1343,12 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             }
             vkd3d_shader_scan_pop_cf_info(context);
             break;
-        case VKD3DSIH_LOOP:
+        case VSIR_OP_LOOP:
             cf_info = vkd3d_shader_scan_push_cf_info(context);
             cf_info->type = VKD3D_SHADER_BLOCK_LOOP;
             cf_info->inside_block = true;
             break;
-        case VKD3DSIH_ENDLOOP:
+        case VSIR_OP_ENDLOOP:
             if (!(cf_info = vkd3d_shader_scan_get_current_cf_info(context)) || cf_info->type != VKD3D_SHADER_BLOCK_LOOP)
             {
                 vkd3d_shader_scan_error(context, VKD3D_SHADER_ERROR_TPF_MISMATCHED_CF,
@@ -1357,11 +1357,11 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             }
             vkd3d_shader_scan_pop_cf_info(context);
             break;
-        case VKD3DSIH_SWITCH:
+        case VSIR_OP_SWITCH:
             cf_info = vkd3d_shader_scan_push_cf_info(context);
             cf_info->type = VKD3D_SHADER_BLOCK_SWITCH;
             break;
-        case VKD3DSIH_ENDSWITCH:
+        case VSIR_OP_ENDSWITCH:
             if (!(cf_info = vkd3d_shader_scan_get_current_cf_info(context))
                     || cf_info->type != VKD3D_SHADER_BLOCK_SWITCH || cf_info->inside_block)
             {
@@ -1371,7 +1371,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             }
             vkd3d_shader_scan_pop_cf_info(context);
             break;
-        case VKD3DSIH_CASE:
+        case VSIR_OP_CASE:
             if (!(cf_info = vkd3d_shader_scan_get_current_cf_info(context))
                     || cf_info->type != VKD3D_SHADER_BLOCK_SWITCH)
             {
@@ -1381,7 +1381,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             }
             cf_info->inside_block = true;
             break;
-        case VKD3DSIH_DEFAULT:
+        case VSIR_OP_DEFAULT:
             if (!(cf_info = vkd3d_shader_scan_get_current_cf_info(context))
                     || cf_info->type != VKD3D_SHADER_BLOCK_SWITCH)
             {
@@ -1398,7 +1398,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             cf_info->inside_block = true;
             cf_info->has_default = true;
             break;
-        case VKD3DSIH_BREAK:
+        case VSIR_OP_BREAK:
             if (!(cf_info = vkd3d_shader_scan_find_innermost_breakable_cf_info(context)))
             {
                 vkd3d_shader_scan_error(context, VKD3D_SHADER_ERROR_TPF_MISMATCHED_CF,
@@ -1407,7 +1407,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             }
             cf_info->inside_block = false;
             break;
-        case VKD3DSIH_BREAKP:
+        case VSIR_OP_BREAKP:
             if (!(cf_info = vkd3d_shader_scan_find_innermost_loop_cf_info(context)))
             {
                 vkd3d_shader_scan_error(context, VKD3D_SHADER_ERROR_TPF_MISMATCHED_CF,
@@ -1415,7 +1415,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
                 return VKD3D_ERROR_INVALID_SHADER;
             }
             break;
-        case VKD3DSIH_CONTINUE:
+        case VSIR_OP_CONTINUE:
             if (!(cf_info = vkd3d_shader_scan_find_innermost_loop_cf_info(context)))
             {
                 vkd3d_shader_scan_error(context, VKD3D_SHADER_ERROR_TPF_MISMATCHED_CF,
@@ -1424,7 +1424,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             }
             cf_info->inside_block = false;
             break;
-        case VKD3DSIH_CONTINUEP:
+        case VSIR_OP_CONTINUEP:
             if (!(cf_info = vkd3d_shader_scan_find_innermost_loop_cf_info(context)))
             {
                 vkd3d_shader_scan_error(context, VKD3D_SHADER_ERROR_TPF_MISMATCHED_CF,
@@ -1432,60 +1432,60 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
                 return VKD3D_ERROR_INVALID_SHADER;
             }
             break;
-        case VKD3DSIH_RET:
+        case VSIR_OP_RET:
             if (context->cf_info_count)
                 context->cf_info[context->cf_info_count - 1].inside_block = false;
             break;
-        case VKD3DSIH_TEXLD:
+        case VSIR_OP_TEXLD:
             if (context->version->major == 1)
                 sampler_reg = &instruction->dst[0].reg;
             else
                 sampler_reg = &instruction->src[1].reg;
             vkd3d_shader_scan_combined_sampler_usage(context, sampler_reg, sampler_reg);
             break;
-        case VKD3DSIH_TEX:
-        case VKD3DSIH_TEXBEM:
-        case VKD3DSIH_TEXBEML:
-        case VKD3DSIH_TEXDP3TEX:
-        case VKD3DSIH_TEXM3x2TEX:
-        case VKD3DSIH_TEXM3x3SPEC:
-        case VKD3DSIH_TEXM3x3TEX:
-        case VKD3DSIH_TEXM3x3VSPEC:
-        case VKD3DSIH_TEXREG2AR:
-        case VKD3DSIH_TEXREG2GB:
-        case VKD3DSIH_TEXREG2RGB:
+        case VSIR_OP_TEX:
+        case VSIR_OP_TEXBEM:
+        case VSIR_OP_TEXBEML:
+        case VSIR_OP_TEXDP3TEX:
+        case VSIR_OP_TEXM3x2TEX:
+        case VSIR_OP_TEXM3x3SPEC:
+        case VSIR_OP_TEXM3x3TEX:
+        case VSIR_OP_TEXM3x3VSPEC:
+        case VSIR_OP_TEXREG2AR:
+        case VSIR_OP_TEXREG2GB:
+        case VSIR_OP_TEXREG2RGB:
             sampler_reg = &instruction->dst[0].reg;
             vkd3d_shader_scan_combined_sampler_usage(context, sampler_reg, sampler_reg);
             break;
-        case VKD3DSIH_GATHER4:
-        case VKD3DSIH_GATHER4_C:
-        case VKD3DSIH_SAMPLE:
-        case VKD3DSIH_SAMPLE_B:
-        case VKD3DSIH_SAMPLE_C:
-        case VKD3DSIH_SAMPLE_C_LZ:
-        case VKD3DSIH_SAMPLE_GRAD:
-        case VKD3DSIH_SAMPLE_LOD:
+        case VSIR_OP_GATHER4:
+        case VSIR_OP_GATHER4_C:
+        case VSIR_OP_SAMPLE:
+        case VSIR_OP_SAMPLE_B:
+        case VSIR_OP_SAMPLE_C:
+        case VSIR_OP_SAMPLE_C_LZ:
+        case VSIR_OP_SAMPLE_GRAD:
+        case VSIR_OP_SAMPLE_LOD:
             vkd3d_shader_scan_combined_sampler_usage(context, &instruction->src[1].reg, &instruction->src[2].reg);
             break;
-        case VKD3DSIH_GATHER4_PO:
-        case VKD3DSIH_GATHER4_PO_C:
+        case VSIR_OP_GATHER4_PO:
+        case VSIR_OP_GATHER4_PO_C:
             vkd3d_shader_scan_combined_sampler_usage(context, &instruction->src[2].reg, &instruction->src[3].reg);
             break;
-        case VKD3DSIH_LD:
-        case VKD3DSIH_LD2DMS:
+        case VSIR_OP_LD:
+        case VSIR_OP_LD2DMS:
             vkd3d_shader_scan_combined_sampler_usage(context, &instruction->src[1].reg, NULL);
             break;
-        case VKD3DSIH_BUFINFO:
-        case VKD3DSIH_SAMPLE_INFO:
+        case VSIR_OP_BUFINFO:
+        case VSIR_OP_SAMPLE_INFO:
             if (instruction->src[0].reg.type == VKD3DSPR_RESOURCE)
                 vkd3d_shader_scan_combined_sampler_usage(context, &instruction->src[0].reg, NULL);
             break;
-        case VKD3DSIH_LD_RAW:
-        case VKD3DSIH_RESINFO:
+        case VSIR_OP_LD_RAW:
+        case VSIR_OP_RESINFO:
             if (instruction->src[1].reg.type == VKD3DSPR_RESOURCE)
                 vkd3d_shader_scan_combined_sampler_usage(context, &instruction->src[1].reg, NULL);
             break;
-        case VKD3DSIH_LD_STRUCTURED:
+        case VSIR_OP_LD_STRUCTURED:
             if (instruction->src[2].reg.type == VKD3DSPR_RESOURCE)
                 vkd3d_shader_scan_combined_sampler_usage(context, &instruction->src[2].reg, NULL);
             break;
@@ -1829,6 +1829,10 @@ int vkd3d_shader_compile(const struct vkd3d_shader_compile_info *compile_info,
     {
         ret = fx_parse(compile_info, out, &message_context);
     }
+    else if (compile_info->source_type == VKD3D_SHADER_SOURCE_TX)
+    {
+        ret = tx_parse(compile_info, out, &message_context);
+    }
     else
     {
         uint64_t config_flags = vkd3d_shader_init_config_flags();
@@ -2037,6 +2041,7 @@ const enum vkd3d_shader_source_type *vkd3d_shader_get_supported_source_types(uns
         VKD3D_SHADER_SOURCE_D3D_BYTECODE,
         VKD3D_SHADER_SOURCE_DXBC_DXIL,
         VKD3D_SHADER_SOURCE_FX,
+        VKD3D_SHADER_SOURCE_TX,
     };
 
     TRACE("count %p.\n", count);
@@ -2101,6 +2106,11 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
         VKD3D_SHADER_TARGET_D3D_ASM,
     };
 
+    static const enum vkd3d_shader_target_type tx_types[] =
+    {
+        VKD3D_SHADER_TARGET_D3D_ASM,
+    };
+
     TRACE("source_type %#x, count %p.\n", source_type, count);
 
     switch (source_type)
@@ -2124,6 +2134,10 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
         case VKD3D_SHADER_SOURCE_FX:
             *count = ARRAY_SIZE(fx_types);
             return fx_types;
+
+        case VKD3D_SHADER_SOURCE_TX:
+            *count = ARRAY_SIZE(tx_types);
+            return tx_types;
 
         default:
             *count = 0;

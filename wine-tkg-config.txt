@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-fsync-git configuration - Sat Jun 14 10:30:37 AM UTC 2025 :
+# Last wine-tkg-staging-git configuration - Tue Jul  1 06:12:45 PM UTC 2025 :
 
 Local cfg files used
 
-Wine (plain) version: 10.10.r0.g885446556ce
-Using wine-staging patchset (version 10.10.r0.gc37f9f50)
+Wine (plain) version: 10.11.r0.gcad35b3c811
+Using wine-staging patchset (version 10.11.r0.g3e94d124)
 
 Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
@@ -15,8 +15,6 @@ CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
 Staging overrides, if any: -W winedevice-Default_Drivers
 
-fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
-fsync_futex_waitv.patch -- ( Applied patches for fsync to support futex_waitv )
 
 LAA-unix-staging.patch -- ( Applied large address aware override support (legacy) )
 
@@ -25,10 +23,10 @@ proton_battleye.patch -- ( Add support for Proton's Battleye runtime )
 proton-eac_bridge.patch -- ( Add support for Proton's EAC bridge )
 wow64_loader_hack.patch -- ( Hack around loader name for EAC on 10.2+ )
 
+Applied reverting hotfix de0fc7fd95074cfdeb032d36246c56247d2bd82b.myrevert
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix a608ef1.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
-Applied hotfix HACK-user32-Always-call-get_message-request-after-waiting.mypatch
 Applied hotfix opencl-fixup.mypatch
 Applied your own patch hags.mypatch
 Applied your own patch win32u-hdr.mypatch

@@ -2782,7 +2782,7 @@ static BOOL check_queue_bits( UINT wake_mask, UINT changed_mask, UINT signal_bit
  * available; -1 on error.
  * All pending sent messages are processed before returning.
  */
-int peek_message( MSG *msg, const struct peek_message_filter *filter, BOOL waited )
+int peek_message( MSG *msg, const struct peek_message_filter *filter )
 {
     LRESULT result;
     HWND hwnd = filter->hwnd;
@@ -2822,7 +2822,7 @@ int peek_message( MSG *msg, const struct peek_message_filter *filter, BOOL waite
         thread_info->client_info.msg_source = prev_source;
         wake_mask = filter->mask & (QS_SENDMESSAGE | QS_SMRESULT);
 
-        if ((!waited && (NtGetTickCount() - thread_info->last_getmsg_time < 3000)) && /* avoid hung queue */
+        if (NtGetTickCount() - thread_info->last_getmsg_time < 3000 && /* avoid hung queue */
             check_queue_bits( wake_mask, filter->mask, wake_mask | signal_bits, filter->mask | clear_bits,
                               &wake_bits, &changed_bits ))
             res = STATUS_PENDING;
@@ -3023,7 +3023,7 @@ int peek_message( MSG *msg, const struct peek_message_filter *filter, BOOL waite
                         .mask = filter->mask,
                         .internal = filter->internal,
                     };
-                    peek_message( msg, &new_filter, TRUE );
+                    peek_message( msg, &new_filter );
                 }
                 continue;
             }
@@ -3088,7 +3088,7 @@ static void process_sent_messages(void)
 {
     struct peek_message_filter filter = {.flags = PM_REMOVE | PM_QS_SENDMESSAGE};
     MSG msg;
-    peek_message( &msg, &filter, FALSE );
+    peek_message( &msg, &filter );
 }
 
 /***********************************************************************
@@ -3330,7 +3330,7 @@ BOOL WINAPI NtUserPeekMessage( MSG *msg_out, HWND hwnd, UINT first, UINT last, U
     user_check_not_lock();
     check_for_driver_events();
 
-    if ((ret = peek_message( &msg, &filter, FALSE )) <= 0)
+    if ((ret = peek_message( &msg, &filter )) <= 0)
     {
         if (!ret)
         {
@@ -3393,7 +3393,7 @@ BOOL WINAPI NtUserGetMessage( MSG *msg, HWND hwnd, UINT first, UINT last )
 
     filter.mask = mask;
     filter.flags = PM_REMOVE | (mask << 16);
-    while (!(ret = peek_message( msg, &filter, TRUE )))
+    while (!(ret = peek_message( msg, &filter )))
     {
         wait_objects( 1, &server_queue, INFINITE, mask & (QS_SENDMESSAGE | QS_SMRESULT), mask, 0 );
     }
