@@ -2383,7 +2383,9 @@ static HRESULT create_shader_stage(struct d3d12_device *device,
     const struct vkd3d_vk_device_procs *vk_procs = &device->vk_procs;
     struct vkd3d_shader_compile_info compile_info;
     struct VkShaderModuleCreateInfo shader_desc;
+    struct vkd3d_shader_dxbc_desc dxbc_desc;
     struct vkd3d_shader_code spirv = {0};
+    char source_name[33];
     VkResult vr;
     int ret;
 
@@ -2415,6 +2417,16 @@ static HRESULT create_shader_stage(struct d3d12_device *device,
     compile_info.option_count = ARRAY_SIZE(options);
     compile_info.log_level = VKD3D_SHADER_LOG_NONE;
     compile_info.source_name = NULL;
+
+    if ((ret = vkd3d_shader_parse_dxbc(&(struct vkd3d_shader_code){code->pShaderBytecode, code->BytecodeLength},
+            0, &dxbc_desc, NULL)) >= 0)
+    {
+        sprintf(source_name, "%08x%08x%08x%08x", dxbc_desc.checksum[0],
+                dxbc_desc.checksum[1], dxbc_desc.checksum[2], dxbc_desc.checksum[3]);
+        vkd3d_shader_free_dxbc(&dxbc_desc);
+        TRACE("Compiling shader \"%s\".\n", source_name);
+        compile_info.source_name = source_name;
+    }
 
     if ((ret = vkd3d_shader_parse_dxbc_source_type(&compile_info.source, &compile_info.source_type, NULL)) < 0
             || (ret = vkd3d_shader_compile(&compile_info, &spirv, NULL)) < 0)

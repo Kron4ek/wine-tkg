@@ -655,7 +655,7 @@ struct sm4_index_range_array
 struct vkd3d_sm4_lookup_tables
 {
     const struct vkd3d_sm4_opcode_info *opcode_info_from_sm4[VKD3D_SM4_OP_COUNT];
-    const struct vkd3d_sm4_opcode_info *opcode_info_from_vsir[VKD3DSIH_COUNT];
+    const struct vkd3d_sm4_opcode_info *opcode_info_from_vsir[VSIR_OP_COUNT];
     const struct vkd3d_sm4_register_type_info *register_type_info_from_sm4[VKD3D_SM4_REGISTER_TYPE_COUNT];
     const struct vkd3d_sm4_register_type_info *register_type_info_from_vkd3d[VKD3DSPR_COUNT];
     const struct vkd3d_sm4_stat_field_info *stat_field_from_sm4[VKD3D_SM4_OP_COUNT];
@@ -823,7 +823,7 @@ static void shader_sm4_read_shader_data(struct vkd3d_shader_instruction *ins, ui
     if (type != VKD3D_SM4_SHADER_DATA_IMMEDIATE_CONSTANT_BUFFER)
     {
         FIXME("Ignoring shader data type %#x.\n", type);
-        ins->opcode = VKD3DSIH_NOP;
+        ins->opcode = VSIR_OP_NOP;
         return;
     }
 
@@ -832,7 +832,7 @@ static void shader_sm4_read_shader_data(struct vkd3d_shader_instruction *ins, ui
     if (icb_size % 4)
     {
         FIXME("Unexpected immediate constant buffer size %u.\n", icb_size);
-        ins->opcode = VKD3DSIH_INVALID;
+        ins->opcode = VSIR_OP_INVALID;
         return;
     }
 
@@ -840,7 +840,7 @@ static void shader_sm4_read_shader_data(struct vkd3d_shader_instruction *ins, ui
     {
         ERR("Failed to allocate immediate constant buffer, size %u.\n", icb_size);
         vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_OUT_OF_MEMORY, "Out of memory.");
-        ins->opcode = VKD3DSIH_INVALID;
+        ins->opcode = VSIR_OP_INVALID;
         return;
     }
     icb->register_idx = 0;
@@ -964,7 +964,7 @@ static void shader_sm4_read_dcl_sampler(struct vkd3d_shader_instruction *ins, ui
 
 static bool sm4_parser_is_in_fork_or_join_phase(const struct vkd3d_shader_sm4_parser *sm4)
 {
-    return sm4->phase == VKD3DSIH_HS_FORK_PHASE || sm4->phase == VKD3DSIH_HS_JOIN_PHASE;
+    return sm4->phase == VSIR_OP_HS_FORK_PHASE || sm4->phase == VSIR_OP_HS_JOIN_PHASE;
 }
 
 static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins, uint32_t opcode,
@@ -1441,275 +1441,275 @@ static void init_sm4_lookup_tables(struct vkd3d_sm4_lookup_tables *lookup)
      */
     static const struct vkd3d_sm4_opcode_info opcode_table[] =
     {
-        {VKD3D_SM4_OP_ADD,                              VKD3DSIH_ADD,                              "f",    "ff"},
-        {VKD3D_SM4_OP_AND,                              VKD3DSIH_AND,                              "u",    "uu"},
-        {VKD3D_SM4_OP_BREAK,                            VKD3DSIH_BREAK,                            "",     ""},
-        {VKD3D_SM4_OP_BREAKC,                           VKD3DSIH_BREAKP,                           "",     "u",
+        {VKD3D_SM4_OP_ADD,                              VSIR_OP_ADD,                              "f",    "ff"},
+        {VKD3D_SM4_OP_AND,                              VSIR_OP_AND,                              "u",    "uu"},
+        {VKD3D_SM4_OP_BREAK,                            VSIR_OP_BREAK,                            "",     ""},
+        {VKD3D_SM4_OP_BREAKC,                           VSIR_OP_BREAKP,                           "",     "u",
                 shader_sm4_read_conditional_op, true},
-        {VKD3D_SM4_OP_CASE,                             VKD3DSIH_CASE,                             "",     "u",
+        {VKD3D_SM4_OP_CASE,                             VSIR_OP_CASE,                             "",     "u",
                 shader_sm4_read_case_condition},
-        {VKD3D_SM4_OP_CONTINUE,                         VKD3DSIH_CONTINUE,                         "",     ""},
-        {VKD3D_SM4_OP_CONTINUEC,                        VKD3DSIH_CONTINUEP,                        "",     "u",
+        {VKD3D_SM4_OP_CONTINUE,                         VSIR_OP_CONTINUE,                         "",     ""},
+        {VKD3D_SM4_OP_CONTINUEC,                        VSIR_OP_CONTINUEP,                        "",     "u",
                 shader_sm4_read_conditional_op, true},
-        {VKD3D_SM4_OP_CUT,                              VKD3DSIH_CUT,                              "",     ""},
-        {VKD3D_SM4_OP_DEFAULT,                          VKD3DSIH_DEFAULT,                          "",     ""},
-        {VKD3D_SM4_OP_DERIV_RTX,                        VKD3DSIH_DSX,                              "f",    "f"},
-        {VKD3D_SM4_OP_DERIV_RTY,                        VKD3DSIH_DSY,                              "f",    "f"},
-        {VKD3D_SM4_OP_DISCARD,                          VKD3DSIH_DISCARD,                          "",     "u",
+        {VKD3D_SM4_OP_CUT,                              VSIR_OP_CUT,                              "",     ""},
+        {VKD3D_SM4_OP_DEFAULT,                          VSIR_OP_DEFAULT,                          "",     ""},
+        {VKD3D_SM4_OP_DERIV_RTX,                        VSIR_OP_DSX,                              "f",    "f"},
+        {VKD3D_SM4_OP_DERIV_RTY,                        VSIR_OP_DSY,                              "f",    "f"},
+        {VKD3D_SM4_OP_DISCARD,                          VSIR_OP_DISCARD,                          "",     "u",
                 shader_sm4_read_conditional_op, true},
-        {VKD3D_SM4_OP_DIV,                              VKD3DSIH_DIV,                              "f",    "ff"},
-        {VKD3D_SM4_OP_DP2,                              VKD3DSIH_DP2,                              "f",    "ff"},
-        {VKD3D_SM4_OP_DP3,                              VKD3DSIH_DP3,                              "f",    "ff"},
-        {VKD3D_SM4_OP_DP4,                              VKD3DSIH_DP4,                              "f",    "ff"},
-        {VKD3D_SM4_OP_ELSE,                             VKD3DSIH_ELSE,                             "",     ""},
-        {VKD3D_SM4_OP_EMIT,                             VKD3DSIH_EMIT,                             "",     ""},
-        {VKD3D_SM4_OP_ENDIF,                            VKD3DSIH_ENDIF,                            "",     ""},
-        {VKD3D_SM4_OP_ENDLOOP,                          VKD3DSIH_ENDLOOP,                          "",     ""},
-        {VKD3D_SM4_OP_ENDSWITCH,                        VKD3DSIH_ENDSWITCH,                        "",     ""},
-        {VKD3D_SM4_OP_EQ,                               VKD3DSIH_EQO,                              "u",    "ff"},
-        {VKD3D_SM4_OP_EXP,                              VKD3DSIH_EXP,                              "f",    "f"},
-        {VKD3D_SM4_OP_FRC,                              VKD3DSIH_FRC,                              "f",    "f"},
-        {VKD3D_SM4_OP_FTOI,                             VKD3DSIH_FTOI,                             "i",    "f"},
-        {VKD3D_SM4_OP_FTOU,                             VKD3DSIH_FTOU,                             "u",    "f"},
-        {VKD3D_SM4_OP_GE,                               VKD3DSIH_GEO,                              "u",    "ff"},
-        {VKD3D_SM4_OP_IADD,                             VKD3DSIH_IADD,                             "i",    "ii"},
-        {VKD3D_SM4_OP_IF,                               VKD3DSIH_IF,                               "",     "u",
+        {VKD3D_SM4_OP_DIV,                              VSIR_OP_DIV,                              "f",    "ff"},
+        {VKD3D_SM4_OP_DP2,                              VSIR_OP_DP2,                              "f",    "ff"},
+        {VKD3D_SM4_OP_DP3,                              VSIR_OP_DP3,                              "f",    "ff"},
+        {VKD3D_SM4_OP_DP4,                              VSIR_OP_DP4,                              "f",    "ff"},
+        {VKD3D_SM4_OP_ELSE,                             VSIR_OP_ELSE,                             "",     ""},
+        {VKD3D_SM4_OP_EMIT,                             VSIR_OP_EMIT,                             "",     ""},
+        {VKD3D_SM4_OP_ENDIF,                            VSIR_OP_ENDIF,                            "",     ""},
+        {VKD3D_SM4_OP_ENDLOOP,                          VSIR_OP_ENDLOOP,                          "",     ""},
+        {VKD3D_SM4_OP_ENDSWITCH,                        VSIR_OP_ENDSWITCH,                        "",     ""},
+        {VKD3D_SM4_OP_EQ,                               VSIR_OP_EQO,                              "u",    "ff"},
+        {VKD3D_SM4_OP_EXP,                              VSIR_OP_EXP,                              "f",    "f"},
+        {VKD3D_SM4_OP_FRC,                              VSIR_OP_FRC,                              "f",    "f"},
+        {VKD3D_SM4_OP_FTOI,                             VSIR_OP_FTOI,                             "i",    "f"},
+        {VKD3D_SM4_OP_FTOU,                             VSIR_OP_FTOU,                             "u",    "f"},
+        {VKD3D_SM4_OP_GE,                               VSIR_OP_GEO,                              "u",    "ff"},
+        {VKD3D_SM4_OP_IADD,                             VSIR_OP_IADD,                             "i",    "ii"},
+        {VKD3D_SM4_OP_IF,                               VSIR_OP_IF,                               "",     "u",
                 shader_sm4_read_conditional_op, true},
-        {VKD3D_SM4_OP_IEQ,                              VKD3DSIH_IEQ,                              "u",    "ii"},
-        {VKD3D_SM4_OP_IGE,                              VKD3DSIH_IGE,                              "u",    "ii"},
-        {VKD3D_SM4_OP_ILT,                              VKD3DSIH_ILT,                              "u",    "ii"},
-        {VKD3D_SM4_OP_IMAD,                             VKD3DSIH_IMAD,                             "i",    "iii"},
-        {VKD3D_SM4_OP_IMAX,                             VKD3DSIH_IMAX,                             "i",    "ii"},
-        {VKD3D_SM4_OP_IMIN,                             VKD3DSIH_IMIN,                             "i",    "ii"},
-        {VKD3D_SM4_OP_IMUL,                             VKD3DSIH_IMUL,                             "ii",   "ii"},
-        {VKD3D_SM4_OP_INE,                              VKD3DSIH_INE,                              "u",    "ii"},
-        {VKD3D_SM4_OP_INEG,                             VKD3DSIH_INEG,                             "i",    "i"},
-        {VKD3D_SM4_OP_ISHL,                             VKD3DSIH_ISHL,                             "i",    "ii"},
-        {VKD3D_SM4_OP_ISHR,                             VKD3DSIH_ISHR,                             "i",    "ii"},
-        {VKD3D_SM4_OP_ITOF,                             VKD3DSIH_ITOF,                             "f",    "i"},
-        {VKD3D_SM4_OP_LABEL,                            VKD3DSIH_LABEL,                            "",     "O"},
-        {VKD3D_SM4_OP_LD,                               VKD3DSIH_LD,                               "u",    "i*"},
-        {VKD3D_SM4_OP_LD2DMS,                           VKD3DSIH_LD2DMS,                           "u",    "i*i"},
-        {VKD3D_SM4_OP_LOG,                              VKD3DSIH_LOG,                              "f",    "f"},
-        {VKD3D_SM4_OP_LOOP,                             VKD3DSIH_LOOP,                             "",     ""},
-        {VKD3D_SM4_OP_LT,                               VKD3DSIH_LTO,                              "u",    "ff"},
-        {VKD3D_SM4_OP_MAD,                              VKD3DSIH_MAD,                              "f",    "fff"},
-        {VKD3D_SM4_OP_MIN,                              VKD3DSIH_MIN,                              "f",    "ff"},
-        {VKD3D_SM4_OP_MAX,                              VKD3DSIH_MAX,                              "f",    "ff"},
-        {VKD3D_SM4_OP_SHADER_DATA,                      VKD3DSIH_DCL_IMMEDIATE_CONSTANT_BUFFER,    "",     "",
+        {VKD3D_SM4_OP_IEQ,                              VSIR_OP_IEQ,                              "u",    "ii"},
+        {VKD3D_SM4_OP_IGE,                              VSIR_OP_IGE,                              "u",    "ii"},
+        {VKD3D_SM4_OP_ILT,                              VSIR_OP_ILT,                              "u",    "ii"},
+        {VKD3D_SM4_OP_IMAD,                             VSIR_OP_IMAD,                             "i",    "iii"},
+        {VKD3D_SM4_OP_IMAX,                             VSIR_OP_IMAX,                             "i",    "ii"},
+        {VKD3D_SM4_OP_IMIN,                             VSIR_OP_IMIN,                             "i",    "ii"},
+        {VKD3D_SM4_OP_IMUL,                             VSIR_OP_IMUL,                             "ii",   "ii"},
+        {VKD3D_SM4_OP_INE,                              VSIR_OP_INE,                              "u",    "ii"},
+        {VKD3D_SM4_OP_INEG,                             VSIR_OP_INEG,                             "i",    "i"},
+        {VKD3D_SM4_OP_ISHL,                             VSIR_OP_ISHL,                             "i",    "ii"},
+        {VKD3D_SM4_OP_ISHR,                             VSIR_OP_ISHR,                             "i",    "ii"},
+        {VKD3D_SM4_OP_ITOF,                             VSIR_OP_ITOF,                             "f",    "i"},
+        {VKD3D_SM4_OP_LABEL,                            VSIR_OP_LABEL,                            "",     "O"},
+        {VKD3D_SM4_OP_LD,                               VSIR_OP_LD,                               "u",    "i*"},
+        {VKD3D_SM4_OP_LD2DMS,                           VSIR_OP_LD2DMS,                           "u",    "i*i"},
+        {VKD3D_SM4_OP_LOG,                              VSIR_OP_LOG,                              "f",    "f"},
+        {VKD3D_SM4_OP_LOOP,                             VSIR_OP_LOOP,                             "",     ""},
+        {VKD3D_SM4_OP_LT,                               VSIR_OP_LTO,                              "u",    "ff"},
+        {VKD3D_SM4_OP_MAD,                              VSIR_OP_MAD,                              "f",    "fff"},
+        {VKD3D_SM4_OP_MIN,                              VSIR_OP_MIN,                              "f",    "ff"},
+        {VKD3D_SM4_OP_MAX,                              VSIR_OP_MAX,                              "f",    "ff"},
+        {VKD3D_SM4_OP_SHADER_DATA,                      VSIR_OP_DCL_IMMEDIATE_CONSTANT_BUFFER,    "",     "",
                 shader_sm4_read_shader_data},
-        {VKD3D_SM4_OP_MOV,                              VKD3DSIH_MOV,                              "f",    "f"},
-        {VKD3D_SM4_OP_MOVC,                             VKD3DSIH_MOVC,                             "f",    "uff"},
-        {VKD3D_SM4_OP_MUL,                              VKD3DSIH_MUL,                              "f",    "ff"},
-        {VKD3D_SM4_OP_NE,                               VKD3DSIH_NEU,                              "u",    "ff"},
-        {VKD3D_SM4_OP_NOP,                              VKD3DSIH_NOP,                              "",     ""},
-        {VKD3D_SM4_OP_NOT,                              VKD3DSIH_NOT,                              "u",    "u"},
-        {VKD3D_SM4_OP_OR,                               VKD3DSIH_OR,                               "u",    "uu"},
-        {VKD3D_SM4_OP_RESINFO,                          VKD3DSIH_RESINFO,                          "f",    "i*"},
-        {VKD3D_SM4_OP_RET,                              VKD3DSIH_RET,                              "",     ""},
-        {VKD3D_SM4_OP_RETC,                             VKD3DSIH_RETP,                             "",     "u",
+        {VKD3D_SM4_OP_MOV,                              VSIR_OP_MOV,                              "f",    "f"},
+        {VKD3D_SM4_OP_MOVC,                             VSIR_OP_MOVC,                             "f",    "uff"},
+        {VKD3D_SM4_OP_MUL,                              VSIR_OP_MUL,                              "f",    "ff"},
+        {VKD3D_SM4_OP_NE,                               VSIR_OP_NEU,                              "u",    "ff"},
+        {VKD3D_SM4_OP_NOP,                              VSIR_OP_NOP,                              "",     ""},
+        {VKD3D_SM4_OP_NOT,                              VSIR_OP_NOT,                              "u",    "u"},
+        {VKD3D_SM4_OP_OR,                               VSIR_OP_OR,                               "u",    "uu"},
+        {VKD3D_SM4_OP_RESINFO,                          VSIR_OP_RESINFO,                          "f",    "i*"},
+        {VKD3D_SM4_OP_RET,                              VSIR_OP_RET,                              "",     ""},
+        {VKD3D_SM4_OP_RETC,                             VSIR_OP_RETP,                             "",     "u",
                 shader_sm4_read_conditional_op, true},
-        {VKD3D_SM4_OP_ROUND_NE,                         VKD3DSIH_ROUND_NE,                         "f",    "f"},
-        {VKD3D_SM4_OP_ROUND_NI,                         VKD3DSIH_ROUND_NI,                         "f",    "f"},
-        {VKD3D_SM4_OP_ROUND_PI,                         VKD3DSIH_ROUND_PI,                         "f",    "f"},
-        {VKD3D_SM4_OP_ROUND_Z,                          VKD3DSIH_ROUND_Z,                          "f",    "f"},
-        {VKD3D_SM4_OP_RSQ,                              VKD3DSIH_RSQ,                              "f",    "f"},
-        {VKD3D_SM4_OP_SAMPLE,                           VKD3DSIH_SAMPLE,                           "u",    "f**"},
-        {VKD3D_SM4_OP_SAMPLE_C,                         VKD3DSIH_SAMPLE_C,                         "f",    "f**f"},
-        {VKD3D_SM4_OP_SAMPLE_C_LZ,                      VKD3DSIH_SAMPLE_C_LZ,                      "f",    "f**f"},
-        {VKD3D_SM4_OP_SAMPLE_LOD,                       VKD3DSIH_SAMPLE_LOD,                       "u",    "f**f"},
-        {VKD3D_SM4_OP_SAMPLE_GRAD,                      VKD3DSIH_SAMPLE_GRAD,                      "u",    "f**ff"},
-        {VKD3D_SM4_OP_SAMPLE_B,                         VKD3DSIH_SAMPLE_B,                         "u",    "f**f"},
-        {VKD3D_SM4_OP_SQRT,                             VKD3DSIH_SQRT,                             "f",    "f"},
-        {VKD3D_SM4_OP_SWITCH,                           VKD3DSIH_SWITCH,                           "",     "i"},
-        {VKD3D_SM4_OP_SINCOS,                           VKD3DSIH_SINCOS,                           "ff",   "f"},
-        {VKD3D_SM4_OP_UDIV,                             VKD3DSIH_UDIV,                             "uu",   "uu"},
-        {VKD3D_SM4_OP_ULT,                              VKD3DSIH_ULT,                              "u",    "uu"},
-        {VKD3D_SM4_OP_UGE,                              VKD3DSIH_UGE,                              "u",    "uu"},
-        {VKD3D_SM4_OP_UMUL,                             VKD3DSIH_UMUL,                             "uu",   "uu"},
-        {VKD3D_SM4_OP_UMAX,                             VKD3DSIH_UMAX,                             "u",    "uu"},
-        {VKD3D_SM4_OP_UMIN,                             VKD3DSIH_UMIN,                             "u",    "uu"},
-        {VKD3D_SM4_OP_USHR,                             VKD3DSIH_USHR,                             "u",    "uu"},
-        {VKD3D_SM4_OP_UTOF,                             VKD3DSIH_UTOF,                             "f",    "u"},
-        {VKD3D_SM4_OP_XOR,                              VKD3DSIH_XOR,                              "u",    "uu"},
-        {VKD3D_SM4_OP_DCL_RESOURCE,                     VKD3DSIH_DCL,                              "",     "",
+        {VKD3D_SM4_OP_ROUND_NE,                         VSIR_OP_ROUND_NE,                         "f",    "f"},
+        {VKD3D_SM4_OP_ROUND_NI,                         VSIR_OP_ROUND_NI,                         "f",    "f"},
+        {VKD3D_SM4_OP_ROUND_PI,                         VSIR_OP_ROUND_PI,                         "f",    "f"},
+        {VKD3D_SM4_OP_ROUND_Z,                          VSIR_OP_ROUND_Z,                          "f",    "f"},
+        {VKD3D_SM4_OP_RSQ,                              VSIR_OP_RSQ,                              "f",    "f"},
+        {VKD3D_SM4_OP_SAMPLE,                           VSIR_OP_SAMPLE,                           "u",    "f**"},
+        {VKD3D_SM4_OP_SAMPLE_C,                         VSIR_OP_SAMPLE_C,                         "f",    "f**f"},
+        {VKD3D_SM4_OP_SAMPLE_C_LZ,                      VSIR_OP_SAMPLE_C_LZ,                      "f",    "f**f"},
+        {VKD3D_SM4_OP_SAMPLE_LOD,                       VSIR_OP_SAMPLE_LOD,                       "u",    "f**f"},
+        {VKD3D_SM4_OP_SAMPLE_GRAD,                      VSIR_OP_SAMPLE_GRAD,                      "u",    "f**ff"},
+        {VKD3D_SM4_OP_SAMPLE_B,                         VSIR_OP_SAMPLE_B,                         "u",    "f**f"},
+        {VKD3D_SM4_OP_SQRT,                             VSIR_OP_SQRT,                             "f",    "f"},
+        {VKD3D_SM4_OP_SWITCH,                           VSIR_OP_SWITCH,                           "",     "i"},
+        {VKD3D_SM4_OP_SINCOS,                           VSIR_OP_SINCOS,                           "ff",   "f"},
+        {VKD3D_SM4_OP_UDIV,                             VSIR_OP_UDIV,                             "uu",   "uu"},
+        {VKD3D_SM4_OP_ULT,                              VSIR_OP_ULT,                              "u",    "uu"},
+        {VKD3D_SM4_OP_UGE,                              VSIR_OP_UGE,                              "u",    "uu"},
+        {VKD3D_SM4_OP_UMUL,                             VSIR_OP_UMUL,                             "uu",   "uu"},
+        {VKD3D_SM4_OP_UMAX,                             VSIR_OP_UMAX,                             "u",    "uu"},
+        {VKD3D_SM4_OP_UMIN,                             VSIR_OP_UMIN,                             "u",    "uu"},
+        {VKD3D_SM4_OP_USHR,                             VSIR_OP_USHR,                             "u",    "uu"},
+        {VKD3D_SM4_OP_UTOF,                             VSIR_OP_UTOF,                             "f",    "u"},
+        {VKD3D_SM4_OP_XOR,                              VSIR_OP_XOR,                              "u",    "uu"},
+        {VKD3D_SM4_OP_DCL_RESOURCE,                     VSIR_OP_DCL,                              "",     "",
                 shader_sm4_read_dcl_resource},
-        {VKD3D_SM4_OP_DCL_CONSTANT_BUFFER,              VKD3DSIH_DCL_CONSTANT_BUFFER,              "",     "",
+        {VKD3D_SM4_OP_DCL_CONSTANT_BUFFER,              VSIR_OP_DCL_CONSTANT_BUFFER,              "",     "",
                 shader_sm4_read_dcl_constant_buffer},
-        {VKD3D_SM4_OP_DCL_SAMPLER,                      VKD3DSIH_DCL_SAMPLER,                      "",     "",
+        {VKD3D_SM4_OP_DCL_SAMPLER,                      VSIR_OP_DCL_SAMPLER,                      "",     "",
                 shader_sm4_read_dcl_sampler},
-        {VKD3D_SM4_OP_DCL_INDEX_RANGE,                  VKD3DSIH_DCL_INDEX_RANGE,                  "",     "",
+        {VKD3D_SM4_OP_DCL_INDEX_RANGE,                  VSIR_OP_DCL_INDEX_RANGE,                  "",     "",
                 shader_sm4_read_dcl_index_range},
-        {VKD3D_SM4_OP_DCL_OUTPUT_TOPOLOGY,              VKD3DSIH_DCL_OUTPUT_TOPOLOGY,              "",     "",
+        {VKD3D_SM4_OP_DCL_OUTPUT_TOPOLOGY,              VSIR_OP_DCL_OUTPUT_TOPOLOGY,              "",     "",
                 shader_sm4_read_dcl_output_topology},
-        {VKD3D_SM4_OP_DCL_INPUT_PRIMITIVE,              VKD3DSIH_DCL_INPUT_PRIMITIVE,              "",     "",
+        {VKD3D_SM4_OP_DCL_INPUT_PRIMITIVE,              VSIR_OP_DCL_INPUT_PRIMITIVE,              "",     "",
                 shader_sm4_read_dcl_input_primitive},
-        {VKD3D_SM4_OP_DCL_VERTICES_OUT,                 VKD3DSIH_DCL_VERTICES_OUT,                 "",     "",
+        {VKD3D_SM4_OP_DCL_VERTICES_OUT,                 VSIR_OP_DCL_VERTICES_OUT,                 "",     "",
                 shader_sm4_read_declaration_count},
-        {VKD3D_SM4_OP_DCL_INPUT,                        VKD3DSIH_DCL_INPUT,                        "",     "",
+        {VKD3D_SM4_OP_DCL_INPUT,                        VSIR_OP_DCL_INPUT,                        "",     "",
                 shader_sm4_read_declaration_dst},
-        {VKD3D_SM4_OP_DCL_INPUT_SGV,                    VKD3DSIH_DCL_INPUT_SGV,                    "",     "",
+        {VKD3D_SM4_OP_DCL_INPUT_SGV,                    VSIR_OP_DCL_INPUT_SGV,                    "",     "",
                 shader_sm4_read_declaration_register_semantic},
-        {VKD3D_SM4_OP_DCL_INPUT_SIV,                    VKD3DSIH_DCL_INPUT_SIV,                    "",     "",
+        {VKD3D_SM4_OP_DCL_INPUT_SIV,                    VSIR_OP_DCL_INPUT_SIV,                    "",     "",
                 shader_sm4_read_declaration_register_semantic},
-        {VKD3D_SM4_OP_DCL_INPUT_PS,                     VKD3DSIH_DCL_INPUT_PS,                     "",     "",
+        {VKD3D_SM4_OP_DCL_INPUT_PS,                     VSIR_OP_DCL_INPUT_PS,                     "",     "",
                 shader_sm4_read_dcl_input_ps},
-        {VKD3D_SM4_OP_DCL_INPUT_PS_SGV,                 VKD3DSIH_DCL_INPUT_PS_SGV,                 "",     "",
+        {VKD3D_SM4_OP_DCL_INPUT_PS_SGV,                 VSIR_OP_DCL_INPUT_PS_SGV,                 "",     "",
                 shader_sm4_read_declaration_register_semantic},
-        {VKD3D_SM4_OP_DCL_INPUT_PS_SIV,                 VKD3DSIH_DCL_INPUT_PS_SIV,                 "",     "",
+        {VKD3D_SM4_OP_DCL_INPUT_PS_SIV,                 VSIR_OP_DCL_INPUT_PS_SIV,                 "",     "",
                 shader_sm4_read_dcl_input_ps_siv},
-        {VKD3D_SM4_OP_DCL_OUTPUT,                       VKD3DSIH_DCL_OUTPUT,                       "",     "",
+        {VKD3D_SM4_OP_DCL_OUTPUT,                       VSIR_OP_DCL_OUTPUT,                       "",     "",
                 shader_sm4_read_declaration_dst},
-        {VKD3D_SM4_OP_DCL_OUTPUT_SGV,                   VKD3DSIH_DCL_OUTPUT_SGV,                   "",     "",
+        {VKD3D_SM4_OP_DCL_OUTPUT_SGV,                   VSIR_OP_DCL_OUTPUT_SGV,                   "",     "",
                 shader_sm4_read_declaration_register_semantic},
-        {VKD3D_SM4_OP_DCL_OUTPUT_SIV,                   VKD3DSIH_DCL_OUTPUT_SIV,                   "",     "",
+        {VKD3D_SM4_OP_DCL_OUTPUT_SIV,                   VSIR_OP_DCL_OUTPUT_SIV,                   "",     "",
                 shader_sm4_read_declaration_register_semantic},
-        {VKD3D_SM4_OP_DCL_TEMPS,                        VKD3DSIH_DCL_TEMPS,                        "",     "",
+        {VKD3D_SM4_OP_DCL_TEMPS,                        VSIR_OP_DCL_TEMPS,                        "",     "",
                 shader_sm4_read_declaration_count},
-        {VKD3D_SM4_OP_DCL_INDEXABLE_TEMP,               VKD3DSIH_DCL_INDEXABLE_TEMP,               "",     "",
+        {VKD3D_SM4_OP_DCL_INDEXABLE_TEMP,               VSIR_OP_DCL_INDEXABLE_TEMP,               "",     "",
                 shader_sm4_read_dcl_indexable_temp},
-        {VKD3D_SM4_OP_DCL_GLOBAL_FLAGS,                 VKD3DSIH_DCL_GLOBAL_FLAGS,                 "",     "",
+        {VKD3D_SM4_OP_DCL_GLOBAL_FLAGS,                 VSIR_OP_DCL_GLOBAL_FLAGS,                 "",     "",
                 shader_sm4_read_dcl_global_flags},
-        {VKD3D_SM4_OP_LOD,                              VKD3DSIH_LOD,                              "f",    "f**"},
-        {VKD3D_SM4_OP_GATHER4,                          VKD3DSIH_GATHER4,                          "u",    "f**"},
-        {VKD3D_SM4_OP_SAMPLE_POS,                       VKD3DSIH_SAMPLE_POS,                       "f",    "*u"},
-        {VKD3D_SM4_OP_SAMPLE_INFO,                      VKD3DSIH_SAMPLE_INFO,                      "f",    "*"},
-        {VKD3D_SM5_OP_HS_DECLS,                         VKD3DSIH_HS_DECLS,                         "",     ""},
-        {VKD3D_SM5_OP_HS_CONTROL_POINT_PHASE,           VKD3DSIH_HS_CONTROL_POINT_PHASE,           "",     ""},
-        {VKD3D_SM5_OP_HS_FORK_PHASE,                    VKD3DSIH_HS_FORK_PHASE,                    "",     ""},
-        {VKD3D_SM5_OP_HS_JOIN_PHASE,                    VKD3DSIH_HS_JOIN_PHASE,                    "",     ""},
-        {VKD3D_SM5_OP_EMIT_STREAM,                      VKD3DSIH_EMIT_STREAM,                      "",     "f"},
-        {VKD3D_SM5_OP_CUT_STREAM,                       VKD3DSIH_CUT_STREAM,                       "",     "f"},
-        {VKD3D_SM5_OP_FCALL,                            VKD3DSIH_FCALL,                            "",     "O",
+        {VKD3D_SM4_OP_LOD,                              VSIR_OP_LOD,                              "f",    "f**"},
+        {VKD3D_SM4_OP_GATHER4,                          VSIR_OP_GATHER4,                          "u",    "f**"},
+        {VKD3D_SM4_OP_SAMPLE_POS,                       VSIR_OP_SAMPLE_POS,                       "f",    "*u"},
+        {VKD3D_SM4_OP_SAMPLE_INFO,                      VSIR_OP_SAMPLE_INFO,                      "f",    "*"},
+        {VKD3D_SM5_OP_HS_DECLS,                         VSIR_OP_HS_DECLS,                         "",     ""},
+        {VKD3D_SM5_OP_HS_CONTROL_POINT_PHASE,           VSIR_OP_HS_CONTROL_POINT_PHASE,           "",     ""},
+        {VKD3D_SM5_OP_HS_FORK_PHASE,                    VSIR_OP_HS_FORK_PHASE,                    "",     ""},
+        {VKD3D_SM5_OP_HS_JOIN_PHASE,                    VSIR_OP_HS_JOIN_PHASE,                    "",     ""},
+        {VKD3D_SM5_OP_EMIT_STREAM,                      VSIR_OP_EMIT_STREAM,                      "",     "f"},
+        {VKD3D_SM5_OP_CUT_STREAM,                       VSIR_OP_CUT_STREAM,                       "",     "f"},
+        {VKD3D_SM5_OP_FCALL,                            VSIR_OP_FCALL,                            "",     "O",
                 shader_sm5_read_fcall},
-        {VKD3D_SM5_OP_BUFINFO,                          VKD3DSIH_BUFINFO,                          "i",    "*"},
-        {VKD3D_SM5_OP_DERIV_RTX_COARSE,                 VKD3DSIH_DSX_COARSE,                       "f",    "f"},
-        {VKD3D_SM5_OP_DERIV_RTX_FINE,                   VKD3DSIH_DSX_FINE,                         "f",    "f"},
-        {VKD3D_SM5_OP_DERIV_RTY_COARSE,                 VKD3DSIH_DSY_COARSE,                       "f",    "f"},
-        {VKD3D_SM5_OP_DERIV_RTY_FINE,                   VKD3DSIH_DSY_FINE,                         "f",    "f"},
-        {VKD3D_SM5_OP_GATHER4_C,                        VKD3DSIH_GATHER4_C,                        "f",    "f**f"},
-        {VKD3D_SM5_OP_GATHER4_PO,                       VKD3DSIH_GATHER4_PO,                       "f",    "fi**"},
-        {VKD3D_SM5_OP_GATHER4_PO_C,                     VKD3DSIH_GATHER4_PO_C,                     "f",    "fi**f"},
-        {VKD3D_SM5_OP_RCP,                              VKD3DSIH_RCP,                              "f",    "f"},
-        {VKD3D_SM5_OP_F32TOF16,                         VKD3DSIH_F32TOF16,                         "u",    "f"},
-        {VKD3D_SM5_OP_F16TOF32,                         VKD3DSIH_F16TOF32,                         "f",    "u"},
-        {VKD3D_SM5_OP_COUNTBITS,                        VKD3DSIH_COUNTBITS,                        "u",    "u"},
-        {VKD3D_SM5_OP_FIRSTBIT_HI,                      VKD3DSIH_FIRSTBIT_HI,                      "u",    "u"},
-        {VKD3D_SM5_OP_FIRSTBIT_LO,                      VKD3DSIH_FIRSTBIT_LO,                      "u",    "u"},
-        {VKD3D_SM5_OP_FIRSTBIT_SHI,                     VKD3DSIH_FIRSTBIT_SHI,                     "u",    "i"},
-        {VKD3D_SM5_OP_UBFE,                             VKD3DSIH_UBFE,                             "u",    "iiu"},
-        {VKD3D_SM5_OP_IBFE,                             VKD3DSIH_IBFE,                             "i",    "iii"},
-        {VKD3D_SM5_OP_BFI,                              VKD3DSIH_BFI,                              "u",    "iiuu"},
-        {VKD3D_SM5_OP_BFREV,                            VKD3DSIH_BFREV,                            "u",    "u"},
-        {VKD3D_SM5_OP_SWAPC,                            VKD3DSIH_SWAPC,                            "ff",   "uff"},
-        {VKD3D_SM5_OP_DCL_STREAM,                       VKD3DSIH_DCL_STREAM,                       "",     "O"},
-        {VKD3D_SM5_OP_DCL_FUNCTION_BODY,                VKD3DSIH_DCL_FUNCTION_BODY,                "",     "",
+        {VKD3D_SM5_OP_BUFINFO,                          VSIR_OP_BUFINFO,                          "i",    "*"},
+        {VKD3D_SM5_OP_DERIV_RTX_COARSE,                 VSIR_OP_DSX_COARSE,                       "f",    "f"},
+        {VKD3D_SM5_OP_DERIV_RTX_FINE,                   VSIR_OP_DSX_FINE,                         "f",    "f"},
+        {VKD3D_SM5_OP_DERIV_RTY_COARSE,                 VSIR_OP_DSY_COARSE,                       "f",    "f"},
+        {VKD3D_SM5_OP_DERIV_RTY_FINE,                   VSIR_OP_DSY_FINE,                         "f",    "f"},
+        {VKD3D_SM5_OP_GATHER4_C,                        VSIR_OP_GATHER4_C,                        "f",    "f**f"},
+        {VKD3D_SM5_OP_GATHER4_PO,                       VSIR_OP_GATHER4_PO,                       "f",    "fi**"},
+        {VKD3D_SM5_OP_GATHER4_PO_C,                     VSIR_OP_GATHER4_PO_C,                     "f",    "fi**f"},
+        {VKD3D_SM5_OP_RCP,                              VSIR_OP_RCP,                              "f",    "f"},
+        {VKD3D_SM5_OP_F32TOF16,                         VSIR_OP_F32TOF16,                         "u",    "f"},
+        {VKD3D_SM5_OP_F16TOF32,                         VSIR_OP_F16TOF32,                         "f",    "u"},
+        {VKD3D_SM5_OP_COUNTBITS,                        VSIR_OP_COUNTBITS,                        "u",    "u"},
+        {VKD3D_SM5_OP_FIRSTBIT_HI,                      VSIR_OP_FIRSTBIT_HI,                      "u",    "u"},
+        {VKD3D_SM5_OP_FIRSTBIT_LO,                      VSIR_OP_FIRSTBIT_LO,                      "u",    "u"},
+        {VKD3D_SM5_OP_FIRSTBIT_SHI,                     VSIR_OP_FIRSTBIT_SHI,                     "u",    "i"},
+        {VKD3D_SM5_OP_UBFE,                             VSIR_OP_UBFE,                             "u",    "iiu"},
+        {VKD3D_SM5_OP_IBFE,                             VSIR_OP_IBFE,                             "i",    "iii"},
+        {VKD3D_SM5_OP_BFI,                              VSIR_OP_BFI,                              "u",    "iiuu"},
+        {VKD3D_SM5_OP_BFREV,                            VSIR_OP_BFREV,                            "u",    "u"},
+        {VKD3D_SM5_OP_SWAPC,                            VSIR_OP_SWAPC,                            "ff",   "uff"},
+        {VKD3D_SM5_OP_DCL_STREAM,                       VSIR_OP_DCL_STREAM,                       "",     "O"},
+        {VKD3D_SM5_OP_DCL_FUNCTION_BODY,                VSIR_OP_DCL_FUNCTION_BODY,                "",     "",
                 shader_sm5_read_dcl_function_body},
-        {VKD3D_SM5_OP_DCL_FUNCTION_TABLE,               VKD3DSIH_DCL_FUNCTION_TABLE,               "",     "",
+        {VKD3D_SM5_OP_DCL_FUNCTION_TABLE,               VSIR_OP_DCL_FUNCTION_TABLE,               "",     "",
                 shader_sm5_read_dcl_function_table},
-        {VKD3D_SM5_OP_DCL_INTERFACE,                    VKD3DSIH_DCL_INTERFACE,                    "",     "",
+        {VKD3D_SM5_OP_DCL_INTERFACE,                    VSIR_OP_DCL_INTERFACE,                    "",     "",
                 shader_sm5_read_dcl_interface},
-        {VKD3D_SM5_OP_DCL_INPUT_CONTROL_POINT_COUNT,    VKD3DSIH_DCL_INPUT_CONTROL_POINT_COUNT,    "",     "",
+        {VKD3D_SM5_OP_DCL_INPUT_CONTROL_POINT_COUNT,    VSIR_OP_DCL_INPUT_CONTROL_POINT_COUNT,    "",     "",
                 shader_sm5_read_control_point_count},
-        {VKD3D_SM5_OP_DCL_OUTPUT_CONTROL_POINT_COUNT,   VKD3DSIH_DCL_OUTPUT_CONTROL_POINT_COUNT,   "",     "",
+        {VKD3D_SM5_OP_DCL_OUTPUT_CONTROL_POINT_COUNT,   VSIR_OP_DCL_OUTPUT_CONTROL_POINT_COUNT,   "",     "",
                 shader_sm5_read_control_point_count},
-        {VKD3D_SM5_OP_DCL_TESSELLATOR_DOMAIN,           VKD3DSIH_DCL_TESSELLATOR_DOMAIN,           "",     "",
+        {VKD3D_SM5_OP_DCL_TESSELLATOR_DOMAIN,           VSIR_OP_DCL_TESSELLATOR_DOMAIN,           "",     "",
                 shader_sm5_read_dcl_tessellator_domain},
-        {VKD3D_SM5_OP_DCL_TESSELLATOR_PARTITIONING,     VKD3DSIH_DCL_TESSELLATOR_PARTITIONING,     "",     "",
+        {VKD3D_SM5_OP_DCL_TESSELLATOR_PARTITIONING,     VSIR_OP_DCL_TESSELLATOR_PARTITIONING,     "",     "",
                 shader_sm5_read_dcl_tessellator_partitioning},
-        {VKD3D_SM5_OP_DCL_TESSELLATOR_OUTPUT_PRIMITIVE, VKD3DSIH_DCL_TESSELLATOR_OUTPUT_PRIMITIVE, "",     "",
+        {VKD3D_SM5_OP_DCL_TESSELLATOR_OUTPUT_PRIMITIVE, VSIR_OP_DCL_TESSELLATOR_OUTPUT_PRIMITIVE, "",     "",
                 shader_sm5_read_dcl_tessellator_output_primitive},
-        {VKD3D_SM5_OP_DCL_HS_MAX_TESSFACTOR,            VKD3DSIH_DCL_HS_MAX_TESSFACTOR,            "",     "",
+        {VKD3D_SM5_OP_DCL_HS_MAX_TESSFACTOR,            VSIR_OP_DCL_HS_MAX_TESSFACTOR,            "",     "",
                 shader_sm5_read_dcl_hs_max_tessfactor},
-        {VKD3D_SM5_OP_DCL_HS_FORK_PHASE_INSTANCE_COUNT, VKD3DSIH_DCL_HS_FORK_PHASE_INSTANCE_COUNT, "",     "",
+        {VKD3D_SM5_OP_DCL_HS_FORK_PHASE_INSTANCE_COUNT, VSIR_OP_DCL_HS_FORK_PHASE_INSTANCE_COUNT, "",     "",
                 shader_sm4_read_declaration_count},
-        {VKD3D_SM5_OP_DCL_HS_JOIN_PHASE_INSTANCE_COUNT, VKD3DSIH_DCL_HS_JOIN_PHASE_INSTANCE_COUNT, "",     "",
+        {VKD3D_SM5_OP_DCL_HS_JOIN_PHASE_INSTANCE_COUNT, VSIR_OP_DCL_HS_JOIN_PHASE_INSTANCE_COUNT, "",     "",
                 shader_sm4_read_declaration_count},
-        {VKD3D_SM5_OP_DCL_THREAD_GROUP,                 VKD3DSIH_DCL_THREAD_GROUP,                 "",     "",
+        {VKD3D_SM5_OP_DCL_THREAD_GROUP,                 VSIR_OP_DCL_THREAD_GROUP,                 "",     "",
                 shader_sm5_read_dcl_thread_group},
-        {VKD3D_SM5_OP_DCL_UAV_TYPED,                    VKD3DSIH_DCL_UAV_TYPED,                    "",     "",
+        {VKD3D_SM5_OP_DCL_UAV_TYPED,                    VSIR_OP_DCL_UAV_TYPED,                    "",     "",
                 shader_sm4_read_dcl_resource},
-        {VKD3D_SM5_OP_DCL_UAV_RAW,                      VKD3DSIH_DCL_UAV_RAW,                      "",     "",
+        {VKD3D_SM5_OP_DCL_UAV_RAW,                      VSIR_OP_DCL_UAV_RAW,                      "",     "",
                 shader_sm5_read_dcl_uav_raw},
-        {VKD3D_SM5_OP_DCL_UAV_STRUCTURED,               VKD3DSIH_DCL_UAV_STRUCTURED,               "",     "",
+        {VKD3D_SM5_OP_DCL_UAV_STRUCTURED,               VSIR_OP_DCL_UAV_STRUCTURED,               "",     "",
                 shader_sm5_read_dcl_uav_structured},
-        {VKD3D_SM5_OP_DCL_TGSM_RAW,                     VKD3DSIH_DCL_TGSM_RAW,                     "",     "",
+        {VKD3D_SM5_OP_DCL_TGSM_RAW,                     VSIR_OP_DCL_TGSM_RAW,                     "",     "",
                 shader_sm5_read_dcl_tgsm_raw},
-        {VKD3D_SM5_OP_DCL_TGSM_STRUCTURED,              VKD3DSIH_DCL_TGSM_STRUCTURED,              "",     "",
+        {VKD3D_SM5_OP_DCL_TGSM_STRUCTURED,              VSIR_OP_DCL_TGSM_STRUCTURED,              "",     "",
                 shader_sm5_read_dcl_tgsm_structured},
-        {VKD3D_SM5_OP_DCL_RESOURCE_RAW,                 VKD3DSIH_DCL_RESOURCE_RAW,                 "",     "",
+        {VKD3D_SM5_OP_DCL_RESOURCE_RAW,                 VSIR_OP_DCL_RESOURCE_RAW,                 "",     "",
                 shader_sm5_read_dcl_resource_raw},
-        {VKD3D_SM5_OP_DCL_RESOURCE_STRUCTURED,          VKD3DSIH_DCL_RESOURCE_STRUCTURED,          "",     "",
+        {VKD3D_SM5_OP_DCL_RESOURCE_STRUCTURED,          VSIR_OP_DCL_RESOURCE_STRUCTURED,          "",     "",
                 shader_sm5_read_dcl_resource_structured},
-        {VKD3D_SM5_OP_LD_UAV_TYPED,                     VKD3DSIH_LD_UAV_TYPED,                     "u",    "i*"},
-        {VKD3D_SM5_OP_STORE_UAV_TYPED,                  VKD3DSIH_STORE_UAV_TYPED,                  "*",    "iu"},
-        {VKD3D_SM5_OP_LD_RAW,                           VKD3DSIH_LD_RAW,                           "u",    "i*"},
-        {VKD3D_SM5_OP_STORE_RAW,                        VKD3DSIH_STORE_RAW,                        "*",    "uu"},
-        {VKD3D_SM5_OP_LD_STRUCTURED,                    VKD3DSIH_LD_STRUCTURED,                    "u",    "ii*"},
-        {VKD3D_SM5_OP_STORE_STRUCTURED,                 VKD3DSIH_STORE_STRUCTURED,                 "*",    "iiu"},
-        {VKD3D_SM5_OP_ATOMIC_AND,                       VKD3DSIH_ATOMIC_AND,                       "*",    "iu"},
-        {VKD3D_SM5_OP_ATOMIC_OR,                        VKD3DSIH_ATOMIC_OR,                        "*",    "iu"},
-        {VKD3D_SM5_OP_ATOMIC_XOR,                       VKD3DSIH_ATOMIC_XOR,                       "*",    "iu"},
-        {VKD3D_SM5_OP_ATOMIC_CMP_STORE,                 VKD3DSIH_ATOMIC_CMP_STORE,                 "*",    "iuu"},
-        {VKD3D_SM5_OP_ATOMIC_IADD,                      VKD3DSIH_ATOMIC_IADD,                      "*",    "ii"},
-        {VKD3D_SM5_OP_ATOMIC_IMAX,                      VKD3DSIH_ATOMIC_IMAX,                      "*",    "ii"},
-        {VKD3D_SM5_OP_ATOMIC_IMIN,                      VKD3DSIH_ATOMIC_IMIN,                      "*",    "ii"},
-        {VKD3D_SM5_OP_ATOMIC_UMAX,                      VKD3DSIH_ATOMIC_UMAX,                      "*",    "iu"},
-        {VKD3D_SM5_OP_ATOMIC_UMIN,                      VKD3DSIH_ATOMIC_UMIN,                      "*",    "iu"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_ALLOC,                 VKD3DSIH_IMM_ATOMIC_ALLOC,                 "u",    "*"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_CONSUME,               VKD3DSIH_IMM_ATOMIC_CONSUME,               "u",    "*"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_IADD,                  VKD3DSIH_IMM_ATOMIC_IADD,                  "u*",   "ii"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_AND,                   VKD3DSIH_IMM_ATOMIC_AND,                   "u*",   "iu"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_OR,                    VKD3DSIH_IMM_ATOMIC_OR,                    "u*",   "iu"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_XOR,                   VKD3DSIH_IMM_ATOMIC_XOR,                   "u*",   "iu"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_EXCH,                  VKD3DSIH_IMM_ATOMIC_EXCH,                  "u*",   "iu"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_CMP_EXCH,              VKD3DSIH_IMM_ATOMIC_CMP_EXCH,              "u*",   "iuu"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_IMAX,                  VKD3DSIH_IMM_ATOMIC_IMAX,                  "i*",   "ii"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_IMIN,                  VKD3DSIH_IMM_ATOMIC_IMIN,                  "i*",   "ii"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_UMAX,                  VKD3DSIH_IMM_ATOMIC_UMAX,                  "u*",   "iu"},
-        {VKD3D_SM5_OP_IMM_ATOMIC_UMIN,                  VKD3DSIH_IMM_ATOMIC_UMIN,                  "u*",   "iu"},
-        {VKD3D_SM5_OP_SYNC,                             VKD3DSIH_SYNC,                             "",     "",
+        {VKD3D_SM5_OP_LD_UAV_TYPED,                     VSIR_OP_LD_UAV_TYPED,                     "u",    "i*"},
+        {VKD3D_SM5_OP_STORE_UAV_TYPED,                  VSIR_OP_STORE_UAV_TYPED,                  "*",    "iu"},
+        {VKD3D_SM5_OP_LD_RAW,                           VSIR_OP_LD_RAW,                           "u",    "i*"},
+        {VKD3D_SM5_OP_STORE_RAW,                        VSIR_OP_STORE_RAW,                        "*",    "uu"},
+        {VKD3D_SM5_OP_LD_STRUCTURED,                    VSIR_OP_LD_STRUCTURED,                    "u",    "ii*"},
+        {VKD3D_SM5_OP_STORE_STRUCTURED,                 VSIR_OP_STORE_STRUCTURED,                 "*",    "iiu"},
+        {VKD3D_SM5_OP_ATOMIC_AND,                       VSIR_OP_ATOMIC_AND,                       "*",    "iu"},
+        {VKD3D_SM5_OP_ATOMIC_OR,                        VSIR_OP_ATOMIC_OR,                        "*",    "iu"},
+        {VKD3D_SM5_OP_ATOMIC_XOR,                       VSIR_OP_ATOMIC_XOR,                       "*",    "iu"},
+        {VKD3D_SM5_OP_ATOMIC_CMP_STORE,                 VSIR_OP_ATOMIC_CMP_STORE,                 "*",    "iuu"},
+        {VKD3D_SM5_OP_ATOMIC_IADD,                      VSIR_OP_ATOMIC_IADD,                      "*",    "ii"},
+        {VKD3D_SM5_OP_ATOMIC_IMAX,                      VSIR_OP_ATOMIC_IMAX,                      "*",    "ii"},
+        {VKD3D_SM5_OP_ATOMIC_IMIN,                      VSIR_OP_ATOMIC_IMIN,                      "*",    "ii"},
+        {VKD3D_SM5_OP_ATOMIC_UMAX,                      VSIR_OP_ATOMIC_UMAX,                      "*",    "iu"},
+        {VKD3D_SM5_OP_ATOMIC_UMIN,                      VSIR_OP_ATOMIC_UMIN,                      "*",    "iu"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_ALLOC,                 VSIR_OP_IMM_ATOMIC_ALLOC,                 "u",    "*"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_CONSUME,               VSIR_OP_IMM_ATOMIC_CONSUME,               "u",    "*"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_IADD,                  VSIR_OP_IMM_ATOMIC_IADD,                  "u*",   "ii"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_AND,                   VSIR_OP_IMM_ATOMIC_AND,                   "u*",   "iu"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_OR,                    VSIR_OP_IMM_ATOMIC_OR,                    "u*",   "iu"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_XOR,                   VSIR_OP_IMM_ATOMIC_XOR,                   "u*",   "iu"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_EXCH,                  VSIR_OP_IMM_ATOMIC_EXCH,                  "u*",   "iu"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_CMP_EXCH,              VSIR_OP_IMM_ATOMIC_CMP_EXCH,              "u*",   "iuu"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_IMAX,                  VSIR_OP_IMM_ATOMIC_IMAX,                  "i*",   "ii"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_IMIN,                  VSIR_OP_IMM_ATOMIC_IMIN,                  "i*",   "ii"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_UMAX,                  VSIR_OP_IMM_ATOMIC_UMAX,                  "u*",   "iu"},
+        {VKD3D_SM5_OP_IMM_ATOMIC_UMIN,                  VSIR_OP_IMM_ATOMIC_UMIN,                  "u*",   "iu"},
+        {VKD3D_SM5_OP_SYNC,                             VSIR_OP_SYNC,                             "",     "",
                 shader_sm5_read_sync},
-        {VKD3D_SM5_OP_DADD,                             VKD3DSIH_DADD,                             "d",    "dd"},
-        {VKD3D_SM5_OP_DMAX,                             VKD3DSIH_DMAX,                             "d",    "dd"},
-        {VKD3D_SM5_OP_DMIN,                             VKD3DSIH_DMIN,                             "d",    "dd"},
-        {VKD3D_SM5_OP_DMUL,                             VKD3DSIH_DMUL,                             "d",    "dd"},
-        {VKD3D_SM5_OP_DEQ,                              VKD3DSIH_DEQO,                             "u",    "dd"},
-        {VKD3D_SM5_OP_DGE,                              VKD3DSIH_DGEO,                             "u",    "dd"},
-        {VKD3D_SM5_OP_DLT,                              VKD3DSIH_DLT,                              "u",    "dd"},
-        {VKD3D_SM5_OP_DNE,                              VKD3DSIH_DNE,                              "u",    "dd"},
-        {VKD3D_SM5_OP_DMOV,                             VKD3DSIH_DMOV,                             "d",    "d"},
-        {VKD3D_SM5_OP_DMOVC,                            VKD3DSIH_DMOVC,                            "d",    "udd"},
-        {VKD3D_SM5_OP_DTOF,                             VKD3DSIH_DTOF,                             "f",    "d"},
-        {VKD3D_SM5_OP_FTOD,                             VKD3DSIH_FTOD,                             "d",    "f"},
-        {VKD3D_SM5_OP_EVAL_SAMPLE_INDEX,                VKD3DSIH_EVAL_SAMPLE_INDEX,                "f",    "fi"},
-        {VKD3D_SM5_OP_EVAL_CENTROID,                    VKD3DSIH_EVAL_CENTROID,                    "f",    "f"},
-        {VKD3D_SM5_OP_DCL_GS_INSTANCES,                 VKD3DSIH_DCL_GS_INSTANCES,                 "",     "",
+        {VKD3D_SM5_OP_DADD,                             VSIR_OP_DADD,                             "d",    "dd"},
+        {VKD3D_SM5_OP_DMAX,                             VSIR_OP_DMAX,                             "d",    "dd"},
+        {VKD3D_SM5_OP_DMIN,                             VSIR_OP_DMIN,                             "d",    "dd"},
+        {VKD3D_SM5_OP_DMUL,                             VSIR_OP_DMUL,                             "d",    "dd"},
+        {VKD3D_SM5_OP_DEQ,                              VSIR_OP_DEQO,                             "u",    "dd"},
+        {VKD3D_SM5_OP_DGE,                              VSIR_OP_DGEO,                             "u",    "dd"},
+        {VKD3D_SM5_OP_DLT,                              VSIR_OP_DLT,                              "u",    "dd"},
+        {VKD3D_SM5_OP_DNE,                              VSIR_OP_DNE,                              "u",    "dd"},
+        {VKD3D_SM5_OP_DMOV,                             VSIR_OP_DMOV,                             "d",    "d"},
+        {VKD3D_SM5_OP_DMOVC,                            VSIR_OP_DMOVC,                            "d",    "udd"},
+        {VKD3D_SM5_OP_DTOF,                             VSIR_OP_DTOF,                             "f",    "d"},
+        {VKD3D_SM5_OP_FTOD,                             VSIR_OP_FTOD,                             "d",    "f"},
+        {VKD3D_SM5_OP_EVAL_SAMPLE_INDEX,                VSIR_OP_EVAL_SAMPLE_INDEX,                "f",    "fi"},
+        {VKD3D_SM5_OP_EVAL_CENTROID,                    VSIR_OP_EVAL_CENTROID,                    "f",    "f"},
+        {VKD3D_SM5_OP_DCL_GS_INSTANCES,                 VSIR_OP_DCL_GS_INSTANCES,                 "",     "",
                 shader_sm4_read_declaration_count},
-        {VKD3D_SM5_OP_DDIV,                             VKD3DSIH_DDIV,                             "d",    "dd"},
-        {VKD3D_SM5_OP_DFMA,                             VKD3DSIH_DFMA,                             "d",    "ddd"},
-        {VKD3D_SM5_OP_DRCP,                             VKD3DSIH_DRCP,                             "d",    "d"},
-        {VKD3D_SM5_OP_MSAD,                             VKD3DSIH_MSAD,                             "u",    "uuu"},
-        {VKD3D_SM5_OP_DTOI,                             VKD3DSIH_DTOI,                             "i",    "d"},
-        {VKD3D_SM5_OP_DTOU,                             VKD3DSIH_DTOU,                             "u",    "d"},
-        {VKD3D_SM5_OP_ITOD,                             VKD3DSIH_ITOD,                             "d",    "i"},
-        {VKD3D_SM5_OP_UTOD,                             VKD3DSIH_UTOD,                             "d",    "u"},
-        {VKD3D_SM5_OP_GATHER4_S,                        VKD3DSIH_GATHER4_S,                        "uu",   "f**"},
-        {VKD3D_SM5_OP_GATHER4_C_S,                      VKD3DSIH_GATHER4_C_S,                      "fu",   "f**f"},
-        {VKD3D_SM5_OP_GATHER4_PO_S,                     VKD3DSIH_GATHER4_PO_S,                     "fu",   "fi**"},
-        {VKD3D_SM5_OP_GATHER4_PO_C_S,                   VKD3DSIH_GATHER4_PO_C_S,                   "fu",   "fi**f"},
-        {VKD3D_SM5_OP_LD_S,                             VKD3DSIH_LD_S,                             "uu",   "i*"},
-        {VKD3D_SM5_OP_LD2DMS_S,                         VKD3DSIH_LD2DMS_S,                         "uu",   "i*i"},
-        {VKD3D_SM5_OP_LD_UAV_TYPED_S,                   VKD3DSIH_LD_UAV_TYPED_S,                   "uu",   "iU"},
-        {VKD3D_SM5_OP_LD_RAW_S,                         VKD3DSIH_LD_RAW_S,                         "uu",   "iU"},
-        {VKD3D_SM5_OP_LD_STRUCTURED_S,                  VKD3DSIH_LD_STRUCTURED_S,                  "uu",   "ii*"},
-        {VKD3D_SM5_OP_SAMPLE_LOD_S,                     VKD3DSIH_SAMPLE_LOD_S,                     "uu",   "f**f"},
-        {VKD3D_SM5_OP_SAMPLE_C_LZ_S,                    VKD3DSIH_SAMPLE_C_LZ_S,                    "fu",   "f**f"},
-        {VKD3D_SM5_OP_SAMPLE_CL_S,                      VKD3DSIH_SAMPLE_CL_S,                      "uu",   "f**f"},
-        {VKD3D_SM5_OP_SAMPLE_B_CL_S,                    VKD3DSIH_SAMPLE_B_CL_S,                    "uu",   "f**ff"},
-        {VKD3D_SM5_OP_SAMPLE_GRAD_CL_S,                 VKD3DSIH_SAMPLE_GRAD_CL_S,                 "uu",   "f**fff"},
-        {VKD3D_SM5_OP_SAMPLE_C_CL_S,                    VKD3DSIH_SAMPLE_C_CL_S,                    "fu",   "f**ff"},
-        {VKD3D_SM5_OP_CHECK_ACCESS_FULLY_MAPPED,        VKD3DSIH_CHECK_ACCESS_FULLY_MAPPED,        "u",    "u"},
+        {VKD3D_SM5_OP_DDIV,                             VSIR_OP_DDIV,                             "d",    "dd"},
+        {VKD3D_SM5_OP_DFMA,                             VSIR_OP_DFMA,                             "d",    "ddd"},
+        {VKD3D_SM5_OP_DRCP,                             VSIR_OP_DRCP,                             "d",    "d"},
+        {VKD3D_SM5_OP_MSAD,                             VSIR_OP_MSAD,                             "u",    "uuu"},
+        {VKD3D_SM5_OP_DTOI,                             VSIR_OP_DTOI,                             "i",    "d"},
+        {VKD3D_SM5_OP_DTOU,                             VSIR_OP_DTOU,                             "u",    "d"},
+        {VKD3D_SM5_OP_ITOD,                             VSIR_OP_ITOD,                             "d",    "i"},
+        {VKD3D_SM5_OP_UTOD,                             VSIR_OP_UTOD,                             "d",    "u"},
+        {VKD3D_SM5_OP_GATHER4_S,                        VSIR_OP_GATHER4_S,                        "uu",   "f**"},
+        {VKD3D_SM5_OP_GATHER4_C_S,                      VSIR_OP_GATHER4_C_S,                      "fu",   "f**f"},
+        {VKD3D_SM5_OP_GATHER4_PO_S,                     VSIR_OP_GATHER4_PO_S,                     "fu",   "fi**"},
+        {VKD3D_SM5_OP_GATHER4_PO_C_S,                   VSIR_OP_GATHER4_PO_C_S,                   "fu",   "fi**f"},
+        {VKD3D_SM5_OP_LD_S,                             VSIR_OP_LD_S,                             "uu",   "i*"},
+        {VKD3D_SM5_OP_LD2DMS_S,                         VSIR_OP_LD2DMS_S,                         "uu",   "i*i"},
+        {VKD3D_SM5_OP_LD_UAV_TYPED_S,                   VSIR_OP_LD_UAV_TYPED_S,                   "uu",   "iU"},
+        {VKD3D_SM5_OP_LD_RAW_S,                         VSIR_OP_LD_RAW_S,                         "uu",   "iU"},
+        {VKD3D_SM5_OP_LD_STRUCTURED_S,                  VSIR_OP_LD_STRUCTURED_S,                  "uu",   "ii*"},
+        {VKD3D_SM5_OP_SAMPLE_LOD_S,                     VSIR_OP_SAMPLE_LOD_S,                     "uu",   "f**f"},
+        {VKD3D_SM5_OP_SAMPLE_C_LZ_S,                    VSIR_OP_SAMPLE_C_LZ_S,                    "fu",   "f**f"},
+        {VKD3D_SM5_OP_SAMPLE_CL_S,                      VSIR_OP_SAMPLE_CL_S,                      "uu",   "f**f"},
+        {VKD3D_SM5_OP_SAMPLE_B_CL_S,                    VSIR_OP_SAMPLE_B_CL_S,                    "uu",   "f**ff"},
+        {VKD3D_SM5_OP_SAMPLE_GRAD_CL_S,                 VSIR_OP_SAMPLE_GRAD_CL_S,                 "uu",   "f**fff"},
+        {VKD3D_SM5_OP_SAMPLE_C_CL_S,                    VSIR_OP_SAMPLE_C_CL_S,                    "fu",   "f**ff"},
+        {VKD3D_SM5_OP_CHECK_ACCESS_FULLY_MAPPED,        VSIR_OP_CHECK_ACCESS_FULLY_MAPPED,        "u",    "u"},
     };
 
     static const struct vkd3d_sm4_register_type_info register_type_table[] =
@@ -1944,7 +1944,7 @@ static const struct vkd3d_sm4_opcode_info *get_info_from_sm4_opcode(
 static const struct vkd3d_sm4_opcode_info *get_info_from_vsir_opcode(
         const struct vkd3d_sm4_lookup_tables *lookup, enum vkd3d_shader_opcode vsir_opcode)
 {
-    if (vsir_opcode >= VKD3DSIH_COUNT)
+    if (vsir_opcode >= VSIR_OP_COUNT)
         return NULL;
     return lookup->opcode_info_from_vsir[vsir_opcode];
 }
@@ -2289,7 +2289,7 @@ static bool register_is_control_point_input(const struct vkd3d_shader_register *
         const struct vkd3d_shader_sm4_parser *priv)
 {
     return reg->type == VKD3DSPR_INCONTROLPOINT || reg->type == VKD3DSPR_OUTCONTROLPOINT
-            || (reg->type == VKD3DSPR_INPUT && (priv->phase == VKD3DSIH_HS_CONTROL_POINT_PHASE
+            || (reg->type == VKD3DSPR_INPUT && (priv->phase == VSIR_OP_HS_CONTROL_POINT_PHASE
             || priv->p.program->shader_version.type == VKD3D_SHADER_TYPE_GEOMETRY));
 }
 
@@ -2656,16 +2656,16 @@ static void shader_sm4_read_instruction(struct vkd3d_shader_sm4_parser *sm4, str
     if (!(opcode_info = get_info_from_sm4_opcode(&sm4->lookup, opcode)))
     {
         FIXME("Unrecognized opcode %#x, opcode_token 0x%08x.\n", opcode, opcode_token);
-        ins->opcode = VKD3DSIH_INVALID;
+        ins->opcode = VSIR_OP_INVALID;
         *ptr += len;
         return;
     }
 
     vsir_instruction_init(ins, &sm4->p.location, opcode_info->handler_idx);
-    if (ins->opcode == VKD3DSIH_HS_CONTROL_POINT_PHASE || ins->opcode == VKD3DSIH_HS_FORK_PHASE
-            || ins->opcode == VKD3DSIH_HS_JOIN_PHASE)
+    if (ins->opcode == VSIR_OP_HS_CONTROL_POINT_PHASE || ins->opcode == VSIR_OP_HS_FORK_PHASE
+            || ins->opcode == VSIR_OP_HS_JOIN_PHASE)
         sm4->phase = ins->opcode;
-    sm4->has_control_point_phase |= ins->opcode == VKD3DSIH_HS_CONTROL_POINT_PHASE;
+    sm4->has_control_point_phase |= ins->opcode == VSIR_OP_HS_CONTROL_POINT_PHASE;
     ins->flags = 0;
     ins->coissue = false;
     ins->raw = false;
@@ -2678,7 +2678,7 @@ static void shader_sm4_read_instruction(struct vkd3d_shader_sm4_parser *sm4, str
     {
         ERR("Failed to allocate src parameters.\n");
         vkd3d_shader_parser_error(&sm4->p, VKD3D_SHADER_ERROR_TPF_OUT_OF_MEMORY, "Out of memory.");
-        ins->opcode = VKD3DSIH_INVALID;
+        ins->opcode = VSIR_OP_INVALID;
         return;
     }
     ins->resource_type = VKD3D_SHADER_RESOURCE_NONE;
@@ -2720,7 +2720,7 @@ static void shader_sm4_read_instruction(struct vkd3d_shader_sm4_parser *sm4, str
         {
             ERR("Failed to allocate dst parameters.\n");
             vkd3d_shader_parser_error(&sm4->p, VKD3D_SHADER_ERROR_TPF_OUT_OF_MEMORY, "Out of memory.");
-            ins->opcode = VKD3DSIH_INVALID;
+            ins->opcode = VSIR_OP_INVALID;
             return;
         }
         for (i = 0; i < ins->dst_count; ++i)
@@ -2728,7 +2728,7 @@ static void shader_sm4_read_instruction(struct vkd3d_shader_sm4_parser *sm4, str
             if (!(shader_sm4_read_dst_param(sm4, &p, *ptr, map_data_type(opcode_info->dst_info[i]),
                     &dst_params[i])))
             {
-                ins->opcode = VKD3DSIH_INVALID;
+                ins->opcode = VSIR_OP_INVALID;
                 return;
             }
             dst_params[i].modifiers |= instruction_dst_modifier;
@@ -2739,7 +2739,7 @@ static void shader_sm4_read_instruction(struct vkd3d_shader_sm4_parser *sm4, str
             if (!(shader_sm4_read_src_param(sm4, &p, *ptr, map_data_type(opcode_info->src_info[i]),
                     &src_params[i])))
             {
-                ins->opcode = VKD3DSIH_INVALID;
+                ins->opcode = VSIR_OP_INVALID;
                 return;
             }
         }
@@ -2749,7 +2749,7 @@ static void shader_sm4_read_instruction(struct vkd3d_shader_sm4_parser *sm4, str
 
 fail:
     *ptr = sm4->end;
-    ins->opcode = VKD3DSIH_INVALID;
+    ins->opcode = VSIR_OP_INVALID;
     return;
 }
 
@@ -2971,7 +2971,7 @@ int tpf_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t con
         ins = &instructions->elements[instructions->count];
         shader_sm4_read_instruction(&sm4, ins);
 
-        if (ins->opcode == VKD3DSIH_INVALID)
+        if (ins->opcode == VSIR_OP_INVALID)
         {
             WARN("Encountered unrecognized or invalid instruction.\n");
             vsir_program_cleanup(program);
@@ -3868,20 +3868,20 @@ static void tpf_dcl_texture(const struct tpf_compiler *tpf, const struct vkd3d_s
     info = get_info_from_vsir_opcode(&tpf->lookup, ins->opcode);
     VKD3D_ASSERT(info);
 
-    uav = ins->opcode == VKD3DSIH_DCL_UAV_TYPED
-            || ins->opcode == VKD3DSIH_DCL_UAV_RAW
-            || ins->opcode == VKD3DSIH_DCL_UAV_STRUCTURED;
+    uav = ins->opcode == VSIR_OP_DCL_UAV_TYPED
+            || ins->opcode == VSIR_OP_DCL_UAV_RAW
+            || ins->opcode == VSIR_OP_DCL_UAV_STRUCTURED;
 
     instr.opcode = info->opcode;
 
-    if (ins->opcode == VKD3DSIH_DCL || ins->opcode == VKD3DSIH_DCL_UAV_TYPED)
+    if (ins->opcode == VSIR_OP_DCL || ins->opcode == VSIR_OP_DCL_UAV_TYPED)
     {
         instr.idx[0] = pack_resource_data_type(ins->declaration.semantic.resource_data_type);
         instr.idx_count = 1;
         instr.extra_bits |= ins->declaration.semantic.sample_count << VKD3D_SM4_RESOURCE_SAMPLE_COUNT_SHIFT;
         resource = &ins->declaration.semantic.resource;
     }
-    else if (ins->opcode == VKD3DSIH_DCL_RESOURCE_RAW || ins->opcode == VKD3DSIH_DCL_UAV_RAW)
+    else if (ins->opcode == VSIR_OP_DCL_RESOURCE_RAW || ins->opcode == VSIR_OP_DCL_UAV_RAW)
     {
         resource = &ins->declaration.raw_resource.resource;
     }
@@ -4046,6 +4046,39 @@ static void tpf_write_dcl_vertices_out(const struct tpf_compiler *tpf, unsigned 
     write_sm4_instruction(tpf, &instr);
 }
 
+/* Descriptor registers are stored in shader model 5.1 format regardless
+ * of the program's version. Convert them to the 4.0 format if necessary. */
+static void rewrite_descriptor_register(const struct tpf_compiler *tpf, struct vkd3d_shader_register *reg)
+{
+    if (vkd3d_shader_ver_ge(&tpf->program->shader_version, 5, 1))
+        return;
+
+    switch (reg->type)
+    {
+        case VKD3DSPR_CONSTBUFFER:
+            reg->idx[0] = reg->idx[1];
+            reg->idx[1] = reg->idx[2];
+            reg->idx_count = 2;
+            break;
+
+        case VKD3DSPR_RESOURCE:
+        case VKD3DSPR_SAMPLER:
+        case VKD3DSPR_UAV:
+            reg->idx[0] = reg->idx[1];
+            reg->idx_count = 1;
+            break;
+
+        default:
+            break;
+    }
+
+    for (unsigned int i = 0; i < reg->idx_count; ++i)
+    {
+        if (reg->idx[i].rel_addr)
+            rewrite_descriptor_register(tpf, &reg->idx[i].rel_addr->reg);
+    }
+}
+
 static void tpf_simple_instruction(struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
 {
     struct sm4_instruction_modifier *modifier;
@@ -4082,6 +4115,7 @@ static void tpf_simple_instruction(struct tpf_compiler *tpf, const struct vkd3d_
     for (unsigned int i = 0; i < ins->dst_count; ++i)
     {
         instr.dsts[i] = ins->dst[i];
+        rewrite_descriptor_register(tpf, &instr.dsts[i].reg);
 
         if (instr.dsts[i].modifiers & VKD3DSPDM_SATURATE)
         {
@@ -4092,7 +4126,10 @@ static void tpf_simple_instruction(struct tpf_compiler *tpf, const struct vkd3d_
         }
     }
     for (unsigned int i = 0; i < ins->src_count; ++i)
+    {
         instr.srcs[i] = ins->src[i];
+        rewrite_descriptor_register(tpf, &instr.srcs[i].reg);
+    }
 
     if (ins->texel_offset.u || ins->texel_offset.v || ins->texel_offset.w)
     {
@@ -4117,184 +4154,184 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
 {
     switch (ins->opcode)
     {
-        case VKD3DSIH_DCL_CONSTANT_BUFFER:
+        case VSIR_OP_DCL_CONSTANT_BUFFER:
             tpf_dcl_constant_buffer(tpf, ins);
             break;
 
-        case VKD3DSIH_DCL_TEMPS:
+        case VSIR_OP_DCL_TEMPS:
             tpf_dcl_temps(tpf, ins->declaration.count);
             break;
 
-        case VKD3DSIH_DCL_INDEXABLE_TEMP:
+        case VSIR_OP_DCL_INDEXABLE_TEMP:
             tpf_dcl_indexable_temp(tpf, &ins->declaration.indexable_temp);
             break;
 
-        case VKD3DSIH_DCL_INPUT:
+        case VSIR_OP_DCL_INPUT:
             tpf_dcl_semantic(tpf, VKD3D_SM4_OP_DCL_INPUT, &ins->declaration.dst, 0);
             break;
 
-        case VKD3DSIH_DCL_INPUT_PS:
+        case VSIR_OP_DCL_INPUT_PS:
             tpf_dcl_semantic(tpf, VKD3D_SM4_OP_DCL_INPUT_PS, &ins->declaration.dst, ins->flags);
             break;
 
-        case VKD3DSIH_DCL_INPUT_PS_SGV:
+        case VSIR_OP_DCL_INPUT_PS_SGV:
             tpf_dcl_siv_semantic(tpf, VKD3D_SM4_OP_DCL_INPUT_PS_SGV, &ins->declaration.register_semantic, 0);
             break;
 
-        case VKD3DSIH_DCL_INPUT_PS_SIV:
+        case VSIR_OP_DCL_INPUT_PS_SIV:
             tpf_dcl_siv_semantic(tpf, VKD3D_SM4_OP_DCL_INPUT_PS_SIV, &ins->declaration.register_semantic, ins->flags);
             break;
 
-        case VKD3DSIH_DCL_INPUT_SGV:
+        case VSIR_OP_DCL_INPUT_SGV:
             tpf_dcl_siv_semantic(tpf, VKD3D_SM4_OP_DCL_INPUT_SGV, &ins->declaration.register_semantic, 0);
             break;
 
-        case VKD3DSIH_DCL_INPUT_SIV:
+        case VSIR_OP_DCL_INPUT_SIV:
             tpf_dcl_siv_semantic(tpf, VKD3D_SM4_OP_DCL_INPUT_SIV, &ins->declaration.register_semantic, 0);
             break;
 
-        case VKD3DSIH_DCL_OUTPUT:
+        case VSIR_OP_DCL_OUTPUT:
             tpf_dcl_semantic(tpf, VKD3D_SM4_OP_DCL_OUTPUT, &ins->declaration.dst, 0);
             break;
 
-        case VKD3DSIH_DCL_OUTPUT_SGV:
+        case VSIR_OP_DCL_OUTPUT_SGV:
             tpf_dcl_siv_semantic(tpf, VKD3D_SM4_OP_DCL_OUTPUT_SGV, &ins->declaration.register_semantic, 0);
             break;
 
-        case VKD3DSIH_DCL_OUTPUT_SIV:
+        case VSIR_OP_DCL_OUTPUT_SIV:
             tpf_dcl_siv_semantic(tpf, VKD3D_SM4_OP_DCL_OUTPUT_SIV, &ins->declaration.register_semantic, 0);
             break;
 
-        case VKD3DSIH_DCL_SAMPLER:
+        case VSIR_OP_DCL_SAMPLER:
             tpf_dcl_sampler(tpf, ins);
             break;
 
-        case VKD3DSIH_DCL:
-        case VKD3DSIH_DCL_RESOURCE_RAW:
-        case VKD3DSIH_DCL_UAV_RAW:
-        case VKD3DSIH_DCL_UAV_STRUCTURED:
-        case VKD3DSIH_DCL_UAV_TYPED:
+        case VSIR_OP_DCL:
+        case VSIR_OP_DCL_RESOURCE_RAW:
+        case VSIR_OP_DCL_UAV_RAW:
+        case VSIR_OP_DCL_UAV_STRUCTURED:
+        case VSIR_OP_DCL_UAV_TYPED:
             tpf_dcl_texture(tpf, ins);
             break;
 
-        case VKD3DSIH_ADD:
-        case VKD3DSIH_ATOMIC_AND:
-        case VKD3DSIH_ATOMIC_CMP_STORE:
-        case VKD3DSIH_ATOMIC_IADD:
-        case VKD3DSIH_ATOMIC_IMAX:
-        case VKD3DSIH_ATOMIC_IMIN:
-        case VKD3DSIH_ATOMIC_UMAX:
-        case VKD3DSIH_ATOMIC_UMIN:
-        case VKD3DSIH_ATOMIC_OR:
-        case VKD3DSIH_ATOMIC_XOR:
-        case VKD3DSIH_AND:
-        case VKD3DSIH_BREAK:
-        case VKD3DSIH_CASE:
-        case VKD3DSIH_CONTINUE:
-        case VKD3DSIH_CUT:
-        case VKD3DSIH_CUT_STREAM:
-        case VKD3DSIH_DCL_STREAM:
-        case VKD3DSIH_DEFAULT:
-        case VKD3DSIH_DISCARD:
-        case VKD3DSIH_DIV:
-        case VKD3DSIH_DP2:
-        case VKD3DSIH_DP3:
-        case VKD3DSIH_DP4:
-        case VKD3DSIH_DSX:
-        case VKD3DSIH_DSX_COARSE:
-        case VKD3DSIH_DSX_FINE:
-        case VKD3DSIH_DSY:
-        case VKD3DSIH_DSY_COARSE:
-        case VKD3DSIH_DSY_FINE:
-        case VKD3DSIH_ELSE:
-        case VKD3DSIH_EMIT:
-        case VKD3DSIH_EMIT_STREAM:
-        case VKD3DSIH_ENDIF:
-        case VKD3DSIH_ENDLOOP:
-        case VKD3DSIH_ENDSWITCH:
-        case VKD3DSIH_EQO:
-        case VKD3DSIH_EXP:
-        case VKD3DSIH_F16TOF32:
-        case VKD3DSIH_F32TOF16:
-        case VKD3DSIH_FRC:
-        case VKD3DSIH_FTOI:
-        case VKD3DSIH_FTOU:
-        case VKD3DSIH_GATHER4:
-        case VKD3DSIH_GATHER4_PO:
-        case VKD3DSIH_GATHER4_C:
-        case VKD3DSIH_GATHER4_PO_C:
-        case VKD3DSIH_GEO:
-        case VKD3DSIH_HS_CONTROL_POINT_PHASE:
-        case VKD3DSIH_HS_FORK_PHASE:
-        case VKD3DSIH_IADD:
-        case VKD3DSIH_IEQ:
-        case VKD3DSIH_IF:
-        case VKD3DSIH_IGE:
-        case VKD3DSIH_ILT:
-        case VKD3DSIH_IMAD:
-        case VKD3DSIH_IMAX:
-        case VKD3DSIH_IMIN:
-        case VKD3DSIH_IMM_ATOMIC_AND:
-        case VKD3DSIH_IMM_ATOMIC_CMP_EXCH:
-        case VKD3DSIH_IMM_ATOMIC_EXCH:
-        case VKD3DSIH_IMM_ATOMIC_IADD:
-        case VKD3DSIH_IMM_ATOMIC_IMAX:
-        case VKD3DSIH_IMM_ATOMIC_IMIN:
-        case VKD3DSIH_IMM_ATOMIC_UMAX:
-        case VKD3DSIH_IMM_ATOMIC_UMIN:
-        case VKD3DSIH_IMM_ATOMIC_OR:
-        case VKD3DSIH_IMM_ATOMIC_XOR:
-        case VKD3DSIH_SYNC:
-        case VKD3DSIH_IMUL:
-        case VKD3DSIH_INE:
-        case VKD3DSIH_INEG:
-        case VKD3DSIH_ISHL:
-        case VKD3DSIH_ISHR:
-        case VKD3DSIH_ITOF:
-        case VKD3DSIH_LD:
-        case VKD3DSIH_LD2DMS:
-        case VKD3DSIH_LD_RAW:
-        case VKD3DSIH_LD_UAV_TYPED:
-        case VKD3DSIH_LOG:
-        case VKD3DSIH_LOOP:
-        case VKD3DSIH_LTO:
-        case VKD3DSIH_MAD:
-        case VKD3DSIH_MAX:
-        case VKD3DSIH_MIN:
-        case VKD3DSIH_MOV:
-        case VKD3DSIH_MOVC:
-        case VKD3DSIH_MUL:
-        case VKD3DSIH_NEU:
-        case VKD3DSIH_NOT:
-        case VKD3DSIH_OR:
-        case VKD3DSIH_RCP:
-        case VKD3DSIH_RESINFO:
-        case VKD3DSIH_RET:
-        case VKD3DSIH_ROUND_NE:
-        case VKD3DSIH_ROUND_NI:
-        case VKD3DSIH_ROUND_PI:
-        case VKD3DSIH_ROUND_Z:
-        case VKD3DSIH_RSQ:
-        case VKD3DSIH_SAMPLE:
-        case VKD3DSIH_SAMPLE_B:
-        case VKD3DSIH_SAMPLE_C:
-        case VKD3DSIH_SAMPLE_C_LZ:
-        case VKD3DSIH_SAMPLE_GRAD:
-        case VKD3DSIH_SAMPLE_INFO:
-        case VKD3DSIH_SAMPLE_LOD:
-        case VKD3DSIH_SINCOS:
-        case VKD3DSIH_SQRT:
-        case VKD3DSIH_STORE_RAW:
-        case VKD3DSIH_STORE_UAV_TYPED:
-        case VKD3DSIH_SWITCH:
-        case VKD3DSIH_UDIV:
-        case VKD3DSIH_UGE:
-        case VKD3DSIH_ULT:
-        case VKD3DSIH_UMAX:
-        case VKD3DSIH_UMIN:
-        case VKD3DSIH_USHR:
-        case VKD3DSIH_UTOF:
-        case VKD3DSIH_XOR:
+        case VSIR_OP_ADD:
+        case VSIR_OP_ATOMIC_AND:
+        case VSIR_OP_ATOMIC_CMP_STORE:
+        case VSIR_OP_ATOMIC_IADD:
+        case VSIR_OP_ATOMIC_IMAX:
+        case VSIR_OP_ATOMIC_IMIN:
+        case VSIR_OP_ATOMIC_UMAX:
+        case VSIR_OP_ATOMIC_UMIN:
+        case VSIR_OP_ATOMIC_OR:
+        case VSIR_OP_ATOMIC_XOR:
+        case VSIR_OP_AND:
+        case VSIR_OP_BREAK:
+        case VSIR_OP_CASE:
+        case VSIR_OP_CONTINUE:
+        case VSIR_OP_CUT:
+        case VSIR_OP_CUT_STREAM:
+        case VSIR_OP_DCL_STREAM:
+        case VSIR_OP_DEFAULT:
+        case VSIR_OP_DISCARD:
+        case VSIR_OP_DIV:
+        case VSIR_OP_DP2:
+        case VSIR_OP_DP3:
+        case VSIR_OP_DP4:
+        case VSIR_OP_DSX:
+        case VSIR_OP_DSX_COARSE:
+        case VSIR_OP_DSX_FINE:
+        case VSIR_OP_DSY:
+        case VSIR_OP_DSY_COARSE:
+        case VSIR_OP_DSY_FINE:
+        case VSIR_OP_ELSE:
+        case VSIR_OP_EMIT:
+        case VSIR_OP_EMIT_STREAM:
+        case VSIR_OP_ENDIF:
+        case VSIR_OP_ENDLOOP:
+        case VSIR_OP_ENDSWITCH:
+        case VSIR_OP_EQO:
+        case VSIR_OP_EXP:
+        case VSIR_OP_F16TOF32:
+        case VSIR_OP_F32TOF16:
+        case VSIR_OP_FRC:
+        case VSIR_OP_FTOI:
+        case VSIR_OP_FTOU:
+        case VSIR_OP_GATHER4:
+        case VSIR_OP_GATHER4_PO:
+        case VSIR_OP_GATHER4_C:
+        case VSIR_OP_GATHER4_PO_C:
+        case VSIR_OP_GEO:
+        case VSIR_OP_HS_CONTROL_POINT_PHASE:
+        case VSIR_OP_HS_FORK_PHASE:
+        case VSIR_OP_IADD:
+        case VSIR_OP_IEQ:
+        case VSIR_OP_IF:
+        case VSIR_OP_IGE:
+        case VSIR_OP_ILT:
+        case VSIR_OP_IMAD:
+        case VSIR_OP_IMAX:
+        case VSIR_OP_IMIN:
+        case VSIR_OP_IMM_ATOMIC_AND:
+        case VSIR_OP_IMM_ATOMIC_CMP_EXCH:
+        case VSIR_OP_IMM_ATOMIC_EXCH:
+        case VSIR_OP_IMM_ATOMIC_IADD:
+        case VSIR_OP_IMM_ATOMIC_IMAX:
+        case VSIR_OP_IMM_ATOMIC_IMIN:
+        case VSIR_OP_IMM_ATOMIC_UMAX:
+        case VSIR_OP_IMM_ATOMIC_UMIN:
+        case VSIR_OP_IMM_ATOMIC_OR:
+        case VSIR_OP_IMM_ATOMIC_XOR:
+        case VSIR_OP_SYNC:
+        case VSIR_OP_IMUL:
+        case VSIR_OP_INE:
+        case VSIR_OP_INEG:
+        case VSIR_OP_ISHL:
+        case VSIR_OP_ISHR:
+        case VSIR_OP_ITOF:
+        case VSIR_OP_LD:
+        case VSIR_OP_LD2DMS:
+        case VSIR_OP_LD_RAW:
+        case VSIR_OP_LD_UAV_TYPED:
+        case VSIR_OP_LOG:
+        case VSIR_OP_LOOP:
+        case VSIR_OP_LTO:
+        case VSIR_OP_MAD:
+        case VSIR_OP_MAX:
+        case VSIR_OP_MIN:
+        case VSIR_OP_MOV:
+        case VSIR_OP_MOVC:
+        case VSIR_OP_MUL:
+        case VSIR_OP_NEU:
+        case VSIR_OP_NOT:
+        case VSIR_OP_OR:
+        case VSIR_OP_RCP:
+        case VSIR_OP_RESINFO:
+        case VSIR_OP_RET:
+        case VSIR_OP_ROUND_NE:
+        case VSIR_OP_ROUND_NI:
+        case VSIR_OP_ROUND_PI:
+        case VSIR_OP_ROUND_Z:
+        case VSIR_OP_RSQ:
+        case VSIR_OP_SAMPLE:
+        case VSIR_OP_SAMPLE_B:
+        case VSIR_OP_SAMPLE_C:
+        case VSIR_OP_SAMPLE_C_LZ:
+        case VSIR_OP_SAMPLE_GRAD:
+        case VSIR_OP_SAMPLE_INFO:
+        case VSIR_OP_SAMPLE_LOD:
+        case VSIR_OP_SINCOS:
+        case VSIR_OP_SQRT:
+        case VSIR_OP_STORE_RAW:
+        case VSIR_OP_STORE_UAV_TYPED:
+        case VSIR_OP_SWITCH:
+        case VSIR_OP_UDIV:
+        case VSIR_OP_UGE:
+        case VSIR_OP_ULT:
+        case VSIR_OP_UMAX:
+        case VSIR_OP_UMIN:
+        case VSIR_OP_USHR:
+        case VSIR_OP_UTOF:
+        case VSIR_OP_XOR:
             tpf_simple_instruction(tpf, ins);
             break;
 
@@ -4462,6 +4499,9 @@ int tpf_compile(struct vsir_program *program, uint64_t config_flags, const struc
     struct sm4_stat stat = {0};
     size_t i;
     int ret;
+
+    if ((ret = vsir_allocate_temp_registers(program, message_context)))
+        return ret;
 
     tpf.program = program;
     tpf.buffer = NULL;

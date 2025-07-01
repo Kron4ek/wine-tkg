@@ -143,7 +143,7 @@ struct context_data
     union
     {
         struct { unsigned int eip, ebp, esp, eflags, cs, ss; } i386_regs;
-        struct { unsigned __int64 rip, rbp, rsp;
+        struct { unsigned __int64 rip, rsp;
                  unsigned int cs, ss, flags, __pad; } x86_64_regs;
         struct { unsigned int sp, lr, pc, cpsr; } arm_regs;
         struct { unsigned __int64 sp, pc, pstate; } arm64_regs;
@@ -151,7 +151,7 @@ struct context_data
     union
     {
         struct { unsigned int eax, ebx, ecx, edx, esi, edi; } i386_regs;
-        struct { unsigned __int64 rax,rbx, rcx, rdx, rsi, rdi,
+        struct { unsigned __int64 rax, rbx, rcx, rdx, rbp, rsi, rdi,
                                   r8, r9, r10, r11, r12, r13, r14, r15; } x86_64_regs;
         struct { unsigned int r[13]; } arm_regs;
         struct { unsigned __int64 x[31]; } arm64_regs;
@@ -1121,6 +1121,8 @@ struct obj_locator
     thread_id_t  tid;          /* thread id of the new thread */
     timeout_t    server_start; /* server start time */
     unsigned int session_id;   /* process session id */
+    obj_handle_t inproc_device;/* inproc device fd in flight with this handle */
+    obj_handle_t alert_handle; /* alert fd is in flight with this handle */
     data_size_t  info_size;    /* total size of startup info */
     VARARG(machines,ushorts);  /* array of supported machines */
 @END
@@ -1135,6 +1137,7 @@ struct obj_locator
     client_ptr_t entry;        /* entry point (in thread address space) */
 @REPLY
     int          suspend;      /* is thread suspended? */
+    obj_handle_t alert_handle; /* alert fd is in flight with this handle */
 @END
 
 
@@ -2249,6 +2252,23 @@ enum prefix_type
 @REPLY
     int          count;        /* atom lock count */
     int          pinned;       /* whether the atom has been pinned */
+    data_size_t  total;        /* actual length of atom name */
+    VARARG(name,unicode_str);  /* atom name */
+@END
+
+
+/* Add a user atom */
+@REQ(add_user_atom)
+    VARARG(name,unicode_str);  /* atom name */
+@REPLY
+    atom_t        atom;        /* resulting atom */
+@END
+
+
+/* Get a user atom name */
+@REQ(get_user_atom_name)
+    atom_t       atom;         /* atom handle */
+@REPLY
     data_size_t  total;        /* actual length of atom name */
     VARARG(name,unicode_str);  /* atom name */
 @END
@@ -4120,45 +4140,28 @@ struct handle_info
     int enable;                /* previous state of auto-repeat enable */
 @END
 
+
 enum inproc_sync_type
 {
-    INPROC_SYNC_UNKNOWN,
-    INPROC_SYNC_AUTO_EVENT,
-    INPROC_SYNC_MANUAL_EVENT,
-    INPROC_SYNC_SEMAPHORE,
-    INPROC_SYNC_MUTEX,
-    INPROC_SYNC_AUTO_SERVER,
-    INPROC_SYNC_MANUAL_SERVER,
-    INPROC_SYNC_QUEUE,
+    INPROC_SYNC_UNKNOWN = 0,
+    INPROC_SYNC_EVENT = 1,
+    INPROC_SYNC_MUTEX = 2,
+    INPROC_SYNC_SEMAPHORE = 3,
 };
 
-
-/* Obtain a fd for the ntsync device */
-@REQ(get_linux_sync_device)
-@END
-
 /* Get the in-process synchronization fd associated with the waitable handle */
-@REQ(get_linux_sync_obj)
+@REQ(get_inproc_sync_fd)
     obj_handle_t handle;        /* handle to the object */
 @REPLY
-    int type;                   /* object type */
+    unsigned char type;         /* inproc sync type */
+    unsigned char queue;        /* sync is a message queue sync */
+    unsigned char internal;     /* sync is an internal event sync */
     unsigned int access;        /* handle access rights */
 @END
 
 
-/* Begin a client-side wait on a message queue */
+/* Begin/end a client-side wait on a message queue */
 @REQ(select_inproc_queue)
-@END
-
-
-/* End a client-side wait on a message queue */
-@REQ(unselect_inproc_queue)
+    int          select;          /* 1: begin waiting, 0: end waiting */
     int          signaled;        /* was the queue signaled? */
-@END
-
-
-/* Get an event handle to be used for thread alerts with in-process synchronization */
-@REQ(get_inproc_alert_event)
-@REPLY
-    obj_handle_t handle;          /* handle to the event */
 @END

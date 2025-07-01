@@ -1431,6 +1431,11 @@ enum vkd3d_shader_source_type
      * Input is a raw FX section without container. \since 1.14
      */
     VKD3D_SHADER_SOURCE_FX,
+    /**
+     * A D3DX texture shader. This is the format used for the 'tx_1_0' HLSL
+     * target profile. \since 1.17
+     */
+    VKD3D_SHADER_SOURCE_TX,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_SOURCE_TYPE),
 };
@@ -2761,6 +2766,7 @@ VKD3D_SHADER_API const enum vkd3d_shader_target_type *vkd3d_shader_get_supported
  * - VKD3D_SHADER_SOURCE_HLSL to VKD3D_SHADER_TARGET_DXBC_TPF
  * - VKD3D_SHADER_SOURCE_HLSL to VKD3D_SHADER_TARGET_FX
  * - VKD3D_SHADER_SOURCE_FX to VKD3D_SHADER_TARGET_D3D_ASM
+ * - VKD3D_SHADER_SOURCE_TX to VKD3D_SHADER_TARGET_D3D_ASM
  *
  * Supported transformations can also be detected at runtime with the functions
  * vkd3d_shader_get_supported_source_types() and

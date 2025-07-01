@@ -2559,6 +2559,13 @@ static void declare_var(struct hlsl_ctx *ctx, struct parse_variable_def *v)
             hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
                     "Variable '%s' is declared as both \"uniform\" and \"static\".", var->name);
 
+        if ((modifiers & HLSL_STORAGE_GROUPSHARED) && ctx->profile->type != VKD3D_SHADER_TYPE_COMPUTE)
+        {
+            modifiers &= ~HLSL_STORAGE_GROUPSHARED;
+            hlsl_warning(ctx, &var->loc, VKD3D_SHADER_WARNING_HLSL_IGNORED_MODIFIER,
+                    "Ignoring the 'groupshared' modifier in a non-compute shader.");
+        }
+
         if (modifiers & HLSL_STORAGE_GROUPSHARED)
             hlsl_fixme(ctx, &var->loc, "Group shared variables.");
 
@@ -4294,6 +4301,28 @@ static bool intrinsic_mul(struct hlsl_ctx *ctx,
     return true;
 }
 
+static bool intrinsic_noise(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_type *type = params->args[0]->data_type, *ret_type;
+    struct hlsl_ir_node *args[HLSL_MAX_OPERANDS] = {0};
+
+    type = params->args[0]->data_type;
+    if (type->class == HLSL_CLASS_MATRIX)
+    {
+        struct vkd3d_string_buffer *string;
+        if ((string = hlsl_type_to_string(ctx, type)))
+            hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                    "Wrong argument type for noise(): expected vector or scalar, but got '%s'.", string->buffer);
+        hlsl_release_string_buffer(ctx, string);
+    }
+
+    args[0] = intrinsic_float_convert_arg(ctx, params, params->args[0], loc);
+    ret_type = hlsl_get_scalar_type(ctx, args[0]->data_type->e.numeric.type);
+
+    return !!add_expr(ctx, params->instrs, HLSL_OP1_NOISE, args, ret_type, loc);
+}
+
 static bool intrinsic_normalize(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
@@ -5122,10 +5151,10 @@ static bool intrinsic_InterlockedXor(struct hlsl_ctx *ctx,
 
 static void validate_group_barrier_profile(struct hlsl_ctx *ctx, const struct vkd3d_shader_location *loc)
 {
-    if (ctx->profile->type != VKD3D_SHADER_TYPE_COMPUTE || hlsl_version_lt(ctx, 5, 0))
+    if (ctx->profile->type != VKD3D_SHADER_TYPE_COMPUTE)
     {
         hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INCOMPATIBLE_PROFILE,
-                "Group barriers can only be used in compute shaders 5.0 or higher.");
+                "Group barriers can only be used in compute shaders.");
     }
 }
 
@@ -5149,10 +5178,10 @@ static bool intrinsic_DeviceMemoryBarrier(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
     if ((ctx->profile->type != VKD3D_SHADER_TYPE_COMPUTE && ctx->profile->type != VKD3D_SHADER_TYPE_PIXEL)
-            || hlsl_version_lt(ctx, 5, 0))
+            || hlsl_version_lt(ctx, 4, 0))
     {
         hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INCOMPATIBLE_PROFILE,
-                "DeviceMemoryBarrier() can only be used in pixel and compute shaders 5.0 or higher.");
+                "DeviceMemoryBarrier() can only be used in compute and pixel shaders 4.0 or higher.");
     }
     return !!hlsl_block_add_sync(ctx, params->instrs, VKD3DSSF_GLOBAL_UAV, loc);
 }
@@ -5258,6 +5287,7 @@ intrinsic_functions[] =
     {"min",                                 2, true,  intrinsic_min},
     {"modf",                                2, true,  intrinsic_modf},
     {"mul",                                 2, true,  intrinsic_mul},
+    {"noise",                               1, true,  intrinsic_noise},
     {"normalize",                           1, true,  intrinsic_normalize},
     {"pow",                                 2, true,  intrinsic_pow},
     {"radians",                             1, true,  intrinsic_radians},

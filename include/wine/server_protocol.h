@@ -127,7 +127,7 @@ struct context_data
     union
     {
         struct { unsigned int eip, ebp, esp, eflags, cs, ss; } i386_regs;
-        struct { unsigned __int64 rip, rbp, rsp;
+        struct { unsigned __int64 rip, rsp;
                  unsigned int cs, ss, flags, __pad; } x86_64_regs;
         struct { unsigned int sp, lr, pc, cpsr; } arm_regs;
         struct { unsigned __int64 sp, pc, pstate; } arm64_regs;
@@ -135,7 +135,7 @@ struct context_data
     union
     {
         struct { unsigned int eax, ebx, ecx, edx, esi, edi; } i386_regs;
-        struct { unsigned __int64 rax,rbx, rcx, rdx, rsi, rdi,
+        struct { unsigned __int64 rax, rbx, rcx, rdx, rbp, rsi, rdi,
                                   r8, r9, r10, r11, r12, r13, r14, r15; } x86_64_regs;
         struct { unsigned int r[13]; } arm_regs;
         struct { unsigned __int64 x[31]; } arm64_regs;
@@ -1143,6 +1143,8 @@ struct init_first_thread_reply
     thread_id_t  tid;
     timeout_t    server_start;
     unsigned int session_id;
+    obj_handle_t inproc_device;
+    obj_handle_t alert_handle;
     data_size_t  info_size;
     /* VARARG(machines,ushorts); */
 };
@@ -1162,7 +1164,7 @@ struct init_thread_reply
 {
     struct reply_header __header;
     int          suspend;
-    char __pad_12[4];
+    obj_handle_t alert_handle;
 };
 
 
@@ -2934,6 +2936,36 @@ struct get_atom_information_reply
     data_size_t  total;
     /* VARARG(name,unicode_str); */
     char __pad_20[4];
+};
+
+
+
+struct add_user_atom_request
+{
+    struct request_header __header;
+    /* VARARG(name,unicode_str); */
+    char __pad_12[4];
+};
+struct add_user_atom_reply
+{
+    struct reply_header __header;
+    atom_t        atom;
+    char __pad_12[4];
+};
+
+
+
+struct get_user_atom_name_request
+{
+    struct request_header __header;
+    atom_t       atom;
+};
+struct get_user_atom_name_reply
+{
+    struct reply_header __header;
+    data_size_t  total;
+    /* VARARG(name,unicode_str); */
+    char __pad_12[4];
 };
 
 
@@ -5937,40 +5969,28 @@ struct set_keyboard_repeat_reply
     char __pad_12[4];
 };
 
+
 enum inproc_sync_type
 {
-    INPROC_SYNC_UNKNOWN,
-    INPROC_SYNC_AUTO_EVENT,
-    INPROC_SYNC_MANUAL_EVENT,
-    INPROC_SYNC_SEMAPHORE,
-    INPROC_SYNC_MUTEX,
-    INPROC_SYNC_AUTO_SERVER,
-    INPROC_SYNC_MANUAL_SERVER,
-    INPROC_SYNC_QUEUE,
+    INPROC_SYNC_UNKNOWN = 0,
+    INPROC_SYNC_EVENT = 1,
+    INPROC_SYNC_MUTEX = 2,
+    INPROC_SYNC_SEMAPHORE = 3,
 };
 
 
-
-struct get_linux_sync_device_request
-{
-    struct request_header __header;
-    char __pad_12[4];
-};
-struct get_linux_sync_device_reply
-{
-    struct reply_header __header;
-};
-
-
-struct get_linux_sync_obj_request
+struct get_inproc_sync_fd_request
 {
     struct request_header __header;
     obj_handle_t handle;
 };
-struct get_linux_sync_obj_reply
+struct get_inproc_sync_fd_reply
 {
     struct reply_header __header;
-    int type;
+    unsigned char type;
+    unsigned char queue;
+    unsigned char internal;
+    char __pad_11[1];
     unsigned int access;
 };
 
@@ -5979,37 +5999,13 @@ struct get_linux_sync_obj_reply
 struct select_inproc_queue_request
 {
     struct request_header __header;
-    char __pad_12[4];
+    int          select;
+    int          signaled;
+    char __pad_20[4];
 };
 struct select_inproc_queue_reply
 {
     struct reply_header __header;
-};
-
-
-
-struct unselect_inproc_queue_request
-{
-    struct request_header __header;
-    int          signaled;
-};
-struct unselect_inproc_queue_reply
-{
-    struct reply_header __header;
-};
-
-
-
-struct get_inproc_alert_event_request
-{
-    struct request_header __header;
-    char __pad_12[4];
-};
-struct get_inproc_alert_event_reply
-{
-    struct reply_header __header;
-    obj_handle_t handle;
-    char __pad_12[4];
 };
 
 
@@ -6128,6 +6124,8 @@ enum request
     REQ_delete_atom,
     REQ_find_atom,
     REQ_get_atom_information,
+    REQ_add_user_atom,
+    REQ_get_user_atom_name,
     REQ_get_msg_queue_handle,
     REQ_get_msg_queue,
     REQ_set_queue_fd,
@@ -6310,11 +6308,8 @@ enum request
     REQ_get_next_process,
     REQ_get_next_thread,
     REQ_set_keyboard_repeat,
-    REQ_get_linux_sync_device,
-    REQ_get_linux_sync_obj,
+    REQ_get_inproc_sync_fd,
     REQ_select_inproc_queue,
-    REQ_unselect_inproc_queue,
-    REQ_get_inproc_alert_event,
     REQ_NB_REQUESTS
 };
 
@@ -6435,6 +6430,8 @@ union generic_request
     struct delete_atom_request delete_atom_request;
     struct find_atom_request find_atom_request;
     struct get_atom_information_request get_atom_information_request;
+    struct add_user_atom_request add_user_atom_request;
+    struct get_user_atom_name_request get_user_atom_name_request;
     struct get_msg_queue_handle_request get_msg_queue_handle_request;
     struct get_msg_queue_request get_msg_queue_request;
     struct set_queue_fd_request set_queue_fd_request;
@@ -6617,11 +6614,8 @@ union generic_request
     struct get_next_process_request get_next_process_request;
     struct get_next_thread_request get_next_thread_request;
     struct set_keyboard_repeat_request set_keyboard_repeat_request;
-    struct get_linux_sync_device_request get_linux_sync_device_request;
-    struct get_linux_sync_obj_request get_linux_sync_obj_request;
+    struct get_inproc_sync_fd_request get_inproc_sync_fd_request;
     struct select_inproc_queue_request select_inproc_queue_request;
-    struct unselect_inproc_queue_request unselect_inproc_queue_request;
-    struct get_inproc_alert_event_request get_inproc_alert_event_request;
 };
 union generic_reply
 {
@@ -6740,6 +6734,8 @@ union generic_reply
     struct delete_atom_reply delete_atom_reply;
     struct find_atom_reply find_atom_reply;
     struct get_atom_information_reply get_atom_information_reply;
+    struct add_user_atom_reply add_user_atom_reply;
+    struct get_user_atom_name_reply get_user_atom_name_reply;
     struct get_msg_queue_handle_reply get_msg_queue_handle_reply;
     struct get_msg_queue_reply get_msg_queue_reply;
     struct set_queue_fd_reply set_queue_fd_reply;
@@ -6922,11 +6918,8 @@ union generic_reply
     struct get_next_process_reply get_next_process_reply;
     struct get_next_thread_reply get_next_thread_reply;
     struct set_keyboard_repeat_reply set_keyboard_repeat_reply;
-    struct get_linux_sync_device_reply get_linux_sync_device_reply;
-    struct get_linux_sync_obj_reply get_linux_sync_obj_reply;
+    struct get_inproc_sync_fd_reply get_inproc_sync_fd_reply;
     struct select_inproc_queue_reply select_inproc_queue_reply;
-    struct unselect_inproc_queue_reply unselect_inproc_queue_reply;
-    struct get_inproc_alert_event_reply get_inproc_alert_event_reply;
 };
 
 #define SERVER_PROTOCOL_VERSION 882

@@ -73,12 +73,13 @@ static const struct object_ops winstation_ops =
     sizeof(struct winstation),    /* size */
     &winstation_type,             /* type */
     winstation_dump,              /* dump */
-    no_add_queue,                 /* add_queue */
+    NULL,                         /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
     NULL,                         /* satisfied */
-    no_signal,                    /* signal */
+    NULL,                         /* signal */
     no_get_fd,                    /* get_fd */
+    no_get_sync,                  /* get_sync */
     default_map_access,           /* map_access */
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
@@ -88,7 +89,6 @@ static const struct object_ops winstation_ops =
     default_unlink_name,          /* unlink_name */
     no_open_file,                 /* open_file */
     no_kernel_obj_list,           /* get_kernel_obj_list */
-    no_get_inproc_sync,           /* get_inproc_sync */
     winstation_close_handle,      /* close_handle */
     winstation_destroy            /* destroy */
 };
@@ -114,12 +114,13 @@ static const struct object_ops desktop_ops =
     sizeof(struct desktop),       /* size */
     &desktop_type,                /* type */
     desktop_dump,                 /* dump */
-    no_add_queue,                 /* add_queue */
+    NULL,                         /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
     NULL,                         /* satisfied */
-    no_signal,                    /* signal */
+    NULL,                         /* signal */
     no_get_fd,                    /* get_fd */
+    no_get_sync,                  /* get_sync */
     default_map_access,           /* map_access */
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
@@ -129,7 +130,6 @@ static const struct object_ops desktop_ops =
     default_unlink_name,          /* unlink_name */
     no_open_file,                 /* open_file */
     no_kernel_obj_list,           /* get_kernel_obj_list */
-    no_get_inproc_sync,           /* get_inproc_sync */
     desktop_close_handle,         /* close_handle */
     desktop_destroy               /* destroy */
 };

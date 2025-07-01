@@ -1120,13 +1120,7 @@ static void prepaint_setup (const LISTVIEW_INFO *infoPtr, HDC hdc, const NMLVCUS
         textcolor = comctl32_color.clrWindowText;
 
     /* Set the text attributes */
-    if (backcolor != CLR_NONE)
-    {
-	SetBkMode(hdc, OPAQUE);
-	SetBkColor(hdc, backcolor);
-    }
-    else
-	SetBkMode(hdc, TRANSPARENT);
+    SetBkColor(hdc, backcolor);
     SetTextColor(hdc, textcolor);
 }
 
@@ -5269,6 +5263,7 @@ static void LISTVIEW_Refresh(LISTVIEW_INFO *infoPtr, HDC hdc, const RECT *prcEra
                hdcOrig, infoPtr->rcList.left, infoPtr->rcList.top, SRCCOPY);
     }
 
+    SetBkMode(hdc, TRANSPARENT);
     GetClientRect(infoPtr->hwndSelf, &rcClient);
     customdraw_fill(&nmlvcd, infoPtr, hdc, &rcClient, 0);
     cdmode = notify_customdraw(infoPtr, CDDS_PREPAINT, &nmlvcd);
@@ -6711,7 +6706,8 @@ static BOOL LISTVIEW_GetItemT(const LISTVIEW_INFO *infoPtr, LPLVITEMW lpLVItem, 
     /* if the app stores all the data, handle it separately */
     if (infoPtr->dwStyle & LVS_OWNERDATA)
     {
-	dispInfo.item.state = 0;
+        if (lpLVItem->mask & LVIF_STATE) lpLVItem->state = 0;
+        dispInfo.item.state = lpLVItem->state;
 
 	/* apparently, we should not callback for lParam in LVS_OWNERDATA */
 	if ((lpLVItem->mask & ~(LVIF_STATE | LVIF_PARAM)) ||
@@ -6867,8 +6863,6 @@ static BOOL LISTVIEW_GetItemT(const LISTVIEW_INFO *infoPtr, LPLVITEMW lpLVItem, 
     {
         if (!lpLVItem->iSubItem || (infoPtr->dwLvExStyle & LVS_EX_SUBITEMIMAGES))
             lpLVItem->iImage = pItemHdr->iImage;
-        else
-            lpLVItem->iImage = 0;
     }
 
     /* The pszText field */

@@ -116,6 +116,8 @@ struct msg_queue
 {
     struct object          obj;             /* object header */
     struct fd             *fd;              /* optional file descriptor to poll */
+    struct object         *inproc_sync;     /* inproc sync for client-side waits */
+    int                    signaled;        /* queue is signaled from fd POLLIN or masks */
     int                    paint_count;     /* pending paint messages count */
     int                    hotkey_count;    /* pending hotkey messages count */
     int                    quit_message;    /* is there a pending quit message? */
@@ -133,8 +135,7 @@ struct msg_queue
     struct hook_table     *hooks;           /* hook table */
     timeout_t              last_get_msg;    /* time of last get message call */
     int                    keystate_lock;   /* owns an input keystate lock */
-    int                    inproc_sync;     /* in-process synchronization object */
-    int                    in_inproc_wait;  /* are we in a client-side wait? */
+    int                    waiting;         /* is thread waiting on queue */
     queue_shm_t           *shared;          /* queue in session shared memory */
     unsigned int           ignore_post_msg; /* ignore post messages newer than this unique id */
 };
@@ -154,7 +155,6 @@ static int msg_queue_add_queue( struct object *obj, struct wait_queue_entry *ent
 static void msg_queue_remove_queue( struct object *obj, struct wait_queue_entry *entry );
 static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry );
 static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *entry );
-static int msg_queue_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void msg_queue_destroy( struct object *obj );
 static void msg_queue_poll_event( struct fd *fd, int event );
 static void thread_input_dump( struct object *obj, int verbose );
@@ -170,8 +170,9 @@ static const struct object_ops msg_queue_ops =
     msg_queue_remove_queue,    /* remove_queue */
     msg_queue_signaled,        /* signaled */
     msg_queue_satisfied,       /* satisfied */
-    no_signal,                 /* signal */
+    NULL,                      /* signal */
     no_get_fd,                 /* get_fd */
+    default_get_sync,          /* get_sync */
     default_map_access,        /* map_access */
     default_get_sd,            /* get_sd */
     default_set_sd,            /* set_sd */
@@ -181,7 +182,6 @@ static const struct object_ops msg_queue_ops =
     NULL,                      /* unlink_name */
     no_open_file,              /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
-    msg_queue_get_inproc_sync, /* get_inproc_sync */
     no_close_handle,           /* close_handle */
     msg_queue_destroy          /* destroy */
 };
@@ -204,12 +204,13 @@ static const struct object_ops thread_input_ops =
     sizeof(struct thread_input),  /* size */
     &no_type,                     /* type */
     thread_input_dump,            /* dump */
-    no_add_queue,                 /* add_queue */
+    NULL,                         /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
     NULL,                         /* satisfied */
-    no_signal,                    /* signal */
+    NULL,                         /* signal */
     no_get_fd,                    /* get_fd */
+    no_get_sync,                  /* get_sync */
     default_map_access,           /* map_access */
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
@@ -219,7 +220,6 @@ static const struct object_ops thread_input_ops =
     NULL,                         /* unlink_name */
     no_open_file,                 /* open_file */
     no_kernel_obj_list,           /* get_kernel_obj_list */
-    no_get_inproc_sync,           /* get_inproc_sync */
     no_close_handle,              /* close_handle */
     thread_input_destroy          /* destroy */
 };
@@ -308,6 +308,8 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
     if ((queue = alloc_object( &msg_queue_ops )))
     {
         queue->fd              = NULL;
+        queue->inproc_sync     = NULL;
+        queue->signaled        = 0;
         queue->paint_count     = 0;
         queue->hotkey_count    = 0;
         queue->quit_message    = 0;
@@ -320,19 +322,15 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
         queue->last_get_msg    = current_time;
         queue->keystate_lock   = 0;
         queue->ignore_post_msg = 0;
-        queue->inproc_sync     = create_inproc_event( TRUE, FALSE );
-        queue->in_inproc_wait  = 0;
+        queue->waiting         = 0;
         list_init( &queue->send_result );
         list_init( &queue->callback_result );
         list_init( &queue->pending_timers );
         list_init( &queue->expired_timers );
         for (i = 0; i < NB_MSG_KINDS; i++) list_init( &queue->msg_list[i] );
 
-        if (!(queue->shared = alloc_shared_object()))
-        {
-            release_object( queue );
-            return NULL;
-        }
+        if (get_inproc_device_fd() >= 0 && !(queue->inproc_sync = create_inproc_event_sync( 1, 0 ))) goto error;
+        if (!(queue->shared = alloc_shared_object())) goto error;
 
         SHARED_WRITE_BEGIN( queue->shared, queue_shm_t )
         {
@@ -354,6 +352,10 @@ static struct msg_queue *create_msg_queue( struct thread *thread, struct thread_
     }
     if (new_input) release_object( new_input );
     return queue;
+
+error:
+    release_object( queue );
+    return NULL;
 }
 
 /* free the message queue of a thread at thread exit */
@@ -712,6 +714,20 @@ void add_queue_hook_count( struct thread *thread, unsigned int index, int count 
     assert( thread->queue->shared->hooks_count[index] >= 0 );
 }
 
+static void signal_queue_sync( struct msg_queue *queue )
+{
+    if (queue->signaled) return;
+    queue->signaled = 1;
+    wake_up( &queue->obj, 0 );
+    if (queue->inproc_sync) signal_sync( queue->inproc_sync );
+}
+
+static void reset_queue_sync( struct msg_queue *queue )
+{
+    queue->signaled = 0;
+    if (queue->inproc_sync) reset_sync( queue->inproc_sync );
+}
+
 /* check the queue status */
 static inline int is_signaled( struct msg_queue *queue )
 {
@@ -738,11 +754,7 @@ static inline void set_queue_bits( struct msg_queue *queue, unsigned int bits )
     }
     SHARED_WRITE_END;
 
-    if (is_signaled( queue ))
-    {
-        wake_up( &queue->obj, 0 );
-        set_inproc_event( queue->inproc_sync );
-    }
+    if (is_signaled( queue )) signal_queue_sync( queue );
 }
 
 /* clear some queue bits */
@@ -762,8 +774,7 @@ static inline void clear_queue_bits( struct msg_queue *queue, unsigned int bits 
         if (queue->keystate_lock) unlock_input_keystate( queue->input );
         queue->keystate_lock = 0;
     }
-    if (!is_signaled( queue ))
-        reset_inproc_event( queue->inproc_sync );
+    if (!is_signaled( queue )) reset_queue_sync( queue );
 }
 
 /* check if message is matched by the filter */
@@ -1282,20 +1293,25 @@ static void cleanup_results( struct msg_queue *queue )
 /* check if the thread owning the queue is hung (not checking for messages) */
 static int is_queue_hung( struct msg_queue *queue )
 {
-    struct wait_queue_entry *entry;
-
     if (current_time - queue->last_get_msg <= 5 * TICKS_PER_SEC)
         return 0;  /* less than 5 seconds since last get message -> not hung */
+    return !queue->waiting;
+}
 
-    LIST_FOR_EACH_ENTRY( entry, &queue->obj.wait_queue, struct wait_queue_entry, entry )
+static int msg_queue_select( struct msg_queue *queue, int events )
+{
+    if (queue->waiting == !!events)
     {
-        if (get_wait_queue_thread(entry)->queue == queue)
-            return 0;  /* thread is waiting on queue -> not hung */
+        set_error( STATUS_ACCESS_DENIED );
+        return 0;
     }
+    queue->waiting = !!events;
 
-    if (queue->in_inproc_wait)
-        return 0;  /* thread is waiting on queue in absentia -> not hung */
-
+    if (queue->fd)
+    {
+        if (events && check_fd_events( queue->fd, POLLIN )) signal_queue_sync( queue );
+        else set_fd_events( queue->fd, events );
+    }
     return 1;
 }
 
@@ -1310,8 +1326,7 @@ static int msg_queue_add_queue( struct object *obj, struct wait_queue_entry *ent
         return 0;
     }
 
-    if (queue->fd && list_empty( &obj->wait_queue ))  /* first on the queue */
-        set_fd_events( queue->fd, POLLIN );
+    if (!msg_queue_select( queue, POLLIN )) return 0;
     add_queue( obj, entry );
     return 1;
 }
@@ -1321,8 +1336,7 @@ static void msg_queue_remove_queue(struct object *obj, struct wait_queue_entry *
     struct msg_queue *queue = (struct msg_queue *)obj;
 
     remove_queue( obj, entry );
-    if (queue->fd && list_empty( &obj->wait_queue ))  /* last on the queue is gone */
-        set_fd_events( queue->fd, 0 );
+    msg_queue_select( queue, 0 );
 }
 
 static void msg_queue_dump( struct object *obj, int verbose )
@@ -1336,18 +1350,8 @@ static void msg_queue_dump( struct object *obj, int verbose )
 static int msg_queue_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct msg_queue *queue = (struct msg_queue *)obj;
-    int ret = 0;
-
-    if (queue->fd)
-    {
-        if ((ret = check_fd_events( queue->fd, POLLIN )))
-            /* stop waiting on select() if we are signaled */
-            set_fd_events( queue->fd, 0 );
-        else if (!list_empty( &obj->wait_queue ))
-            /* restart waiting on poll() if we are no longer signaled */
-            set_fd_events( queue->fd, POLLIN );
-    }
-    return ret || is_signaled( queue );
+    assert( obj->ops == &msg_queue_ops );
+    return queue->signaled;
 }
 
 static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *entry )
@@ -1361,15 +1365,17 @@ static void msg_queue_satisfied( struct object *obj, struct wait_queue_entry *en
         shared->changed_mask = 0;
     }
     SHARED_WRITE_END;
-    reset_inproc_event( queue->inproc_sync );
+    reset_queue_sync( queue );
 }
 
-static int msg_queue_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
+int thread_queue_select( struct thread *thread, int select )
 {
-    struct msg_queue *queue = (struct msg_queue *)obj;
+    return msg_queue_select( thread->queue, select );
+}
 
-    *type = INPROC_SYNC_QUEUE;
-    return queue->inproc_sync;
+void thread_queue_satisfied( struct thread *thread )
+{
+    msg_queue_satisfied( &thread->queue->obj, NULL );
 }
 
 static void msg_queue_destroy( struct object *obj )
@@ -1415,7 +1421,7 @@ static void msg_queue_destroy( struct object *obj )
     if (queue->hooks) release_object( queue->hooks );
     if (queue->fd) release_object( queue->fd );
     if (queue->shared) free_shared_object( queue->shared );
-    if (use_inproc_sync()) close( queue->inproc_sync );
+    if (queue->inproc_sync) release_object( queue->inproc_sync );
 }
 
 static void msg_queue_poll_event( struct fd *fd, int event )
@@ -1425,8 +1431,7 @@ static void msg_queue_poll_event( struct fd *fd, int event )
 
     if (event & (POLLERR | POLLHUP)) set_fd_events( fd, -1 );
     else set_fd_events( queue->fd, 0 );
-    wake_up( &queue->obj, 0 );
-    set_inproc_event( queue->inproc_sync );
+    signal_queue_sync( queue );
 }
 
 static void thread_input_dump( struct object *obj, int verbose )
@@ -1504,6 +1509,12 @@ int init_thread_queue( struct thread *thread )
 {
     if (thread->queue) return 1;
     return (create_msg_queue( thread, NULL ) != NULL);
+}
+
+struct object *thread_queue_inproc_sync( struct thread *thread )
+{
+    if (!thread->queue) return NULL;
+    return grab_object( thread->queue->inproc_sync );
 }
 
 /* attach two thread input data structures */
@@ -3199,28 +3210,9 @@ DECL_HANDLER(set_queue_mask)
         reply->wake_bits    = queue_shm->wake_bits;
         reply->changed_bits = queue_shm->changed_bits;
 
-        if (is_signaled( queue ))
-        {
-            /* if skip wait is set, do what would have been done in the subsequent wait */
-            if (req->skip_wait)
-            {
-                SHARED_WRITE_BEGIN( queue_shm, queue_shm_t )
-                {
-                    shared->wake_mask = 0;
-                    shared->changed_mask = 0;
-                }
-                SHARED_WRITE_END;
-            }
-            else
-            {
-                wake_up( &queue->obj, 0 );
-                set_inproc_event( queue->inproc_sync );
-            }
-        }
-        else
-        {
-            reset_inproc_event( queue->inproc_sync );
-        }
+        if (!is_signaled( queue )) reset_queue_sync( queue );
+        else if (!req->skip_wait) signal_queue_sync( queue );
+        else msg_queue_satisfied( &queue->obj, NULL );
     }
 }
 
@@ -3242,8 +3234,7 @@ DECL_HANDLER(get_queue_status)
         }
         SHARED_WRITE_END;
 
-        if (!is_signaled( queue ))
-            reset_inproc_event( queue->inproc_sync );
+        if (!is_signaled( queue )) reset_queue_sync( queue );
     }
     else reply->wake_bits = reply->changed_bits = 0;
 }
@@ -3442,8 +3433,7 @@ DECL_HANDLER(get_message)
     }
     SHARED_WRITE_END;
 
-    if (!is_signaled( queue ))
-        reset_inproc_event( queue->inproc_sync );
+    if (!is_signaled( queue )) reset_queue_sync( queue );
 
     /* then check for posted messages */
     if ((filter & QS_POSTMESSAGE) &&
@@ -3514,7 +3504,7 @@ DECL_HANDLER(get_message)
     }
     SHARED_WRITE_END;
 
-    reset_inproc_event( queue->inproc_sync );
+    reset_queue_sync( queue );
     set_error( STATUS_PENDING );  /* FIXME */
     return;
 
@@ -4317,43 +4307,4 @@ DECL_HANDLER(set_keyboard_repeat)
     if (!desktop->key_repeat.enable) stop_key_repeat( desktop );
 
     release_object( desktop );
-}
-
-DECL_HANDLER(select_inproc_queue)
-{
-    struct msg_queue *queue = current->queue;
-
-    if (queue->in_inproc_wait)
-    {
-        set_error( STATUS_ACCESS_DENIED );
-    }
-    else
-    {
-        check_thread_queue_idle( current );
-
-        if (queue->fd)
-            set_fd_events( queue->fd, POLLIN );
-
-        queue->in_inproc_wait = 1;
-    }
-}
-
-DECL_HANDLER(unselect_inproc_queue)
-{
-    struct msg_queue *queue = current->queue;
-
-    if (!queue->in_inproc_wait)
-    {
-        set_error( STATUS_ACCESS_DENIED );
-    }
-    else
-    {
-        if (queue->fd)
-            set_fd_events( queue->fd, 0 );
-
-        if (req->signaled)
-            msg_queue_satisfied( &queue->obj, NULL );
-
-        queue->in_inproc_wait = 0;
-    }
 }

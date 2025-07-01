@@ -250,8 +250,20 @@ static void test_class(void)
     NTSTATUS status;
     WCHAR buf[64];
     WNDCLASSW cls;
+    HANDLE prop;
     HWND hwnd;
     ULONG ret;
+
+    status = NtQueryInformationAtom( 0xc000, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
+    ok( status == STATUS_INVALID_HANDLE, "NtQueryInformationAtom returned %#lx\n", status );
+
+    memset( buf, 0xcc, sizeof(buf) );
+    name.Buffer = buf;
+    name.Length = 0xdead;
+    name.MaximumLength = sizeof(buf);
+    ret = NtUserGetAtomName( 0xc000, &name );
+    ok( !ret && GetLastError() == ERROR_INVALID_HANDLE,
+        "NtUserGetAtomName returned %lx %lu\n", ret, GetLastError() );
 
     memset( &cls, 0, sizeof(cls) );
     cls.style         = CS_HREDRAW | CS_VREDRAW;
@@ -269,7 +281,7 @@ static void test_class(void)
 
     status = NtQueryInformationAtom( class, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
     ok( status == STATUS_INVALID_HANDLE || !status, "NtQueryInformationAtom returned %#lx\n", status );
-    if (!status) todo_wine ok( wcscmp( abi->Name, L"test" ), "buf = %s\n", debugstr_w(abi->Name) );
+    if (!status) ok( wcscmp( abi->Name, L"test" ), "buf = %s\n", debugstr_w(abi->Name) );
 
     memset( buf, 0xcc, sizeof(buf) );
     name.Buffer = buf;
@@ -327,6 +339,38 @@ static void test_class(void)
     ok( !ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER,
         "NtUserGetClassName returned %lx %lu\n", ret, GetLastError() );
 
+    SetPropW( hwnd, L"WineTestProp", (void *)0xdeadbeef );
+
+    status = NtFindAtom( L"WineTestProp", sizeof(L"WineTestProp") - sizeof(WCHAR), &global );
+    ok( !status, "NtFindAtom returned %#lx\n", status );
+
+    for (ATOM atom = 0xc000; atom != 0; atom++)
+    {
+        memset( name.Buffer, 0xcc, name.MaximumLength );
+        ret = NtUserGetAtomName( atom, &name );
+        ok( wcscmp( buf, L"WineTestProp" ), "buf = %s\n", debugstr_w(buf) );
+    }
+
+    prop = NtUserGetProp( hwnd, L"WineTestProp" );
+    todo_wine ok( prop == NULL, "NtUserGetProp returned %#lx\n", status );
+    status = NtAddAtom( L"WineTestProp", sizeof(L"WineTestProp"), &global );
+    ok( !status, "NtAddAtom returned %#lx\n", status );
+    prop = NtUserGetProp( hwnd, MAKEINTRESOURCEW(global) );
+    todo_wine ok( prop == (void *)0xdeadbeef, "NtUserGetProp returned %#lx\n", status );
+    status = NtDeleteAtom( global );
+    ok( !status, "NtDeleteAtom returned %#lx\n", status );
+
+    cls.lpszClassName = L"WineTestProp";
+    class = RegisterClassW( &cls );
+    ok( class != 0, "RegisterClassW returned %#x\n", class );
+    prop = NtUserGetProp( hwnd, MAKEINTRESOURCEW(class) );
+    ok( prop == NULL, "NtUserGetProp returned %#lx\n", status );
+    ret = UnregisterClassW( L"WineTestProp", GetModuleHandleW( NULL ) );
+    ok( ret, "UnregisterClassW failed: %lu\n", GetLastError() );
+    cls.lpszClassName = L"test";
+
+    RemovePropW( hwnd, L"WineTestProp" );
+
     DestroyWindow( hwnd );
 
     ret = UnregisterClassW( L"test", GetModuleHandleW(NULL) );
@@ -341,13 +385,36 @@ static void test_class(void)
         "NtUserGetAtomName returned %lx %lu\n", ret, GetLastError() );
     ok( buf[0] == 0xcccc, "buf = %s\n", debugstr_w(buf) );
 
+    cls.lpszClassName = L"#1";
+    class = RegisterClassW( &cls );
+    ok( class == 1, "RegisterClassW failed: %lu\n", GetLastError() );
+
+    hwnd = CreateWindowW( MAKEINTRESOURCEW(1), NULL, WS_OVERLAPPEDWINDOW | WS_HSCROLL | WS_VSCROLL,
+                          CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, 0, 0, NULL, 0 );
+    ok( !!hwnd, "CreateWindowW failed: %lu\n", GetLastError() );
+
+    memset( buf, 0xcc, sizeof(buf) );
+    name.Buffer = buf;
+    name.Length = 0xdead;
+    name.MaximumLength = 8;
+    ret = NtUserGetClassName( hwnd, FALSE, &name );
+    ok( ret == 2, "NtUserGetClassName returned %lu\n", ret );
+    ok( name.Length == 0xdead, "Length = %u\n", name.Length );
+    ok( name.MaximumLength == 8, "MaximumLength = %u\n", name.MaximumLength );
+    ok( !wcscmp( buf, L"#1" ), "buf = %s\n", debugstr_w(buf) );
+
+    DestroyWindow( hwnd );
+
+    ret = UnregisterClassW( L"#1", GetModuleHandleW(NULL) );
+    ok( ret, "UnregisterClassW failed: %lu\n", GetLastError() );
+
     for (int i = 0; i < ARRAY_SIZE(global_atoms); i++)
     {
         winetest_push_context( "%#x: %s", global_atoms[i].atom, debugstr_w(global_atoms[i].name) );
 
         status = NtQueryInformationAtom( global_atoms[i].atom, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
         ok( !status, "NtQueryInformationAtom returned %#lx\n", status );
-        todo_wine ok( !wcscmp( abi->Name, global_atoms[i].name ), "buf = %s\n", debugstr_w(abi->Name) );
+        ok( !wcscmp( abi->Name, global_atoms[i].name ), "buf = %s\n", debugstr_w(abi->Name) );
 
         memset( buf, 0xcc, sizeof(buf) );
         name.Buffer = buf;
@@ -367,7 +434,6 @@ static void test_class(void)
         winetest_push_context( "%#x: %s", user_atoms[i].atom, debugstr_w(user_atoms[i].name) );
 
         status = NtQueryInformationAtom( user_atoms[i].atom, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
-        ok( !status, "NtQueryInformationAtom returned %#lx\n", status );
         ok( wcscmp( abi->Name, user_atoms[i].name ), "buf = %s\n", debugstr_w(abi->Name) );
 
         memset( buf, 0xcc, sizeof(buf) );
@@ -381,25 +447,23 @@ static void test_class(void)
             win_skip( "Skipping user atoms check on W11\n" );
             break;
         }
-        todo_wine_if( i != 0 && i != 2 && i != 6 )
         ok( ret == wcslen( user_atoms[i].name ), "NtUserGetAtomName returned %lu\n", ret );
         ok( name.Length == 0xdead, "Length = %u\n", name.Length );
         ok( name.MaximumLength == sizeof(buf), "MaximumLength = %u\n", name.MaximumLength );
-        todo_wine ok( !wcscmp( buf, user_atoms[i].name ), "buf = %s\n", debugstr_w(buf) );
+        ok( !wcscmp( buf, user_atoms[i].name ), "buf = %s\n", debugstr_w(buf) );
 
         SetLastError( 0xdeadbeef );
         hwnd = CreateWindowW( MAKEINTRESOURCEW(user_atoms[i].atom), NULL, WS_OVERLAPPEDWINDOW | WS_HSCROLL | WS_VSCROLL,
                               CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, 0, 0, NULL, 0 );
         if (!user_atoms[i].class)
         {
-            todo_wine_if( i < 9 ) ok( !hwnd, "CreateWindowW succeeded\n" );
+            ok( !hwnd, "CreateWindowW succeeded\n" );
             todo_wine ok( GetLastError() == ERROR_CANNOT_FIND_WND_CLASS, "got error %lu\n", GetLastError() );
-            if (hwnd) DestroyWindow( hwnd );
         }
         else
         {
-            todo_wine ok( !!hwnd, "CreateWindowW failed: %lu\n", GetLastError() );
-            if (hwnd) DestroyWindow( hwnd );
+            ok( !!hwnd, "CreateWindowW failed: %lu\n", GetLastError() );
+            DestroyWindow( hwnd );
         }
 
         winetest_pop_context();
@@ -2798,7 +2862,7 @@ static void test_RegisterClipboardFormat(void)
     ok( atom != 0, "got %#x\n", atom );
     ok( GetLastError() == 0xdeadbeef, "got %#lx\n", GetLastError() );
     status = NtQueryInformationAtom( atom, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
-    todo_wine ok( status == STATUS_INVALID_HANDLE, "got %#lx\n", status );
+    ok( status == STATUS_INVALID_HANDLE, "got %#lx\n", status );
 
     memset( buf, 0xcc, sizeof(buf) );
     name.Buffer = buf;
@@ -2849,7 +2913,7 @@ static void test_NtUserRegisterWindowMessage(void)
     ok( atom != 0, "got %#x\n", atom );
     ok( GetLastError() == 0xdeadbeef, "got %#lx\n", GetLastError() );
     status = NtQueryInformationAtom( atom, AtomBasicInformation, abi, sizeof(abi_buf), NULL );
-    todo_wine ok( status == STATUS_INVALID_HANDLE, "got %#lx\n", status );
+    ok( status == STATUS_INVALID_HANDLE, "got %#lx\n", status );
 
     memset( buf, 0xcc, sizeof(buf) );
     name.Buffer = buf;

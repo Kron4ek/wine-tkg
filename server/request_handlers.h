@@ -120,6 +120,8 @@ DECL_HANDLER(add_atom);
 DECL_HANDLER(delete_atom);
 DECL_HANDLER(find_atom);
 DECL_HANDLER(get_atom_information);
+DECL_HANDLER(add_user_atom);
+DECL_HANDLER(get_user_atom_name);
 DECL_HANDLER(get_msg_queue_handle);
 DECL_HANDLER(get_msg_queue);
 DECL_HANDLER(set_queue_fd);
@@ -302,11 +304,8 @@ DECL_HANDLER(resume_process);
 DECL_HANDLER(get_next_process);
 DECL_HANDLER(get_next_thread);
 DECL_HANDLER(set_keyboard_repeat);
-DECL_HANDLER(get_linux_sync_device);
-DECL_HANDLER(get_linux_sync_obj);
+DECL_HANDLER(get_inproc_sync_fd);
 DECL_HANDLER(select_inproc_queue);
-DECL_HANDLER(unselect_inproc_queue);
-DECL_HANDLER(get_inproc_alert_event);
 
 typedef void (*req_handler)( const void *req, void *reply );
 static const req_handler req_handlers[REQ_NB_REQUESTS] =
@@ -424,6 +423,8 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_delete_atom,
     (req_handler)req_find_atom,
     (req_handler)req_get_atom_information,
+    (req_handler)req_add_user_atom,
+    (req_handler)req_get_user_atom_name,
     (req_handler)req_get_msg_queue_handle,
     (req_handler)req_get_msg_queue,
     (req_handler)req_set_queue_fd,
@@ -606,11 +607,8 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_get_next_process,
     (req_handler)req_get_next_thread,
     (req_handler)req_set_keyboard_repeat,
-    (req_handler)req_get_linux_sync_device,
-    (req_handler)req_get_linux_sync_obj,
+    (req_handler)req_get_inproc_sync_fd,
     (req_handler)req_select_inproc_queue,
-    (req_handler)req_unselect_inproc_queue,
-    (req_handler)req_get_inproc_alert_event,
 };
 
 C_ASSERT( sizeof(abstime_t) == 8 );
@@ -631,7 +629,7 @@ C_ASSERT( sizeof(object_id_t) == 8 );
 C_ASSERT( sizeof(process_id_t) == 4 );
 C_ASSERT( sizeof(short int) == 2 );
 C_ASSERT( sizeof(struct async_data) == 40 );
-C_ASSERT( sizeof(struct context_data) == 1728 );
+C_ASSERT( sizeof(struct context_data) == 1720 );
 C_ASSERT( sizeof(struct cursor_pos) == 24 );
 C_ASSERT( sizeof(struct filesystem_event) == 12 );
 C_ASSERT( sizeof(struct generic_map) == 16 );
@@ -713,8 +711,10 @@ C_ASSERT( offsetof(struct init_first_thread_reply, pid) == 8 );
 C_ASSERT( offsetof(struct init_first_thread_reply, tid) == 12 );
 C_ASSERT( offsetof(struct init_first_thread_reply, server_start) == 16 );
 C_ASSERT( offsetof(struct init_first_thread_reply, session_id) == 24 );
-C_ASSERT( offsetof(struct init_first_thread_reply, info_size) == 28 );
-C_ASSERT( sizeof(struct init_first_thread_reply) == 32 );
+C_ASSERT( offsetof(struct init_first_thread_reply, inproc_device) == 28 );
+C_ASSERT( offsetof(struct init_first_thread_reply, alert_handle) == 32 );
+C_ASSERT( offsetof(struct init_first_thread_reply, info_size) == 36 );
+C_ASSERT( sizeof(struct init_first_thread_reply) == 40 );
 C_ASSERT( offsetof(struct init_thread_request, unix_tid) == 12 );
 C_ASSERT( offsetof(struct init_thread_request, reply_fd) == 16 );
 C_ASSERT( offsetof(struct init_thread_request, wait_fd) == 20 );
@@ -722,6 +722,7 @@ C_ASSERT( offsetof(struct init_thread_request, teb) == 24 );
 C_ASSERT( offsetof(struct init_thread_request, entry) == 32 );
 C_ASSERT( sizeof(struct init_thread_request) == 40 );
 C_ASSERT( offsetof(struct init_thread_reply, suspend) == 8 );
+C_ASSERT( offsetof(struct init_thread_reply, alert_handle) == 12 );
 C_ASSERT( sizeof(struct init_thread_reply) == 16 );
 C_ASSERT( offsetof(struct terminate_process_request, handle) == 12 );
 C_ASSERT( offsetof(struct terminate_process_request, exit_code) == 16 );
@@ -1300,6 +1301,13 @@ C_ASSERT( offsetof(struct get_atom_information_reply, count) == 8 );
 C_ASSERT( offsetof(struct get_atom_information_reply, pinned) == 12 );
 C_ASSERT( offsetof(struct get_atom_information_reply, total) == 16 );
 C_ASSERT( sizeof(struct get_atom_information_reply) == 24 );
+C_ASSERT( sizeof(struct add_user_atom_request) == 16 );
+C_ASSERT( offsetof(struct add_user_atom_reply, atom) == 8 );
+C_ASSERT( sizeof(struct add_user_atom_reply) == 16 );
+C_ASSERT( offsetof(struct get_user_atom_name_request, atom) == 12 );
+C_ASSERT( sizeof(struct get_user_atom_name_request) == 16 );
+C_ASSERT( offsetof(struct get_user_atom_name_reply, total) == 8 );
+C_ASSERT( sizeof(struct get_user_atom_name_reply) == 16 );
 C_ASSERT( sizeof(struct get_msg_queue_handle_request) == 16 );
 C_ASSERT( offsetof(struct get_msg_queue_handle_reply, handle) == 8 );
 C_ASSERT( sizeof(struct get_msg_queue_handle_reply) == 16 );
@@ -2299,15 +2307,13 @@ C_ASSERT( offsetof(struct set_keyboard_repeat_request, period) == 20 );
 C_ASSERT( sizeof(struct set_keyboard_repeat_request) == 24 );
 C_ASSERT( offsetof(struct set_keyboard_repeat_reply, enable) == 8 );
 C_ASSERT( sizeof(struct set_keyboard_repeat_reply) == 16 );
-C_ASSERT( sizeof(struct get_linux_sync_device_request) == 16 );
-C_ASSERT( offsetof(struct get_linux_sync_obj_request, handle) == 12 );
-C_ASSERT( sizeof(struct get_linux_sync_obj_request) == 16 );
-C_ASSERT( offsetof(struct get_linux_sync_obj_reply, type) == 8 );
-C_ASSERT( offsetof(struct get_linux_sync_obj_reply, access) == 12 );
-C_ASSERT( sizeof(struct get_linux_sync_obj_reply) == 16 );
-C_ASSERT( sizeof(struct select_inproc_queue_request) == 16 );
-C_ASSERT( offsetof(struct unselect_inproc_queue_request, signaled) == 12 );
-C_ASSERT( sizeof(struct unselect_inproc_queue_request) == 16 );
-C_ASSERT( sizeof(struct get_inproc_alert_event_request) == 16 );
-C_ASSERT( offsetof(struct get_inproc_alert_event_reply, handle) == 8 );
-C_ASSERT( sizeof(struct get_inproc_alert_event_reply) == 16 );
+C_ASSERT( offsetof(struct get_inproc_sync_fd_request, handle) == 12 );
+C_ASSERT( sizeof(struct get_inproc_sync_fd_request) == 16 );
+C_ASSERT( offsetof(struct get_inproc_sync_fd_reply, type) == 8 );
+C_ASSERT( offsetof(struct get_inproc_sync_fd_reply, queue) == 9 );
+C_ASSERT( offsetof(struct get_inproc_sync_fd_reply, internal) == 10 );
+C_ASSERT( offsetof(struct get_inproc_sync_fd_reply, access) == 12 );
+C_ASSERT( sizeof(struct get_inproc_sync_fd_reply) == 16 );
+C_ASSERT( offsetof(struct select_inproc_queue_request, select) == 12 );
+C_ASSERT( offsetof(struct select_inproc_queue_request, signaled) == 16 );
+C_ASSERT( sizeof(struct select_inproc_queue_request) == 24 );
