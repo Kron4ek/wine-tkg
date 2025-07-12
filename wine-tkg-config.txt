@@ -1,11 +1,10 @@
-# Last wine-tkg-staging-ntsync-git configuration - Tue Jul  1 06:19:52 PM UTC 2025 :
+# Last wine-tkg-staging-ntsync-git configuration - Sat Jul 12 11:26:35 AM UTC 2025 :
 
 Local cfg files used
 
-Wine (plain) version: 10.11.r0.gcad35b3c811
-Using wine-staging patchset (version 10.11.r0.g3e94d124)
+Wine (plain) version: 10.12.r0.g9ecae7b571f
+Using wine-staging patchset (version 10.12.r0.gb09545bc)
 
-Disabled the local Esync patchset to use Staging impl instead.
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
 Done applying backports hotfixes (if any) - list available in prepare.log
@@ -13,7 +12,7 @@ Done applying reverting hotfixes (if any) - list available in prepare.log
 
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
-Staging overrides, if any: -W winedevice-Default_Drivers
+Staging overrides, if any: 
 
 
 enable_dynamic_wow64_def.patch -- ( Enable WINEARCH=wow64 by default )
@@ -25,12 +24,10 @@ proton_battleye.patch -- ( Add support for Proton's Battleye runtime )
 proton-eac_bridge.patch -- ( Add support for Proton's EAC bridge )
 wow64_loader_hack.patch -- ( Hack around loader name for EAC on 10.2+ )
 
-Applied reverting hotfix de0fc7fd95074cfdeb032d36246c56247d2bd82b.myrevert
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix a608ef1.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
 Applied hotfix opencl-fixup.mypatch
-Applied your own patch hags.mypatch
-Applied your own patch win32u-hdr.mypatch
+Applied hotfix 0001-wine-staging-Fix-build.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )

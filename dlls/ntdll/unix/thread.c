@@ -1104,7 +1104,6 @@ static void contexts_from_server( CONTEXT *context, struct context_data server_c
  */
 static DECLSPEC_NORETURN void pthread_exit_wrapper( int status )
 {
-    close( ntdll_get_thread_data()->alert_fd );
     close( ntdll_get_thread_data()->wait_fd[0] );
     close( ntdll_get_thread_data()->wait_fd[1] );
     close( ntdll_get_thread_data()->reply_fd );
@@ -1127,7 +1126,7 @@ static void start_thread( TEB *teb )
     thread_data->syscall_trace = TRACE_ON(syscall);
     thread_data->pthread_id = pthread_self();
     pthread_setspecific( teb_key, teb );
-    server_init_thread( thread_data, &suspend );
+    server_init_thread( thread_data->start, &suspend );
     signal_start_thread( thread_data->start, thread_data->param, suspend, teb );
 }
 
@@ -1813,7 +1812,7 @@ NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT ma
 
     if (ret == STATUS_PENDING)
     {
-        NtWaitForSingleObject( context_handle, FALSE, NULL );
+        server_wait_for_object( context_handle, FALSE, NULL );
 
         SERVER_START_REQ( get_thread_context )
         {

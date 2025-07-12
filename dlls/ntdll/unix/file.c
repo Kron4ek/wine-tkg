@@ -3514,11 +3514,11 @@ static inline int get_dos_prefix_len( const UNICODE_STRING *name )
 
 
 /***********************************************************************
- *           remove_last_componentA
+ *           remove_last_component
  *
  * Remove the last component of the path. Helper for find_drive_rootA.
  */
-static inline unsigned int remove_last_componentA( const char *path, unsigned int len )
+static unsigned int remove_last_component( const char *path, unsigned int len )
 {
     int level = 0;
 
@@ -3541,66 +3541,6 @@ static inline unsigned int remove_last_componentA( const char *path, unsigned in
         len = prev;
     }
     return len;
-}
-
-
-/***********************************************************************
- *           find_drive_rootA
- *
- * Find a drive for which the root matches the beginning of the given path.
- * This can be used to translate a Unix path into a drive + DOS path.
- * Return value is the drive, or -1 on error. On success, ppath is modified
- * to point to the beginning of the DOS path.
- */
-static NTSTATUS find_drive_rootA( LPCSTR *ppath, unsigned int len, int *drive_ret )
-{
-    /* Starting with the full path, check if the device and inode match any of
-     * the wine 'drives'. If not then remove the last path component and try
-     * again. If the last component was a '..' then skip a normal component
-     * since it's a directory that's ascended back out of.
-     */
-    int drive;
-    char *buffer;
-    const char *path = *ppath;
-    struct stat st;
-    struct file_identity info[MAX_DOS_DRIVES];
-
-    /* get device and inode of all drives */
-    if (!get_drives_info( info )) return STATUS_OBJECT_PATH_NOT_FOUND;
-
-    /* strip off trailing slashes */
-    while (len > 1 && path[len - 1] == '/') len--;
-
-    /* make a copy of the path */
-    if (!(buffer = malloc( len + 1 ))) return STATUS_NO_MEMORY;
-    memcpy( buffer, path, len );
-    buffer[len] = 0;
-
-    for (;;)
-    {
-        if (!stat( buffer, &st ) && S_ISDIR( st.st_mode ))
-        {
-            /* Find the drive */
-            for (drive = 0; drive < MAX_DOS_DRIVES; drive++)
-            {
-                if ((info[drive].dev == st.st_dev) && (info[drive].ino == st.st_ino))
-                {
-                    if (len == 1) len = 0;  /* preserve root slash in returned path */
-                    TRACE( "%s -> drive %c:, root=%s, name=%s\n",
-                           debugstr_a(path), 'A' + drive, debugstr_a(buffer), debugstr_a(path + len));
-                    *ppath += len;
-                    *drive_ret = drive;
-                    free( buffer );
-                    return STATUS_SUCCESS;
-                }
-            }
-        }
-        if (len <= 1) break;  /* reached root */
-        len = remove_last_componentA( buffer, len );
-        buffer[len] = 0;
-    }
-    free( buffer );
-    return STATUS_OBJECT_PATH_NOT_FOUND;
 }
 
 
@@ -3818,18 +3758,7 @@ NTSTATUS create_reparse_target( int dirfd, const char *unix_src, int depth, cons
         d = dirname( unix_path );
         if (d != unix_path) strcpy( unix_path, d );
         strcat( unix_path, "/");
-        for (;;)
-        {
-            nt_path = malloc( nt_path_len * sizeof(WCHAR) );
-            if (!nt_path)
-            {
-                free( unix_path );
-                return STATUS_NO_MEMORY;
-            }
-            status = wine_unix_to_nt_file_name( unix_path, nt_path, &nt_path_len );
-            if (status != STATUS_BUFFER_TOO_SMALL) break;
-            free( nt_path );
-        }
+        status = unix_to_nt_file_name( unix_path, &nt_path, FILE_OPEN );
         free( unix_path );
         if (status != STATUS_SUCCESS)
             return status;
@@ -5053,7 +4982,7 @@ static NTSTATUS find_drive_nt_root( char *unix_name, unsigned int len,
     while (len > 1 && unix_name[len - 1] == '/') len--;
     unix_name[len] = 0;
 
-    for (pos = len; pos; pos = remove_last_componentA( unix_name, pos ))
+    for (pos = len; pos; pos = remove_last_component( unix_name, pos ))
     {
         char prev = unix_name[pos];
         unix_name[pos] = 0;
@@ -5093,72 +5022,14 @@ static NTSTATUS find_drive_nt_root( char *unix_name, unsigned int len,
 /******************************************************************
  *           unix_to_nt_file_name
  */
-NTSTATUS unix_to_nt_file_name( const char *name, WCHAR **nt )
-{
-    static const WCHAR unix_prefixW[] = {'\\','?','?','\\','u','n','i','x',0};
-    WCHAR dos_prefixW[] = {'\\','?','?','\\','A',':','\\',0};
-    const WCHAR *prefix = unix_prefixW;
-    unsigned int lenW, lenA = strlen(name);
-    const char *path = name;
-    NTSTATUS status;
-    WCHAR *buffer;
-    int drive;
-
-    status = find_drive_rootA( &path, lenA, &drive );
-    lenA -= path - name;
-
-    if (status == STATUS_SUCCESS)
-    {
-        while (lenA && path[0] == '/') { lenA--; path++; }
-        dos_prefixW[4] += drive;
-        prefix = dos_prefixW;
-    }
-    else if (status != STATUS_OBJECT_PATH_NOT_FOUND) return status;
-
-    lenW = wcslen( prefix );
-    if (!(buffer = malloc( (lenA + lenW + 1) * sizeof(WCHAR) ))) return STATUS_NO_MEMORY;
-    memcpy( buffer, prefix, lenW * sizeof(WCHAR) );
-    lenW += ntdll_umbstowcs( path, lenA, buffer + lenW, lenA );
-    buffer[lenW] = 0;
-    collapse_path( buffer );
-    *nt = buffer;
-    return STATUS_SUCCESS;
-}
-
-
-/******************************************************************
- *           wine_unix_to_nt_file_name
- */
-NTSTATUS WINAPI wine_unix_to_nt_file_name( const char *name, WCHAR *buffer, ULONG *size )
-{
-    WCHAR *nt_name = NULL;
-    NTSTATUS status;
-
-    if (name[0] != '/') return STATUS_INVALID_PARAMETER;  /* relative paths are not supported */
-
-    status = unix_to_nt_file_name( name, &nt_name );
-    if (nt_name)
-    {
-        if (*size > wcslen(nt_name)) wcscpy( buffer, nt_name );
-        else status = STATUS_BUFFER_TOO_SMALL;
-        *size = wcslen(nt_name) + 1;
-        free( nt_name );
-    }
-    return status;
-}
-
-
-/******************************************************************
- *           ntdll_get_dos_file_name
- */
-NTSTATUS ntdll_get_dos_file_name( const char *unix_name, WCHAR **dos, UINT disposition )
+NTSTATUS unix_to_nt_file_name( const char *unix_name, WCHAR **nt, UINT disposition )
 {
     NTSTATUS status;
     WCHAR *buffer;
     ULONG len = strlen(unix_name) + 1;
     char *name = strdup( unix_name );
 
-    *dos = NULL;
+    *nt = NULL;
     if (!name) return STATUS_NO_MEMORY;
     status = find_drive_nt_root( name, len - 1, &buffer, disposition );
     free( name );
@@ -5172,9 +5043,24 @@ NTSTATUS ntdll_get_dos_file_name( const char *unix_name, WCHAR **dos, UINT dispo
         collapse_path( buffer );
     }
 
-    if (buffer[5] == ':') memmove( buffer, buffer + 4, (wcslen(buffer + 4) + 1) * sizeof(WCHAR) );
-    else buffer[1] = '\\';
+    *nt = buffer;
+    return status;
+}
 
+
+/******************************************************************
+ *           ntdll_get_dos_file_name
+ */
+NTSTATUS ntdll_get_dos_file_name( const char *unix_name, WCHAR **dos, UINT disposition )
+{
+    WCHAR *buffer;
+    NTSTATUS status = unix_to_nt_file_name( unix_name, &buffer, disposition );
+
+    if (buffer)
+    {
+        if (buffer[5] == ':') memmove( buffer, buffer + 4, (wcslen(buffer + 4) + 1) * sizeof(WCHAR) );
+        else buffer[1] = '\\';
+    }
     *dos = buffer;
     return status;
 }
@@ -6260,7 +6146,6 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                     status  = wine_server_call( req );
                 }
                 SERVER_END_REQ;
-
             }
             free( unix_name );
             free( nt_name.Buffer );
@@ -6894,7 +6779,7 @@ NTSTATUS WINAPI NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, vo
            skip the synchronous read to make sure that the server starts the read
            interval timer after the first read */
         if ((status = get_io_timeouts( handle, type, length, TRUE, &timeouts ))) goto err;
-        if (timeouts.interval)
+        if (timeouts.interval > 0)
         {
             status = register_async_file_read( handle, event, apc, apc_user, iosb_ptr,
                                                buffer, total, length, FALSE );
@@ -7805,7 +7690,7 @@ NTSTATUS WINAPI NtLockFile( HANDLE file, HANDLE event, PIO_APC_ROUTINE apc, void
         }
         if (handle)
         {
-            NtWaitForSingleObject( handle, FALSE, NULL );
+            server_wait_for_object( handle, FALSE, NULL );
             NtClose( handle );
         }
         else  /* Unix lock conflict, sleep a bit and retry */

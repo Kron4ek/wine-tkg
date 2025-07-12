@@ -26,6 +26,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <stdarg.h>
+#include <unistd.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -52,20 +53,22 @@ struct type_descr timer_type =
 
 struct timer
 {
-    struct object        obj;       /* object header */
-    struct object       *sync;      /* sync object for wait/signal */
-    int                  manual;    /* manual reset */
-    int                  signaled;  /* current signaled state */
-    unsigned int         period;    /* timer period in ms */
-    abstime_t            when;      /* next expiration */
-    struct timeout_user *timeout;   /* timeout user */
-    struct thread       *thread;    /* thread that set the APC function */
-    client_ptr_t         callback;  /* callback APC function */
-    client_ptr_t         arg;       /* callback argument */
+    struct object        obj;           /* object header */
+    int                  manual;        /* manual reset */
+    int                  signaled;      /* current signaled state */
+    unsigned int         period;        /* timer period in ms */
+    abstime_t            when;          /* next expiration */
+    struct timeout_user *timeout;       /* timeout user */
+    struct thread       *thread;        /* thread that set the APC function */
+    client_ptr_t         callback;      /* callback APC function */
+    client_ptr_t         arg;           /* callback argument */
+    int                  inproc_sync;   /* in-process synchronization object */
 };
 
 static void timer_dump( struct object *obj, int verbose );
-static struct object *timer_get_sync( struct object *obj );
+static int timer_signaled( struct object *obj, struct wait_queue_entry *entry );
+static void timer_satisfied( struct object *obj, struct wait_queue_entry *entry );
+static int timer_get_inproc_sync( struct object *obj, enum inproc_sync_type *type );
 static void timer_destroy( struct object *obj );
 
 static const struct object_ops timer_ops =
@@ -73,13 +76,12 @@ static const struct object_ops timer_ops =
     sizeof(struct timer),      /* size */
     &timer_type,               /* type */
     timer_dump,                /* dump */
-    NULL,                      /* add_queue */
-    NULL,                      /* remove_queue */
-    NULL,                      /* signaled */
-    NULL,                      /* satisfied */
-    NULL,                      /* signal */
+    add_queue,                 /* add_queue */
+    remove_queue,              /* remove_queue */
+    timer_signaled,            /* signaled */
+    timer_satisfied,           /* satisfied */
+    no_signal,                 /* signal */
     no_get_fd,                 /* get_fd */
-    timer_get_sync,            /* get_sync */
     default_map_access,        /* map_access */
     default_get_sd,            /* get_sd */
     default_set_sd,            /* set_sd */
@@ -89,6 +91,7 @@ static const struct object_ops timer_ops =
     default_unlink_name,       /* unlink_name */
     no_open_file,              /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
+    timer_get_inproc_sync,     /* get_inproc_sync */
     no_close_handle,           /* close_handle */
     timer_destroy              /* destroy */
 };
@@ -105,19 +108,13 @@ static struct timer *create_timer( struct object *root, const struct unicode_str
         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
         {
             /* initialize it if it didn't already exist */
-            timer->sync     = NULL;
             timer->manual   = manual;
             timer->signaled = 0;
             timer->when     = 0;
             timer->period   = 0;
             timer->timeout  = NULL;
             timer->thread   = NULL;
-
-            if (!(timer->sync = create_event_sync( manual, 0 )))
-            {
-                release_object( timer );
-                return NULL;
-            }
+            timer->inproc_sync = create_inproc_event( manual, FALSE );
         }
     }
     return timer;
@@ -156,8 +153,10 @@ static void timer_callback( void *private )
     }
     else timer->timeout = NULL;
 
+    /* wake up waiters */
     timer->signaled = 1;
-    signal_sync( timer->sync );
+    wake_up( &timer->obj, 0 );
+    set_inproc_event( timer->inproc_sync );
 }
 
 /* cancel a running timer */
@@ -188,7 +187,7 @@ static int set_timer( struct timer *timer, timeout_t expire, unsigned int period
     {
         period = 0;  /* period doesn't make any sense for a manual timer */
         timer->signaled = 0;
-        reset_sync( timer->sync );
+        reset_inproc_event( timer->inproc_sync );
     }
     timer->when     = (expire <= 0) ? expire - monotonic_time : max( expire, current_time );
     timer->period   = period;
@@ -209,11 +208,26 @@ static void timer_dump( struct object *obj, int verbose )
              timer->manual, get_timeout_str(timeout), timer->period );
 }
 
-static struct object *timer_get_sync( struct object *obj )
+static int timer_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct timer *timer = (struct timer *)obj;
     assert( obj->ops == &timer_ops );
-    return grab_object( timer->sync );
+    return timer->signaled;
+}
+
+static void timer_satisfied( struct object *obj, struct wait_queue_entry *entry )
+{
+    struct timer *timer = (struct timer *)obj;
+    assert( obj->ops == &timer_ops );
+    if (!timer->manual) timer->signaled = 0;
+}
+
+static int timer_get_inproc_sync( struct object *obj, enum inproc_sync_type *type )
+{
+    struct timer *timer = (struct timer *)obj;
+
+    *type = timer->manual ? INPROC_SYNC_MANUAL_SERVER : INPROC_SYNC_AUTO_SERVER;
+    return timer->inproc_sync;
 }
 
 static void timer_destroy( struct object *obj )
@@ -223,7 +237,7 @@ static void timer_destroy( struct object *obj )
 
     if (timer->timeout) remove_timeout_user( timer->timeout );
     if (timer->thread) release_object( timer->thread );
-    if (timer->sync) release_object( timer->sync );
+    if (use_inproc_sync()) close( timer->inproc_sync );
 }
 
 /* create a timer */

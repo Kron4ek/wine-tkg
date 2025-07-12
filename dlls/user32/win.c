@@ -29,6 +29,13 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(win);
 
+#define MAX_ATOM_LEN 255 /* from dlls/kernel32/atom.c */
+
+static const char *debugstr_us( const UNICODE_STRING *us )
+{
+    if (!us) return "<null>";
+    return debugstr_wn( us->Buffer, us->Length / sizeof(WCHAR) );
+}
 
 #ifdef __i386__
 /* Some apps pass a non-stdcall proc to EnumChildWindows,
@@ -275,14 +282,23 @@ static BOOL is_default_coord( int x )
  */
 HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module, BOOL unicode )
 {
-    UNICODE_STRING class, window_name = {0};
+    WCHAR nameW[MAX_ATOM_LEN + 1];
+    UNICODE_STRING class = RTL_CONSTANT_STRING(nameW), version, window_name = {0};
     HWND hwnd, top_child = 0;
     MDICREATESTRUCTW mdi_cs;
     WNDCLASSEXW info;
     WCHAR name_buf[8];
     HMENU menu;
 
-    if (!get_class_info( module, className, &info, &class, FALSE )) return FALSE;
+    init_class_name( &class, className );
+    get_class_version( &class, &version, TRUE );
+
+    if (!NtUserGetClassInfoEx( module, &class, &info, NULL, FALSE ))
+    {
+        TRACE( "%s %p -> not found\n", debugstr_us(&class), module );
+        SetLastError( ERROR_CLASS_DOES_NOT_EXIST );
+        return FALSE;
+    }
 
     TRACE("%s %s%s%s ex=%08lx style=%08lx %d,%d %dx%d parent=%p menu=%p inst=%p params=%p\n",
           unicode ? debugstr_w(cs->lpszName) : debugstr_a((LPCSTR)cs->lpszName),

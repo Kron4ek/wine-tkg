@@ -120,15 +120,32 @@ static BOOL is_builtin_class( const WCHAR *name )
     return FALSE;
 }
 
-
-static void init_class_name( UNICODE_STRING *str, const WCHAR *name )
+static void init_class_name_ansi( UNICODE_STRING *str, const char *name )
 {
     if (IS_INTRESOURCE( name ))
     {
         str->Buffer = (WCHAR *)name;
         str->Length = str->MaximumLength = 0;
     }
-    else RtlInitUnicodeString( str, name );
+    else
+    {
+        UINT len = MultiByteToWideChar( CP_ACP, 0, name, -1, str->Buffer, str->MaximumLength / sizeof(WCHAR) );
+        str->Length = (len - 1) * sizeof(WCHAR);
+    }
+}
+
+void init_class_name( UNICODE_STRING *str, const WCHAR *name )
+{
+    if (IS_INTRESOURCE( name ))
+    {
+        str->Buffer = (WCHAR *)name;
+        str->Length = str->MaximumLength = 0;
+    }
+    else
+    {
+        str->Length = min( str->MaximumLength, wcslen( name ) * sizeof(WCHAR) );
+        memcpy( str->Buffer, name, str->Length + sizeof(WCHAR) );
+    }
 }
 
 static BOOL alloc_menu_nameA( struct client_menu_name *ret, const char *menu_name )
@@ -194,62 +211,55 @@ static ULONG_PTR set_menu_nameA( HWND hwnd, INT offset, ULONG_PTR newval )
     return 0;
 }
 
-static void get_versioned_name( const WCHAR *name, UNICODE_STRING *ret, UNICODE_STRING *version, HMODULE *reg_module )
+void get_class_version( UNICODE_STRING *name, UNICODE_STRING *version, BOOL load )
 {
-    ACTCTX_SECTION_KEYED_DATA data;
-    struct wndclass_redirect_data
-    {
-        ULONG size;
-        DWORD res;
-        ULONG name_len;
-        ULONG name_offset;
-        ULONG module_len;
-        ULONG module_offset;
-    } *wndclass;
-    const WCHAR *module, *ptr;
-    UNICODE_STRING name_us;
-    HMODULE hmod;
-    UINT offset = 0;
+    ACTCTX_SECTION_KEYED_DATA data = {.cbSize = sizeof(data)};
+    const WCHAR *class_name = name->Buffer;
+    HMODULE hmod = NULL;
 
-    if (reg_module) *reg_module = 0;
-    if (version) version->Length = 0;
+    memset( version, 0, sizeof(*version) );
 
-    if (IS_INTRESOURCE( name ) || is_comctl32_class( name ) || is_builtin_class( name ))
+    if (IS_INTRESOURCE( name->Buffer ) || is_builtin_class( name->Buffer )) return;
+
+    if (is_comctl32_class( name->Buffer ))
     {
-        init_class_name( ret, name );
-        return;
+        if (load && !(hmod = GetModuleHandleW( L"comctl32" ))) hmod = LoadLibraryW( L"comctl32" );
+    }
+    else if (!RtlFindActivationContextSectionString( 0, NULL, ACTIVATION_CONTEXT_SECTION_WINDOW_CLASS_REDIRECTION, name, &data ))
+    {
+        struct wndclass_redirect_data
+        {
+            ULONG size;
+            DWORD res;
+            ULONG name_len;
+            ULONG name_offset;
+            ULONG module_len;
+            ULONG module_offset;
+        } *wndclass = (struct wndclass_redirect_data *)data.lpData;
+        const WCHAR *module, *ptr;
+
+        module = (const WCHAR *)((BYTE *)data.lpSectionBase + wndclass->module_offset);
+        if (load && !(hmod = GetModuleHandleW( module ))) hmod = LoadLibraryW( module );
+
+        *version = *name;
+        version->Length = wndclass->name_len - name->Length;
+        class_name += version->Length / sizeof(WCHAR);
+
+        ptr = (const WCHAR *)((BYTE *)wndclass + wndclass->name_offset);
+        memcpy( name->Buffer, ptr, wndclass->name_len );
+        name->Length = wndclass->name_len;
+        name->Buffer[name->Length / sizeof(WCHAR)] = 0;
     }
 
-    data.cbSize = sizeof(data);
-    RtlInitUnicodeString(&name_us, name);
-    if (RtlFindActivationContextSectionString( 0, NULL, ACTIVATION_CONTEXT_SECTION_WINDOW_CLASS_REDIRECTION,
-                                               &name_us, &data ))
+    if (load && hmod)
     {
-        init_class_name( ret, name );
-        return;
+        BOOL (WINAPI *pRegisterClassNameW)( const WCHAR *class );
+        if ((pRegisterClassNameW = (void *)GetProcAddress( hmod, "RegisterClassNameW" )))
+        {
+            TRACE( "registering %s version %s\n", debugstr_us(name), debugstr_us(version) );
+            pRegisterClassNameW( class_name );
+        }
     }
-
-    wndclass = (struct wndclass_redirect_data *)data.lpData;
-    offset = wndclass->name_len / sizeof(WCHAR) - lstrlenW(name);
-
-    module = (const WCHAR *)((BYTE *)data.lpSectionBase + wndclass->module_offset);
-    if (!(hmod = GetModuleHandleW( module )))
-        hmod = LoadLibraryW( module );
-
-    /* Combined name is used to register versioned class name. Base name part will match exactly
-       original class name and won't be reused from context data. */
-    ptr = (const WCHAR *)((BYTE *)wndclass + wndclass->name_offset);
-    if (version)
-    {
-        WCHAR *combined = version->Buffer;
-        memcpy( combined, ptr, offset * sizeof(WCHAR) );
-        lstrcpyW( &combined[offset], name );
-        version->Length = offset * sizeof(WCHAR);
-        ptr = combined;
-    }
-
-    if (reg_module) *reg_module = hmod;
-    init_class_name( ret, ptr );
 }
 
 
@@ -341,23 +351,13 @@ ATOM WINAPI RegisterClassW( const WNDCLASSW* wc )
  */
 ATOM WINAPI RegisterClassExA( const WNDCLASSEXA* wc )
 {
-    WCHAR nameW[MAX_ATOM_LEN + 1], combined[MAX_ATOM_LEN + 1];
     struct client_menu_name menu_name;
-    UNICODE_STRING name, version;
+    WCHAR nameW[MAX_ATOM_LEN + 1];
+    UNICODE_STRING name = RTL_CONSTANT_STRING(nameW), version;
     ATOM atom;
 
-    version.Buffer = combined;
-    version.MaximumLength = sizeof(combined);
-    if (!IS_INTRESOURCE(wc->lpszClassName))
-    {
-        if (!MultiByteToWideChar( CP_ACP, 0, wc->lpszClassName, -1, nameW, MAX_ATOM_LEN + 1 )) return 0;
-        get_versioned_name( nameW, &name, &version, FALSE );
-    }
-    else
-    {
-        init_class_name( &name, (const WCHAR *)wc->lpszClassName );
-        version.Length = 0;
-    }
+    init_class_name_ansi( &name, wc->lpszClassName );
+    get_class_version( &name, &version, FALSE );
 
     if (!alloc_menu_nameA( &menu_name, wc->lpszMenuName )) return 0;
 
@@ -372,14 +372,13 @@ ATOM WINAPI RegisterClassExA( const WNDCLASSEXA* wc )
  */
 ATOM WINAPI RegisterClassExW( const WNDCLASSEXW* wc )
 {
-    WCHAR combined[MAX_ATOM_LEN + 1];
     struct client_menu_name menu_name;
-    UNICODE_STRING name, version;
+    WCHAR nameW[MAX_ATOM_LEN + 1];
+    UNICODE_STRING name = RTL_CONSTANT_STRING(nameW), version;
     ATOM atom;
 
-    version.Buffer = combined;
-    version.MaximumLength = sizeof(combined);
-    get_versioned_name( wc->lpszClassName, &name, &version, FALSE );
+    init_class_name( &name, wc->lpszClassName );
+    get_class_version( &name, &version, FALSE );
 
     if (!alloc_menu_nameW( &menu_name, wc->lpszMenuName )) return 0;
 
@@ -408,14 +407,17 @@ BOOL WINAPI UnregisterClassA( LPCSTR className, HINSTANCE hInstance )
 /***********************************************************************
  *		UnregisterClassW (USER32.@)
  */
-BOOL WINAPI UnregisterClassW( LPCWSTR className, HINSTANCE hInstance )
+BOOL WINAPI UnregisterClassW( LPCWSTR class_name, HINSTANCE instance )
 {
     struct client_menu_name menu_name;
-    UNICODE_STRING name;
+    WCHAR nameW[MAX_ATOM_LEN + 1];
+    UNICODE_STRING name = RTL_CONSTANT_STRING(nameW), version;
     BOOL ret;
 
-    get_versioned_name( className, &name, NULL, FALSE );
-    ret = NtUserUnregisterClass( &name, hInstance, &menu_name );
+    init_class_name( &name, class_name );
+    get_class_version( &name, &version, FALSE );
+
+    ret = NtUserUnregisterClass( &name, instance, &menu_name );
     if (ret) free_menu_name( &menu_name );
     return ret;
 }
@@ -562,54 +564,13 @@ BOOL WINAPI GetClassInfoW( HINSTANCE hInstance, LPCWSTR name, WNDCLASSW *wc )
     return ret;
 }
 
-ATOM get_class_info( HINSTANCE instance, const WCHAR *class_name, WNDCLASSEXW *info,
-                     UNICODE_STRING *name_str, BOOL ansi )
-{
-    UNICODE_STRING name;
-    HMODULE module;
-    ATOM atom;
-
-    get_versioned_name( class_name, &name, NULL, &module );
-
-    if (!name_str && !instance) instance = user32_module;
-
-    while (!(atom = NtUserGetClassInfoEx( instance, &name, info, NULL, ansi )))
-    {
-        if (module)
-        {
-            BOOL (WINAPI *pRegisterClassNameW)( const WCHAR *class );
-            pRegisterClassNameW = (void *)GetProcAddress( module, "RegisterClassNameW" );
-            module = NULL;
-            if (pRegisterClassNameW)
-            {
-                TRACE( "registering %s\n", debugstr_us(&name) );
-                pRegisterClassNameW( class_name );
-                continue;
-            }
-        }
-        if (IS_INTRESOURCE( class_name )) break;
-        if (!is_comctl32_class( class_name )) break;
-        if (GetModuleHandleW( L"comctl32.dll" )) break;
-        if (!LoadLibraryW( L"comctl32.dll" )) break;
-        TRACE( "%s retrying after loading comctl32\n", debugstr_w(class_name) );
-    }
-
-    if (!atom)
-    {
-        TRACE( "%s %p -> not found\n", debugstr_w(class_name), instance );
-        SetLastError( ERROR_CLASS_DOES_NOT_EXIST );
-        return 0;
-    }
-
-    if (name_str) *name_str = name;
-    return atom;
-}
-
 /***********************************************************************
  *		GetClassInfoExA (USER32.@)
  */
 BOOL WINAPI GetClassInfoExA( HINSTANCE hInstance, LPCSTR name, WNDCLASSEXA *wc )
 {
+    WCHAR nameW[MAX_ATOM_LEN + 1];
+    UNICODE_STRING name_str = RTL_CONSTANT_STRING(nameW), version;
     ATOM atom;
 
     TRACE("%p %s %p\n", hInstance, debugstr_a(name), wc);
@@ -620,16 +581,18 @@ BOOL WINAPI GetClassInfoExA( HINSTANCE hInstance, LPCSTR name, WNDCLASSEXA *wc )
         return FALSE;
     }
 
-    if (!IS_INTRESOURCE(name))
-    {
-        WCHAR nameW[MAX_ATOM_LEN + 1];
-        if (!MultiByteToWideChar( CP_ACP, 0, name, -1, nameW, ARRAY_SIZE( nameW )))
-            return FALSE;
-        atom = get_class_info( hInstance, nameW, (WNDCLASSEXW *)wc, NULL, TRUE );
-    }
-    else atom = get_class_info( hInstance, (const WCHAR *)name, (WNDCLASSEXW *)wc, NULL, TRUE );
-    if (atom) wc->lpszClassName = name;
+    if (!hInstance) hInstance = user32_module;
+    init_class_name_ansi( &name_str, name );
+    get_class_version( &name_str, &version, TRUE );
 
+    if (!(atom = NtUserGetClassInfoEx( hInstance, &name_str, (WNDCLASSEXW *)wc, NULL, TRUE )))
+    {
+        TRACE( "%s %p -> not found\n", debugstr_us(&name_str), hInstance );
+        SetLastError( ERROR_CLASS_DOES_NOT_EXIST );
+        return 0;
+    }
+
+    wc->lpszClassName = name;
     /* We must return the atom of the class here instead of just TRUE. */
     return atom;
 }
@@ -640,6 +603,8 @@ BOOL WINAPI GetClassInfoExA( HINSTANCE hInstance, LPCSTR name, WNDCLASSEXA *wc )
  */
 BOOL WINAPI GetClassInfoExW( HINSTANCE hInstance, LPCWSTR name, WNDCLASSEXW *wc )
 {
+    WCHAR nameW[MAX_ATOM_LEN + 1];
+    UNICODE_STRING name_str = RTL_CONSTANT_STRING(nameW), version;
     ATOM atom;
 
     TRACE("%p %s %p\n", hInstance, debugstr_w(name), wc);
@@ -650,9 +615,18 @@ BOOL WINAPI GetClassInfoExW( HINSTANCE hInstance, LPCWSTR name, WNDCLASSEXW *wc 
         return FALSE;
     }
 
-    atom = get_class_info( hInstance, name, wc, NULL, FALSE );
-    if (atom) wc->lpszClassName = name;
+    if (!hInstance) hInstance = user32_module;
+    init_class_name( &name_str, name );
+    get_class_version( &name_str, &version, TRUE );
 
+    if (!(atom = NtUserGetClassInfoEx( hInstance, &name_str, wc, NULL, FALSE )))
+    {
+        TRACE( "%s %p -> not found\n", debugstr_us(&name_str), hInstance );
+        SetLastError( ERROR_CLASS_DOES_NOT_EXIST );
+        return 0;
+    }
+
+    wc->lpszClassName = name;
     /* We must return the atom of the class here instead of just TRUE. */
     return atom;
 }

@@ -1121,8 +1121,6 @@ struct obj_locator
     thread_id_t  tid;          /* thread id of the new thread */
     timeout_t    server_start; /* server start time */
     unsigned int session_id;   /* process session id */
-    obj_handle_t inproc_device;/* inproc device fd in flight with this handle */
-    obj_handle_t alert_handle; /* alert fd is in flight with this handle */
     data_size_t  info_size;    /* total size of startup info */
     VARARG(machines,ushorts);  /* array of supported machines */
 @END
@@ -1137,7 +1135,6 @@ struct obj_locator
     client_ptr_t entry;        /* entry point (in thread address space) */
 @REPLY
     int          suspend;      /* is thread suspended? */
-    obj_handle_t alert_handle; /* alert fd is in flight with this handle */
 @END
 
 
@@ -4140,28 +4137,45 @@ struct handle_info
     int enable;                /* previous state of auto-repeat enable */
 @END
 
-
 enum inproc_sync_type
 {
-    INPROC_SYNC_UNKNOWN = 0,
-    INPROC_SYNC_EVENT = 1,
-    INPROC_SYNC_MUTEX = 2,
-    INPROC_SYNC_SEMAPHORE = 3,
+    INPROC_SYNC_UNKNOWN,
+    INPROC_SYNC_AUTO_EVENT,
+    INPROC_SYNC_MANUAL_EVENT,
+    INPROC_SYNC_SEMAPHORE,
+    INPROC_SYNC_MUTEX,
+    INPROC_SYNC_AUTO_SERVER,
+    INPROC_SYNC_MANUAL_SERVER,
+    INPROC_SYNC_QUEUE,
 };
 
+
+/* Obtain a fd for the ntsync device */
+@REQ(get_linux_sync_device)
+@END
+
 /* Get the in-process synchronization fd associated with the waitable handle */
-@REQ(get_inproc_sync_fd)
+@REQ(get_linux_sync_obj)
     obj_handle_t handle;        /* handle to the object */
 @REPLY
-    unsigned char type;         /* inproc sync type */
-    unsigned char queue;        /* sync is a message queue sync */
-    unsigned char internal;     /* sync is an internal event sync */
+    int type;                   /* object type */
     unsigned int access;        /* handle access rights */
 @END
 
 
-/* Begin/end a client-side wait on a message queue */
+/* Begin a client-side wait on a message queue */
 @REQ(select_inproc_queue)
-    int          select;          /* 1: begin waiting, 0: end waiting */
+@END
+
+
+/* End a client-side wait on a message queue */
+@REQ(unselect_inproc_queue)
     int          signaled;        /* was the queue signaled? */
+@END
+
+
+/* Get an event handle to be used for thread alerts with in-process synchronization */
+@REQ(get_inproc_alert_event)
+@REPLY
+    obj_handle_t handle;          /* handle to the event */
 @END

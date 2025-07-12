@@ -148,8 +148,6 @@ static void dump_init_first_thread_reply( const struct init_first_thread_reply *
     fprintf( stderr, ", tid=%04x", req->tid );
     dump_timeout( ", server_start=", &req->server_start );
     fprintf( stderr, ", session_id=%08x", req->session_id );
-    fprintf( stderr, ", inproc_device=%04x", req->inproc_device );
-    fprintf( stderr, ", alert_handle=%04x", req->alert_handle );
     fprintf( stderr, ", info_size=%u", req->info_size );
     dump_varargs_ushorts( ", machines=", cur_size );
 }
@@ -166,7 +164,6 @@ static void dump_init_thread_request( const struct init_thread_request *req )
 static void dump_init_thread_reply( const struct init_thread_reply *req )
 {
     fprintf( stderr, " suspend=%d", req->suspend );
-    fprintf( stderr, ", alert_handle=%04x", req->alert_handle );
 }
 
 static void dump_terminate_process_request( const struct terminate_process_request *req )
@@ -3400,23 +3397,37 @@ static void dump_set_keyboard_repeat_reply( const struct set_keyboard_repeat_rep
     fprintf( stderr, " enable=%d", req->enable );
 }
 
-static void dump_get_inproc_sync_fd_request( const struct get_inproc_sync_fd_request *req )
+static void dump_get_linux_sync_device_request( const struct get_linux_sync_device_request *req )
+{
+}
+
+static void dump_get_linux_sync_obj_request( const struct get_linux_sync_obj_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
 }
 
-static void dump_get_inproc_sync_fd_reply( const struct get_inproc_sync_fd_reply *req )
+static void dump_get_linux_sync_obj_reply( const struct get_linux_sync_obj_reply *req )
 {
-    fprintf( stderr, " type=%02x", req->type );
-    fprintf( stderr, ", queue=%02x", req->queue );
-    fprintf( stderr, ", internal=%02x", req->internal );
+    fprintf( stderr, " type=%d", req->type );
     fprintf( stderr, ", access=%08x", req->access );
 }
 
 static void dump_select_inproc_queue_request( const struct select_inproc_queue_request *req )
 {
-    fprintf( stderr, " select=%d", req->select );
-    fprintf( stderr, ", signaled=%d", req->signaled );
+}
+
+static void dump_unselect_inproc_queue_request( const struct unselect_inproc_queue_request *req )
+{
+    fprintf( stderr, " signaled=%d", req->signaled );
+}
+
+static void dump_get_inproc_alert_event_request( const struct get_inproc_alert_event_request *req )
+{
+}
+
+static void dump_get_inproc_alert_event_reply( const struct get_inproc_alert_event_reply *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
 }
 
 typedef void (*dump_func)( const void *req );
@@ -3720,8 +3731,11 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_next_process_request,
     (dump_func)dump_get_next_thread_request,
     (dump_func)dump_set_keyboard_repeat_request,
-    (dump_func)dump_get_inproc_sync_fd_request,
+    (dump_func)dump_get_linux_sync_device_request,
+    (dump_func)dump_get_linux_sync_obj_request,
     (dump_func)dump_select_inproc_queue_request,
+    (dump_func)dump_unselect_inproc_queue_request,
+    (dump_func)dump_get_inproc_alert_event_request,
 };
 
 static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
@@ -4023,8 +4037,11 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_next_process_reply,
     (dump_func)dump_get_next_thread_reply,
     (dump_func)dump_set_keyboard_repeat_reply,
-    (dump_func)dump_get_inproc_sync_fd_reply,
     NULL,
+    (dump_func)dump_get_linux_sync_obj_reply,
+    NULL,
+    NULL,
+    (dump_func)dump_get_inproc_alert_event_reply,
 };
 
 static const char * const req_names[REQ_NB_REQUESTS] =
@@ -4326,8 +4343,11 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "get_next_process",
     "get_next_thread",
     "set_keyboard_repeat",
-    "get_inproc_sync_fd",
+    "get_linux_sync_device",
+    "get_linux_sync_obj",
     "select_inproc_queue",
+    "unselect_inproc_queue",
+    "get_inproc_alert_event",
 };
 
 static const struct

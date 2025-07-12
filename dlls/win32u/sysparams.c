@@ -1989,6 +1989,7 @@ static void monitor_get_info( struct monitor *monitor, MONITORINFO *info, UINT d
 {
     info->rcMonitor = monitor_get_rect( monitor, dpi, MDT_DEFAULT );
     info->rcWork = map_monitor_rect( monitor, monitor->rc_work, 0, MDT_RAW_DPI, dpi, MDT_DEFAULT );
+    intersect_rect( &info->rcWork, &info->rcWork, &info->rcMonitor );
     info->dwFlags = is_monitor_primary( monitor ) ? MONITORINFOF_PRIMARY : 0;
 
     if (info->cbSize >= sizeof(MONITORINFOEXW))
@@ -7400,36 +7401,11 @@ NTSTATUS WINAPI NtUserDisplayConfigGetDeviceInfo( DISPLAYCONFIG_DEVICE_INFO_HEAD
 
         return STATUS_NOT_SUPPORTED;
     }
-    case DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO:
-    {
-        DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO *info = (DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO *)packet;
-        const char *env;
-
-        FIXME( "DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO semi-stub.\n" );
-
-        if (packet->size < sizeof(*info))
-            return STATUS_INVALID_PARAMETER;
-
-        info->advancedColorSupported = 0;
-        info->advancedColorEnabled = 0;
-        info->wideColorEnforced = 0;
-        info->advancedColorForceDisabled = 0;
-        info->colorEncoding = DISPLAYCONFIG_COLOR_ENCODING_RGB;
-        info->bitsPerColorChannel = 8;
-        if ((env = getenv("DXVK_HDR")) && *env == '1')
-        {
-            TRACE( "HDR is enabled.\n" );
-            info->advancedColorSupported = 1;
-            info->advancedColorEnabled = 1;
-            info->bitsPerColorChannel = 10;
-        }
-
-        return STATUS_SUCCESS;
-    }
     case DISPLAYCONFIG_DEVICE_INFO_SET_TARGET_PERSISTENCE:
     case DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_BASE_TYPE:
     case DISPLAYCONFIG_DEVICE_INFO_GET_SUPPORT_VIRTUAL_RESOLUTION:
     case DISPLAYCONFIG_DEVICE_INFO_SET_SUPPORT_VIRTUAL_RESOLUTION:
+    case DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO:
     case DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE:
     case DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL:
     default:

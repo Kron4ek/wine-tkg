@@ -120,13 +120,12 @@ static const struct object_ops file_ops =
     sizeof(struct file),          /* size */
     &file_type,                   /* type */
     file_dump,                    /* dump */
-    NULL,                         /* add_queue */
-    NULL,                         /* remove_queue */
-    NULL,                         /* signaled */
-    NULL,                         /* satisfied */
-    NULL,                         /* signal */
+    add_queue,                    /* add_queue */
+    remove_queue,                 /* remove_queue */
+    default_fd_signaled,          /* signaled */
+    no_satisfied,                 /* satisfied */
+    no_signal,                    /* signal */
     file_get_fd,                  /* get_fd */
-    default_fd_get_sync,          /* get_sync */
     default_map_access,           /* map_access */
     file_get_sd,                  /* get_sd */
     file_set_sd,                  /* set_sd */
@@ -136,6 +135,7 @@ static const struct object_ops file_ops =
     NULL,                         /* unlink_name */
     file_open_file,               /* open_file */
     file_get_kernel_obj_list,     /* get_kernel_obj_list */
+    default_fd_get_inproc_sync,   /* get_inproc_sync */
     no_close_handle,              /* close_handle */
     file_destroy                  /* destroy */
 };
