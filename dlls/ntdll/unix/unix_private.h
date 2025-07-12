@@ -105,6 +105,8 @@ struct ntdll_thread_data
     SYSTEM_SERVICE_TABLE     *syscall_table; /* 214/0370 syscall table */
     struct syscall_frame     *syscall_frame; /* 218/0378 current syscall frame */
     int                       syscall_trace; /* 21c/0380 syscall trace flag */
+    int                       esync_apc_fd;  /* fd to wait on for user APCs */
+    int                      *fsync_apc_futex;
     int                       request_fd;    /* fd for sending server requests */
     int                       reply_fd;      /* fd for receiving server replies */
     int                       wait_fd[2];    /* fd for sleeping server requests */
@@ -204,6 +206,9 @@ extern struct _KUSER_SHARED_DATA *user_shared_data;
 #ifdef __i386__
 extern struct ldt_copy __wine_ldt_copy;
 #endif
+
+extern BOOL ac_odyssey;
+extern BOOL fsync_simulate_sched_quantum;
 
 extern void init_environment(void);
 extern void init_startup_info(void);
@@ -359,7 +364,7 @@ extern void release_fileio( struct async_fileio *io );
 extern NTSTATUS errno_to_status( int err );
 extern NTSTATUS get_nt_and_unix_names( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *nt_name,
                                        char **unix_name, UINT disposition );
-extern NTSTATUS unix_to_nt_file_name( const char *name, WCHAR **nt );
+extern NTSTATUS unix_to_nt_file_name( const char *unix_name, WCHAR **nt, UINT disposition );
 extern NTSTATUS get_full_path( char *name, const WCHAR *curdir, UNICODE_STRING *nt_name );
 extern NTSTATUS open_unix_file( HANDLE *handle, const char *unix_name, ACCESS_MASK access,
                                 OBJECT_ATTRIBUTES *attr, ULONG attributes, ULONG sharing, ULONG disposition,

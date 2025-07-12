@@ -148,63 +148,72 @@ struct test_engine
 
     ISpObjectToken *token;
 
+    BOOL simulate_output;
     BOOL speak_called;
     DWORD flags;
     GUID fmtid;
-    SPVTEXTFRAG *frag_list;
+    SPVTEXTFRAG *frags;
+    size_t frag_count;
     LONG rate;
     USHORT volume;
 };
 
-static void copy_frag_list(const SPVTEXTFRAG *frag_list, SPVTEXTFRAG **ret_frag_list)
+/* Copy frag_list into a contiguous array allocated by a single malloc().
+ * The texts are allocated at the end of the array. */
+static void copy_frag_list(const SPVTEXTFRAG *frag_list, SPVTEXTFRAG **ret_frags, size_t *frag_count)
 {
-    SPVTEXTFRAG *frag, *prev = NULL;
+    const SPVTEXTFRAG *frag;
+    SPVTEXTFRAG *cur;
+    WCHAR *cur_text;
+    size_t size = 0;
+
+    *frag_count = 0;
 
     if (!frag_list)
     {
-        *ret_frag_list = NULL;
+        *ret_frags = NULL;
         return;
     }
 
-    while (frag_list)
+    for (frag = frag_list; frag; frag = frag->pNext)
     {
-        frag = malloc(sizeof(*frag) + frag_list->ulTextLen * sizeof(WCHAR));
-        memcpy(frag, frag_list, sizeof(*frag));
+        size += sizeof(*frag) + (frag->ulTextLen + 1) * sizeof(WCHAR);
+        (*frag_count)++;
+    }
 
-        if (frag_list->pTextStart)
+    *ret_frags = malloc(size);
+    cur = *ret_frags;
+    cur_text = (WCHAR *)(*ret_frags + (*frag_count));
+
+    for (frag = frag_list; frag; frag = frag->pNext, ++cur)
+    {
+        memcpy(cur, frag, sizeof(*frag));
+
+        cur->pNext = frag->pNext ? cur + 1 : NULL;
+
+        if (frag->pTextStart)
         {
-            frag->pTextStart = (WCHAR *)(frag + 1);
-            memcpy(frag + 1, frag_list->pTextStart, frag->ulTextLen * sizeof(WCHAR));
+            memcpy(cur_text, frag->pTextStart, frag->ulTextLen * sizeof(WCHAR));
+            cur_text[frag->ulTextLen] = L'\0';
+
+            cur->pTextStart = (WCHAR *)cur_text;
+            cur_text += frag->ulTextLen + 1;
         }
-
-        frag->pNext = NULL;
-
-        if (prev)
-            prev->pNext = frag;
-        else
-            *ret_frag_list = frag;
-
-        prev = frag;
-        frag_list = frag_list->pNext;
     }
 }
 
 static void reset_engine_params(struct test_engine *engine)
 {
-    SPVTEXTFRAG *frag, *next;
-
+    engine->simulate_output = FALSE;
     engine->speak_called = FALSE;
     engine->flags = 0xdeadbeef;
     memset(&engine->fmtid, 0xde, sizeof(engine->fmtid));
     engine->rate = 0xdeadbeef;
     engine->volume = 0xbeef;
 
-    for (frag = engine->frag_list; frag; frag = next)
-    {
-        next = frag->pNext;
-        free(frag);
-    }
-    engine->frag_list = NULL;
+    free(engine->frags);
+    engine->frags = NULL;
+    engine->frag_count = 0;
 }
 
 static inline struct test_engine *impl_from_ISpTTSEngine(ISpTTSEngine *iface)
@@ -257,7 +266,7 @@ static HRESULT WINAPI test_engine_Speak(ISpTTSEngine *iface, DWORD flags, REFGUI
 
     engine->flags = flags;
     engine->fmtid = *fmtid;
-    copy_frag_list(frag_list, &engine->frag_list);
+    copy_frag_list(frag_list, &engine->frags, &engine->frag_count);
     engine->speak_called = TRUE;
 
     actions = ISpTTSEngineSite_GetActions(site);
@@ -272,6 +281,9 @@ static HRESULT WINAPI test_engine_Speak(ISpTTSEngine *iface, DWORD flags, REFGUI
     ok(hr == S_OK, "got %#lx.\n", hr);
     actions = ISpTTSEngineSite_GetActions(site);
     ok(actions == SPVES_CONTINUE, "got %#lx.\n", actions);
+
+    if (!engine->simulate_output)
+        return S_OK;
 
     buf = calloc(1, 22050 * 2 / 5);
     for (i = 0; i < 5; i++)
@@ -414,9 +426,24 @@ static const IClassFactoryVtbl ClassFactoryVtbl = {
 
 static IClassFactory test_engine_cf = { &ClassFactoryVtbl };
 
+static const WCHAR test_token_id[] = L"HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Speech\\Voices\\Tokens\\WinetestVoice";
+
+static BOOL test_token_created = FALSE;
+
+#define check_frag_text(i, exp) \
+    ok(!wcscmp(test_engine.frags[i].pTextStart, exp), "frag %d text: got %s.\n", \
+        i, wine_dbgstr_w(test_engine.frags[i].pTextStart))
+
+#define check_frag_text_src_offset(i, exp) \
+    ok(test_engine.frags[i].ulTextSrcOffset == exp, "frag %d text src offset: got %lu.\n", \
+        i, test_engine.frags[i].ulTextSrcOffset)
+
+#define check_frag_state_field(i, name, exp, fmt) \
+    ok(test_engine.frags[i].State.name == exp, "frag %d state " #name ": got " fmt ".\n", \
+        i, test_engine.frags[i].State.name)
+
 static void test_spvoice(void)
 {
-    static const WCHAR test_token_id[] = L"HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Speech\\Voices\\Tokens\\WinetestVoice";
     static const WCHAR test_text[] = L"Hello! This is a test sentence.";
     static const WCHAR *get_voices = L"GetVoices";
 
@@ -449,8 +476,6 @@ static void test_spvoice(void)
         skip("no wave out devices.\n");
         return;
     }
-
-    RegDeleteTreeA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Speech\\Voices\\WinetestVoice");
 
     check_apttype();
     ok(test_apt_data.type == APTTYPE_UNITIALIZED, "got apt type %d.\n", test_apt_data.type);
@@ -604,6 +629,8 @@ static void test_spvoice(void)
     ISpDataKey_SetStringValue(attrs_key, L"Vendor", L"Winetest");
     ISpDataKey_Release(attrs_key);
 
+    test_token_created = TRUE;
+
     hr = ISpVoice_SetVoice(voice, token);
     ok(hr == S_OK, "got %#lx.\n", hr);
 
@@ -630,6 +657,7 @@ static void test_spvoice(void)
     ISpVoice_SetVolume(voice, 100);
 
     reset_engine_params(&test_engine);
+    test_engine.simulate_output = TRUE;
     stream_num = 0xdeadbeef;
     start = GetTickCount();
     hr = ISpVoice_Speak(voice, test_text, SPF_DEFAULT, &stream_num);
@@ -637,11 +665,8 @@ static void test_spvoice(void)
     ok(hr == S_OK, "got %#lx.\n", hr);
     ok(test_engine.speak_called, "ISpTTSEngine::Speak was not called.\n");
     ok(test_engine.flags == SPF_DEFAULT, "got %#lx.\n", test_engine.flags);
-    ok(test_engine.frag_list != NULL, "frag_list is NULL.\n");
-    ok(test_engine.frag_list->pNext == NULL, "frag_list->pNext != NULL.\n");
-    ok(test_engine.frag_list->ulTextLen == wcslen(test_text), "got %lu.\n", test_engine.frag_list->ulTextLen);
-    ok(!wcsncmp(test_text, test_engine.frag_list->pTextStart, wcslen(test_text)),
-       "got %s.\n", wine_dbgstr_w(test_engine.frag_list->pTextStart));
+    ok(test_engine.frag_count == 1, "got %Iu.\n", test_engine.frag_count);
+    check_frag_text(0, test_text);
     ok(test_engine.rate == 0, "got %ld.\n", test_engine.rate);
     ok(test_engine.volume == 100, "got %d.\n", test_engine.volume);
     ok(stream_num == 1, "got %lu.\n", stream_num);
@@ -659,6 +684,7 @@ static void test_spvoice(void)
     ok(duration < 200, "took %lu ms.\n", duration);
 
     reset_engine_params(&test_engine);
+    test_engine.simulate_output = TRUE;
     stream_num = 0xdeadbeef;
     start = GetTickCount();
     hr = ISpVoice_Speak(voice, test_text, SPF_DEFAULT | SPF_ASYNC | SPF_NLP_SPEAK_PUNC, &stream_num);
@@ -677,15 +703,14 @@ static void test_spvoice(void)
 
     ok(test_engine.speak_called, "ISpTTSEngine::Speak was not called.\n");
     ok(test_engine.flags == SPF_NLP_SPEAK_PUNC, "got %#lx.\n", test_engine.flags);
-    ok(test_engine.frag_list != NULL, "frag_list is NULL.\n");
-    ok(test_engine.frag_list->pNext == NULL, "frag_list->pNext != NULL.\n");
-    ok(test_engine.frag_list->ulTextLen == wcslen(test_text), "got %lu.\n", test_engine.frag_list->ulTextLen);
-    ok(!wcsncmp(test_text, test_engine.frag_list->pTextStart, wcslen(test_text)),
-       "got %s.\n", wine_dbgstr_w(test_engine.frag_list->pTextStart));
+    ok(test_engine.frag_count == 1, "got %Iu.\n", test_engine.frag_count);
+    check_frag_text(0, test_text);
+    check_frag_text_src_offset(0, 0);
     ok(test_engine.rate == 0, "got %ld.\n", test_engine.rate);
     ok(test_engine.volume == 100, "got %d.\n", test_engine.volume);
 
     reset_engine_params(&test_engine);
+    test_engine.simulate_output = TRUE;
     hr = ISpVoice_Speak(voice, test_text, SPF_DEFAULT | SPF_ASYNC, NULL);
     ok(hr == S_OK, "got %#lx.\n", hr);
 
@@ -800,15 +825,411 @@ done:
     ISpMMSysAudio_Release(audio_out);
     SysFreeString(req);
     SysFreeString(opt);
+}
 
-    RegDeleteTreeA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Speech\\Voices\\WinetestVoice");
+static void test_spvoice_ssml(void)
+{
+    static const WCHAR text1[] =
+        L"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-us'>text1</speak>";
+
+    /* Only version 1.0 is supported in SAPI. */
+    static const WCHAR bad_text1[] =
+        L"<speak version='1.1' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-us'>text1</speak>";
+
+    /* version attribute is required in <speak>. */
+    static const WCHAR bad_text2[] =
+        L"<speak xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-us'>text1</speak>";
+
+    /* xml:lang attribute is required in <speak>. */
+    static const WCHAR bad_text3[] =
+        L"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis'>text1</speak>";
+
+    /* xmlns is not required in <speak>. */
+    static const WCHAR text2[] =
+        L"<speak version='1.0' xml:lang='en-US'>text2</speak>";
+
+    static const WCHAR text3[] =
+        L"<?xml version='1.0' encoding='utf-8'?>"
+        L"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-us'>\n"
+        L"P1S1. P1S2.\n"
+        L"\n"
+        L"P2."
+        L"<p>P3.</p>"
+        L"<p><s>P4, S1. P4S2.</s><s>P4S3.</s></p>"
+        L"<p>\u4F0D</p>"
+        L"<p>\U0001240B</p>" /* Two WCHARs needed for \U0001240B */
+        L"<p>P7.</p>"
+        L"</speak>";
+
+    static const WCHAR text4[] =
+        L"<?xml version='1.0' encoding='utf-16'?>"
+        L"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-us'>"
+        L"<s>One, <prosody rate='-85%'>two.</prosody></s>"
+        L"</speak>";
+
+    static const WCHAR text5[] =
+        L"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+        L"<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"en-us\">"
+        L"<prosody rate=\"50%\">50%.</prosody>"
+        L"<prosody rate='+50%'>+50%.</prosody>"
+        L"<prosody rate='6'>6.</prosody>"
+        L"<prosody rate='0.01000001'>0.01000001.</prosody>"
+        L"<prosody rate='0.01'>0.01.</prosody>"
+        L"<prosody rate='0'>0.</prosody>"
+        L"<prosody rate='-1.0'>-1.0.</prosody>"
+        L"<prosody rate='6'><prosody rate='3'>3.</prosody></prosody>"
+        L"</speak>";
+
+    static const WCHAR text6[] =
+        L"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-us'>"
+        L"<prosody rate='x-slow'>x-slow.</prosody>"
+        L"<prosody rate='slow'>slow.</prosody>"
+        L"<prosody rate='medium'>medium.</prosody>"
+        L"<prosody rate='fast'>fast.</prosody>"
+        L"<prosody rate='x-fast'>x-fast.</prosody>"
+        L"</speak>";
+
+    static const WCHAR text7[] =
+        L"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-us'>"
+        L"One,<prosody rate='x-fast'/> Two." /* Empty tags are ignored. */
+        L"<prosody rate='fast'>"
+        L"  Three.<prosody rate='x-fast'>Four.</prosody>"
+        L"</prosody>"
+        L"Five."
+        L"</speak>";
+
+    static const WCHAR text8[] =
+        L"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-us'>"
+        L"<prosody volume='50%'>50%.</prosody>"
+        L"<prosody volume='-50%'>-50%.</prosody>"
+        L"<prosody volume='10'>10.</prosody>"
+        L"<prosody volume='+10'>+10.</prosody>"
+        L"<prosody volume='-10.1' rate='+200%'>-10.1.</prosody>"
+        L"<prosody volume='-50%'><prosody volume='-50%'>25.</prosody></prosody>"
+        L"<prosody volume='-50%'><prosody volume='50%'>75.</prosody></prosody>"
+        L"<prosody volume='-50%'><prosody volume='+50'>100.</prosody></prosody>"
+        L"<prosody volume='-50%'><prosody volume='50'>50.</prosody></prosody>"
+        L"</speak>";
+
+    static const WCHAR text9[] =
+        L"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-us'>"
+        L"<prosody volume='silent'>silent.</prosody>"
+        L"<prosody volume='x-soft'>x-soft.</prosody>"
+        L"<prosody volume='soft'>soft.</prosody>"
+        L"<prosody volume='medium'>medium.</prosody>"
+        L"<prosody volume='loud'>loud.</prosody>"
+        L"<prosody volume='x-loud'>x-loud.</prosody>"
+        L"<prosody volume='loud'><prosody volume='soft'>soft.</prosody></prosody>"
+        L"</speak>";
+
+    static const WCHAR text10[] =
+        L"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-us'>"
+        L"<prosody pitch='300Hz'>300Hz.</prosody>"
+        L"<prosody pitch='600Hz'>600Hz.</prosody>"
+        L"<prosody pitch='+300Hz'>+300Hz.</prosody>"
+        L"<prosody pitch='-300Hz'>-300Hz.</prosody>"
+        L"<prosody pitch='41.4%'>41.4%.</prosody>"
+        L"<prosody pitch='+41.4%'>+41.4%.</prosody>"
+        L"<prosody pitch='-50%'>-50%.</prosody>"
+        L"<prosody pitch='-98.99999%'>-98.99999%.</prosody>"
+        L"<prosody pitch='-99%'>-99%.</prosody>"
+        L"<prosody pitch='-101%'>-101%.</prosody>"
+        L"<prosody pitch='41.4%'><prosody pitch='+41.4%'>+100%.</prosody></prosody>"
+        L"<prosody pitch='41.4%'><prosody pitch='-50%'>-29%.</prosody></prosody>"
+        L"<prosody pitch='x-low'>x-low.</prosody>"
+        L"<prosody pitch='low'>low.</prosody>"
+        L"<prosody pitch='medium'>medium.</prosody>"
+        L"<prosody pitch='high'>high.</prosody>"
+        L"<prosody pitch='x-high'>x-high.</prosody>"
+        L"<prosody pitch='high'><prosody pitch='low'>high-low.</prosody></prosody>"
+        L"</speak>";
+
+
+    ISpVoice *voice;
+    ISpObjectToken *token;
+    HRESULT hr;
+
+    if (waveOutGetNumDevs() == 0) {
+        skip("no wave out devices.\n");
+        return;
+    }
+
+    if (!test_token_created) {
+        /* w1064_adm */
+        win_skip("Test token not created.\n");
+        return;
+    }
+
+    hr = CoCreateInstance(&CLSID_SpVoice, NULL, CLSCTX_INPROC_SERVER,
+                          &IID_ISpVoice, (void **)&voice);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpVoice_SetOutput(voice, NULL, TRUE);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = CoCreateInstance(&CLSID_SpObjectToken, NULL, CLSCTX_INPROC_SERVER,
+                          &IID_ISpObjectToken, (void **)&token);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpObjectToken_SetId(token, NULL, test_token_id, FALSE);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    hr = ISpVoice_SetVoice(voice, token);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, text1, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(test_engine.frag_count == 1, "got %Iu.\n", test_engine.frag_count);
+    check_frag_text(0, L"text1");
+
+    check_frag_state_field(0, eAction, SPVA_Speak, "%d");
+    ok(test_engine.frags[0].State.LangID == 0x409 || broken(test_engine.frags[0].State.LangID == 0) /* win7 */,
+       "got %#hx.\n", test_engine.frags[0].State.LangID);
+    check_frag_state_field(0, EmphAdj, 0, "%ld");
+    check_frag_state_field(0, RateAdj, 0, "%ld");
+    check_frag_state_field(0, Volume, 100, "%lu");
+    check_frag_state_field(0, PitchAdj.MiddleAdj, 0, "%ld");
+    check_frag_state_field(0, PitchAdj.RangeAdj, 0, "%ld");
+    check_frag_state_field(0, SilenceMSecs, 0, "%lu");
+    check_frag_state_field(0, ePartOfSpeech, SPPS_Unknown, "%#x");
+
+    reset_engine_params(&test_engine);
+
+    /* SSML autodetection when SPF_PARSE_SSML is not specified. */
+    hr = ISpVoice_Speak(voice, text1, SPF_IS_XML, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(test_engine.frag_count == 1, "got %Iu.\n", test_engine.frag_count);
+    check_frag_text(0, L"text1");
+
+    reset_engine_params(&test_engine);
+
+    /* XML and SSML autodetection when SPF_IS_XML is not specified. */
+    hr = ISpVoice_Speak(voice, text1, SPF_DEFAULT, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(test_engine.frag_count == 1, "got %Iu.\n", test_engine.frag_count);
+    check_frag_text(0, L"text1");
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, bad_text1, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == SPERR_UNSUPPORTED_FORMAT, "got %#lx.\n", hr);
+
+    hr = ISpVoice_Speak(voice, bad_text2, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == SPERR_UNSUPPORTED_FORMAT, "got %#lx.\n", hr);
+
+    hr = ISpVoice_Speak(voice, bad_text3, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == SPERR_UNSUPPORTED_FORMAT || broken(hr == S_OK) /* win7 */, "got %#lx.\n", hr);
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, text2, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == S_OK || broken(hr == SPERR_UNSUPPORTED_FORMAT) /* win7 */, "got %#lx.\n", hr);
+
+    if (hr == S_OK) {
+        ok(test_engine.frag_count == 1, "got %Iu.\n", test_engine.frag_count);
+        check_frag_text(0, L"text2");
+        check_frag_state_field(0, eAction, SPVA_Speak, "%d");
+        check_frag_state_field(0, LangID, 0x409, "%#hx");
+    }
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, text3, SPF_IS_XML, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(test_engine.frag_count == 7 || broken(test_engine.frag_count == 1) /* win7 */,
+       "got %Iu.\n", test_engine.frag_count);
+
+    if (test_engine.frag_count == 7) {
+        check_frag_text(0, L"\nP1S1. P1S2.\n\nP2.");
+        check_frag_text_src_offset(0, 120);
+        check_frag_state_field(0, eAction, SPVA_Speak, "%d");
+
+        check_frag_text(1, L"P3.");
+        check_frag_text_src_offset(1, 140);
+        check_frag_state_field(1, eAction, SPVA_Speak, "%d");
+
+        check_frag_text(2, L"P4, S1. P4S2.");
+        check_frag_text_src_offset(2, 153);
+        check_frag_state_field(2, eAction, SPVA_Speak, "%d");
+
+        check_frag_text(3, L"P4S3.");
+        check_frag_text_src_offset(3, 173);
+        check_frag_state_field(3, eAction, SPVA_Speak, "%d");
+
+        check_frag_text(4, L"\u4F0D");
+        check_frag_text_src_offset(4, 189);
+        check_frag_state_field(4, eAction, SPVA_Speak, "%d");
+
+        check_frag_text(5, L"\U0001240B");
+        ok(test_engine.frags[5].ulTextSrcOffset == 197 ||       /* 189 + 8 = 197 */
+           broken(test_engine.frags[5].ulTextSrcOffset == 196), /* Windows gives incorrect offset here */
+           "got %lu.\n", test_engine.frags[5].ulTextSrcOffset);
+
+        check_frag_text(6, L"P7.");
+        check_frag_text_src_offset(6, test_engine.frags[5].ulTextSrcOffset + 9);
+    }
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, text4, SPF_DEFAULT, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(test_engine.frag_count == 2, "got %Iu.\n", test_engine.frag_count);
+
+    check_frag_text(0, L"One, ");
+    check_frag_state_field(0, eAction, SPVA_Speak, "%d");
+    check_frag_state_field(0, RateAdj, 0, "%ld");
+
+    check_frag_text(1, L"two.");
+    check_frag_state_field(1, eAction, SPVA_Speak, "%d");
+    check_frag_state_field(1, RateAdj, -17, "%ld"); /* 3^(-17/10) ~= 0.15 */
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, text5, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+    ok(test_engine.frag_count == 8 || broken(test_engine.frag_count == 3) /* win7 */,
+       "got %Iu.\n", test_engine.frag_count);
+
+    if (test_engine.frag_count == 8) {
+        check_frag_state_field(0, RateAdj,   4, "%ld"); /* 3^(4/10)   ~= 1.5          */
+        check_frag_state_field(1, RateAdj,   4, "%ld"); /* 3^(4/10)   ~= 1.5          */
+        check_frag_state_field(2, RateAdj,  16, "%ld"); /* 3^(16/10)  ~= 6            */
+        check_frag_state_field(3, RateAdj, -42, "%ld"); /* 3^(-42/10) ~= 0.01000001   */
+        check_frag_state_field(4, RateAdj, -10, "%ld"); /* rate = 0.01                */
+        check_frag_state_field(5, RateAdj, -10, "%ld"); /* rate = 0                   */
+        check_frag_state_field(6, RateAdj,   0, "%ld"); /* negative rates are ignored */
+        check_frag_state_field(7, RateAdj,  10, "%ld"); /* 3^(10/10)   = 3            */
+    }
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, text6, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == S_OK || broken(hr == SPERR_UNSUPPORTED_FORMAT) /* win7 */, "got %#lx.\n", hr);
+
+    if (hr == S_OK) {
+        ok(test_engine.frag_count == 5, "got %Iu.\n", test_engine.frag_count);
+
+        check_frag_state_field(0, RateAdj, -9, "%ld"); /* x-slow */
+        check_frag_state_field(1, RateAdj, -4, "%ld"); /* slow   */
+        check_frag_state_field(2, RateAdj,  0, "%ld"); /* medium */
+        check_frag_state_field(3, RateAdj,  4, "%ld"); /* fast   */
+        check_frag_state_field(4, RateAdj,  9, "%ld"); /* x-fast */
+    }
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, text7, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == S_OK || broken(hr == SPERR_UNSUPPORTED_FORMAT) /* win7 */, "got %#lx.\n", hr);
+
+    if (hr == S_OK) {
+        ok(test_engine.frag_count == 5, "got %Iu.\n", test_engine.frag_count);
+
+        check_frag_text(0, L"One,");
+        check_frag_state_field(0, RateAdj, 0, "%ld");
+
+        check_frag_text(1, L" Two.");
+        check_frag_state_field(1, RateAdj, 0, "%ld");
+
+        check_frag_text(2, L"  Three.");
+        check_frag_state_field(2, RateAdj, 4, "%ld");
+
+        check_frag_text(3, L"Four.");
+        check_frag_state_field(3, RateAdj, 9, "%ld");
+
+        check_frag_text(4, L"Five.");
+        check_frag_state_field(4, RateAdj, 0, "%ld");
+    }
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, text8, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == S_OK, "got %#lx.\n", hr);
+
+    if (hr == S_OK) {
+        ok(test_engine.frag_count == 9, "got %Iu.\n", test_engine.frag_count);
+
+        ok(test_engine.frags[0].State.Volume == 100 || broken(test_engine.frags[0].State.Volume == 50) /* win7 */,
+           "got %lu.\n", test_engine.frags[0].State.Volume);
+        check_frag_state_field(1,  Volume,  50, "%ld");
+        check_frag_state_field(2,  Volume,  10, "%lu");
+        check_frag_state_field(3,  Volume, 100, "%lu");
+
+        check_frag_state_field(4,  Volume,  90, "%lu");
+        check_frag_state_field(4, RateAdj,  10, "%ld");
+
+        check_frag_state_field(5,  Volume,  25, "%lu");
+        ok(test_engine.frags[6].State.Volume == 75 || broken(test_engine.frags[6].State.Volume == 25) /* win7 */,
+           "got %lu.\n", test_engine.frags[6].State.Volume);
+        check_frag_state_field(7,  Volume, 100, "%lu");
+        check_frag_state_field(8,  Volume,  50, "%lu");
+    }
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, text9, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == S_OK || broken(hr == SPERR_UNSUPPORTED_FORMAT) /* win7 */, "got %#lx.\n", hr);
+
+    if (hr == S_OK) {
+        ok(test_engine.frag_count == 7, "got %Iu.\n", test_engine.frag_count);
+
+        check_frag_state_field(0, Volume,   0, "%lu"); /* silent */
+        check_frag_state_field(1, Volume,  20, "%lu"); /* x-soft */
+        check_frag_state_field(2, Volume,  40, "%lu"); /* soft   */
+        check_frag_state_field(3, Volume,  60, "%lu"); /* medium */
+        check_frag_state_field(4, Volume,  80, "%lu"); /* loud   */
+        check_frag_state_field(5, Volume, 100, "%lu"); /* x-loud */
+
+        check_frag_state_field(6, Volume,  40, "%lu"); /* soft   */
+    }
+
+    reset_engine_params(&test_engine);
+
+    hr = ISpVoice_Speak(voice, text10, SPF_IS_XML | SPF_PARSE_SSML, NULL);
+    ok(hr == S_OK || broken(hr == SPERR_UNSUPPORTED_FORMAT) /* win7 */, "got %#lx.\n", hr);
+
+    if (hr == S_OK) {
+        ok(test_engine.frag_count == 18, "got %Iu.\n", test_engine.frag_count);
+
+        check_frag_state_field(0,  PitchAdj.MiddleAdj,    0, "%ld"); /* Absolute Hz values are ignored. */
+        check_frag_state_field(1,  PitchAdj.MiddleAdj,    0, "%ld");
+        check_frag_state_field(2,  PitchAdj.MiddleAdj,    0, "%ld");
+        check_frag_state_field(3,  PitchAdj.MiddleAdj,    0, "%ld");
+        check_frag_state_field(4,  PitchAdj.MiddleAdj,   12, "%ld"); /* 2^(12/24)   ~= 1.414. */
+        check_frag_state_field(5,  PitchAdj.MiddleAdj,   12, "%ld"); /* 2^(12/24)   ~= 1.414. */
+        check_frag_state_field(6,  PitchAdj.MiddleAdj,  -24, "%ld"); /* 2^(-24/24)   = 0.5.   */
+        check_frag_state_field(7,  PitchAdj.MiddleAdj, -159, "%ld"); /* 2^(-159/24) ~= 0.0100001. */
+        check_frag_state_field(8,  PitchAdj.MiddleAdj,  -10, "%ld"); /* -99%.  */
+        check_frag_state_field(9,  PitchAdj.MiddleAdj,  -10, "%ld"); /* -101%. */
+        check_frag_state_field(10, PitchAdj.MiddleAdj,   24, "%ld"); /* 2^(24/24)   = 1.     */
+        check_frag_state_field(11, PitchAdj.MiddleAdj,  -12, "%ld"); /* 2^(-12/24) ~= 0.707. */
+
+        check_frag_state_field(12, PitchAdj.MiddleAdj, -9, "%ld"); /* x-low  */
+        check_frag_state_field(13, PitchAdj.MiddleAdj, -4, "%ld"); /* low    */
+        check_frag_state_field(14, PitchAdj.MiddleAdj,  0, "%ld"); /* medium */
+        check_frag_state_field(15, PitchAdj.MiddleAdj,  4, "%ld"); /* high   */
+        check_frag_state_field(16, PitchAdj.MiddleAdj,  9, "%ld"); /* x-high */
+
+        check_frag_state_field(17, PitchAdj.MiddleAdj, -4, "%ld"); /* low    */
+    }
+
+
+    reset_engine_params(&test_engine);
+    ISpVoice_Release(voice);
+    ISpObjectToken_Release(token);
 }
 
 START_TEST(tts)
 {
     CoInitialize(NULL);
+    RegDeleteTreeA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Speech\\Voices\\WinetestVoice");
+
     /* Run spvoice tests before interface tests so that a MTA won't be created before this test is run. */
     test_spvoice();
+    test_spvoice_ssml();
     test_interfaces();
+
+    RegDeleteTreeA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Speech\\Voices\\WinetestVoice");
     CoUninitialize();
 }

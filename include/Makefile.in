@@ -59,8 +59,10 @@ SOURCES = \
 	bits5_0.idl \
 	bitsmsg.h \
 	bluetoothapis.h \
+	bluetoothleapis.h \
 	bthdef.h \
 	bthioctl.h \
+	bthledef.h \
 	bthsdpdef.h \
 	cderr.h \
 	cdosys.idl \
@@ -197,6 +199,7 @@ SOURCES = \
 	dde.h \
 	dde.rh \
 	ddeml.h \
+	ddk/bthguid.h \
 	ddk/compstui.h \
 	ddk/csq.h \
 	ddk/d3dkmthk.h \
@@ -231,10 +234,13 @@ SOURCES = \
 	ddstream.idl \
 	delayloadhandler.h \
 	devenum.idl \
+	devfiltertypes.h \
 	devguid.h \
 	devicetopology.idl \
 	devpkey.h \
 	devpropdef.h \
+	devquery.h \
+	devquerydef.h \
 	dhcpcsdk.h \
 	dhtmldid.h \
 	dhtmled.idl \

@@ -4057,12 +4057,15 @@ static void test_wma_decoder_dmo_output_type(void)
     ok(hr == S_OK, "SetInputType returned %#lx.\n", hr);
     hr = IMediaObject_GetOutputCurrentType(dmo, 0, &type);
     ok(hr == S_OK, "GetOutputCurrentType returned %#lx.\n", hr);
+    MoFreeMediaType(input_type);
+    MoFreeMediaType(&type);
 
     init_dmo_media_type_audio(input_type, input_subtype, channel_count, rate * 2, 32);
     hr = IMediaObject_SetInputType(dmo, 0, input_type, 0);
     ok(hr == S_OK, "SetInputType returned %#lx.\n", hr);
     hr = IMediaObject_GetOutputCurrentType(dmo, 0, &type);
     todo_wine ok(hr == DMO_E_TYPE_NOT_SET, "GetOutputCurrentType returned %#lx.\n", hr);
+    if (hr == S_OK) MoFreeMediaType(&type);
 
     /* Cleanup. */
     ret = IMediaObject_Release(dmo);
@@ -4238,6 +4241,12 @@ static void test_h264_encoder(void)
     ULONG ret;
     DWORD i;
 
+    if (sizeof(void *) == 4 && winetest_platform_is_wine)
+    {
+        skip("Skipping 32bit H264 encoder tests\n");
+        return;
+    }
+
     hr = CoInitialize(NULL);
     ok(hr == S_OK, "Failed to initialize, hr %#lx.\n", hr);
 
@@ -4361,6 +4370,8 @@ static void test_h264_encoder(void)
         winetest_pop_context();
     }
 
+    IMFMediaType_Release(media_type);
+
     hr = IMFTransform_QueryInterface(transform, &IID_ICodecAPI, (void **)&codec_api);
     ok(hr == S_OK, "QueryInterface returned %#lx.\n", hr);
     for (desc = &expect_codec_api_attributes[0]; desc->key; ++desc)
@@ -4426,6 +4437,9 @@ static void test_h264_encoder(void)
     ok(hr == S_OK, "ProcessOutput returned %#lx.\n", hr);
     if (hr != S_OK)
     {
+        ret = IMFTransform_Release(transform);
+        ok(ret == 0, "Release returned %lu\n", ret);
+        IMFCollection_Release(output_sample_collection);
         IMFSample_Release(output_sample);
         goto failed;
     }
@@ -4444,7 +4458,6 @@ static void test_h264_encoder(void)
     ok(ret == 0, "Got %lu%% diff\n", ret);
     IMFCollection_Release(output_sample_collection);
 
-    IMFMediaType_Release(media_type);
     ret = IMFTransform_Release(transform);
     ok(ret == 0, "Release returned %lu\n", ret);
 
@@ -10640,7 +10653,6 @@ static void test_video_processor_with_dxgi_manager(void)
 
     /* native wants a dxgi buffer on input */
     input_sample = create_d3d_sample(allocator, nv12frame_data, nv12frame_data_len);
-
     hr = IMFTransform_ProcessInput(transform, 0, input_sample, 0);
     ok(hr == S_OK, "got %#lx\n", hr);
 
@@ -10771,8 +10783,6 @@ static void test_video_processor_with_dxgi_manager(void)
     nv12frame_data = nv12frame_data + length;
     ok(nv12frame_data_len == 13824, "got length %lu\n", nv12frame_data_len);
 
-    input_sample = create_d3d_sample(allocator, nv12frame_data, nv12frame_data_len);
-
     hr = IMFTransform_ProcessInput(transform, 0, input_sample, 0);
     ok(hr == S_OK, "got %#lx\n", hr);
 
@@ -10837,8 +10847,6 @@ skip_rgb32:
     nv12frame_data_len = nv12frame_data_len - length;
     nv12frame_data = nv12frame_data + length;
     ok(nv12frame_data_len == 13824, "got length %lu\n", nv12frame_data_len);
-
-    input_sample = create_d3d_sample(allocator, nv12frame_data, nv12frame_data_len);
 
     hr = IMFTransform_ProcessInput(transform, 0, input_sample, 0);
     ok(hr == S_OK, "got %#lx\n", hr);
