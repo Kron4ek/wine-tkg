@@ -196,7 +196,10 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
 
     TRACE("hwnd=%p\n", data->hwnd);
 
-    visible = (NtUserGetWindowLongW(data->hwnd, GWL_STYLE) & WS_VISIBLE) == WS_VISIBLE;
+    visible = ((NtUserGetWindowLongW(data->hwnd, GWL_STYLE) & WS_VISIBLE) == WS_VISIBLE) &&
+               (!(NtUserGetWindowLongW(data->hwnd, GWL_EXSTYLE) & WS_EX_LAYERED) ||
+                data->layered_attribs_set);
+
     if (!visible) role = WAYLAND_SURFACE_ROLE_NONE;
     else if (toplevel_surface) role = WAYLAND_SURFACE_ROLE_SUBSURFACE;
     else role = WAYLAND_SURFACE_ROLE_TOPLEVEL;
@@ -204,7 +207,7 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
     /* we can temporarily clear the role of a surface but cannot assign a different one after it's set */
     if ((surface = data->wayland_surface) && role && surface->role && surface->role != role)
     {
-        if (client) wayland_client_surface_detach(client);
+        if (client) wayland_client_surface_attach(client, NULL);
         wayland_surface_destroy(data->wayland_surface);
         data->wayland_surface = NULL;
     }
@@ -403,7 +406,6 @@ void WAYLAND_DestroyWindow(HWND hwnd)
 
     if (!(data = wayland_win_data_get(hwnd))) return;
     wayland_win_data_destroy(data);
-    wayland_destroy_gl_drawable(hwnd);
 }
 
 /***********************************************************************
@@ -479,7 +481,7 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
             if (toplevel && NtUserIsWindowVisible(hwnd))
                 wayland_client_surface_attach(client, toplevel);
             else
-                wayland_client_surface_detach(client);
+                wayland_client_surface_attach(client, NULL);
         }
 
         if (data->wayland_surface)
@@ -668,6 +670,18 @@ LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     return NtUserMessageCall(hwnd, msg, wp, lp, 0, NtUserDefWindowProc, FALSE);
 }
 
+/*****************************************************************
+ *		WAYLAND_SetLayeredWindowAttributes
+ */
+void WAYLAND_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWORD flags)
+{
+    struct wayland_win_data *data;
+
+    if (!(data = wayland_win_data_get(hwnd))) return;
+    data->layered_attribs_set = TRUE;
+    wayland_win_data_release(data);
+}
+
 static enum xdg_toplevel_resize_edge hittest_to_resize_edge(WPARAM hittest)
 {
     switch (hittest)
@@ -704,6 +718,24 @@ void WAYLAND_SetWindowIcon(HWND hwnd, UINT type, HICON icon)
             wayland_win_data_release(data);
         }
     }
+}
+
+/***********************************************************************
+ *		WAYLAND_SetWindowStyle
+ */
+void WAYLAND_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style)
+{
+    struct wayland_win_data *data;
+    DWORD changed = style->styleNew ^ style->styleOld;
+
+    if (hwnd == NtUserGetDesktopWindow()) return;
+    if (!(data = wayland_win_data_get(hwnd))) return;
+
+    /* Changing WS_EX_LAYERED resets attributes */
+    if (offset == GWL_EXSTYLE && (changed & WS_EX_LAYERED))
+        data->layered_attribs_set = FALSE;
+
+    wayland_win_data_release(data);
 }
 
 /*****************************************************************
@@ -775,42 +807,32 @@ LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam, const POINT 
     return ret;
 }
 
-/**********************************************************************
- *          get_client_surface
- */
-struct wayland_client_surface *get_client_surface(HWND hwnd)
+void set_client_surface(HWND hwnd, struct wayland_client_surface *new_client)
 {
     HWND toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
-    struct wayland_client_surface *client;
+    struct wayland_client_surface *old_client;
     struct wayland_win_data *data;
 
-    if ((data = wayland_win_data_get(hwnd)))
-    {
-        /* ownership is shared with one of the callers, the last caller to release
-         * its reference will also destroy it and clear our pointer. */
-        if ((client = data->client_surface)) InterlockedIncrement(&client->ref);
-    }
-    else
-    {
-        client = NULL;
-    }
+    /* ownership is shared with the callers, the last caller to release
+     * its reference will also destroy it and clear our pointer. */
 
-    if (!client && !(client = wayland_client_surface_create(hwnd)))
+    if (!(data = wayland_win_data_get(hwnd))) return;
+
+    if (new_client != data->client_surface)
     {
-        if (data) wayland_win_data_release(data);
-        return NULL;
+        if ((old_client = data->client_surface))
+            wayland_client_surface_attach(old_client, NULL);
+
+        if ((data->client_surface = new_client))
+        {
+            if (toplevel && NtUserIsWindowVisible(hwnd))
+                wayland_client_surface_attach(new_client, toplevel);
+            else
+                wayland_client_surface_attach(new_client, NULL);
+        }
     }
-    if (!data) return client;
-
-    if (toplevel && NtUserIsWindowVisible(hwnd))
-        wayland_client_surface_attach(client, toplevel);
-    else
-        wayland_client_surface_detach(client);
-
-    if (!data->client_surface) data->client_surface = client;
 
     wayland_win_data_release(data);
-    return client;
 }
 
 BOOL set_window_surface_contents(HWND hwnd, struct wayland_shm_buffer *shm_buffer, HRGN damage_region)

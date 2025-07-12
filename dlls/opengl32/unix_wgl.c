@@ -399,11 +399,11 @@ static const char *legacy_extensions[] =
     NULL,
 };
 
-static GLubyte *filter_extensions_list( const char *extensions, const char *disabled )
+static GLubyte *filter_extensions_list( const char *extensions, const char *disabled, const char *enabled )
 {
     const char *end, **extra;
     char *p, *str;
-    size_t size;
+    size_t size, len;
 
     size = strlen( extensions ) + 2;
     for (extra = legacy_extensions; *extra; extra++) size += strlen( *extra ) + 1;
@@ -411,14 +411,15 @@ static GLubyte *filter_extensions_list( const char *extensions, const char *disa
 
     TRACE( "GL_EXTENSIONS:\n" );
 
-    for (extra = legacy_extensions;;)
+    for (;;)
     {
         while (*extensions == ' ') extensions++;
-        if (!*extensions && !(extensions = *extra++)) break;
+        if (!*extensions) break;
 
         if (!(end = strchr( extensions, ' ' ))) end = extensions + strlen( extensions );
         memcpy( p, extensions, end - extensions );
-        p[end - extensions] = 0;
+        len = end - extensions;
+        p[len] = 0;
 
         /* We do not support GL_MAP_PERSISTENT_BIT, and hence
          * ARB_buffer_storage, on wow64. */
@@ -426,7 +427,7 @@ static GLubyte *filter_extensions_list( const char *extensions, const char *disa
         {
             TRACE( "-- %s (disabled due to wow64)\n", p );
         }
-        else if (!has_extension( disabled, p, strlen( p ) ))
+        else if (!has_extension( disabled, p, len ) && (!*enabled || has_extension( enabled, p, len )))
         {
             TRACE( "++ %s\n", p );
             p += end - extensions;
@@ -438,6 +439,16 @@ static GLubyte *filter_extensions_list( const char *extensions, const char *disa
         }
         extensions = end;
     }
+
+    for (extra = legacy_extensions; *extra; extra++)
+    {
+        size = strlen( *extra );
+        memcpy( p, *extra, size );
+        p += size;
+        *p++ = ' ';
+    }
+
+    if (p != str) --p;
     *p = 0;
     return (GLubyte *)str;
 }
@@ -460,13 +471,13 @@ static const char *parse_gl_version( const char *gl_version, int *major, int *mi
     return ptr;
 }
 
-static GLuint *filter_extensions_index( TEB *teb, const char *disabled )
+static GLuint *filter_extensions_index( TEB *teb, const char *disabled, const char *enabled )
 {
     const struct opengl_funcs *funcs = teb->glTable;
     const char *ext, *version;
     GLuint *disabled_index;
     GLint extensions_count;
-    unsigned int i = 0, j;
+    unsigned int i = 0, j, len;
     int major, minor;
 
     if (!funcs->p_glGetStringi)
@@ -490,6 +501,7 @@ static GLuint *filter_extensions_index( TEB *teb, const char *disabled )
     for (j = 0; j < extensions_count; ++j)
     {
         ext = (const char *)funcs->p_glGetStringi( GL_EXTENSIONS, j );
+        len = strlen( ext );
 
         /* We do not support GL_MAP_PERSISTENT_BIT, and hence
          * ARB_buffer_storage, on wow64. */
@@ -498,7 +510,7 @@ static GLuint *filter_extensions_index( TEB *teb, const char *disabled )
             TRACE( "-- %s (disabled due to wow64)\n", ext );
             disabled_index[i++] = j;
         }
-        else if (!has_extension( disabled, ext, strlen( ext ) ))
+        else if (!has_extension( disabled, ext, len ) && (!*enabled || has_extension( enabled, ext, len )))
         {
             TRACE( "++ %s\n", ext );
         }
@@ -577,50 +589,113 @@ static HKEY open_hkcu_key( const char *name )
     return reg_open_key( hkcu, bufferW, asciiz_to_unicode( bufferW, name ) - sizeof(WCHAR) );
 }
 
-static NTSTATUS query_reg_value( HKEY hkey, const WCHAR *name, KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size )
+static ULONG query_reg_value( HKEY hkey, const WCHAR *name, KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size )
 {
     unsigned int name_size = name ? lstrlenW( name ) * sizeof(WCHAR) : 0;
     UNICODE_STRING nameW = { name_size, name_size, (WCHAR *)name };
 
-    return NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation, info, size, &size );
+    if (NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation,
+                         info, size, &size ))
+        return 0;
+
+    return size - FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data);
+}
+
+static ULONG query_reg_ascii_value( HKEY hkey, const char *name, KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size )
+{
+    WCHAR nameW[64];
+    asciiz_to_unicode( nameW, name );
+    return query_reg_value( hkey, nameW, info, size );
+}
+
+static DWORD get_ascii_config_key( HKEY defkey, HKEY appkey, const char *name,
+                                   char *buffer, DWORD size )
+{
+    char buf[offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data[4096])];
+    KEY_VALUE_PARTIAL_INFORMATION *info = (void *)buf;
+
+    if (appkey && query_reg_ascii_value( appkey, name, info, sizeof(buf) ))
+    {
+        size = min( info->DataLength, size - sizeof(WCHAR) ) / sizeof(WCHAR);
+        unicode_to_ascii( buffer, (WCHAR *)info->Data, size );
+        buffer[size] = 0;
+        return 0;
+    }
+
+    if (defkey && query_reg_ascii_value( defkey, name, info, sizeof(buf) ))
+    {
+        size = min( info->DataLength, size - sizeof(WCHAR) ) / sizeof(WCHAR);
+        unicode_to_ascii( buffer, (WCHAR *)info->Data, size );
+        buffer[size] = 0;
+        return 0;
+    }
+
+    return ERROR_FILE_NOT_FOUND;
+}
+
+static char *query_opengl_option( const char *name )
+{
+    WCHAR bufferW[MAX_PATH + 16], *p, *appname;
+    HKEY defkey, appkey = 0;
+    char buffer[4096];
+    char *str = NULL;
+    DWORD len;
+
+    /* @@ Wine registry key: HKCU\Software\Wine\OpenGL */
+    defkey = open_hkcu_key( "Software\\Wine\\OpenGL" );
+
+    /* open the app-specific key */
+    appname = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
+    if ((p = wcsrchr( appname, '/' ))) appname = p + 1;
+    if ((p = wcsrchr( appname, '\\' ))) appname = p + 1;
+    len = lstrlenW( appname );
+
+    if (len && len < MAX_PATH)
+    {
+        HKEY tmpkey;
+        int i;
+
+        for (i = 0; appname[i]; i++) bufferW[i] = RtlDowncaseUnicodeChar( appname[i] );
+        bufferW[i] = 0;
+        appname = bufferW;
+
+        /* @@ Wine registry key: HKCU\Software\Wine\AppDefaults\app.exe\OpenGL */
+        if ((tmpkey = open_hkcu_key( "Software\\Wine\\AppDefaults" )))
+        {
+            static const WCHAR openglW[] = {'\\','O','p','e','n','G','L',0};
+            memcpy( appname + i, openglW, sizeof(openglW) );
+            appkey = reg_open_key( tmpkey, appname, lstrlenW( appname ) * sizeof(WCHAR) );
+            NtClose( tmpkey );
+        }
+    }
+
+    if (!get_ascii_config_key( defkey, appkey, name, buffer, sizeof(buffer) ))
+        str = strdup( buffer );
+
+    if (appkey) NtClose( appkey );
+    if (defkey) NtClose( defkey );
+    return str;
 }
 
 /* build the extension string by filtering out the disabled extensions */
 static BOOL filter_extensions( TEB * teb, const char *extensions, GLubyte **exts_list, GLuint **disabled_exts )
 {
-    static const char *disabled;
+    static const char *disabled, *enabled;
+    char *str;
 
     if (!disabled)
     {
-        char *str = NULL;
-        HKEY hkey;
-
-        /* @@ Wine registry key: HKCU\Software\Wine\OpenGL */
-        if ((hkey = open_hkcu_key( "Software\\Wine\\OpenGL" )))
-        {
-            char buffer[4096];
-            KEY_VALUE_PARTIAL_INFORMATION *value = (void *)buffer;
-            static WCHAR disabled_extensionsW[] = {'D','i','s','a','b','l','e','d','E','x','t','e','n','s','i','o','n','s',0};
-
-            if (!query_reg_value( hkey, disabled_extensionsW, value, sizeof(buffer) ))
-            {
-                ULONG len = value->DataLength / sizeof(WCHAR);
-
-                unicode_to_ascii( buffer, (WCHAR *)value->Data, len );
-                buffer[len] = 0;
-                str = strdup( buffer );
-            }
-            NtClose( hkey );
-        }
-        if (str)
-        {
-            if (InterlockedCompareExchangePointer( (void **)&disabled, str, NULL )) free( str );
-        }
-        else disabled = "";
+        if (!(str = query_opengl_option( "DisabledExtensions" ))) disabled = "";
+        else if (InterlockedCompareExchangePointer( (void **)&disabled, str, NULL )) free( str );
+    }
+    if (!enabled)
+    {
+        if (!(str = query_opengl_option( "EnabledExtensions" ))) enabled = "";
+        else if (InterlockedCompareExchangePointer( (void **)&enabled, str, NULL )) free( str );
     }
 
-    if (extensions && !*exts_list) *exts_list = filter_extensions_list( extensions, disabled );
-    if (!*disabled_exts) *disabled_exts = filter_extensions_index( teb, disabled );
+    if (extensions && !*exts_list) *exts_list = filter_extensions_list( extensions, disabled, enabled );
+    if (!*disabled_exts) *disabled_exts = filter_extensions_index( teb, disabled, enabled );
     return (exts_list && *exts_list) || *disabled_exts;
 }
 

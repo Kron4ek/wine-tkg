@@ -64,6 +64,8 @@
 #include "request.h"
 #include "user.h"
 #include "security.h"
+#include "esync.h"
+#include "fsync.h"
 
 /* process object */
 
@@ -90,12 +92,14 @@ struct type_descr process_type =
 };
 
 static void process_dump( struct object *obj, int verbose );
-static struct object *process_get_sync( struct object *obj );
+static int process_signaled( struct object *obj, struct wait_queue_entry *entry );
 static unsigned int process_map_access( struct object *obj, unsigned int access );
 static struct security_descriptor *process_get_sd( struct object *obj );
 static void process_poll_event( struct fd *fd, int event );
 static struct list *process_get_kernel_obj_list( struct object *obj );
 static void process_destroy( struct object *obj );
+static int process_get_esync_fd( struct object *obj, enum esync_type *type );
+static unsigned int process_get_fsync_idx( struct object *obj, enum fsync_type *type );
 static void terminate_process( struct process *process, struct thread *skip, int exit_code );
 
 static const struct object_ops process_ops =
@@ -103,13 +107,14 @@ static const struct object_ops process_ops =
     sizeof(struct process),      /* size */
     &process_type,               /* type */
     process_dump,                /* dump */
-    NULL,                        /* add_queue */
-    NULL,                        /* remove_queue */
-    NULL,                        /* signaled */
-    NULL,                        /* satisfied */
+    add_queue,                   /* add_queue */
+    remove_queue,                /* remove_queue */
+    process_signaled,            /* signaled */
+    process_get_esync_fd,        /* get_esync_fd */
+    process_get_fsync_idx,       /* get_fsync_idx */
+    no_satisfied,                /* satisfied */
     no_signal,                   /* signal */
     no_get_fd,                   /* get_fd */
-    process_get_sync,            /* get_sync */
     process_map_access,          /* map_access */
     process_get_sd,              /* get_sd */
     default_set_sd,              /* set_sd */
@@ -139,16 +144,15 @@ static const struct fd_ops process_fd_ops =
 
 struct startup_info
 {
-    struct object               obj;            /* object header */
-    struct event_sync          *sync;           /* sync object for wait/signal */
-    struct process             *process;        /* created process */
-    data_size_t                 info_size;      /* size of startup info */
-    data_size_t                 data_size;      /* size of whole startup data */
-    struct startup_info_data   *data;           /* data for startup info */
+    struct object       obj;          /* object header */
+    struct process     *process;      /* created process */
+    data_size_t         info_size;    /* size of startup info */
+    data_size_t         data_size;    /* size of whole startup data */
+    struct startup_info_data *data;   /* data for startup info */
 };
 
 static void startup_info_dump( struct object *obj, int verbose );
-static struct object *startup_info_get_sync( struct object *obj );
+static int startup_info_signaled( struct object *obj, struct wait_queue_entry *entry );
 static void startup_info_destroy( struct object *obj );
 
 static const struct object_ops startup_info_ops =
@@ -156,13 +160,14 @@ static const struct object_ops startup_info_ops =
     sizeof(struct startup_info),   /* size */
     &no_type,                      /* type */
     startup_info_dump,             /* dump */
-    NULL,                          /* add_queue */
-    NULL,                          /* remove_queue */
-    NULL,                          /* signaled */
-    NULL,                          /* satisfied */
+    add_queue,                     /* add_queue */
+    remove_queue,                  /* remove_queue */
+    startup_info_signaled,         /* signaled */
+    NULL,                          /* get_esync_fd */
+    NULL,                          /* get_fsync_idx */
+    no_satisfied,                  /* satisfied */
     no_signal,                     /* signal */
     no_get_fd,                     /* get_fd */
-    startup_info_get_sync,         /* get_sync */
     default_map_access,            /* map_access */
     default_get_sd,                /* get_sd */
     default_set_sd,                /* set_sd */
@@ -193,24 +198,24 @@ struct type_descr job_type =
 };
 
 static void job_dump( struct object *obj, int verbose );
-static struct object *job_get_sync( struct object *obj );
+static int job_signaled( struct object *obj, struct wait_queue_entry *entry );
 static int job_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
 static void job_destroy( struct object *obj );
 
 struct job
 {
-    struct object        obj;               /* object header */
-    struct event_sync   *sync;              /* sync object for wait/signal */
-    struct list          process_list;      /* list of processes */
-    int                  num_processes;     /* count of running processes */
-    int                  total_processes;   /* count of processes which have been assigned */
-    unsigned int         limit_flags;       /* limit flags */
-    int                  terminating;       /* job is terminating */
-    struct completion   *completion_port;   /* associated completion port */
-    apc_param_t          completion_key;    /* key to send with completion messages */
-    struct job          *parent;
-    struct list          parent_job_entry;  /* list entry for parent job */
-    struct list          child_job_list;    /* list of child jobs */
+    struct object obj;             /* object header */
+    struct list process_list;      /* list of processes */
+    int num_processes;             /* count of running processes */
+    int total_processes;           /* count of processes which have been assigned */
+    unsigned int limit_flags;      /* limit flags */
+    int terminating;               /* job is terminating */
+    int signaled;                  /* job is signaled */
+    struct completion *completion_port; /* associated completion port */
+    apc_param_t completion_key;    /* key to send with completion messages */
+    struct job *parent;
+    struct list parent_job_entry;  /* list entry for parent job */
+    struct list child_job_list;    /* list of child jobs */
 };
 
 static const struct object_ops job_ops =
@@ -218,13 +223,14 @@ static const struct object_ops job_ops =
     sizeof(struct job),            /* size */
     &job_type,                     /* type */
     job_dump,                      /* dump */
-    NULL,                          /* add_queue */
-    NULL,                          /* remove_queue */
-    NULL,                          /* signaled */
-    NULL,                          /* satisfied */
+    add_queue,                     /* add_queue */
+    remove_queue,                  /* remove_queue */
+    job_signaled,                  /* signaled */
+    NULL,                          /* get_esync_fd */
+    NULL,                          /* get_fsync_idx */
+    no_satisfied,                  /* satisfied */
     no_signal,                     /* signal */
     no_get_fd,                     /* get_fd */
-    job_get_sync,                  /* get_sync */
     default_map_access,            /* map_access */
     default_get_sd,                /* get_sd */
     default_set_sd,                /* set_sd */
@@ -248,22 +254,16 @@ static struct job *create_job_object( struct object *root, const struct unicode_
         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
         {
             /* initialize it if it didn't already exist */
-            job->sync = NULL;
             list_init( &job->process_list );
             list_init( &job->child_job_list );
             job->num_processes = 0;
             job->total_processes = 0;
             job->limit_flags = 0;
             job->terminating = 0;
+            job->signaled = 0;
             job->completion_port = NULL;
             job->completion_key = 0;
             job->parent = NULL;
-
-            if (!(job->sync = create_event_sync( 1, 0 )))
-            {
-                release_object( job );
-                return NULL;
-            }
         }
     }
     return job;
@@ -418,7 +418,8 @@ static void terminate_job( struct job *job, int exit_code )
         if (process->running_threads) terminate_process( process, NULL, exit_code );
     }
     job->terminating = 0;
-    signal_sync( job->sync );
+    job->signaled = 1;
+    wake_up( &job->obj, 0 );
 }
 
 static int job_close_handle( struct object *obj, struct process *process, obj_handle_t handle )
@@ -449,8 +450,6 @@ static void job_destroy( struct object *obj )
         list_remove( &job->parent_job_entry );
         release_object( job->parent );
     }
-
-    if (job->sync) release_object( job->sync );
 }
 
 static void job_dump( struct object *obj, int verbose )
@@ -461,11 +460,10 @@ static void job_dump( struct object *obj, int verbose )
              list_count(&job->process_list), list_count(&job->child_job_list), job->parent );
 }
 
-static struct object *job_get_sync( struct object *obj )
+static int job_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct job *job = (struct job *)obj;
-    assert( obj->ops == &job_ops );
-    return grab_object( job->sync );
+    return job->signaled;
 }
 
 struct ptid_entry
@@ -564,7 +562,7 @@ static void set_process_startup_state( struct process *process, enum startup_sta
     if (process->startup_state == STARTUP_IN_PROGRESS) process->startup_state = state;
     if (process->startup_info)
     {
-        signal_sync( process->startup_info->sync );
+        wake_up( &process->startup_info->obj, 0 );
         release_object( process->startup_info );
         process->startup_info = NULL;
     }
@@ -663,7 +661,6 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
         close( fd );
         goto error;
     }
-    process->sync            = NULL;
     process->parent_id       = 0;
     process->debug_obj       = NULL;
     process->debug_event     = NULL;
@@ -701,6 +698,8 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
     process->rawinput_kbd    = NULL;
     memset( &process->image_info, 0, sizeof(process->image_info) );
     list_init( &process->rawinput_entry );
+    process->esync_fd        = -1;
+    process->fsync_idx       = 0;
     list_init( &process->kernel_object );
     list_init( &process->thread_list );
     list_init( &process->locks );
@@ -722,7 +721,6 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
         goto error;
     }
     if (!(process->msg_fd = create_anonymous_fd( &process_fd_ops, fd, &process->obj, 0 ))) goto error;
-    if (!(process->sync = create_event_sync( 1, 0 ))) goto error;
 
     /* create the handle table */
     if (!parent)
@@ -751,6 +749,12 @@ struct process *create_process( int fd, struct process *parent, unsigned int fla
     }
     if (!process->handles || !process->token) goto error;
     process->session_id = token_get_session_id( process->token );
+
+    if (do_fsync())
+        process->fsync_idx = fsync_alloc_shm( 0, 0 );
+
+    if (do_esync())
+        process->esync_fd = esync_create_fd( 0, 0 );
 
     set_fd_events( process->msg_fd, POLLIN );  /* start listening to events */
     return process;
@@ -796,11 +800,11 @@ static void process_destroy( struct object *obj )
     if (process->idle_event) release_object( process->idle_event );
     if (process->id) free_ptid( process->id );
     if (process->token) release_object( process->token );
-    if (process->sync) release_object( process->sync );
     list_remove( &process->rawinput_entry );
     free( process->rawinput_devices );
     free( process->dir_cache );
     free( process->image );
+    if (do_esync()) close( process->esync_fd );
 }
 
 /* dump a process on stdout for debugging purposes */
@@ -812,11 +816,24 @@ static void process_dump( struct object *obj, int verbose )
     fprintf( stderr, "Process id=%04x handles=%p\n", process->id, process->handles );
 }
 
-static struct object *process_get_sync( struct object *obj )
+static int process_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct process *process = (struct process *)obj;
-    assert( obj->ops == &process_ops );
-    return grab_object( process->sync );
+    return !process->running_threads;
+}
+
+static int process_get_esync_fd( struct object *obj, enum esync_type *type )
+{
+    struct process *process = (struct process *)obj;
+    *type = ESYNC_MANUAL_SERVER;
+    return process->esync_fd;
+}
+
+static unsigned int process_get_fsync_idx( struct object *obj, enum fsync_type *type )
+{
+    struct process *process = (struct process *)obj;
+    *type = FSYNC_MANUAL_SERVER;
+    return process->fsync_idx;
 }
 
 static unsigned int process_map_access( struct object *obj, unsigned int access )
@@ -889,7 +906,6 @@ static void startup_info_destroy( struct object *obj )
     assert( obj->ops == &startup_info_ops );
     free( info->data );
     if (info->process) release_object( info->process );
-    if (info->sync) release_object( info->sync );
 }
 
 static void startup_info_dump( struct object *obj, int verbose )
@@ -904,11 +920,10 @@ static void startup_info_dump( struct object *obj, int verbose )
     fputc( '\n', stderr );
 }
 
-static struct object *startup_info_get_sync( struct object *obj )
+static int startup_info_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct startup_info *info = (struct startup_info *)obj;
-    assert( obj->ops == &startup_info_ops );
-    return grab_object( info->sync );
+    return info->process && info->process->startup_state != STARTUP_IN_PROGRESS;
 }
 
 /* get a process from an id (and increment the refcount) */
@@ -1000,7 +1015,7 @@ static void process_killed( struct process *process )
     finish_process_tracing( process );
     release_job_process( process );
     start_sigkill_timer( process );
-    signal_sync( process->sync );
+    wake_up( &process->obj, 0 );
 }
 
 /* add a thread to a process running threads list */
@@ -1219,15 +1234,8 @@ DECL_HANDLER(new_process)
         release_object( parent );
         return;
     }
-    info->sync     = NULL;
     info->process  = NULL;
     info->data     = NULL;
-
-    if (!(info->sync = create_event_sync( 1, 0 )))
-    {
-        close( socket_fd );
-        goto done;
-    }
 
     info_ptr = get_req_data_after_objattr( objattr, &info->data_size );
 

@@ -93,12 +93,10 @@ static struct gl_drawable *impl_from_opengl_drawable(struct opengl_drawable *bas
 static struct list context_list = LIST_INIT(context_list);
 static pthread_mutex_t context_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static CFMutableDictionaryRef dc_pbuffers;
-static pthread_mutex_t dc_pbuffers_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 static void *opengl_handle;
 static const struct opengl_funcs *funcs;
 static const struct opengl_driver_funcs macdrv_driver_funcs;
+static const struct client_surface_funcs macdrv_client_surface_funcs;
 static const struct opengl_drawable_funcs macdrv_surface_funcs;
 static const struct opengl_drawable_funcs macdrv_pbuffer_funcs;
 
@@ -1473,6 +1471,7 @@ static BOOL create_context(struct macdrv_context *context, CGLContextObj share, 
 
 static BOOL macdrv_surface_create(HWND hwnd, HDC hdc, int format, struct opengl_drawable **drawable)
 {
+    struct client_surface *client;
     struct macdrv_win_data *data;
     struct gl_drawable *gl;
 
@@ -1487,9 +1486,12 @@ static BOOL macdrv_surface_create(HWND hwnd, HDC hdc, int format, struct opengl_
     data->pixel_format = format;
     release_win_data(data);
 
-    if (!(gl = opengl_drawable_create(sizeof(*gl), &macdrv_surface_funcs, format, hwnd, hdc))) return FALSE;
-    *drawable = &gl->base;
+    if (!(client = client_surface_create(sizeof(*client), &macdrv_client_surface_funcs, hwnd))) return FALSE;
+    gl = opengl_drawable_create(sizeof(*gl), &macdrv_surface_funcs, format, client);
+    client_surface_release(client);
+    if (!gl) return FALSE;
 
+    *drawable = &gl->base;
     return TRUE;
 }
 
@@ -1513,7 +1515,6 @@ static void mark_contexts_for_moved_view(macdrv_view view)
     }
     pthread_mutex_unlock(&context_mutex);
 }
-
 
 /**********************************************************************
  *              sync_context_rect
@@ -2074,7 +2075,6 @@ static void macdrv_glCopyPixels(GLint x, GLint y, GLsizei width, GLsizei height,
         make_context_current(context, FALSE);
 }
 
-
 static void macdrv_surface_flush(struct opengl_drawable *base, UINT flags)
 {
     struct macdrv_context *context = NtCurrentTeb()->glReserved2;
@@ -2342,7 +2342,7 @@ static BOOL macdrv_pbuffer_create(HDC hdc, int format, BOOL largest, GLenum text
         texture_format = GL_RGB;
     }
 
-    if (!(gl = opengl_drawable_create(sizeof(*gl), &macdrv_pbuffer_funcs, format, 0, hdc))) return FALSE;
+    if (!(gl = opengl_drawable_create(sizeof(*gl), &macdrv_pbuffer_funcs, format, NULL))) return FALSE;
 
     err = CGLCreatePBuffer(*width, *height, texture_target, texture_format, max_level, &gl->pbuffer);
     if (err != kCGLNoError)
@@ -2351,10 +2351,6 @@ static BOOL macdrv_pbuffer_create(HDC hdc, int format, BOOL largest, GLenum text
         opengl_drawable_release(&gl->base);
         return FALSE;
     }
-
-    pthread_mutex_lock(&dc_pbuffers_mutex);
-    CFDictionarySetValue(dc_pbuffers, hdc, gl->pbuffer);
-    pthread_mutex_unlock(&dc_pbuffers_mutex);
 
     *drawable = &gl->base;
     TRACE(" -> %p\n", gl);
@@ -2367,20 +2363,7 @@ static void macdrv_pbuffer_destroy(struct opengl_drawable *base)
 
     TRACE("drawable %s\n", debugstr_opengl_drawable(base));
 
-    pthread_mutex_lock(&dc_pbuffers_mutex);
-    CFDictionaryRemoveValue(dc_pbuffers, gl->pbuffer);
-    pthread_mutex_unlock(&dc_pbuffers_mutex);
-
     CGLReleasePBuffer(gl->pbuffer);
-}
-
-static void macdrv_pbuffer_flush(struct opengl_drawable *base, UINT flags)
-{
-}
-
-static BOOL macdrv_pbuffer_swap(struct opengl_drawable *base)
-{
-    return FALSE;
 }
 
 static BOOL macdrv_make_current(struct opengl_drawable *draw_base, struct opengl_drawable *read_base, void *private)
@@ -2388,7 +2371,6 @@ static BOOL macdrv_make_current(struct opengl_drawable *draw_base, struct opengl
     struct gl_drawable *draw = impl_from_opengl_drawable(draw_base), *read = impl_from_opengl_drawable(read_base);
     struct macdrv_context *context = private;
     struct macdrv_win_data *data;
-    HWND hwnd;
 
     TRACE("draw %s, read %s, context %p\n", debugstr_opengl_drawable(draw_base), debugstr_opengl_drawable(read_base), private);
 
@@ -2399,8 +2381,9 @@ static BOOL macdrv_make_current(struct opengl_drawable *draw_base, struct opengl
         return TRUE;
     }
 
-    if ((hwnd = draw->base.hwnd))
+    if (draw->base.client)
     {
+        HWND hwnd = draw->base.client->hwnd;
         if (!(data = get_win_data(hwnd)))
         {
             FIXME("draw DC for window %p of other process: not implemented\n", hwnd);
@@ -2417,30 +2400,18 @@ static BOOL macdrv_make_current(struct opengl_drawable *draw_base, struct opengl
     }
     else
     {
-        CGLPBufferObj pbuffer;
-
-        pthread_mutex_lock(&dc_pbuffers_mutex);
-        pbuffer = (CGLPBufferObj)CFDictionaryGetValue(dc_pbuffers, draw->base.hdc);
-        if (!pbuffer)
-        {
-            WARN("no window or pbuffer for DC\n");
-            pthread_mutex_unlock(&dc_pbuffers_mutex);
-            RtlSetLastWin32Error(ERROR_INVALID_HANDLE);
-            return FALSE;
-        }
-
         context->draw_hwnd = NULL;
         context->draw_view = NULL;
-        context->draw_pbuffer = pbuffer;
-        pthread_mutex_unlock(&dc_pbuffers_mutex);
+        context->draw_pbuffer = draw->pbuffer;
     }
 
     context->read_view = NULL;
     context->read_pbuffer = NULL;
     if (read != draw)
     {
-        if ((hwnd = read->base.hwnd))
+        if (read->base.client)
         {
+            HWND hwnd = read->base.client->hwnd;
             if ((data = get_win_data(hwnd)))
             {
                 if (data->client_cocoa_view != context->draw_view)
@@ -2454,9 +2425,7 @@ static BOOL macdrv_make_current(struct opengl_drawable *draw_base, struct opengl
         }
         else
         {
-            pthread_mutex_lock(&dc_pbuffers_mutex);
-            context->read_pbuffer = (CGLPBufferObj)CFDictionaryGetValue(dc_pbuffers, read->base.hdc);
-            pthread_mutex_unlock(&dc_pbuffers_mutex);
+            context->read_pbuffer = read->pbuffer;
         }
     }
 
@@ -2768,13 +2737,6 @@ UINT macdrv_OpenGLInit(UINT version, const struct opengl_funcs *opengl_funcs, co
     }
     funcs = opengl_funcs;
 
-    dc_pbuffers = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
-    if (!dc_pbuffers)
-    {
-        WARN("CFDictionaryCreateMutable failed\n");
-        return STATUS_NOT_SUPPORTED;
-    }
-
     opengl_handle = dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_LAZY|RTLD_LOCAL|RTLD_NOLOAD);
     if (!opengl_handle)
     {
@@ -2808,30 +2770,6 @@ failed:
     opengl_handle = NULL;
     return STATUS_NOT_SUPPORTED;
 }
-
-
-/***********************************************************************
- *              sync_gl_view
- *
- * Synchronize the Mac GL view position with the Windows child window
- * position.
- */
-void sync_gl_view(struct macdrv_win_data* data, const struct window_rects *old_rects)
-{
-    if (data->client_cocoa_view && data->pixel_format)
-    {
-        RECT old = old_rects->client, new = data->rects.client;
-
-        OffsetRect(&old, -old_rects->visible.left, -old_rects->visible.top);
-        OffsetRect(&new, -data->rects.visible.left, -data->rects.visible.top);
-        if (!EqualRect(&old, &new))
-        {
-            TRACE("GL view %p changed position; marking contexts\n", data->client_cocoa_view);
-            mark_contexts_for_moved_view(data->client_cocoa_view);
-        }
-    }
-}
-
 
 static BOOL macdrv_describe_pixel_format(int format, struct wgl_pixel_format *descr)
 {
@@ -2953,49 +2891,27 @@ static void *macdrv_get_proc_address(const char *name)
 static BOOL macdrv_surface_swap(struct opengl_drawable *base)
 {
     struct macdrv_context *context = NtCurrentTeb()->glReserved2;
-    HWND hwnd = base->hwnd;
-    HDC hdc = base->hdc;
+    struct macdrv_win_data *data;
+    HWND hwnd = base->client->hwnd;
     BOOL match = FALSE;
 
-    TRACE("hdc %p context %p/%p/%p\n", hdc, context, (context ? context->context : NULL),
+    TRACE("%s context %p/%p/%p\n", debugstr_opengl_drawable(base), context, (context ? context->context : NULL),
           (context ? context->cglcontext : NULL));
 
-    if (hwnd)
+    if (!(data = get_win_data(hwnd)))
     {
-        struct macdrv_win_data *data;
-
-        if (!(data = get_win_data(hwnd)))
-        {
-            RtlSetLastWin32Error(ERROR_INVALID_HANDLE);
-            return FALSE;
-        }
-
-        if (context && context->draw_view == data->client_cocoa_view)
-            match = TRUE;
-
-        release_win_data(data);
+        RtlSetLastWin32Error(ERROR_INVALID_HANDLE);
+        return FALSE;
     }
-    else
-    {
-        CGLPBufferObj pbuffer;
 
-        pthread_mutex_lock(&dc_pbuffers_mutex);
-        pbuffer = (CGLPBufferObj)CFDictionaryGetValue(dc_pbuffers, hdc);
-        pthread_mutex_unlock(&dc_pbuffers_mutex);
+    if (context && context->draw_view == data->client_cocoa_view)
+        match = TRUE;
 
-        if (!pbuffer)
-        {
-            RtlSetLastWin32Error(ERROR_INVALID_HANDLE);
-            return FALSE;
-        }
-
-        if (context && context->draw_pbuffer == pbuffer)
-            match = TRUE;
-    }
+    release_win_data(data);
 
     if (!match)
     {
-        FIXME("current context %p doesn't match hdc %p; can't swap\n", context, hdc);
+        FIXME("current context %p doesn't match; can't swap\n", context);
         return FALSE;
     }
 
@@ -3018,6 +2934,42 @@ static const struct opengl_driver_funcs macdrv_driver_funcs =
     .p_pbuffer_bind = macdrv_pbuffer_bind,
 };
 
+static void macdrv_client_surface_destroy(struct client_surface *client)
+{
+    TRACE("%s\n", debugstr_client_surface(client));
+}
+
+static void macdrv_client_surface_detach(struct client_surface *client)
+{
+}
+
+static void macdrv_client_surface_update(struct client_surface *client)
+{
+    struct macdrv_win_data *data = get_win_data(client->hwnd);
+
+    TRACE("%s\n", debugstr_client_surface(client));
+
+    if (data->client_cocoa_view && data->pixel_format)
+    {
+        TRACE("GL view %p changed position; marking contexts\n", data->client_cocoa_view);
+        mark_contexts_for_moved_view(data->client_cocoa_view);
+    }
+
+    release_win_data(data);
+}
+
+static void macdrv_client_surface_present(struct client_surface *client, HDC hdc)
+{
+}
+
+static const struct client_surface_funcs macdrv_client_surface_funcs =
+{
+    .destroy = macdrv_client_surface_destroy,
+    .detach = macdrv_client_surface_detach,
+    .update = macdrv_client_surface_update,
+    .present = macdrv_client_surface_present,
+};
+
 static const struct opengl_drawable_funcs macdrv_surface_funcs =
 {
     .destroy = macdrv_surface_destroy,
@@ -3028,6 +2980,4 @@ static const struct opengl_drawable_funcs macdrv_surface_funcs =
 static const struct opengl_drawable_funcs macdrv_pbuffer_funcs =
 {
     .destroy = macdrv_pbuffer_destroy,
-    .flush = macdrv_pbuffer_flush,
-    .swap = macdrv_pbuffer_swap,
 };

@@ -55,74 +55,37 @@ static VkBool32 (*pvkGetPhysicalDeviceWaylandPresentationSupportKHR)(VkPhysicalD
 
 static const struct vulkan_driver_funcs wayland_vulkan_driver_funcs;
 
-static void wine_vk_surface_destroy(struct wayland_client_surface *client)
-{
-    HWND hwnd = wl_surface_get_user_data(client->wl_surface);
-    struct wayland_win_data *data = wayland_win_data_get(hwnd);
-
-    if (wayland_client_surface_release(client) && data)
-        data->client_surface = NULL;
-
-    if (data) wayland_win_data_release(data);
-}
-
-static VkResult wayland_vulkan_surface_create(HWND hwnd, const struct vulkan_instance *instance, VkSurfaceKHR *surface, void **private)
+static VkResult wayland_vulkan_surface_create(HWND hwnd, const struct vulkan_instance *instance, VkSurfaceKHR *handle,
+                                              struct client_surface **client)
 {
     VkResult res;
     VkWaylandSurfaceCreateInfoKHR create_info_host;
-    struct wayland_client_surface *client;
+    struct wayland_client_surface *surface;
 
-    TRACE("%p %p %p %p\n", hwnd, instance, surface, private);
+    TRACE("%p %p %p %p\n", hwnd, instance, handle, client);
 
-    if (!(client = get_client_surface(hwnd)))
-    {
-        ERR("Failed to create client surface for hwnd=%p\n", hwnd);
-        return VK_ERROR_OUT_OF_HOST_MEMORY;
-    }
-
+    if (!(surface = wayland_client_surface_create(hwnd))) return VK_ERROR_OUT_OF_HOST_MEMORY;
     create_info_host.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
     create_info_host.pNext = NULL;
     create_info_host.flags = 0; /* reserved */
     create_info_host.display = process_wayland.wl_display;
-    create_info_host.surface = client->wl_surface;
+    create_info_host.surface = surface->wl_surface;
 
     res = pvkCreateWaylandSurfaceKHR(instance->host.instance, &create_info_host,
                                      NULL /* allocator */,
-                                     surface);
+                                     handle);
     if (res != VK_SUCCESS)
     {
         ERR("Failed to create vulkan wayland surface, res=%d\n", res);
-        wine_vk_surface_destroy(client);
+        client_surface_release(&surface->client);
         return res;
     }
 
-    *private = client;
+    set_client_surface(hwnd, surface);
+    *client = &surface->client;
 
-    TRACE("Created surface=0x%s, private=%p\n", wine_dbgstr_longlong(*surface), *private);
+    TRACE("Created surface=0x%s, client=%p\n", wine_dbgstr_longlong(*handle), *client);
     return VK_SUCCESS;
-}
-
-static void wayland_vulkan_surface_destroy(HWND hwnd, void *private)
-{
-    struct wayland_client_surface *client = private;
-
-    TRACE("%p %p\n", hwnd, private);
-
-    wine_vk_surface_destroy(client);
-}
-
-static void wayland_vulkan_surface_detach(HWND hwnd, void *private)
-{
-}
-
-static void wayland_vulkan_surface_update(HWND hwnd, void *private)
-{
-}
-
-static void wayland_vulkan_surface_presented(HWND hwnd, void *private, VkResult result)
-{
-    HWND toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
-    ensure_window_surface_contents(toplevel);
 }
 
 static VkBool32 wayland_vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice phys_dev,
@@ -142,11 +105,6 @@ static const char *wayland_get_host_surface_extension(void)
 static const struct vulkan_driver_funcs wayland_vulkan_driver_funcs =
 {
     .p_vulkan_surface_create = wayland_vulkan_surface_create,
-    .p_vulkan_surface_destroy = wayland_vulkan_surface_destroy,
-    .p_vulkan_surface_detach = wayland_vulkan_surface_detach,
-    .p_vulkan_surface_update = wayland_vulkan_surface_update,
-    .p_vulkan_surface_presented = wayland_vulkan_surface_presented,
-
     .p_vkGetPhysicalDeviceWin32PresentationSupportKHR = wayland_vkGetPhysicalDeviceWin32PresentationSupportKHR,
     .p_get_host_surface_extension = wayland_get_host_surface_extension,
 };

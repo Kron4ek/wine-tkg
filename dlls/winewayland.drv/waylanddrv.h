@@ -29,6 +29,7 @@
 #include <wayland-client.h>
 #include <xkbcommon/xkbcommon.h>
 #include <xkbcommon/xkbregistry.h>
+#include "cursor-shape-v1-client-protocol.h"
 #include "pointer-constraints-unstable-v1-client-protocol.h"
 #include "relative-pointer-unstable-v1-client-protocol.h"
 #include "text-input-unstable-v3-client-protocol.h"
@@ -106,6 +107,7 @@ struct wayland_pointer
     struct zwp_confined_pointer_v1 *zwp_confined_pointer_v1;
     struct zwp_locked_pointer_v1 *zwp_locked_pointer_v1;
     struct zwp_relative_pointer_v1 *zwp_relative_pointer_v1;
+    struct wp_cursor_shape_device_v1 *wp_cursor_shape_device_v1;
     HWND focused_hwnd;
     HWND constraint_hwnd;
     BOOL pending_warp;
@@ -175,6 +177,7 @@ struct wayland
     struct zwlr_data_control_manager_v1 *zwlr_data_control_manager_v1;
     struct wl_data_device_manager *wl_data_device_manager;
     struct xdg_toplevel_icon_manager_v1 *xdg_toplevel_icon_manager_v1;
+    struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
     struct wayland_seat seat;
     struct wayland_keyboard keyboard;
     struct wayland_pointer pointer;
@@ -236,8 +239,7 @@ struct wayland_window_config
 
 struct wayland_client_surface
 {
-    LONG ref;
-    HWND hwnd;
+    struct client_surface client;
     HWND toplevel;
     struct wl_surface *wl_surface;
     struct wl_subsurface *wl_subsurface;
@@ -327,9 +329,7 @@ void wayland_surface_coords_to_window(struct wayland_surface *surface,
                                       double surface_x, double surface_y,
                                       int *window_x, int *window_y);
 struct wayland_client_surface *wayland_client_surface_create(HWND hwnd);
-BOOL wayland_client_surface_release(struct wayland_client_surface *client);
 void wayland_client_surface_attach(struct wayland_client_surface *client, HWND toplevel);
-void wayland_client_surface_detach(struct wayland_client_surface *client);
 void wayland_surface_ensure_contents(struct wayland_surface *surface);
 void wayland_surface_set_title(struct wayland_surface *surface, LPCWSTR title);
 void wayland_surface_set_icon(struct wayland_surface *surface, UINT type, ICONINFO *ii);
@@ -370,6 +370,7 @@ struct wayland_win_data
     struct window_rects rects;
     BOOL is_fullscreen;
     BOOL managed;
+    BOOL layered_attribs_set;
 };
 
 struct wayland_win_data *wayland_win_data_get(HWND hwnd);
@@ -377,6 +378,7 @@ struct wayland_win_data *wayland_win_data_get_nolock(HWND hwnd);
 void wayland_win_data_release(struct wayland_win_data *data);
 
 struct wayland_client_surface *get_client_surface(HWND hwnd);
+void set_client_surface(HWND hwnd, struct wayland_client_surface *client);
 BOOL set_window_surface_contents(HWND hwnd, struct wayland_shm_buffer *shm_buffer, HRGN damage_region);
 struct wayland_shm_buffer *get_window_surface_contents(HWND hwnd);
 void ensure_window_surface_contents(HWND hwnd);
@@ -412,13 +414,6 @@ void wayland_text_input_deinit(void);
 void wayland_data_device_init(void);
 
 /**********************************************************************
- *          OpenGL
- */
-
-void wayland_destroy_gl_drawable(HWND hwnd);
-void wayland_resize_gl_drawable(HWND hwnd);
-
-/**********************************************************************
  *          Helpers
  */
 
@@ -449,7 +444,9 @@ void WAYLAND_DestroyWindow(HWND hwnd);
 BOOL WAYLAND_SetIMECompositionRect(HWND hwnd, RECT rect);
 void WAYLAND_SetCursor(HWND hwnd, HCURSOR hcursor);
 BOOL WAYLAND_SetCursorPos(INT x, INT y);
+void WAYLAND_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWORD flags);
 void WAYLAND_SetWindowIcon(HWND hwnd, UINT type, HICON icon);
+void WAYLAND_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style);
 void WAYLAND_SetWindowText(HWND hwnd, LPCWSTR text);
 LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam, const POINT *pos);
 UINT WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager, void *param);

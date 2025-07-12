@@ -109,13 +109,14 @@ static const struct object_ops dir_ops =
     sizeof(struct dir),       /* size */
     &file_type,               /* type */
     dir_dump,                 /* dump */
-    NULL,                     /* add_queue */
-    NULL,                     /* remove_queue */
-    NULL,                     /* signaled */
-    NULL,                     /* satisfied */
+    add_queue,                /* add_queue */
+    remove_queue,             /* remove_queue */
+    default_fd_signaled,      /* signaled */
+    default_fd_get_esync_fd,  /* get_esync_fd */
+    default_fd_get_fsync_idx, /* get_fsync_idx */
+    no_satisfied,             /* satisfied */
     no_signal,                /* signal */
     dir_get_fd,               /* get_fd */
-    default_fd_get_sync,      /* get_sync */
     default_map_access,       /* map_access */
     dir_get_sd,               /* get_sd */
     dir_set_sd,               /* set_sd */
