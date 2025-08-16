@@ -3852,15 +3852,15 @@ msgstr "사용 중지됨"
 msgid "DInput"
 msgstr "DInput"
 
-#: dlls/joy.cpl/joy.rc:62
+#: dlls/joy.cpl/joy.rc:62 dlls/joy.cpl/joy.rc:111
 msgid "Axes"
 msgstr "축"
 
-#: dlls/joy.cpl/joy.rc:63
+#: dlls/joy.cpl/joy.rc:63 dlls/joy.cpl/joy.rc:112
 msgid "POVs"
 msgstr "시점"
 
-#: dlls/joy.cpl/joy.rc:64
+#: dlls/joy.cpl/joy.rc:64 dlls/joy.cpl/joy.rc:113
 msgid "Buttons"
 msgstr "버튼"
 
@@ -3929,9 +3929,13 @@ msgstr ""
 "서 DInput으로 재정의되지 않았는지 확인하십시오."
 
 #: dlls/joy.cpl/joy.rc:98 dlls/joy.cpl/joy.rc:99 dlls/joy.cpl/joy.rc:100
-#: dlls/joy.cpl/joy.rc:101
+#: dlls/joy.cpl/joy.rc:101 dlls/joy.cpl/joy.rc:115
 msgid "Rumble"
 msgstr "진동"
+
+#: dlls/joy.cpl/joy.rc:106
+msgid "Windows.Gaming.Input"
+msgstr ""
 
 #: dlls/joy.cpl/joy.rc:31
 msgid "Game Controllers"
@@ -7984,7 +7988,7 @@ msgid "Vector property is required.\n"
 msgstr "벡터 속성이 필요합니다.\n"
 
 #: dlls/mferror/mferror.mc:389
-msgid "Operation was cancelled.\n"
+msgid "Operation was canceled.\n"
 msgstr "작업이 취소되었습니다.\n"
 
 #: dlls/mferror/mferror.mc:396
@@ -9182,12 +9186,12 @@ msgstr "화면 벗어남"
 
 #: dlls/oleacc/oleacc.rc:115
 msgctxt "object state"
-msgid "sizeable"
+msgid "sizable"
 msgstr "크기 조절 가능"
 
 #: dlls/oleacc/oleacc.rc:116
 msgctxt "object state"
-msgid "moveable"
+msgid "movable"
 msgstr "이동 가능"
 
 #: dlls/oleacc/oleacc.rc:117
@@ -16169,7 +16173,7 @@ msgid "reg: The operation completed successfully\n"
 msgstr "reg: 작업이 성공적으로 끝났습니다\n"
 
 #: programs/reg/reg.rc:131
-msgid "reg: The registry operation was cancelled\n"
+msgid "reg: The registry operation was canceled\n"
 msgstr "reg: 레지스트리 작업이 취소되었습니다\n"
 
 #: programs/reg/reg.rc:174

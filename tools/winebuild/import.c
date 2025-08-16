@@ -1072,8 +1072,9 @@ void output_stubs( DLLSPEC *spec )
     {
         ORDDEF *odp = exports->entry_points[i];
         if (odp->type != TYPE_STUB) continue;
+        if (odp->flags & FLAG_SYSCALL) continue;
 
-        name = get_stub_name( odp, spec );
+        name = get_link_name( odp );
         exp_name = odp->name ? odp->name : odp->export_name;
         output_function_header( name, 0 );
 
@@ -1177,10 +1178,11 @@ void output_stubs( DLLSPEC *spec )
     {
         ORDDEF *odp = exports->entry_points[i];
         if (odp->type != TYPE_STUB) continue;
+        if (odp->flags & FLAG_SYSCALL) continue;
         exp_name = odp->name ? odp->name : odp->export_name;
         if (exp_name)
         {
-            name = get_stub_name( odp, spec );
+            name = get_link_name( odp );
             output( ".L%s_string:\n", name );
             output( "\t%s \"%s\"\n", get_asm_string_keyword(), exp_name );
         }

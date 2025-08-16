@@ -118,9 +118,11 @@ builtin_algorithms[] =
     {  BCRYPT_DH_ALGORITHM,         BCRYPT_SECRET_AGREEMENT_INTERFACE,      0,      0,    0 },
     {  BCRYPT_ECDH_P256_ALGORITHM,  BCRYPT_SECRET_AGREEMENT_INTERFACE,      0,      0,    0 },
     {  BCRYPT_ECDH_P384_ALGORITHM,  BCRYPT_SECRET_AGREEMENT_INTERFACE,      0,      0,    0 },
+    {  BCRYPT_ECDH_P521_ALGORITHM,  BCRYPT_SECRET_AGREEMENT_INTERFACE,      0,      0,    0 },
     {  BCRYPT_RSA_SIGN_ALGORITHM,   BCRYPT_SIGNATURE_INTERFACE,             0,      0,    0 },
     {  BCRYPT_ECDSA_P256_ALGORITHM, BCRYPT_SIGNATURE_INTERFACE,             0,      0,    0 },
     {  BCRYPT_ECDSA_P384_ALGORITHM, BCRYPT_SIGNATURE_INTERFACE,             0,      0,    0 },
+    {  BCRYPT_ECDSA_P521_ALGORITHM, BCRYPT_SIGNATURE_INTERFACE,             0,      0,    0 },
     {  BCRYPT_DSA_ALGORITHM,        BCRYPT_SIGNATURE_INTERFACE,             0,      0,    0 },
     {  BCRYPT_RNG_ALGORITHM,        BCRYPT_RNG_INTERFACE,                   0,      0,    0 },
     {  BCRYPT_PBKDF2_ALGORITHM,     BCRYPT_KEY_DERIVATION_INTERFACE,      618,      0,    0 },
@@ -247,11 +249,11 @@ static const struct algorithm pseudo_algorithms[] =
     {{ 0 }}, /* ECDH */
     {{ MAGIC_ALG }, ALG_ID_ECDH_P256 },
     {{ MAGIC_ALG }, ALG_ID_ECDH_P384 },
-    {{ 0 }}, /* ECDH_P512 */
+    {{ MAGIC_ALG }, ALG_ID_ECDH_P521 },
     {{ MAGIC_ALG }, ALG_ID_DSA },
     {{ MAGIC_ALG }, ALG_ID_ECDSA_P256 },
     {{ MAGIC_ALG }, ALG_ID_ECDSA_P384 },
-    {{ 0 }}, /* ECDSA_P512 */
+    {{ MAGIC_ALG }, ALG_ID_ECDSA_P521 },
     {{ MAGIC_ALG }, ALG_ID_RSA_SIGN },
 };
 
@@ -809,7 +811,7 @@ static NTSTATUS set_key_property( struct key *key, const WCHAR *prop, UCHAR *val
 
         if (key->u.a.flags & KEY_FLAG_FINALIZED) return STATUS_INVALID_HANDLE;
         if (key->alg_id != ALG_ID_DH || size < sizeof(*hdr) || hdr->cbLength != size ||
-            hdr->dwMagic != BCRYPT_DH_PARAMETERS_MAGIC || hdr->cbKeyLength != key->u.a.bitlen / 8)
+            hdr->dwMagic != BCRYPT_DH_PARAMETERS_MAGIC || hdr->cbKeyLength != len_from_bitlen( key->u.a.bitlen ))
             return STATUS_INVALID_PARAMETER;
 
         params.key   = key;
@@ -1736,30 +1738,40 @@ static NTSTATUS key_import_pair( struct algorithm *alg, const WCHAR *type, BCRYP
     if (!wcscmp( type, BCRYPT_ECCPUBLIC_BLOB ))
     {
         BCRYPT_ECCKEY_BLOB *ecc_blob = (BCRYPT_ECCKEY_BLOB *)input;
-        DWORD key_size, magic;
+        DWORD bitlen, magic;
 
         if (input_len < sizeof(*ecc_blob)) return STATUS_INVALID_PARAMETER;
 
         switch (alg->id)
         {
         case ALG_ID_ECDH_P256:
-            key_size = 32;
+            bitlen = 256;
             magic = BCRYPT_ECDH_PUBLIC_P256_MAGIC;
             break;
 
         case ALG_ID_ECDH_P384:
-            key_size = 48;
+            bitlen = 384;
             magic = BCRYPT_ECDH_PUBLIC_P384_MAGIC;
             break;
 
+        case ALG_ID_ECDH_P521:
+            bitlen = 521;
+            magic = BCRYPT_ECDH_PUBLIC_P521_MAGIC;
+            break;
+
         case ALG_ID_ECDSA_P256:
-            key_size = 32;
+            bitlen = 256;
             magic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
             break;
 
         case ALG_ID_ECDSA_P384:
-            key_size = 48;
+            bitlen = 384;
             magic = BCRYPT_ECDSA_PUBLIC_P384_MAGIC;
+            break;
+
+        case ALG_ID_ECDSA_P521:
+            bitlen = 521;
+            magic = BCRYPT_ECDSA_PUBLIC_P521_MAGIC;
             break;
 
         default:
@@ -1768,10 +1780,10 @@ static NTSTATUS key_import_pair( struct algorithm *alg, const WCHAR *type, BCRYP
         }
 
         if (ecc_blob->dwMagic != magic) return STATUS_INVALID_PARAMETER;
-        if (ecc_blob->cbKey != key_size || input_len < sizeof(*ecc_blob) + ecc_blob->cbKey * 2)
+        if (ecc_blob->cbKey != len_from_bitlen( bitlen ) || input_len < sizeof(*ecc_blob) + ecc_blob->cbKey * 2)
             return STATUS_INVALID_PARAMETER;
 
-        if ((status = key_asymmetric_create( alg->id, key_size * 8, &key ))) return status;
+        if ((status = key_asymmetric_create( alg->id, bitlen, &key ))) return status;
         params.key   = key;
         params.flags = KEY_IMPORT_FLAG_PUBLIC;
         params.buf   = input;
@@ -1785,25 +1797,40 @@ static NTSTATUS key_import_pair( struct algorithm *alg, const WCHAR *type, BCRYP
     else if (!wcscmp( type, BCRYPT_ECCPRIVATE_BLOB ))
     {
         BCRYPT_ECCKEY_BLOB *ecc_blob = (BCRYPT_ECCKEY_BLOB *)input;
-        DWORD key_size, magic;
+        DWORD bitlen, magic;
 
         if (input_len < sizeof(*ecc_blob)) return STATUS_INVALID_PARAMETER;
 
         switch (alg->id)
         {
         case ALG_ID_ECDH_P256:
-            key_size = 32;
+            bitlen = 256;
             magic = BCRYPT_ECDH_PRIVATE_P256_MAGIC;
             break;
 
         case ALG_ID_ECDH_P384:
-            key_size = 48;
+            bitlen = 384;
             magic = BCRYPT_ECDH_PRIVATE_P384_MAGIC;
             break;
 
+        case ALG_ID_ECDH_P521:
+            bitlen = 521;
+            magic = BCRYPT_ECDH_PRIVATE_P521_MAGIC;
+            break;
+
         case ALG_ID_ECDSA_P256:
-            key_size = 32;
+            bitlen = 256;
             magic = BCRYPT_ECDSA_PRIVATE_P256_MAGIC;
+            break;
+
+        case ALG_ID_ECDSA_P384:
+            bitlen = 384;
+            magic = BCRYPT_ECDSA_PRIVATE_P384_MAGIC;
+            break;
+
+        case ALG_ID_ECDSA_P521:
+            bitlen = 521;
+            magic = BCRYPT_ECDSA_PRIVATE_P521_MAGIC;
             break;
 
         default:
@@ -1812,10 +1839,10 @@ static NTSTATUS key_import_pair( struct algorithm *alg, const WCHAR *type, BCRYP
         }
 
         if (ecc_blob->dwMagic != magic) return STATUS_INVALID_PARAMETER;
-        if (ecc_blob->cbKey != key_size || input_len < sizeof(*ecc_blob) + ecc_blob->cbKey * 3)
+        if (ecc_blob->cbKey != len_from_bitlen( bitlen ) || input_len < sizeof(*ecc_blob) + ecc_blob->cbKey * 3)
             return STATUS_INVALID_PARAMETER;
 
-        if ((status = key_asymmetric_create( alg->id, key_size * 8, &key ))) return status;
+        if ((status = key_asymmetric_create( alg->id, bitlen, &key ))) return status;
         params.key   = key;
         params.flags = 0;
         params.buf   = input;
@@ -1921,7 +1948,7 @@ static NTSTATUS key_import_pair( struct algorithm *alg, const WCHAR *type, BCRYP
         pubkey = (DSSPUBKEY *)(hdr + 1);
         if (pubkey->magic != MAGIC_DSS2) return STATUS_NOT_SUPPORTED;
 
-        if (input_len < sizeof(*hdr) + sizeof(*pubkey) + (pubkey->bitlen / 8) * 2 + 40 + sizeof(DSSSEED))
+        if (input_len < sizeof(*hdr) + sizeof(*pubkey) + len_from_bitlen( pubkey->bitlen ) * 2 + 40 + sizeof(DSSSEED))
             return STATUS_INVALID_PARAMETER;
 
         if ((status = key_asymmetric_create( alg->id, pubkey->bitlen, &key ))) return status;
@@ -1954,7 +1981,7 @@ static NTSTATUS key_import_pair( struct algorithm *alg, const WCHAR *type, BCRYP
         pubkey = (DSSPUBKEY *)(hdr + 1);
         if (pubkey->magic != MAGIC_DSS1) return STATUS_NOT_SUPPORTED;
 
-        size = sizeof(*hdr) + sizeof(*pubkey) + (pubkey->bitlen / 8) * 3 + 20 + sizeof(DSSSEED);
+        size = sizeof(*hdr) + sizeof(*pubkey) + len_from_bitlen( pubkey->bitlen ) * 3 + 20 + sizeof(DSSSEED);
         if (input_len < size) return STATUS_INVALID_PARAMETER;
 
         if ((status = key_asymmetric_create( alg->id, pubkey->bitlen, &key ))) return status;
@@ -2181,8 +2208,10 @@ static const WCHAR *resolve_blob_type( const WCHAR *type, UCHAR *input, ULONG in
     {
     case BCRYPT_ECDH_PUBLIC_P256_MAGIC:
     case BCRYPT_ECDH_PUBLIC_P384_MAGIC:
+    case BCRYPT_ECDH_PUBLIC_P521_MAGIC:
     case BCRYPT_ECDSA_PUBLIC_P256_MAGIC:
     case BCRYPT_ECDSA_PUBLIC_P384_MAGIC:
+    case BCRYPT_ECDSA_PUBLIC_P521_MAGIC:
         return BCRYPT_ECCPUBLIC_BLOB;
 
     case BCRYPT_RSAPUBLIC_MAGIC:
@@ -2628,7 +2657,7 @@ static NTSTATUS derive_key_hash( struct secret *secret, BCryptBufferDesc *desc, 
                                  ULONG *ret_len )
 {
     struct key_asymmetric_derive_key_params params;
-    ULONG hash_len, derived_key_len = secret->privkey->u.a.bitlen / 8;
+    ULONG hash_len, derived_key_len = len_from_bitlen( secret->privkey->u.a.bitlen );
     UCHAR hash_buf[MAX_HASH_OUTPUT_BYTES];
     struct algorithm *alg = NULL;
     UCHAR *derived_key;

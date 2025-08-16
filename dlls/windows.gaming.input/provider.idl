@@ -169,6 +169,9 @@ namespace Windows.Gaming.Input.Custom {
     interface IWineGameControllerProvider : IInspectable
         requires Windows.Gaming.Input.Custom.IGameControllerProvider
     {
+        [propget] HRESULT NonRoamableId([out, retval] HSTRING *value);
+        [propget] HRESULT DisplayName([out, retval] HSTRING *value);
+
         [propget] HRESULT Type([out, retval] WineGameControllerType *value);
         [propget] HRESULT AxisCount([out, retval] INT32 *value);
         [propget] HRESULT ButtonCount([out, retval] INT32 *value);
@@ -187,11 +190,12 @@ namespace Windows.Gaming.Input.Custom {
     interface IWineForceFeedbackEffectImpl : IUnknown
         requires Windows.Gaming.Input.ForceFeedback.IForceFeedbackEffect
     {
-        [propput] HRESULT Parameters([in] WineForceFeedbackEffectParameters parameters,
-                                     [in, optional] WineForceFeedbackEffectEnvelope *envelope);
+        HRESULT SetParameters([in] WineForceFeedbackEffectParameters parameters,
+                              [in, optional] WineForceFeedbackEffectEnvelope *envelope);
     }
 
     [
+        contract(Windows.Foundation.UniversalApiContract, 1.0),
         marshaling_behavior(agile),
         threading(both)
     ]

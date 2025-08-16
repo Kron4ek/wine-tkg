@@ -3856,15 +3856,15 @@ msgstr "Hidraw uitschakelen"
 msgid "DInput"
 msgstr "DInput"
 
-#: dlls/joy.cpl/joy.rc:62
+#: dlls/joy.cpl/joy.rc:62 dlls/joy.cpl/joy.rc:111
 msgid "Axes"
 msgstr "Assen"
 
-#: dlls/joy.cpl/joy.rc:63
+#: dlls/joy.cpl/joy.rc:63 dlls/joy.cpl/joy.rc:112
 msgid "POVs"
 msgstr "Gezichtsveld"
 
-#: dlls/joy.cpl/joy.rc:64
+#: dlls/joy.cpl/joy.rc:64 dlls/joy.cpl/joy.rc:113
 msgid "Buttons"
 msgstr "Knoppen"
 
@@ -3933,9 +3933,13 @@ msgstr ""
 "niet voor DInput is overschreven op het Joysticks-tabblad."
 
 #: dlls/joy.cpl/joy.rc:98 dlls/joy.cpl/joy.rc:99 dlls/joy.cpl/joy.rc:100
-#: dlls/joy.cpl/joy.rc:101
+#: dlls/joy.cpl/joy.rc:101 dlls/joy.cpl/joy.rc:115
 msgid "Rumble"
 msgstr "Trillen"
+
+#: dlls/joy.cpl/joy.rc:106
+msgid "Windows.Gaming.Input"
+msgstr ""
 
 #: dlls/joy.cpl/joy.rc:31
 msgid "Game Controllers"
@@ -7989,7 +7993,7 @@ msgid "Vector property is required.\n"
 msgstr "Vectoreigenschap is verplicht.\n"
 
 #: dlls/mferror/mferror.mc:389
-msgid "Operation was cancelled.\n"
+msgid "Operation was canceled.\n"
 msgstr "Bewerking werd geannuleerd.\n"
 
 #: dlls/mferror/mferror.mc:396
@@ -9188,12 +9192,12 @@ msgstr "buiten beeld"
 
 #: dlls/oleacc/oleacc.rc:115
 msgctxt "object state"
-msgid "sizeable"
+msgid "sizable"
 msgstr "schaalbaar"
 
 #: dlls/oleacc/oleacc.rc:116
 msgctxt "object state"
-msgid "moveable"
+msgid "movable"
 msgstr "beweegbaar"
 
 #: dlls/oleacc/oleacc.rc:117
@@ -16239,7 +16243,7 @@ msgid "reg: The operation completed successfully\n"
 msgstr "reg: De bewerking is succesvol voltooid\n"
 
 #: programs/reg/reg.rc:131
-msgid "reg: The registry operation was cancelled\n"
+msgid "reg: The registry operation was canceled\n"
 msgstr "reg: De register bewerking is afgebroken\n"
 
 #: programs/reg/reg.rc:174

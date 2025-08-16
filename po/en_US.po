@@ -3840,15 +3840,15 @@ msgstr "Disable hidraw"
 msgid "DInput"
 msgstr "DInput"
 
-#: dlls/joy.cpl/joy.rc:62
+#: dlls/joy.cpl/joy.rc:62 dlls/joy.cpl/joy.rc:111
 msgid "Axes"
 msgstr "Axes"
 
-#: dlls/joy.cpl/joy.rc:63
+#: dlls/joy.cpl/joy.rc:63 dlls/joy.cpl/joy.rc:112
 msgid "POVs"
 msgstr "POVs"
 
-#: dlls/joy.cpl/joy.rc:64
+#: dlls/joy.cpl/joy.rc:64 dlls/joy.cpl/joy.rc:113
 msgid "Buttons"
 msgstr "Buttons"
 
@@ -3917,9 +3917,13 @@ msgstr ""
 "overridden for DInput in the Joysticks tab."
 
 #: dlls/joy.cpl/joy.rc:98 dlls/joy.cpl/joy.rc:99 dlls/joy.cpl/joy.rc:100
-#: dlls/joy.cpl/joy.rc:101
+#: dlls/joy.cpl/joy.rc:101 dlls/joy.cpl/joy.rc:115
 msgid "Rumble"
 msgstr "Rumble"
+
+#: dlls/joy.cpl/joy.rc:106
+msgid "Windows.Gaming.Input"
+msgstr "Windows.Gaming.Input"
 
 #: dlls/joy.cpl/joy.rc:31
 msgid "Game Controllers"
@@ -7969,8 +7973,8 @@ msgid "Vector property is required.\n"
 msgstr "Vector property is required.\n"
 
 #: dlls/mferror/mferror.mc:389
-msgid "Operation was cancelled.\n"
-msgstr "Operation was cancelled.\n"
+msgid "Operation was canceled.\n"
+msgstr "Operation was canceled.\n"
 
 #: dlls/mferror/mferror.mc:396
 msgid "Bytestream is not seekable.\n"
@@ -9168,13 +9172,13 @@ msgstr "offscreen"
 
 #: dlls/oleacc/oleacc.rc:115
 msgctxt "object state"
-msgid "sizeable"
-msgstr "sizeable"
+msgid "sizable"
+msgstr "sizable"
 
 #: dlls/oleacc/oleacc.rc:116
 msgctxt "object state"
-msgid "moveable"
-msgstr "moveable"
+msgid "movable"
+msgstr "movable"
 
 #: dlls/oleacc/oleacc.rc:117
 msgctxt "object state"
@@ -16161,8 +16165,8 @@ msgid "reg: The operation completed successfully\n"
 msgstr "reg: The operation completed successfully\n"
 
 #: programs/reg/reg.rc:131
-msgid "reg: The registry operation was cancelled\n"
-msgstr "reg: The registry operation was cancelled\n"
+msgid "reg: The registry operation was canceled\n"
+msgstr "reg: The registry operation was canceled\n"
 
 #: programs/reg/reg.rc:174
 msgid "reg: Unable to find the specified registry key\n"

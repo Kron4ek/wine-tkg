@@ -38,6 +38,7 @@
 #include "ddk/ntifs.h"
 
 static HANDLE (WINAPI *pFindFirstFileExA)(LPCSTR,FINDEX_INFO_LEVELS,LPVOID,FINDEX_SEARCH_OPS,LPVOID,DWORD);
+static BOOL (WINAPI *pGetOverlappedResultEx)(HANDLE, OVERLAPPED *, DWORD *, DWORD, BOOL);
 static BOOL (WINAPI *pReplaceFileW)(LPCWSTR, LPCWSTR, LPCWSTR, DWORD, LPVOID, LPVOID);
 static UINT (WINAPI *pGetSystemWindowsDirectoryA)(LPSTR, UINT);
 static BOOL (WINAPI *pGetVolumeNameForVolumeMountPointA)(LPCSTR, LPSTR, DWORD);
@@ -93,6 +94,7 @@ static void InitFunctionPointers(void)
     pRtlFreeUnicodeString = (void *)GetProcAddress(hntdll, "RtlFreeUnicodeString");
 
     pFindFirstFileExA=(void*)GetProcAddress(hkernel32, "FindFirstFileExA");
+    pGetOverlappedResultEx =(void*)GetProcAddress(hkernel32, "GetOverlappedResultEx");
     pReplaceFileW=(void*)GetProcAddress(hkernel32, "ReplaceFileW");
     pGetSystemWindowsDirectoryA=(void*)GetProcAddress(hkernel32, "GetSystemWindowsDirectoryA");
     pGetVolumeNameForVolumeMountPointA = (void *) GetProcAddress(hkernel32, "GetVolumeNameForVolumeMountPointA");
@@ -3731,8 +3733,93 @@ static void test_OpenFile(void)
 
 static void test_overlapped(void)
 {
+    static const struct
+    {
+        BOOL ex, alertable, wait, queue_apc;
+        BOOL pass_file_handle, pass_event_handle, set_event;
+    }
+    tests[] =
+    {
+        { FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE },
+        { TRUE,  FALSE, FALSE, FALSE, FALSE, FALSE, FALSE },
+        { TRUE,  TRUE,  FALSE, FALSE, FALSE, FALSE, FALSE },
+        { FALSE, FALSE, TRUE,  FALSE, FALSE, FALSE, FALSE },
+        { TRUE,  FALSE, TRUE,  FALSE, FALSE, FALSE, FALSE },
+        { TRUE,  TRUE,  TRUE,  FALSE, FALSE, FALSE, FALSE },
+        { TRUE,  TRUE,  FALSE, TRUE,  FALSE, FALSE, FALSE },
+        { TRUE,  TRUE,  TRUE,  TRUE,  FALSE, FALSE, FALSE },
+        { FALSE, FALSE, FALSE, FALSE, TRUE,  FALSE, FALSE },
+        { TRUE,  FALSE, FALSE, FALSE, TRUE,  FALSE, FALSE },
+        { TRUE,  TRUE,  FALSE, FALSE, TRUE,  FALSE, FALSE },
+        { FALSE, FALSE, TRUE,  FALSE, TRUE,  FALSE, FALSE },
+        { TRUE,  FALSE, TRUE,  FALSE, TRUE,  FALSE, FALSE },
+        { TRUE,  TRUE,  TRUE,  FALSE, TRUE,  FALSE, FALSE },
+        { TRUE,  TRUE,  FALSE, TRUE,  TRUE,  FALSE, FALSE },
+        { TRUE,  TRUE,  TRUE,  TRUE,  TRUE,  FALSE, FALSE },
+        { FALSE, FALSE, FALSE, FALSE, FALSE, TRUE,  FALSE },
+        { TRUE,  FALSE, FALSE, FALSE, FALSE, TRUE,  FALSE },
+        { TRUE,  TRUE,  FALSE, FALSE, FALSE, TRUE,  FALSE },
+        { FALSE, FALSE, TRUE,  FALSE, FALSE, TRUE,  FALSE },
+        { TRUE,  FALSE, TRUE,  FALSE, FALSE, TRUE,  FALSE },
+        { TRUE,  TRUE,  TRUE,  FALSE, FALSE, TRUE,  FALSE },
+        { TRUE,  TRUE,  FALSE, TRUE,  FALSE, TRUE,  FALSE },
+        { TRUE,  TRUE,  TRUE,  TRUE,  FALSE, TRUE,  FALSE },
+        { FALSE, FALSE, FALSE, FALSE, TRUE,  TRUE,  FALSE },
+        { TRUE,  FALSE, FALSE, FALSE, TRUE,  TRUE,  FALSE },
+        { TRUE,  TRUE,  FALSE, FALSE, TRUE,  TRUE,  FALSE },
+        { FALSE, FALSE, TRUE,  FALSE, TRUE,  TRUE,  FALSE },
+        { TRUE,  FALSE, TRUE,  FALSE, TRUE,  TRUE,  FALSE },
+        { TRUE,  TRUE,  TRUE,  FALSE, TRUE,  TRUE,  FALSE },
+        { TRUE,  TRUE,  FALSE, TRUE,  TRUE,  TRUE,  FALSE },
+        { TRUE,  TRUE,  TRUE,  TRUE,  TRUE,  TRUE,  FALSE },
+        { FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, TRUE },
+        { TRUE,  FALSE, FALSE, FALSE, FALSE, FALSE, TRUE },
+        { TRUE,  TRUE,  FALSE, FALSE, FALSE, FALSE, TRUE },
+        { FALSE, FALSE, TRUE,  FALSE, FALSE, FALSE, TRUE },
+        { TRUE,  FALSE, TRUE,  FALSE, FALSE, FALSE, TRUE },
+        { TRUE,  TRUE,  TRUE,  FALSE, FALSE, FALSE, TRUE },
+        { TRUE,  TRUE,  FALSE, TRUE,  FALSE, FALSE, TRUE },
+        { TRUE,  TRUE,  TRUE,  TRUE,  FALSE, FALSE, TRUE },
+        { FALSE, FALSE, FALSE, FALSE, TRUE,  FALSE, TRUE },
+        { TRUE,  FALSE, FALSE, FALSE, TRUE,  FALSE, TRUE },
+        { TRUE,  TRUE,  FALSE, FALSE, TRUE,  FALSE, TRUE },
+        { FALSE, FALSE, TRUE,  FALSE, TRUE,  FALSE, TRUE },
+        { TRUE,  FALSE, TRUE,  FALSE, TRUE,  FALSE, TRUE },
+        { TRUE,  TRUE,  TRUE,  FALSE, TRUE,  FALSE, TRUE },
+        { TRUE,  TRUE,  FALSE, TRUE,  TRUE,  FALSE, TRUE },
+        { TRUE,  TRUE,  TRUE,  TRUE,  TRUE,  FALSE, TRUE },
+        { FALSE, FALSE, FALSE, FALSE, FALSE, TRUE,  TRUE },
+        { TRUE,  FALSE, FALSE, FALSE, FALSE, TRUE,  TRUE },
+        { TRUE,  TRUE,  FALSE, FALSE, FALSE, TRUE,  TRUE },
+        { FALSE, FALSE, TRUE,  FALSE, FALSE, TRUE,  TRUE },
+        { TRUE,  FALSE, TRUE,  FALSE, FALSE, TRUE,  TRUE },
+        { TRUE,  TRUE,  TRUE,  FALSE, FALSE, TRUE,  TRUE },
+        { TRUE,  TRUE,  FALSE, TRUE,  FALSE, TRUE,  TRUE },
+        { TRUE,  TRUE,  TRUE,  TRUE,  FALSE, TRUE,  TRUE },
+        { FALSE, FALSE, FALSE, FALSE, TRUE,  TRUE,  TRUE },
+        { TRUE,  FALSE, FALSE, FALSE, TRUE,  TRUE,  TRUE },
+        { TRUE,  TRUE,  FALSE, FALSE, TRUE,  TRUE,  TRUE },
+        { FALSE, FALSE, TRUE,  FALSE, TRUE,  TRUE,  TRUE },
+        { TRUE,  FALSE, TRUE,  FALSE, TRUE,  TRUE,  TRUE },
+        { TRUE,  TRUE,  TRUE,  FALSE, TRUE,  TRUE,  TRUE },
+        { TRUE,  TRUE,  FALSE, TRUE,  TRUE,  TRUE,  TRUE },
+        { TRUE,  TRUE,  TRUE,  TRUE,  TRUE,  TRUE,  TRUE },
+    };
+    static const NTSTATUS test_status[] =
+    {
+        STATUS_SUCCESS, STATUS_PENDING, STATUS_UNEXPECTED_IO_ERROR,
+    };
+    static const ULONG_PTR test_file_bits[] =
+    {
+        0, 1, 2, 3, 0xdeadbeef,
+    };
+
     OVERLAPPED ov;
-    DWORD r, result;
+    DWORD r, result, err;
+    HANDLE event;
+    unsigned int i, status_idx, file_bits_idx;
+    NTSTATUS iosb_status;
+    ULONG_PTR file_bits, event_bits;
 
     /* GetOverlappedResult crashes if the 2nd or 3rd param are NULL */
     if (0) /* tested: WinXP */
@@ -3787,10 +3874,13 @@ static void test_overlapped(void)
         "wrong error %lu\n", GetLastError() );
     ok( r == FALSE, "should return false\n");
 
+    SetLastError( 0xdeadbeef );
     r = GetOverlappedResult( 0, &ov, &result, TRUE );
     ok( r == TRUE, "should return TRUE\n" );
     ok( result == 0xabcd, "wrong result %lu\n", result );
     ok( ov.Internal == STATUS_PENDING, "expected STATUS_PENDING, got %08Ix\n", ov.Internal );
+    err = GetLastError();
+    ok( err == ERROR_IO_PENDING || broken( err == 0xdeadbeef ) /* Before Win10 1809 */, "got %lu.\n", GetLastError() );
 
     ResetEvent( ov.hEvent );
 
@@ -3804,6 +3894,154 @@ static void test_overlapped(void)
 
     r = CloseHandle( ov.hEvent );
     ok( r == TRUE, "close handle failed\n");
+
+    if (!pGetOverlappedResultEx)
+    {
+        win_skip( "GetOverlappedResultEx is not available, skipping tests.\n" );
+        return;
+    }
+
+    event = CreateEventW( NULL, FALSE, FALSE, NULL );
+
+    user_apc_ran = FALSE;
+    QueueUserAPC( user_apc, GetCurrentThread(), 0 );
+    SetEvent( event );
+    r = WaitForSingleObjectEx( event, INFINITE, TRUE );
+    todo_wine ok( r == WAIT_IO_COMPLETION, "got %lu.\n", r );
+    if (!r) SleepEx( 0, TRUE );
+    ok( user_apc_ran, "APC was not run.\n" );
+
+    user_apc_ran = FALSE;
+    SetEvent( event );
+    QueueUserAPC( user_apc, GetCurrentThread(), 0 );
+    r = WaitForSingleObjectEx( event, 2, TRUE );
+    todo_wine ok( r == WAIT_IO_COMPLETION, "got %lu.\n", r );
+    if (!r) SleepEx( 0, TRUE );
+    ok( user_apc_ran, "APC was not run.\n" );
+
+    user_apc_ran = FALSE;
+    SetEvent( event );
+    QueueUserAPC( user_apc, GetCurrentThread(), 0 );
+    r = WaitForSingleObjectEx( event, 0, TRUE );
+    todo_wine ok( r == WAIT_IO_COMPLETION, "got %lu.\n", r );
+    if (!r) SleepEx( 0, TRUE );
+    ok( user_apc_ran, "APC was not run.\n" );
+
+    for (event_bits = 0; event_bits < 2; ++event_bits)
+    for (file_bits_idx = 0; file_bits_idx < ARRAY_SIZE(test_file_bits); ++file_bits_idx)
+    {
+        file_bits = test_file_bits[file_bits_idx];
+        for (status_idx = 0; status_idx < ARRAY_SIZE(test_status); ++status_idx)
+        {
+            iosb_status = test_status[status_idx];
+            for (i = 0; i < ARRAY_SIZE(tests); ++i)
+            {
+                BOOL will_wait, wait_fails, wait_alerts, wait_timeouts;
+                DWORD err;
+                HANDLE file;
+
+                ov.Internal = iosb_status;
+                ov.InternalHigh = 0xabcd;
+                ov.hEvent = (tests[i].pass_event_handle ? event : NULL);
+                file = (tests[i].pass_file_handle ? event : NULL);
+                ov.hEvent = (HANDLE)((ULONG_PTR)ov.hEvent | event_bits);
+                file = (HANDLE)((ULONG_PTR)file | file_bits);
+                will_wait = tests[i].wait
+                        && (iosb_status == STATUS_PENDING || (tests[i].ex && !(file_bits & 1)));
+                wait_fails = will_wait && WaitForSingleObject( ov.hEvent ? ov.hEvent : file, 0 ) == WAIT_FAILED;
+                wait_alerts = will_wait && tests[i].ex && tests[i].alertable && tests[i].queue_apc;
+                wait_timeouts = will_wait && !wait_fails && !wait_alerts && !tests[i].set_event && !(tests[i].ex && file_bits & 1);
+                if (will_wait && !tests[i].ex && wait_timeouts)
+                {
+                    /* This would wait forever. */
+                    continue;
+                }
+
+                winetest_push_context( "status %#lx, file_bits %Iu, event_bits %Iu, test %u",
+                                       iosb_status, file_bits, event_bits, i );
+
+                if (tests[i].set_event)
+                    SetEvent( event );
+                else
+                    ResetEvent( event );
+
+                if (tests[i].queue_apc)
+                    QueueUserAPC( user_apc, GetCurrentThread(), 0 );
+
+                result = 0xdeadbeef;
+                SetLastError( 0xdeadbeef );
+                if (tests[i].ex)
+                    r = pGetOverlappedResultEx( file, &ov, &result, tests[i].wait ? 2 : 0, tests[i].alertable );
+                else
+                    r = GetOverlappedResult( file, &ov, &result, tests[i].wait );
+                err = GetLastError();
+                if (will_wait)
+                {
+                    if (wait_fails)
+                    {
+                        ok( !r, "got %lu.\n", r );
+                        ok( err == ERROR_INVALID_HANDLE, "got %lu.\n", err );
+                        ok( result == 0xdeadbeef, "wrong result %lu\n", result );
+                    }
+                    else if (wait_alerts)
+                    {
+                        /* todo comes from WaitForSingleObjectEx() with signaled event and queued APC not preferring
+                         * user APC (which is tested above for clarity) */
+                        todo_wine_if(tests[i].set_event) ok( err == WAIT_IO_COMPLETION, "got %lu.\n", err );
+                        if (err == WAIT_IO_COMPLETION)
+                        {
+                            ok( !r, "got %lu.\n", r );
+                            ok( result == 0xdeadbeef, "wrong result %lu\n", result );
+                        }
+                    }
+                    else if (wait_timeouts)
+                    {
+                        ok( !r, "got %lu.\n", r );
+                        ok( err == WAIT_TIMEOUT, "got %lu.\n", err );
+                        ok( result == 0xdeadbeef, "wrong result %lu\n", result );
+                    }
+                    else
+                    {
+                        ok( r == (iosb_status == STATUS_SUCCESS || iosb_status == STATUS_PENDING),
+                            "got %lu.\n", r );
+                        ok( err == RtlNtStatusToDosError( iosb_status ) || broken( r && err == 0xdeadbeef ) /* Before Win10 1809 */,
+                            "got %lu.\n", err );
+                        ok( result == 0xabcd, "wrong result %lu\n", result );
+                    }
+                }
+                else if (iosb_status == STATUS_PENDING)
+                {
+                    ok( !r, "got %lu.\n", r );
+                    ok( err == ERROR_IO_INCOMPLETE, "got %lu.\n", err );
+                    ok( result == 0xdeadbeef, "wrong result %lu\n", result );
+                }
+                else
+                {
+                    ok( r == (iosb_status == STATUS_SUCCESS || iosb_status == STATUS_PENDING),
+                        "got %lu.\n", r );
+                    ok( err == RtlNtStatusToDosError( iosb_status ) || broken( r && err == 0xdeadbeef ) /* Before Win10 1809 */,
+                        "got %lu.\n", err );
+                    ok( result == 0xabcd, "wrong result %lu\n", result );
+                }
+
+                r = WaitForSingleObject( event, 0 );
+                if (!tests[i].set_event || (will_wait && !wait_fails && !wait_alerts))
+                {
+                    ok( r == WAIT_TIMEOUT, "got %#lx.\n", r );
+                }
+                else
+                {
+                    todo_wine_if(will_wait && !wait_fails && wait_alerts && tests[i].set_event)
+                    ok( r == WAIT_OBJECT_0, "got %#lx.\n", r );
+                }
+
+                winetest_pop_context();
+                if (tests[i].queue_apc)
+                    SleepEx( 0, TRUE );
+            }
+        }
+    }
+    CloseHandle( event );
 }
 
 static void test_RemoveDirectory(void)
@@ -5430,6 +5668,30 @@ static void test_GetFinalPathNameByHandleW(void)
        wine_dbgstr_w(nt_path), wine_dbgstr_w(result_path));
 
     CloseHandle(file);
+
+    /* Roots of drives should come back with a trailing slash. */
+    file = CreateFileW(L"C:\\", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                       OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+    ok(file != INVALID_HANDLE_VALUE, "CreateFileW error %lu\n", GetLastError());
+    memset(result_path, 0x11, sizeof(result_path));
+    count = pGetFinalPathNameByHandleW(file, result_path, MAX_PATH, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    lstrcpyW(dos_path, L"\\\\?\\C:\\");
+    ok(count == lstrlenW(dos_path), "Expected length %u, got %lu\n", lstrlenW(dos_path), count);
+    ok(lstrcmpiW(dos_path, result_path) == 0, "Expected %s, got %s\n",
+       wine_dbgstr_w(dos_path), wine_dbgstr_w(result_path));
+    CloseHandle(file);
+
+    /* Other directories should not have a trailing slash. */
+    file = CreateFileW(L"C:\\windows\\", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                       OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
+    ok(file != INVALID_HANDLE_VALUE, "CreateFileW error %lu\n", GetLastError());
+    memset(result_path, 0x11, sizeof(result_path));
+    count = pGetFinalPathNameByHandleW(file, result_path, MAX_PATH, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    lstrcpyW(dos_path, L"\\\\?\\C:\\windows");
+    ok(count == lstrlenW(dos_path), "Expected length %u, got %lu\n", lstrlenW(dos_path), count);
+    ok(lstrcmpiW(dos_path, result_path) == 0, "Expected %s, got %s\n",
+       wine_dbgstr_w(dos_path), wine_dbgstr_w(result_path));
+    CloseHandle(file);
 }
 
 static void test_SetFileInformationByHandle(void)
@@ -5610,6 +5872,48 @@ static void test_SetFileRenameInfo(void)
     ok(!ret && GetLastError() == ERROR_ACCESS_DENIED, "FileRenameInfo unexpected result %ld\n", GetLastError());
     CloseHandle(file);
 
+    DeleteFileW(tempFileFrom);
+    DeleteFileW(tempFileTo1);
+    DeleteFileW(tempFileTo2);
+
+    /* repeat test again with FileRenameInfoEx */
+
+    ret = GetTempFileNameW(tempPath, L"abc", 0, tempFileTo1);
+    ok(ret, "GetTempFileNameW failed, got error %lu.\n", GetLastError());
+
+    ret = GetTempFileNameW(tempPath, L"abc", 1, tempFileTo2);
+    ok(ret, "GetTempFileNameW failed, got error %lu.\n", GetLastError());
+
+    file = CreateFileW(tempFileFrom, GENERIC_READ | GENERIC_WRITE | DELETE, 0, 0, CREATE_ALWAYS, 0, 0);
+    ok(file != INVALID_HANDLE_VALUE, "failed to create temp file, error %lu.\n", GetLastError());
+
+    fri->Flags = 0;
+    fri->RootDirectory = NULL;
+    fri->FileNameLength = wcslen(tempFileTo1) * sizeof(WCHAR);
+    memcpy(fri->FileName, tempFileTo1, fri->FileNameLength + sizeof(WCHAR));
+    ret = pSetFileInformationByHandle(file, FileRenameInfoEx, fri, size);
+    ok(!ret && (GetLastError() == ERROR_ALREADY_EXISTS || GetLastError() == ERROR_INVALID_PARAMETER),
+        "FileRenameInfoEx unexpected result %ld\n", GetLastError());
+    if (GetLastError() != ERROR_INVALID_PARAMETER)
+    {
+        fri->Flags = FILE_RENAME_REPLACE_IF_EXISTS;
+        ret = pSetFileInformationByHandle(file, FileRenameInfoEx, fri, size);
+        ok(ret, "FileRenameInfoEx failed, error %ld\n", GetLastError());
+
+        fri->Flags = 0;
+        fri->FileNameLength = wcslen(tempFileTo2) * sizeof(WCHAR);
+        memcpy(fri->FileName, tempFileTo2, fri->FileNameLength + sizeof(WCHAR));
+        ret = pSetFileInformationByHandle(file, FileRenameInfoEx, fri, size);
+        ok(ret, "FileRenameInfoEx failed, error %ld\n", GetLastError());
+
+        CloseHandle(file);
+
+        file = CreateFileW(tempFileTo2, GENERIC_READ | GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0);
+        ok(file != INVALID_HANDLE_VALUE, "file not renamed, error %ld\n", GetLastError());
+    }
+    else win_skip( "FileRenameInfoEx not supported\n" );
+
+    CloseHandle(file);
     HeapFree(GetProcessHeap(), 0, fri);
     DeleteFileW(tempFileFrom);
     DeleteFileW(tempFileTo1);
@@ -6371,7 +6675,7 @@ static void test_symbolic_link(void)
         return;
 
     ret = GetFileAttributesW( path );
-    ok( ret == (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT), "got attrs %#x\n", ret );
+    ok( (ret & 0xfff) == (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT), "got attrs %#x\n", ret );
 
     file = CreateFileW( path, FILE_READ_DATA, 0, NULL, OPEN_EXISTING,
                         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL );
@@ -6413,7 +6717,7 @@ static void test_symbolic_link(void)
     ok( !GetLastError(), "got error %lu\n", GetLastError() );
 
     ret = GetFileAttributesW( path );
-    ok( ret == (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT), "got attrs %#x\n", ret );
+    ok( (ret & 0xfff) == (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT), "got attrs %#x\n", ret );
 
     file = CreateFileW( path, FILE_READ_DATA, 0, NULL, OPEN_EXISTING,
                         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL );
@@ -6455,7 +6759,7 @@ static void test_symbolic_link(void)
     ok( !GetLastError(), "got error %lu\n", GetLastError() );
 
     ret = GetFileAttributesW( path );
-    ok( ret == (FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_REPARSE_POINT), "got attrs %#x\n", ret );
+    ok( (ret & 0xfff) == (FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_REPARSE_POINT), "got attrs %#x\n", ret );
 
     file = CreateFileW( path, FILE_READ_DATA, 0, NULL, OPEN_EXISTING,
                         FILE_FLAG_OPEN_REPARSE_POINT, NULL );

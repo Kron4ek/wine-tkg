@@ -135,6 +135,7 @@ static const struct column col_desktopmonitor[] =
 {
     { L"Name",                  CIM_STRING },
     { L"PixelsPerXLogicalInch", CIM_UINT32 },
+    { L"Status",                CIM_STRING },
 };
 static const struct column col_directory[] =
 {
@@ -505,7 +506,7 @@ static const struct column col_videocontroller[] =
     { L"CurrentScanMode",             CIM_UINT16 },
     { L"CurrentVerticalResolution",   CIM_UINT32 },
     { L"Description",                 CIM_STRING|COL_FLAG_DYNAMIC },
-    { L"DeviceId",                    CIM_STRING|COL_FLAG_DYNAMIC|COL_FLAG_KEY },
+    { L"DeviceID",                    CIM_STRING|COL_FLAG_DYNAMIC|COL_FLAG_KEY },
     { L"DeviceSpecificPens",          CIM_UINT32 },
     { L"DitherType",                  CIM_UINT32 },
     { L"DriverDate",                  CIM_DATETIME|COL_FLAG_DYNAMIC },
@@ -652,6 +653,7 @@ struct record_desktopmonitor
 {
     const WCHAR *name;
     UINT32       pixelsperxlogicalinch;
+    const WCHAR *status;
 };
 struct record_directory
 {
@@ -1750,14 +1752,6 @@ static enum fill_status fill_cdromdrive( struct table *table, const struct expr 
     return status;
 }
 
-static UINT get_processor_count(void)
-{
-    SYSTEM_BASIC_INFORMATION info;
-
-    if (NtQuerySystemInformation( SystemBasicInformation, &info, sizeof(info), NULL )) return 1;
-    return info.NumberOfProcessors;
-}
-
 static UINT get_physical_processor_count( const char *buf, UINT len, UINT *num_logical )
 {
     const struct smbios_header *hdr;
@@ -2352,6 +2346,7 @@ static enum fill_status fill_desktopmonitor( struct table *table, const struct e
     rec = (struct record_desktopmonitor *)table->data;
     rec->name                  = L"Generic Non-PnP Monitor";
     rec->pixelsperxlogicalinch = get_pixelsperxlogicalinch();
+    rec->status                = L"OK";
 
     if (match_row( table, row, cond, &status )) row++;
 
@@ -3688,7 +3683,7 @@ static WCHAR *get_processor_name( UINT index, const char *buf, UINT len )
 static UINT get_processor_currentclockspeed( UINT index )
 {
     PROCESSOR_POWER_INFORMATION *info;
-    UINT ret = 1000, size = get_processor_count() * sizeof(PROCESSOR_POWER_INFORMATION);
+    UINT ret = 1000, size = NtCurrentTeb()->Peb->NumberOfProcessors * sizeof(PROCESSOR_POWER_INFORMATION);
     NTSTATUS status;
 
     if ((info = malloc( size )))
@@ -3702,7 +3697,7 @@ static UINT get_processor_currentclockspeed( UINT index )
 static UINT get_processor_maxclockspeed( UINT index )
 {
     PROCESSOR_POWER_INFORMATION *info;
-    UINT ret = 1000, size = get_processor_count() * sizeof(PROCESSOR_POWER_INFORMATION);
+    UINT ret = 1000, size = NtCurrentTeb()->Peb->NumberOfProcessors * sizeof(PROCESSOR_POWER_INFORMATION);
     NTSTATUS status;
 
     if ((info = malloc( size )))

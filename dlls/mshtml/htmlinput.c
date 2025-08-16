@@ -25,6 +25,7 @@
 #include "winbase.h"
 #include "winuser.h"
 #include "ole2.h"
+#include "mshtmdid.h"
 
 #include "wine/debug.h"
 
@@ -1270,6 +1271,27 @@ static const NodeImplVtbl HTMLInputElementImplVtbl = {
     .is_text_edit          = HTMLInputElement_is_text_edit
 };
 
+static void HTMLInputElement_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+{
+    static const dispex_hook_t input_hooks[] = {
+        {DISPID_IHTMLINPUTELEMENT_READYSTATE,          .noattr = TRUE},
+        {DISPID_IHTMLINPUTELEMENT_FORM,                .noattr = TRUE},
+        {DISPID_IHTMLINPUTELEMENT_STATUS,              .noattr = TRUE},
+        {DISPID_IHTMLINPUTELEMENT_DEFAULTCHECKED,      .noattr = TRUE},
+        {DISPID_IHTMLINPUTELEMENT_COMPLETE,            .noattr = TRUE},
+        {DISPID_UNKNOWN}
+    };
+    static const dispex_hook_t inputtext_hooks[] = {
+        {DISPID_IHTMLINPUTTEXTELEMENT2_SELECTIONSTART, .noattr = TRUE},
+        {DISPID_IHTMLINPUTTEXTELEMENT2_SELECTIONEND,   .noattr = TRUE},
+        {DISPID_UNKNOWN}
+    };
+    dispex_info_add_interface(info, IHTMLInputElement_tid, input_hooks);
+    dispex_info_add_interface(info, IHTMLInputTextElement2_tid, inputtext_hooks);
+
+    HTMLElement_init_dispex_info(info, mode);
+}
+
 static const event_target_vtbl_t HTMLInputElement_event_target_vtbl = {
     {
         HTMLELEMENT_DISPEX_VTBL_ENTRIES,
@@ -1282,18 +1304,12 @@ static const event_target_vtbl_t HTMLInputElement_event_target_vtbl = {
     .handle_event       = HTMLElement_handle_event
 };
 
-static const tid_t HTMLInputElement_iface_tids[] = {
-    IHTMLInputElement_tid,
-    IHTMLInputTextElement2_tid,
-    0
-};
 dispex_static_data_t HTMLInputElement_dispex = {
     .id           = OBJID_HTMLInputElement,
     .prototype_id = OBJID_HTMLElement,
     .vtbl         = &HTMLInputElement_event_target_vtbl.dispex_vtbl,
     .disp_tid     = DispHTMLInputElement_tid,
-    .iface_tids   = HTMLInputElement_iface_tids,
-    .init_info    = HTMLElement_init_dispex_info,
+    .init_info    = HTMLInputElement_init_dispex_info,
 };
 
 HRESULT HTMLInputElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
@@ -1413,6 +1429,17 @@ static const NodeImplVtbl HTMLLabelElementImplVtbl = {
     .get_attr_col          = HTMLElement_get_attr_col,
 };
 
+static void HTMLLabelElement_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+{
+    static const dispex_hook_t label_hooks[] = {
+        {DISPID_IHTMLLABELELEMENT_HTMLFOR, .noattr = TRUE},
+        {DISPID_UNKNOWN}
+    };
+    dispex_info_add_interface(info, IHTMLLabelElement_tid, label_hooks);
+
+    HTMLElement_init_dispex_info(info, mode);
+}
+
 static const event_target_vtbl_t HTMLLabelElement_event_target_vtbl = {
     {
         HTMLELEMENT_DISPEX_VTBL_ENTRIES,
@@ -1425,18 +1452,12 @@ static const event_target_vtbl_t HTMLLabelElement_event_target_vtbl = {
     .handle_event       = HTMLElement_handle_event
 };
 
-static const tid_t HTMLLabelElement_iface_tids[] = {
-    IHTMLLabelElement_tid,
-    0
-};
-
 dispex_static_data_t HTMLLabelElement_dispex = {
     .id           = OBJID_HTMLLabelElement,
     .prototype_id = OBJID_HTMLElement,
     .vtbl         = &HTMLLabelElement_event_target_vtbl.dispex_vtbl,
     .disp_tid     = DispHTMLLabelElement_tid,
-    .iface_tids   = HTMLLabelElement_iface_tids,
-    .init_info    = HTMLElement_init_dispex_info,
+    .init_info    = HTMLLabelElement_init_dispex_info,
 };
 
 HRESULT HTMLLabelElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)
@@ -1699,6 +1720,19 @@ static const NodeImplVtbl HTMLButtonElementImplVtbl = {
     .is_text_edit          = HTMLButtonElement_is_text_edit
 };
 
+static void HTMLButtonElement_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+{
+    static const dispex_hook_t button_hooks[] = {
+        {DISPID_IHTMLBUTTONELEMENT_FORM,   .noattr = TRUE},
+        {DISPID_IHTMLBUTTONELEMENT_VALUE,  .noattr = TRUE},
+        {DISPID_IHTMLBUTTONELEMENT_STATUS, .noattr = TRUE},
+        {DISPID_UNKNOWN}
+    };
+    dispex_info_add_interface(info, IHTMLButtonElement_tid, button_hooks);
+
+    HTMLElement_init_dispex_info(info, mode);
+}
+
 static const event_target_vtbl_t HTMLButtonElement_event_target_vtbl = {
     {
         HTMLELEMENT_DISPEX_VTBL_ENTRIES,
@@ -1711,18 +1745,12 @@ static const event_target_vtbl_t HTMLButtonElement_event_target_vtbl = {
     .handle_event       = HTMLElement_handle_event
 };
 
-static const tid_t HTMLButtonElement_iface_tids[] = {
-    IHTMLButtonElement_tid,
-    0
-};
-
 dispex_static_data_t HTMLButtonElement_dispex = {
     .id           = OBJID_HTMLButtonElement,
     .prototype_id = OBJID_HTMLElement,
     .vtbl         = &HTMLButtonElement_event_target_vtbl.dispex_vtbl,
     .disp_tid     = DispHTMLButtonElement_tid,
-    .iface_tids   = HTMLButtonElement_iface_tids,
-    .init_info    = HTMLElement_init_dispex_info,
+    .init_info    = HTMLButtonElement_init_dispex_info,
 };
 
 HRESULT HTMLButtonElement_Create(HTMLDocumentNode *doc, nsIDOMElement *nselem, HTMLElement **elem)

@@ -2492,20 +2492,41 @@ static void descriptor_writes_free_object_refs(struct descriptor_writes *writes,
     writes->held_ref_count = 0;
 }
 
+static enum vkd3d_vk_descriptor_set_index vkd3d_vk_descriptor_set_index_from_vk_descriptor_type(
+        VkDescriptorType type)
+{
+    static const enum vkd3d_vk_descriptor_set_index table[] =
+    {
+        [VK_DESCRIPTOR_TYPE_SAMPLER]                = VKD3D_SET_INDEX_SAMPLER,
+        [VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER] = VKD3D_SET_INDEX_COUNT,
+        [VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE]          = VKD3D_SET_INDEX_SAMPLED_IMAGE,
+        [VK_DESCRIPTOR_TYPE_STORAGE_IMAGE]          = VKD3D_SET_INDEX_STORAGE_IMAGE,
+        [VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER]   = VKD3D_SET_INDEX_UNIFORM_TEXEL_BUFFER,
+        [VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER]   = VKD3D_SET_INDEX_STORAGE_TEXEL_BUFFER,
+        [VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER]         = VKD3D_SET_INDEX_UNIFORM_BUFFER,
+    };
+
+    VKD3D_ASSERT(type < ARRAY_SIZE(table));
+    VKD3D_ASSERT(table[type] < VKD3D_SET_INDEX_COUNT);
+
+    return table[type];
+}
+
 static void d3d12_desc_write_vk_heap_null_descriptor(struct d3d12_descriptor_heap *descriptor_heap,
-        uint32_t dst_array_element, struct descriptor_writes *writes, struct d3d12_device *device)
+        uint32_t dst_array_element, struct descriptor_writes *writes, struct d3d12_device *device,
+        VkDescriptorType type)
 {
     const struct vkd3d_vk_device_procs *vk_procs = &device->vk_procs;
     struct d3d12_descriptor_heap_vk_set *descriptor_set;
-    enum vkd3d_vk_descriptor_set_index set, end;
+    enum vkd3d_vk_descriptor_set_index set;
     unsigned int i = writes->count;
 
-    end = device->vk_info.EXT_mutable_descriptor_type ? VKD3D_SET_INDEX_MUTABLE
-            : VKD3D_SET_INDEX_STORAGE_IMAGE;
     /* Binding a shader with the wrong null descriptor type works in Windows.
      * To support that here we must write one to all applicable Vulkan sets. */
-    for (set = VKD3D_SET_INDEX_UNIFORM_BUFFER; set <= end; ++set)
+    for (set = VKD3D_SET_INDEX_UNIFORM_BUFFER; set <= VKD3D_SET_INDEX_STORAGE_IMAGE; ++set)
     {
+        if (device->vk_info.EXT_mutable_descriptor_type)
+            set = vkd3d_vk_descriptor_set_index_from_vk_descriptor_type(type);
         descriptor_set = &descriptor_heap->vk_descriptor_sets[set];
         writes->vk_descriptor_writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes->vk_descriptor_writes[i].pNext = NULL;
@@ -2546,6 +2567,8 @@ static void d3d12_desc_write_vk_heap_null_descriptor(struct d3d12_descriptor_hea
         VK_CALL(vkUpdateDescriptorSets(device->vk_device, i, writes->vk_descriptor_writes, 0, NULL));
         descriptor_writes_free_object_refs(writes, device);
         i = 0;
+        if (device->vk_info.EXT_mutable_descriptor_type)
+            break;
     }
 
     writes->count = i;
@@ -2610,7 +2633,7 @@ static void d3d12_desc_write_vk_heap(struct d3d12_descriptor_heap *descriptor_he
             break;
     }
     if (is_null && device->vk_info.EXT_robustness2)
-        return d3d12_desc_write_vk_heap_null_descriptor(descriptor_heap, dst_array_element, writes, device);
+        return d3d12_desc_write_vk_heap_null_descriptor(descriptor_heap, dst_array_element, writes, device, type);
 
     ++i;
     if (u.header->magic == VKD3D_DESCRIPTOR_MAGIC_UAV && u.view->v.vk_counter_view)
@@ -4222,17 +4245,6 @@ static const struct ID3D12DescriptorHeapVtbl d3d12_descriptor_heap_vtbl =
     d3d12_descriptor_heap_GetDesc,
     d3d12_descriptor_heap_GetCPUDescriptorHandleForHeapStart,
     d3d12_descriptor_heap_GetGPUDescriptorHandleForHeapStart,
-};
-
-const enum vkd3d_vk_descriptor_set_index vk_descriptor_set_index_table[] =
-{
-    VKD3D_SET_INDEX_SAMPLER,
-    VKD3D_SET_INDEX_COUNT,
-    VKD3D_SET_INDEX_SAMPLED_IMAGE,
-    VKD3D_SET_INDEX_STORAGE_IMAGE,
-    VKD3D_SET_INDEX_UNIFORM_TEXEL_BUFFER,
-    VKD3D_SET_INDEX_STORAGE_TEXEL_BUFFER,
-    VKD3D_SET_INDEX_UNIFORM_BUFFER,
 };
 
 static HRESULT d3d12_descriptor_heap_create_descriptor_pool(struct d3d12_descriptor_heap *descriptor_heap,

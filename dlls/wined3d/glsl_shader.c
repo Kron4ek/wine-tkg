@@ -1954,7 +1954,7 @@ static void shader_glsl_load_constants(struct shader_glsl_priv *priv,
             if (prog->ps.bumpenv_mat_location[i] == -1)
                 continue;
 
-            GL_EXTCALL(glUniformMatrix2fv(prog->ps.bumpenv_mat_location[i], 1, 0,
+            GL_EXTCALL(glUniformMatrix2fv(prog->ps.bumpenv_mat_location[i], 1, GL_FALSE,
                     &constants->bumpenv.matrices[i]._00));
 
             if (prog->ps.bumpenv_lum_scale_location[i] != -1)
@@ -5472,29 +5472,11 @@ static void shader_glsl_tex(const struct wined3d_shader_instruction *ins)
 
     if (shader_version < WINED3D_SHADER_VERSION(1,4))
     {
-        DWORD flags = (priv->cur_ps_args->tex_transform >> resource_idx * WINED3D_PSARGS_TEXTRANSFORM_SHIFT)
-                & WINED3D_PSARGS_TEXTRANSFORM_MASK;
-
         /* Projected cube textures don't make a lot of sense, the resulting coordinates stay the same. */
-        if (flags & WINED3D_PSARGS_PROJECTED && resource_type != WINED3D_SHADER_RESOURCE_TEXTURE_CUBE)
+        if ((priv->cur_ps_args->projected & (1u << resource_idx)) && resource_type != WINED3D_SHADER_RESOURCE_TEXTURE_CUBE)
         {
             sample_flags |= WINED3D_GLSL_SAMPLE_PROJECTED;
-            switch (flags & ~WINED3D_PSARGS_PROJECTED)
-            {
-                case WINED3D_TTFF_COUNT1:
-                    FIXME("WINED3D_TTFF_PROJECTED with WINED3D_TTFF_COUNT1?\n");
-                    break;
-                case WINED3D_TTFF_COUNT2:
-                    mask = WINED3DSP_WRITEMASK_1;
-                    break;
-                case WINED3D_TTFF_COUNT3:
-                    mask = WINED3DSP_WRITEMASK_2;
-                    break;
-                case WINED3D_TTFF_COUNT4:
-                case WINED3D_TTFF_DISABLE:
-                    mask = WINED3DSP_WRITEMASK_3;
-                    break;
-            }
+            mask = WINED3DSP_WRITEMASK_3;
         }
     }
     else if (shader_version < WINED3D_SHADER_VERSION(2,0))
@@ -6844,12 +6826,9 @@ static void shader_glsl_texbem(const struct wined3d_shader_instruction *ins)
     struct glsl_src_param coord_param;
     unsigned int sampler_idx;
     DWORD mask;
-    DWORD flags;
     char coord_mask[6];
 
     sampler_idx = ins->dst[0].reg.idx[0].offset;
-    flags = (priv->cur_ps_args->tex_transform >> sampler_idx * WINED3D_PSARGS_TEXTRANSFORM_SHIFT)
-            & WINED3D_PSARGS_TEXTRANSFORM_MASK;
 
     /* Dependent read, not valid with conditional NP2 */
     shader_glsl_get_sample_function(ins->ctx, sampler_idx, sampler_idx, 0, &sample_function);
@@ -6859,29 +6838,8 @@ static void shader_glsl_texbem(const struct wined3d_shader_instruction *ins)
 
     /* With projected textures, texbem only divides the static texture coord,
      * not the displacement, so we can't let GL handle this. */
-    if (flags & WINED3D_PSARGS_PROJECTED)
-    {
-        DWORD div_mask=0;
-        char coord_div_mask[3];
-        switch (flags & ~WINED3D_PSARGS_PROJECTED)
-        {
-            case WINED3D_TTFF_COUNT1:
-                FIXME("WINED3D_TTFF_PROJECTED with WINED3D_TTFF_COUNT1?\n");
-                break;
-            case WINED3D_TTFF_COUNT2:
-                div_mask = WINED3DSP_WRITEMASK_1;
-                break;
-            case WINED3D_TTFF_COUNT3:
-                div_mask = WINED3DSP_WRITEMASK_2;
-                break;
-            case WINED3D_TTFF_COUNT4:
-            case WINED3D_TTFF_DISABLE:
-                div_mask = WINED3DSP_WRITEMASK_3;
-                break;
-        }
-        shader_glsl_write_mask_to_str(div_mask, coord_div_mask);
-        shader_addline(ins->ctx->buffer, "T%u%s /= T%u%s;\n", sampler_idx, coord_mask, sampler_idx, coord_div_mask);
-    }
+    if (priv->cur_ps_args->projected & (1u << sampler_idx))
+        shader_addline(ins->ctx->buffer, "T%u%s /= T%u.w;\n", sampler_idx, coord_mask, sampler_idx);
 
     shader_glsl_add_src_param(ins, &ins->src[0], WINED3DSP_WRITEMASK_0 | WINED3DSP_WRITEMASK_1, &coord_param);
 
@@ -9997,25 +9955,10 @@ static GLuint shader_glsl_generate_ffp_fragment_shader(struct shader_glsl_priv *
     for (stage = 0; stage < WINED3D_MAX_FFP_TEXTURES && settings->op[stage].cop != WINED3D_TOP_DISABLE; ++stage)
     {
         const char *texture_function, *coord_mask;
-        BOOL proj;
+        BOOL proj = settings->op[stage].projected;
 
         if (!(tex_map & (1u << stage)))
             continue;
-
-        if (settings->op[stage].projected == WINED3D_PROJECTION_NONE)
-        {
-            proj = FALSE;
-        }
-        else if (settings->op[stage].projected == WINED3D_PROJECTION_COUNT4
-                || settings->op[stage].projected == WINED3D_PROJECTION_COUNT3)
-        {
-            proj = TRUE;
-        }
-        else
-        {
-            FIXME("Unexpected projection mode %d\n", settings->op[stage].projected);
-            proj = TRUE;
-        }
 
         if (settings->op[stage].tex_type == WINED3D_GL_RES_TYPE_TEX_CUBE)
             proj = FALSE;
@@ -10058,20 +10001,11 @@ static GLuint shader_glsl_generate_ffp_fragment_shader(struct shader_glsl_priv *
              * texture coordinate, not the displacement, so multiply the
              * displacement with the dividing parameter before passing it to
              * TXP. */
-            if (settings->op[stage].projected != WINED3D_PROJECTION_NONE)
+            if (settings->op[stage].projected)
             {
-                if (settings->op[stage].projected == WINED3D_PROJECTION_COUNT4)
-                {
-                    shader_addline(buffer, "ret.xy = (ret.xy * ffp_texcoord[%u].w) + ffp_texcoord[%u].xy;\n",
-                            stage, stage);
-                    shader_addline(buffer, "ret.zw = ffp_texcoord[%u].ww;\n", stage);
-                }
-                else
-                {
-                    shader_addline(buffer, "ret.xy = (ret.xy * ffp_texcoord[%u].z) + ffp_texcoord[%u].xy;\n",
-                            stage, stage);
-                    shader_addline(buffer, "ret.zw = ffp_texcoord[%u].zz;\n", stage);
-                }
+                shader_addline(buffer, "ret.xy = (ret.xy * ffp_texcoord[%u].w) + ffp_texcoord[%u].xy;\n",
+                        stage, stage);
+                shader_addline(buffer, "ret.zw = ffp_texcoord[%u].ww;\n", stage);
             }
             else
             {
@@ -10084,11 +10018,6 @@ static GLuint shader_glsl_generate_ffp_fragment_shader(struct shader_glsl_priv *
             if (settings->op[stage - 1].cop == WINED3D_TOP_BUMPENVMAP_LUMINANCE)
                 shader_addline(buffer, "tex%u *= clamp(tex%u.z * bumpenv_lum_scale%u + bumpenv_lum_offset%u, 0.0, 1.0);\n",
                         stage, stage - 1, stage - 1, stage - 1);
-        }
-        else if (settings->op[stage].projected == WINED3D_PROJECTION_COUNT3)
-        {
-            shader_addline(buffer, "tex%u = %s%s(ps_sampler%u, ffp_texcoord[%u].xyz);\n",
-                    stage, texture_function, proj ? "Proj" : "", stage, stage);
         }
         else
         {

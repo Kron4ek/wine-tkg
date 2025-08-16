@@ -1072,12 +1072,10 @@ static const BYTE direction_flag_code[] = {
 static DWORD direction_flag_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
                                      CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher )
 {
-#ifdef __GNUC__
     unsigned int flags;
     __asm__("pushfl; popl %0; cld" : "=r" (flags) );
     /* older windows versions don't clear DF properly so don't test */
     if (flags & 0x400) trace( "eflags has DF bit set\n" );
-#endif
     ok( context->EFlags & 0x400, "context eflags has DF bit cleared\n" );
     got_exception++;
     context->Eip++;  /* skip cli */
@@ -3175,7 +3173,7 @@ static const BYTE align_check_code[] =
 static DWORD WINAPI align_check_handler( EXCEPTION_RECORD *rec, ULONG64 frame,
                                          CONTEXT *context, DISPATCHER_CONTEXT *dispatcher )
 {
-#ifdef __GNUC__
+#ifndef __arm64ec__
     __asm__ volatile( "pushfq; andl $~0x40000,(%rsp); popfq" );
 #endif
     ok (context->EFlags & 0x40000, "eflags has AC bit unset\n");
@@ -3199,7 +3197,7 @@ static const BYTE direction_flag_code[] =
 static DWORD WINAPI direction_flag_handler( EXCEPTION_RECORD *rec, ULONG64 frame,
                                             CONTEXT *context, DISPATCHER_CONTEXT *dispatcher )
 {
-#ifdef __GNUC__
+#ifndef __arm64ec__
     ULONG_PTR flags;
     __asm__("pushfq; popq %0; cld" : "=r" (flags) );
     /* older windows versions don't clear DF properly so don't test */
@@ -5199,7 +5197,7 @@ static void test_KiUserExceptionDispatcher(void)
         test_kiuserexceptiondispatcher_saved_r12 = ctx.R12;
         ctx.R12 = (ULONG64)0xdeadbeeffeedcafe;
 
-#ifdef __GNUC__
+#ifndef __arm64ec__
         /* Spoil r12 value to make sure it doesn't come from the current userspace registers. */
         __asm__ volatile("movq $0xdeadcafe, %%r12" : : : "%r12");
 #endif
@@ -6072,6 +6070,116 @@ static void test_direct_syscalls(void)
     todo_wine
     ok(WaitForSingleObject(event, 0) == WAIT_OBJECT_0, "Event not signaled.\n");
     CloseHandle(event);
+}
+
+static void *unwind_target = NULL;
+static void *target_frame;
+
+static LRESULT unwinding_wnd_proc(HWND w, UINT msg, WPARAM p2, LPARAM p3)
+{
+    CONTEXT context;
+    int frames;
+    UNWIND_HISTORY_TABLE table;
+    RUNTIME_FUNCTION *func;
+    ULONG_PTR frame, base;
+    void *data;
+    BOOL found = FALSE;
+
+    RtlCaptureContext(&context);
+
+    switch (msg)
+    {
+    case WM_NCDESTROY:
+        for (frames = 0; frames < 16; frames++)
+        {
+            func = RtlLookupFunctionEntry(context.Rip, &base, &table);
+            if (RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, context.Rip, func, &context, &data, &frame, NULL))
+                break;
+            if (!context.Rip) break;
+            if (!frame) break;
+            if (context.Rip == (DWORD64)unwind_target || frame == (DWORD64)target_frame)
+            {
+                found = TRUE;
+
+                /* check that non-volatile registers are set properly before entering user callback. */
+                ok(!context.Rbx, "unexpected register value, %%rbx = %#I64x\n", context.Rbx);
+                ok(!context.R12, "unexpected register value, %%r12 = %#I64x\n", context.R12);
+                ok(!context.R13, "unexpected register value, %%r13 = %#I64x\n", context.R13);
+                ok(!context.R14, "unexpected register value, %%r14 = %#I64x\n", context.R14);
+                ok(!context.R15, "unexpected register value, %%r15 = %#I64x\n", context.R15);
+                ok(context.Rbp == 0xdeadbeef, "unexpected register value, %%rbp = %#I64x\n", context.Rbp);
+                break;
+            }
+        }
+        ok(found, "couldn't find target frame in parent frames\n");
+        break;
+    default: break;
+    }
+    return DefWindowProcA(w, msg, p2, p3);
+}
+
+static void test_user_callback_context(void)
+{
+    WNDCLASSA cls = {0};
+    HWND hwnd;
+    ATOM atom;
+    UINT64 patch;
+    void (*pdestroy_window_trampoline)(HWND) = (void (*)(HWND))code_mem;
+
+    /* setup register context so later we can check what changed and what hasn't. */
+    static const BYTE trampoline[] =
+    {
+        0x55,                                                       /* 00: push %rbp */
+        0x41, 0x57,                                                 /* 01: push %r15 */
+        0x41, 0x56,                                                 /* 03: push %r14 */
+        0x41, 0x55,                                                 /* 05: push %r13 */
+        0x41, 0x54,                                                 /* 07: push %r12 */
+        0x53,                                                       /* 09: push %rbx */
+        0x48, 0x83, 0xec, 0x28,                                     /* 0a: sub 0x28,%rsp */
+        0xbd, 0xef, 0xbe, 0xad, 0xde,                               /* 0e: mov $0xdeadbeef,%rbp */
+        0xbb, 0xef, 0xbe, 0xad, 0xde,                               /* 13: mov $0xdeadbeef,%rbx */
+        0x41, 0xbc, 0xef, 0xbe, 0xad, 0xde,                         /* 18: mov $0xdeadbeef,%r12 */
+        0x41, 0xbd, 0xef, 0xbe, 0xad, 0xde,                         /* 1e: mov $0xdeadbeef,%r13 */
+        0x41, 0xbe, 0xef, 0xbe, 0xad, 0xde,                         /* 24: mov $0xdeadbeef,%r14 */
+        0x41, 0xbf, 0xef, 0xbe, 0xad, 0xde,                         /* 2a: mov $0xdeadbeef,%r15 */
+        0x48, 0xb8, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, /* 30: mov ?,%rax # &target_frame */
+        0x48, 0x89, 0x20,                                           /* 3a: mov %rsp,(%rax) */
+        0x48, 0xb8, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, /* 3d: mov ?,%rax # DestroyWindow */
+        0xff, 0xd0,                                                 /* 47: call *%rax */
+        0x90,                                                       /* 49: nop */
+        0x48, 0x83, 0xc4, 0x28,                                     /* 4a: add $0x28,%rsp */
+        0x5b,                                                       /* 4e: pop %rbx */
+        0x41, 0x5c,                                                 /* 4f: pop %r12 */
+        0x41, 0x5d,                                                 /* 51: pop %r13 */
+        0x41, 0x5e,                                                 /* 53: pop %r14 */
+        0x41, 0x5f,                                                 /* 55: pop %r15 */
+        0x5d,                                                       /* 57: pop %rbp */
+        0xc3,                                                       /* 58: ret */
+    };
+
+    memcpy(code_mem, trampoline, ARRAYSIZE(trampoline));
+
+    patch = (ULONG_PTR)&target_frame;
+    memcpy((char *)code_mem + 0x30 + 2, &patch, 8);
+    patch = (ULONG_PTR)DestroyWindow;
+    memcpy((char *)code_mem + 0x3d + 2, &patch, 8);
+
+    unwind_target = (char *)code_mem + 0x49;
+
+    cls.style = CS_HREDRAW | CS_VREDRAW;
+    cls.lpfnWndProc = unwinding_wnd_proc;
+    cls.hInstance = GetModuleHandleA(0);
+    cls.lpszClassName = "test_user_callback_registers_class";
+
+    atom = RegisterClassA(&cls);
+    ok(!!atom, "RegisterClassA failed, error %#lx.\n", GetLastError());
+
+    hwnd = CreateWindowExA(WS_EX_TOPMOST, cls.lpszClassName, "", WS_POPUP | WS_VISIBLE, 100, 100,
+                           100, 100, NULL, NULL, 0, NULL);
+    ok(!!hwnd, "CreateWindowA failed, error %#lx.\n", GetLastError());
+
+    pdestroy_window_trampoline(hwnd);
+    UnregisterClassA(cls.lpszClassName, GetModuleHandleA(0));
 }
 
 #elif defined(__arm__)
@@ -10014,7 +10122,7 @@ static DWORD test_extended_context_handler(EXCEPTION_RECORD *rec, EXCEPTION_REGI
     }
 
 done:
-#ifdef __GNUC__
+#ifndef __arm64ec__
     __asm__ volatile("vmovups (%0),%%ymm0" : : "r"(test_extended_context_spoil_data2));
 #endif
 #ifdef __x86_64__
@@ -12298,6 +12406,7 @@ START_TEST(exception)
     test_restore_context();
     test_prot_fault();
     test_dpe_exceptions();
+    test_user_callback_context();
     test_wow64_context();
     test_nested_exception();
     test_collided_unwind();

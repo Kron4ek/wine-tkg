@@ -183,6 +183,7 @@ struct constructor;
     XIID(IHTMLAttributeCollection) \
     XIID(IHTMLAttributeCollection2) \
     XIID(IHTMLAttributeCollection3) \
+    XIID(IHTMLAttributeCollection4) \
     XIID(IHTMLBodyElement) \
     XIID(IHTMLBodyElement2) \
     XIID(IHTMLButtonElement) \
@@ -548,6 +549,7 @@ typedef struct {
     DISPID dispid;
     dispex_hook_invoke_t invoke;
     const WCHAR *name;
+    BOOL noattr;
 } dispex_hook_t;
 
 struct DispatchEx {
@@ -628,6 +630,8 @@ HRESULT change_type(VARIANT*,VARIANT*,VARTYPE,IServiceProvider*);
 HRESULT dispex_get_dprop_ref(DispatchEx*,const WCHAR*,BOOL,VARIANT**);
 HRESULT get_dispids(tid_t,DWORD*,DISPID**);
 HRESULT remove_attribute(DispatchEx*,DISPID,VARIANT_BOOL*);
+BOOL is_builtin_attribute(DispatchEx*,DISPID);
+BOOL is_builtin_value(DispatchEx*,DISPID);
 HRESULT dispex_get_dynid(DispatchEx*,const WCHAR*,BOOL,DISPID*);
 void release_typelib(void);
 HRESULT get_class_typeinfo(const CLSID*,ITypeInfo**);
@@ -649,6 +653,7 @@ HRESULT dispex_prop_name(DispatchEx *dispex, DISPID id, BSTR *ret);
 HRESULT dispex_define_property(DispatchEx *dispex, const WCHAR *name, DWORD flags, VARIANT *v, DISPID *id);
 HRESULT dispex_index_prop_desc(DispatchEx*,DISPID,struct property_info*);
 const WCHAR *dispex_builtin_prop_name(DispatchEx *dispex, DISPID id);
+BOOL dispex_builtin_is_noattr(DispatchEx *dispex, DISPID id);
 IWineJSDispatchHost *dispex_outer_iface(DispatchEx *dispex);
 HRESULT get_constructor(HTMLInnerWindow *script_global, object_id_t id, DispatchEx **ret);
 HRESULT get_prototype(HTMLInnerWindow *script_global, object_id_t id, DispatchEx **ret);
@@ -1327,21 +1332,26 @@ struct HTMLAttributeCollection {
     IHTMLAttributeCollection IHTMLAttributeCollection_iface;
     IHTMLAttributeCollection2 IHTMLAttributeCollection2_iface;
     IHTMLAttributeCollection3 IHTMLAttributeCollection3_iface;
+    IHTMLAttributeCollection4 IHTMLAttributeCollection4_iface;
 
+    nsIDOMMozNamedAttrMap *dom_attrs;
     HTMLElement *elem;
     struct list attrs;
 };
 
 typedef struct {
-    DispatchEx dispex;
+    HTMLDOMNode node; /* only dispex is valid if dom_attr is NULL */
     IHTMLDOMAttribute IHTMLDOMAttribute_iface;
     IHTMLDOMAttribute2 IHTMLDOMAttribute2_iface;
     IHTMLDOMAttribute3 IHTMLDOMAttribute3_iface;
 
+    /* Gecko attr for proper nodes, when non-NULL other fields are invalid */
+    nsIDOMAttr *dom_attr;
+
     /* value is valid only for detached attributes (when elem == NULL). */
     VARIANT value;
     /* name must be valid for detached attributes */
-    WCHAR *name;
+    BSTR name;
 
     HTMLDocumentNode *doc;
     HTMLElement *elem;
@@ -1352,6 +1362,8 @@ typedef struct {
 HTMLDOMAttribute *unsafe_impl_from_IHTMLDOMAttribute(IHTMLDOMAttribute*);
 
 HRESULT HTMLDOMAttribute_Create(const WCHAR*,HTMLElement*,DISPID,HTMLDocumentNode*,HTMLDOMAttribute**);
+HRESULT create_attr_node(HTMLDocumentNode *doc, nsIDOMAttr *dom_attr, HTMLDOMAttribute **ret);
+HRESULT get_attr_node(nsIDOMAttr *dom_attr, HTMLDOMAttribute **ret);
 
 HRESULT HTMLElement_Create(HTMLDocumentNode*,nsIDOMNode*,BOOL,HTMLElement**);
 HRESULT HTMLCommentElement_Create(HTMLDocumentNode*,nsIDOMNode*,HTMLElement**);

@@ -3880,15 +3880,15 @@ msgstr "Deaktiviert"
 msgid "DInput"
 msgstr "DInput"
 
-#: dlls/joy.cpl/joy.rc:62
+#: dlls/joy.cpl/joy.rc:62 dlls/joy.cpl/joy.rc:111
 msgid "Axes"
 msgstr "Achsen"
 
-#: dlls/joy.cpl/joy.rc:63
+#: dlls/joy.cpl/joy.rc:63 dlls/joy.cpl/joy.rc:112
 msgid "POVs"
 msgstr "POVs"
 
-#: dlls/joy.cpl/joy.rc:64
+#: dlls/joy.cpl/joy.rc:64 dlls/joy.cpl/joy.rc:113
 msgid "Buttons"
 msgstr "Tasten"
 
@@ -3958,9 +3958,13 @@ msgstr ""
 "eingesteckt ist und nicht im Joysticks-Tab für DInput überschrieben wurde."
 
 #: dlls/joy.cpl/joy.rc:98 dlls/joy.cpl/joy.rc:99 dlls/joy.cpl/joy.rc:100
-#: dlls/joy.cpl/joy.rc:101
+#: dlls/joy.cpl/joy.rc:101 dlls/joy.cpl/joy.rc:115
 msgid "Rumble"
 msgstr "Rumble"
+
+#: dlls/joy.cpl/joy.rc:106
+msgid "Windows.Gaming.Input"
+msgstr ""
 
 #: dlls/joy.cpl/joy.rc:31
 msgid "Game Controllers"
@@ -8020,7 +8024,7 @@ msgid "Vector property is required.\n"
 msgstr "Vektor-Merkmal erforderlich.\n"
 
 #: dlls/mferror/mferror.mc:389
-msgid "Operation was cancelled.\n"
+msgid "Operation was canceled.\n"
 msgstr "Vorgang wurde abgebrochen.\n"
 
 #: dlls/mferror/mferror.mc:396
@@ -9219,12 +9223,12 @@ msgstr "nicht im Bild"
 
 #: dlls/oleacc/oleacc.rc:115
 msgctxt "object state"
-msgid "sizeable"
+msgid "sizable"
 msgstr "größenänderbar"
 
 #: dlls/oleacc/oleacc.rc:116
 msgctxt "object state"
-msgid "moveable"
+msgid "movable"
 msgstr "verschiebbar"
 
 #: dlls/oleacc/oleacc.rc:117
@@ -16311,7 +16315,7 @@ msgid "reg: The operation completed successfully\n"
 msgstr "reg: Der Vorgang wurde erfolgreich abgeschlossen\n"
 
 #: programs/reg/reg.rc:131
-msgid "reg: The registry operation was cancelled\n"
+msgid "reg: The registry operation was canceled\n"
 msgstr "reg: Der Registrierungsvorgang wurde abgebrochen\n"
 
 #: programs/reg/reg.rc:174
