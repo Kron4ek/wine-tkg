@@ -733,13 +733,16 @@ static void test_DoDragDrop(void)
     {
         for (seq = 0; seq < ARRAY_SIZE(call_lists); seq++)
         {
+            HCURSOR cursor;
             DWORD effect_in;
             trace("%d\n", seq);
             call_ptr = call_lists[seq];
             effect_in = call_ptr->set_param;
             call_ptr++;
 
+            cursor = GetCursor();
             hr = DoDragDrop(&DataObject, &DropSource, effect_in, &effect);
+            ok(GetCursor() == cursor, "cursor not restored\n");
             check_expect(DoDragDrop_ret, hr, NULL);
             check_expect(DoDragDrop_effect_out, effect, NULL);
         }

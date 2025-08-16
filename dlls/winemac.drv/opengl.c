@@ -43,7 +43,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(wgl);
 
-
 struct gl_info {
     char *glExtensions;
 
@@ -59,24 +58,19 @@ static struct gl_info gl_info;
 
 struct macdrv_context
 {
-    struct list             entry;
     int                     format;
     GLint                   renderer_id;
     macdrv_opengl_context   context;
     CGLContextObj           cglcontext;
     HWND                    draw_hwnd;
     macdrv_view             draw_view;
-    RECT                    draw_rect;
-    RECT                    draw_rect_win_dpi;
     CGLPBufferObj           draw_pbuffer;
     GLenum                  draw_pbuffer_face;
     GLint                   draw_pbuffer_level;
+    HWND                    read_hwnd;
     macdrv_view             read_view;
-    RECT                    read_rect;
     CGLPBufferObj           read_pbuffer;
     int                     swap_interval;
-    LONG                    view_moved;
-    UINT                    major;
 };
 
 struct gl_drawable
@@ -90,13 +84,9 @@ static struct gl_drawable *impl_from_opengl_drawable(struct opengl_drawable *bas
     return CONTAINING_RECORD(base, struct gl_drawable, base);
 }
 
-static struct list context_list = LIST_INIT(context_list);
-static pthread_mutex_t context_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 static void *opengl_handle;
 static const struct opengl_funcs *funcs;
 static const struct opengl_driver_funcs macdrv_driver_funcs;
-static const struct client_surface_funcs macdrv_client_surface_funcs;
 static const struct opengl_drawable_funcs macdrv_surface_funcs;
 static const struct opengl_drawable_funcs macdrv_pbuffer_funcs;
 
@@ -1461,7 +1451,6 @@ static BOOL create_context(struct macdrv_context *context, CGLContextObj share, 
         RtlSetLastWin32Error(ERROR_INVALID_OPERATION);
         return FALSE;
     }
-    context->major = major;
     context->swap_interval = INT_MIN;
 
     TRACE("created context %p/%p/%p\n", context, context->context, context->cglcontext);
@@ -1471,7 +1460,7 @@ static BOOL create_context(struct macdrv_context *context, CGLContextObj share, 
 
 static BOOL macdrv_surface_create(HWND hwnd, HDC hdc, int format, struct opengl_drawable **drawable)
 {
-    struct client_surface *client;
+    struct macdrv_client_surface *client;
     struct macdrv_win_data *data;
     struct gl_drawable *gl;
 
@@ -1486,9 +1475,9 @@ static BOOL macdrv_surface_create(HWND hwnd, HDC hdc, int format, struct opengl_
     data->pixel_format = format;
     release_win_data(data);
 
-    if (!(client = client_surface_create(sizeof(*client), &macdrv_client_surface_funcs, hwnd))) return FALSE;
-    gl = opengl_drawable_create(sizeof(*gl), &macdrv_surface_funcs, format, client);
-    client_surface_release(client);
+    if (!(client = macdrv_client_surface_create(hwnd))) return FALSE;
+    gl = opengl_drawable_create(sizeof(*gl), &macdrv_surface_funcs, format, &client->client);
+    client_surface_release(&client->client);
     if (!gl) return FALSE;
 
     *drawable = &gl->base;
@@ -1501,57 +1490,6 @@ static void macdrv_surface_destroy(struct opengl_drawable *base)
 }
 
 /**********************************************************************
- *              mark_contexts_for_moved_view
- */
-static void mark_contexts_for_moved_view(macdrv_view view)
-{
-    struct macdrv_context *context;
-
-    pthread_mutex_lock(&context_mutex);
-    LIST_FOR_EACH_ENTRY(context, &context_list, struct macdrv_context, entry)
-    {
-        if (context->draw_view == view)
-            InterlockedExchange(&context->view_moved, TRUE);
-    }
-    pthread_mutex_unlock(&context_mutex);
-}
-
-/**********************************************************************
- *              sync_context_rect
- */
-static BOOL sync_context_rect(struct macdrv_context *context)
-{
-    BOOL ret = FALSE;
-    RECT rect;
-    struct macdrv_win_data *data = get_win_data(context->draw_hwnd);
-
-    if (data && data->client_cocoa_view == context->draw_view)
-    {
-        if (InterlockedCompareExchange(&context->view_moved, FALSE, TRUE))
-        {
-            rect = data->rects.client;
-            OffsetRect(&rect, -data->rects.visible.left, -data->rects.visible.top);
-            if (!EqualRect(&context->draw_rect, &rect))
-            {
-                context->draw_rect = rect;
-                ret = TRUE;
-            }
-        }
-
-        NtUserGetClientRect(context->draw_hwnd, &rect, NtUserGetDpiForWindow(context->draw_hwnd));
-        if (!EqualRect(&context->draw_rect_win_dpi, &rect))
-        {
-            context->draw_rect_win_dpi = rect;
-            ret = TRUE;
-        }
-    }
-
-    release_win_data(data);
-    return ret;
-}
-
-
-/**********************************************************************
  *              make_context_current
  */
 static void make_context_current(struct macdrv_context *context, BOOL read)
@@ -1562,16 +1500,14 @@ static void make_context_current(struct macdrv_context *context, BOOL read)
 
     if (read)
     {
+        if (context->read_hwnd) NtUserGetClientRect(context->read_hwnd, &view_rect, NtUserGetDpiForWindow(context->read_hwnd));
         view = context->read_view;
-        view_rect = context->read_rect;
         pbuffer = context->read_pbuffer;
     }
     else
     {
-        sync_context_rect(context);
-
+        if (context->draw_hwnd) NtUserGetClientRect(context->draw_hwnd, &view_rect, NtUserGetDpiForWindow(context->draw_hwnd));
         view = context->draw_view;
-        view_rect = context->draw_rect_win_dpi;
         pbuffer = context->draw_pbuffer;
     }
 
@@ -2077,11 +2013,14 @@ static void macdrv_glCopyPixels(GLint x, GLint y, GLsizei width, GLsizei height,
 
 static void macdrv_surface_flush(struct opengl_drawable *base, UINT flags)
 {
+    struct macdrv_client_surface *client = impl_from_client_surface(base->client);
     struct macdrv_context *context = NtCurrentTeb()->glReserved2;
 
     TRACE("%s flags %#x\n", debugstr_opengl_drawable(base), flags);
 
+    if (!context) return;
     if (flags & GL_FLUSH_INTERVAL) set_swap_interval(context, base->interval);
+    if (flags & GL_FLUSH_UPDATED) make_context_current(context, context->read_view == client->cocoa_view);
 }
 
 
@@ -2318,10 +2257,6 @@ static BOOL macdrv_context_create(int format, void *shared, const int *attrib_li
         return FALSE;
     }
 
-    pthread_mutex_lock(&context_mutex);
-    list_add_tail(&context_list, &context->entry);
-    pthread_mutex_unlock(&context_mutex);
-
     *private = context;
     return TRUE;
 }
@@ -2370,7 +2305,6 @@ static BOOL macdrv_make_current(struct opengl_drawable *draw_base, struct opengl
 {
     struct gl_drawable *draw = impl_from_opengl_drawable(draw_base), *read = impl_from_opengl_drawable(read_base);
     struct macdrv_context *context = private;
-    struct macdrv_win_data *data;
 
     TRACE("draw %s, read %s, context %p\n", debugstr_opengl_drawable(draw_base), debugstr_opengl_drawable(read_base), private);
 
@@ -2381,47 +2315,28 @@ static BOOL macdrv_make_current(struct opengl_drawable *draw_base, struct opengl
         return TRUE;
     }
 
+    context->read_hwnd = context->draw_hwnd = NULL;
+    context->read_view = context->draw_view = NULL;
+    context->read_pbuffer = context->draw_pbuffer = NULL;
+
     if (draw->base.client)
     {
-        HWND hwnd = draw->base.client->hwnd;
-        if (!(data = get_win_data(hwnd)))
-        {
-            FIXME("draw DC for window %p of other process: not implemented\n", hwnd);
-            return FALSE;
-        }
-
-        context->draw_hwnd = hwnd;
-        context->draw_view = data->client_cocoa_view;
-        context->draw_rect = data->rects.client;
-        OffsetRect(&context->draw_rect, -data->rects.visible.left, -data->rects.visible.top);
-        NtUserGetClientRect(hwnd, &context->draw_rect_win_dpi, NtUserGetDpiForWindow(hwnd));
-        context->draw_pbuffer = NULL;
-        release_win_data(data);
+        struct macdrv_client_surface *client = impl_from_client_surface(draw->base.client);
+        context->draw_hwnd = draw->base.client->hwnd;
+        context->draw_view = client->cocoa_view;
     }
     else
     {
-        context->draw_hwnd = NULL;
-        context->draw_view = NULL;
         context->draw_pbuffer = draw->pbuffer;
     }
 
-    context->read_view = NULL;
-    context->read_pbuffer = NULL;
     if (read != draw)
     {
         if (read->base.client)
         {
-            HWND hwnd = read->base.client->hwnd;
-            if ((data = get_win_data(hwnd)))
-            {
-                if (data->client_cocoa_view != context->draw_view)
-                {
-                    context->read_view = data->client_cocoa_view;
-                    context->read_rect = data->rects.client;
-                    OffsetRect(&context->read_rect, -data->rects.visible.left, -data->rects.visible.top);
-                }
-                release_win_data(data);
-            }
+            struct macdrv_client_surface *client = impl_from_client_surface(read->base.client);
+            context->read_hwnd = read->base.client->hwnd;
+            context->read_view = client->cocoa_view;
         }
         else
         {
@@ -2429,9 +2344,8 @@ static BOOL macdrv_make_current(struct opengl_drawable *draw_base, struct opengl
         }
     }
 
-    TRACE("making context current with draw_view %p %s draw_pbuffer %p read_view %p %s read_pbuffer %p format %u\n",
-          context->draw_view, wine_dbgstr_rect(&context->draw_rect), context->draw_pbuffer,
-          context->read_view, wine_dbgstr_rect(&context->read_rect), context->read_pbuffer, context->format);
+    TRACE("making context current with draw_view %p draw_pbuffer %p read_view %p read_pbuffer %p format %u\n",
+          context->draw_view, context->draw_pbuffer, context->read_view, context->read_pbuffer, context->format);
 
     make_context_current(context, FALSE);
     NtCurrentTeb()->glReserved2 = context;
@@ -2867,10 +2781,6 @@ static BOOL macdrv_context_destroy(void *private)
 
     TRACE("deleting context %p/%p/%p\n", context, context->context, context->cglcontext);
 
-    pthread_mutex_lock(&context_mutex);
-    list_remove(&context->entry);
-    pthread_mutex_unlock(&context_mutex);
-
     macdrv_dispose_opengl_context(context->context);
     free(context);
     return TRUE;
@@ -2891,29 +2801,9 @@ static void *macdrv_get_proc_address(const char *name)
 static BOOL macdrv_surface_swap(struct opengl_drawable *base)
 {
     struct macdrv_context *context = NtCurrentTeb()->glReserved2;
-    struct macdrv_win_data *data;
-    HWND hwnd = base->client->hwnd;
-    BOOL match = FALSE;
 
     TRACE("%s context %p/%p/%p\n", debugstr_opengl_drawable(base), context, (context ? context->context : NULL),
           (context ? context->cglcontext : NULL));
-
-    if (!(data = get_win_data(hwnd)))
-    {
-        RtlSetLastWin32Error(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
-
-    if (context && context->draw_view == data->client_cocoa_view)
-        match = TRUE;
-
-    release_win_data(data);
-
-    if (!match)
-    {
-        FIXME("current context %p doesn't match; can't swap\n", context);
-        return FALSE;
-    }
 
     macdrv_flush_opengl_context(context->context);
     return TRUE;
@@ -2932,42 +2822,6 @@ static const struct opengl_driver_funcs macdrv_driver_funcs =
     .p_pbuffer_create = macdrv_pbuffer_create,
     .p_pbuffer_updated = macdrv_pbuffer_updated,
     .p_pbuffer_bind = macdrv_pbuffer_bind,
-};
-
-static void macdrv_client_surface_destroy(struct client_surface *client)
-{
-    TRACE("%s\n", debugstr_client_surface(client));
-}
-
-static void macdrv_client_surface_detach(struct client_surface *client)
-{
-}
-
-static void macdrv_client_surface_update(struct client_surface *client)
-{
-    struct macdrv_win_data *data = get_win_data(client->hwnd);
-
-    TRACE("%s\n", debugstr_client_surface(client));
-
-    if (data->client_cocoa_view && data->pixel_format)
-    {
-        TRACE("GL view %p changed position; marking contexts\n", data->client_cocoa_view);
-        mark_contexts_for_moved_view(data->client_cocoa_view);
-    }
-
-    release_win_data(data);
-}
-
-static void macdrv_client_surface_present(struct client_surface *client, HDC hdc)
-{
-}
-
-static const struct client_surface_funcs macdrv_client_surface_funcs =
-{
-    .destroy = macdrv_client_surface_destroy,
-    .detach = macdrv_client_surface_detach,
-    .update = macdrv_client_surface_update,
-    .present = macdrv_client_surface_present,
 };
 
 static const struct opengl_drawable_funcs macdrv_surface_funcs =

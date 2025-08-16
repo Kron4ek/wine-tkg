@@ -398,7 +398,6 @@ todo_wine_if(getenv("WINEESYNC"))   /* XFAIL: due to the above */
 
     CloseHandle(params.start_event);
     CloseHandle(params.stop_event);
-    CloseHandle(params.mutex);
 }
 
 static void test_slist(void)

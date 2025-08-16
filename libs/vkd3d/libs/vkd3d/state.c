@@ -3232,17 +3232,6 @@ static HRESULT d3d12_pipeline_state_init_graphics(struct d3d12_pipeline_state *s
     uint32_t mask;
     HRESULT hr;
 
-    static const DWORD default_ps_code[] =
-    {
-#if 0
-        ps_4_0
-        ret
-#endif
-        0x43425844, 0x19cbf606, 0x18f562b9, 0xdaeed4db, 0xc324aa46, 0x00000001, 0x00000060, 0x00000003,
-        0x0000002c, 0x0000003c, 0x0000004c, 0x4e475349, 0x00000008, 0x00000000, 0x00000008, 0x4e47534f,
-        0x00000008, 0x00000000, 0x00000008, 0x52444853, 0x0000000c, 0x00000040, 0x00000003, 0x0100003e,
-    };
-    static const D3D12_SHADER_BYTECODE default_ps = {default_ps_code, sizeof(default_ps_code)};
     static const struct
     {
         enum VkShaderStageFlagBits stage;
@@ -3401,11 +3390,10 @@ static HRESULT d3d12_pipeline_state_init_graphics(struct d3d12_pipeline_state *s
 
         if (!desc->ps.pShaderBytecode)
         {
-            if (FAILED(hr = create_shader_stage(device, &graphics->stages[graphics->stage_count],
-                    VK_SHADER_STAGE_FRAGMENT_BIT, &default_ps, NULL)))
-                goto fail;
-
-            ++graphics->stage_count;
+            for (i = 0; i < rt_count; i++)
+            {
+                graphics->blend_attachments[i].colorWriteMask = 0;
+            }
         }
     }
 
@@ -3983,9 +3971,9 @@ VkPipeline d3d12_pipeline_state_get_or_create_pipeline(struct d3d12_pipeline_sta
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
         .pNext = NULL,
         .flags = 0,
-        .viewportCount = 1,
+        .viewportCount = D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE,
         .pViewports = NULL,
-        .scissorCount = 1,
+        .scissorCount = D3D12_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE,
         .pScissors = NULL,
     };
     static const VkDynamicState dynamic_states[] =

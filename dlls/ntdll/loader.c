@@ -3484,15 +3484,6 @@ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
 
 
 /***********************************************************************
- *           __wine_needs_override_large_address_aware
- */
-unsigned int CDECL __wine_needs_override_large_address_aware(void)
-{
-    return WINE_UNIX_CALL( unix_wine_needs_override_large_address_aware, NULL );
-}
-
-
-/***********************************************************************
  *           wine_server_call
  */
 unsigned int CDECL wine_server_call( void *req_ptr )

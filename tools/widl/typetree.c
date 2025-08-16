@@ -913,6 +913,7 @@ type_t *type_apicontract_declare(char *name, struct namespace *namespace)
 type_t *type_apicontract_define(type_t *apicontract, attr_list_t *attrs, const struct location *where)
 {
     apicontract->attrs = check_apicontract_attrs(apicontract->name, attrs);
+    apicontract->attrs = append_attr(apicontract->attrs, attr_int(*where, ATTR_APICONTRACT, 1));
     define_type(apicontract, where);
     return apicontract;
 }
@@ -1192,9 +1193,9 @@ static type_t *replace_type_parameters_in_type(type_t *type, typeref_list_t *ori
         return type;
     case TYPE_ARRAY:
         t = replace_type_parameters_in_type(type->details.array.elem.type, orig, repl);
-        if (t == t->details.array.elem.type) return type;
+        if (t == type->details.array.elem.type) return type;
         type = duptype(type, 0);
-        t->details.array.elem.type = t;
+        type->details.array.elem.type = t;
         return type;
     case TYPE_FUNCTION:
         t = duptype(type, 0);

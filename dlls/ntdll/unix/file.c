@@ -247,6 +247,9 @@ static unsigned int dir_data_cache_size;
 static BOOL show_dot_files;
 static mode_t start_umask;
 
+static const WCHAR nt_prefixW[] = {'\\','?','?','\\'};
+static const WCHAR dos_prefixW[] = {'\\','?','?','\\','A',':','\\'};
+static const WCHAR unc_prefixW[] = {'\\','?','?','\\','U','N','C','\\'};
 static const WCHAR unix_prefixW[] = {'\\','?','?','\\','u','n','i','x'};
 
 /* at some point we may want to allow Winelib apps to set this */
@@ -1468,23 +1471,6 @@ static BOOLEAN get_dir_case_sensitivity_stat( int root_fd, const char *dir )
         return FALSE;
 #endif
 #endif
-    return TRUE;
-
-#elif defined(__NetBSD__)
-    struct statvfs stfs;
-    int fd;
-
-    if ((fd = openat( root_fd, dir, O_RDONLY )) == -1) return TRUE;
-    if (fstatvfs( fd, &stfs ) == -1)
-    {
-        close( fd );
-        return TRUE;
-    }
-    close( fd );
-    /* Only assume CIOPFS is case insensitive. */
-    if (strcmp( stfs.f_fstypename, "fusefs" ) ||
-        strncmp( stfs.f_mntfromname, "ciopfs", 5 ))
-        return FALSE;
     return TRUE;
 
 #elif defined(__linux__)
@@ -3498,7 +3484,6 @@ failed:
 /* return the length of the DOS namespace prefix if any */
 static inline int get_dos_prefix_len( const UNICODE_STRING *name )
 {
-    static const WCHAR nt_prefixW[] = {'\\','?','?','\\'};
     static const WCHAR dosdev_prefixW[] = {'\\','D','o','s','D','e','v','i','c','e','s','\\'};
 
     if (name->Length >= sizeof(nt_prefixW) &&
@@ -3732,12 +3717,9 @@ int find_prefix_end( const char *path, int *offset )
 NTSTATUS create_reparse_target( int dirfd, const char *unix_src, int depth, const char *link_path,
                                 REPARSE_DATA_BUFFER *buffer )
 {
-    ULONG nt_path_len = PATH_MAX, unix_path_len = PATH_MAX;
     UNICODE_STRING nt_target, nt_full_target;
-    ULONG unix_target_len = PATH_MAX;
     char *unix_path = NULL, *d;
     char target_path[PATH_MAX];
-    OBJECT_ATTRIBUTES attr;
     int nt_target_len;
     char *unix_target;
     int is_relative;
@@ -3749,8 +3731,6 @@ NTSTATUS create_reparse_target( int dirfd, const char *unix_src, int depth, cons
     /* if the target path is relative then turn the source path into an NT path */
     if (is_relative)
     {
-        UNICODE_STRING nt_path_tmp;
-
         /* resolve the NT path of the source */
         unix_path = malloc( strlen(unix_src) + 2 );
         if (!unix_path) return STATUS_NO_MEMORY;
@@ -3763,17 +3743,7 @@ NTSTATUS create_reparse_target( int dirfd, const char *unix_src, int depth, cons
         if (status != STATUS_SUCCESS)
             return status;
         /* re-resolve the unix path for the source */
-        nt_path_tmp.Buffer = nt_path;
-        nt_path_tmp.Length = wcslen(nt_path) * sizeof(WCHAR);
-        InitializeObjectAttributes( &attr, &nt_path_tmp, 0, 0, NULL );
-        for (;;)
-        {
-            unix_path = malloc( unix_path_len );
-            if (!unix_path) return STATUS_NO_MEMORY;
-            status = wine_nt_to_unix_file_name( &attr, unix_path, &unix_path_len, FILE_OPEN_IF );
-            if (status != STATUS_BUFFER_TOO_SMALL) break;
-            free( unix_path );
-        }
+        status = ntdll_get_unix_file_name( nt_path, &unix_path, FILE_OPEN_IF );
     }
     else
     {
@@ -3793,21 +3763,8 @@ NTSTATUS create_reparse_target( int dirfd, const char *unix_src, int depth, cons
     wcscpy( nt_full_target.Buffer, nt_path );
     free( nt_path );
     memcpy( &nt_full_target.Buffer[wcslen(nt_full_target.Buffer)], nt_target.Buffer, nt_target_len );
-    nt_full_target.Length = wcslen( nt_full_target.Buffer ) * sizeof(WCHAR);
     /* find the unix path for the target */
-    InitializeObjectAttributes( &attr, &nt_full_target, 0, 0, NULL );
-    for (;;)
-    {
-        unix_target = malloc( unix_target_len );
-        if (!unix_target)
-        {
-            status = STATUS_NO_MEMORY;
-            goto cleanup;
-        }
-        status = wine_nt_to_unix_file_name( &attr, unix_target, &unix_target_len, FILE_OPEN_IF );
-        if (status != STATUS_BUFFER_TOO_SMALL) break;
-        free( unix_target );
-    }
+    status = ntdll_get_unix_file_name( nt_full_target.Buffer, &unix_target, FILE_OPEN_IF );
     /* create the symlink to the target at the last metadata location */
     if (status == STATUS_SUCCESS || status == STATUS_NO_SUCH_FILE)
     {
@@ -4706,6 +4663,51 @@ reparse:
 }
 
 
+/******************************************************************************
+ *           wine_nt_to_unix_file_name
+ *
+ * Convert a file name from NT namespace to Unix namespace.
+ *
+ * If disposition is not FILE_OPEN or FILE_OVERWRITE, the last path
+ * element doesn't have to exist; in that case STATUS_NO_SUCH_FILE is
+ * returned, but the unix name is still filled in properly.
+ */
+NTSTATUS WINAPI wine_nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char *nameA, ULONG *size,
+                                          UINT disposition )
+{
+    char *buffer = NULL;
+    NTSTATUS status;
+    UNICODE_STRING nt_name;
+    OBJECT_ATTRIBUTES new_attr = *attr;
+
+    status = get_nt_and_unix_names( &new_attr, &nt_name, &buffer, disposition );
+    if (!status || status == STATUS_NO_SUCH_FILE)
+    {
+        struct stat st1, st2;
+        char *name = buffer;
+
+        /* remove dosdevices prefix for z: drive if it points to the Unix root */
+        if (!strncmp( buffer, config_dir, strlen(config_dir) ) &&
+            !strncmp( buffer + strlen(config_dir), "/dosdevices/z:/", 15 ))
+        {
+            char *p = buffer + strlen(config_dir) + 14;
+            *p = 0;
+            if (!stat( buffer, &st1 ) && !stat( "/", &st2 ) &&
+                st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino)
+                name = p;
+            *p = '/';
+        }
+
+        if (*size > strlen(name)) strcpy( nameA, name );
+        else status = STATUS_BUFFER_TOO_SMALL;
+        *size = strlen(name) + 1;
+    }
+    free( buffer );
+    free( nt_name.Buffer );
+    return status;
+}
+
+
 /* read the contents of an NT symlink object */
 static NTSTATUS read_nt_symlink( HANDLE root, UNICODE_STRING *name, WCHAR *target, size_t length )
 {
@@ -4836,50 +4838,6 @@ NTSTATUS nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char **name_ret, U
     return status;
 }
 
-/******************************************************************************
- *           wine_nt_to_unix_file_name
- *
- * Convert a file name from NT namespace to Unix namespace.
- *
- * If disposition is not FILE_OPEN or FILE_OVERWRITE, the last path
- * element doesn't have to exist; in that case STATUS_NO_SUCH_FILE is
- * returned, but the unix name is still filled in properly.
- */
-NTSTATUS WINAPI wine_nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char *nameA, ULONG *size,
-                                          UINT disposition )
-{
-    char *buffer = NULL;
-    NTSTATUS status;
-    UNICODE_STRING nt_name;
-    OBJECT_ATTRIBUTES new_attr = *attr;
-
-    status = get_nt_and_unix_names( &new_attr, &nt_name, &buffer, disposition );
-    if (!status || status == STATUS_NO_SUCH_FILE)
-    {
-        struct stat st1, st2;
-        char *name = buffer;
-
-        /* remove dosdevices prefix for z: drive if it points to the Unix root */
-        if (!strncmp( buffer, config_dir, strlen(config_dir) ) &&
-            !strncmp( buffer + strlen(config_dir), "/dosdevices/z:/", 15 ))
-        {
-            char *p = buffer + strlen(config_dir) + 14;
-            *p = 0;
-            if (!stat( buffer, &st1 ) && !stat( "/", &st2 ) &&
-                st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino)
-                name = p;
-            *p = '/';
-        }
-
-        if (*size > strlen(name)) strcpy( nameA, name );
-        else status = STATUS_BUFFER_TOO_SMALL;
-        *size = strlen(name) + 1;
-    }
-    free( buffer );
-    free( nt_name.Buffer );
-    return status;
-}
-
 
 /******************************************************************
  *		collapse_path
@@ -4966,7 +4924,6 @@ static WCHAR *collapse_path( WCHAR *path )
 static NTSTATUS find_drive_nt_root( char *unix_name, unsigned int len,
                                     WCHAR **nt_name, UINT disposition )
 {
-    static const WCHAR dos_prefixW[] = {'\\','?','?','\\','A',':','\\'};
     unsigned int i, pos, lenW;
     WCHAR *buffer;
     NTSTATUS status = STATUS_SUCCESS;
@@ -5066,6 +5023,31 @@ NTSTATUS ntdll_get_dos_file_name( const char *unix_name, WCHAR **dos, UINT dispo
 }
 
 
+/* remove trailing backslash from NT name; helper for get_nt_and_unix_names */
+static void remove_trailing_backslash( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *nt_name )
+{
+    UNICODE_STRING *obj_name = attr->ObjectName;
+    ULONG len = obj_name->Length / sizeof(WCHAR);
+
+    if (!len || obj_name->Buffer[len - 1] != '\\') return;
+    if (!attr->RootDirectory)
+    {
+        ULONG i, count = 0;
+        for (i = 0; i < len; i++) if (obj_name->Buffer[i] == '\\') count++;
+        if (count <= 3) return;
+    }
+    if (obj_name != nt_name)  /* not already redirected, make a copy */
+    {
+        nt_name->Length = nt_name->MaximumLength = obj_name->Length;
+        if (!(nt_name->Buffer = malloc( nt_name->MaximumLength ))) return;
+        memcpy( nt_name->Buffer, obj_name->Buffer, nt_name->Length );
+        attr->ObjectName = nt_name;
+    }
+
+    nt_name->Length -= sizeof(WCHAR);
+    nt_name->Buffer[len - 1] = 0;
+}
+
 /***********************************************************************
  *           get_nt_and_unix_names
  *
@@ -5115,11 +5097,14 @@ NTSTATUS get_nt_and_unix_names( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *nt_name
 #endif
         status = nt_to_unix_file_name( attr, unix_name_ret, disposition );
     }
-    if (status && status != STATUS_NO_SUCH_FILE)
-        TRACE( "%s -> ret %x\n", debugstr_us(orig), status );
-    else
+
+    if (!status || status == STATUS_NO_SUCH_FILE)
+    {
+        remove_trailing_backslash( attr, nt_name );
         TRACE( "%s -> ret %x nt %s unix %s\n", debugstr_us(orig),
                status, debugstr_us(attr->ObjectName), debugstr_a(*unix_name_ret) );
+    }
+    else TRACE( "%s -> ret %x\n", debugstr_us(orig), status );
     return status;
 }
 
@@ -5131,9 +5116,6 @@ NTSTATUS get_nt_and_unix_names( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *nt_name
  */
 NTSTATUS get_full_path( char *name, const WCHAR *curdir, UNICODE_STRING *nt_name )
 {
-    static const WCHAR uncW[] = {'\\','?','?','\\','U','N','C','\\'};
-    static const WCHAR devW[] = {'\\','?','?','\\'};
-    static const WCHAR rootW[] = {'\\','?','?','\\','C',':','\\'};
     WCHAR *ret;
     ULONG prefix_len, len = max( ARRAY_SIZE(unix_prefixW), wcslen(curdir) ) + strlen(name) + 1;
 
@@ -5151,26 +5133,26 @@ NTSTATUS get_full_path( char *name, const WCHAR *curdir, UNICODE_STRING *nt_name
         if ((name[2] == '.' || name[2] == '?') && IS_SEPARATOR(name[3])) /* \\?\ device */
         {
             name += 4;
-            memcpy( ret, devW, sizeof(devW) );
-            prefix_len = ARRAY_SIZE(devW);
+            memcpy( ret, nt_prefixW, sizeof(nt_prefixW) );
+            prefix_len = ARRAY_SIZE(nt_prefixW);
         }
         else  /* UNC path */
         {
             name += 2;
-            memcpy( ret, uncW, sizeof(uncW) );
-            prefix_len = ARRAY_SIZE(uncW);
+            memcpy( ret, unc_prefixW, sizeof(unc_prefixW) );
+            prefix_len = ARRAY_SIZE(unc_prefixW);
         }
     }
     else if (IS_SEPARATOR(name[0]))  /* absolute path */
     {
-        memcpy( ret, rootW, sizeof(rootW) );
-        prefix_len = ARRAY_SIZE(rootW);
+        memcpy( ret, dos_prefixW, sizeof(dos_prefixW) );
+        prefix_len = ARRAY_SIZE(dos_prefixW);
         ret[4] = curdir[4];
     }
     else if (name[0] && name[1] == ':')  /* drive letter */
     {
-        memcpy( ret, rootW, sizeof(rootW) );
-        prefix_len = ARRAY_SIZE(rootW);
+        memcpy( ret, dos_prefixW, sizeof(dos_prefixW) );
+        prefix_len = ARRAY_SIZE(dos_prefixW);
         ret[4] = towupper(name[0]);
         name += 2;
     }
@@ -5185,6 +5167,85 @@ NTSTATUS get_full_path( char *name, const WCHAR *curdir, UNICODE_STRING *nt_name
  done:
     init_unicode_string( nt_name, ret );
     return STATUS_SUCCESS;
+}
+
+
+/***********************************************************************
+ *           get_nt_path
+ *
+ * Simplified version of RtlDosPathNameToNtPathName_U.
+ */
+NTSTATUS get_nt_path( const WCHAR *name, UNICODE_STRING *nt_name )
+{
+    ULONG len = wcslen( name );
+    WCHAR *ret, *p;
+
+    nt_name->Buffer = NULL;
+    if (!(ret = p = malloc( (len + 8) * sizeof(WCHAR) ))) return STATUS_NO_MEMORY;
+
+    if (name[0] == '\\' && name[1] == '\\')
+    {
+        if ((name[2] == '.' || name[2] == '?') && name[3] == '\\')
+        {
+            memcpy( p, nt_prefixW, sizeof(nt_prefixW) );
+            p += ARRAY_SIZE( nt_prefixW );
+            name += 4;
+        }
+        else
+        {
+            memcpy( p, unc_prefixW, sizeof(unc_prefixW) );
+            p += ARRAY_SIZE( unc_prefixW );
+            name += 2;
+        }
+    }
+    else if (wcsncmp( name, nt_prefixW, ARRAY_SIZE(nt_prefixW) ))
+    {
+        memcpy( p, nt_prefixW, sizeof(nt_prefixW) );
+        p += ARRAY_SIZE( nt_prefixW );
+    }
+    wcscpy( p, name );
+    collapse_path( ret );
+    init_unicode_string( nt_name, ret );
+    return STATUS_SUCCESS;
+}
+
+
+/***********************************************************************
+ *           ntdll_get_unix_file_name
+ */
+NTSTATUS ntdll_get_unix_file_name( const WCHAR *dos, char **unix_name, UINT disposition )
+{
+    UNICODE_STRING nt_name, true_nt_name;
+    OBJECT_ATTRIBUTES attr;
+    char *buffer = NULL;
+    NTSTATUS status = get_nt_path( dos, &nt_name );
+
+    if (status) return status;
+    InitializeObjectAttributes( &attr, &nt_name, 0, 0, NULL );
+    status = get_nt_and_unix_names( &attr, &true_nt_name, &buffer, disposition );
+    free( nt_name.Buffer );
+    free( true_nt_name.Buffer );
+
+    if (!status || status == STATUS_NO_SUCH_FILE)
+    {
+        /* remove dosdevices prefix for z: drive if it points to the Unix root */
+        if (!strncmp( buffer, config_dir, strlen(config_dir) ) &&
+            !strncmp( buffer + strlen(config_dir), "/dosdevices/z:/", 15 ))
+        {
+            struct stat st1, st2;
+            BOOL is_root;
+            char *p = buffer + strlen(config_dir) + 14;
+            *p = 0;
+            is_root = !stat( buffer, &st1 ) && !stat( "/", &st2 ) &&
+                      st1.st_dev == st2.st_dev && st1.st_ino == st2.st_ino;
+            *p = '/';
+            if (is_root) memmove( buffer, p, strlen(p) + 1 );
+        }
+        *unix_name = buffer;
+    }
+    else free( buffer );
+
+    return status;
 }
 
 
@@ -5649,6 +5710,8 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
 
     io->Information = 0;
 
+    if (class == WineFileUnixNameInformation)
+        return server_get_file_info( handle, io, ptr, len, class );
     if (class <= 0 || class >= FileMaximumInformation)
         return io->Status = STATUS_INVALID_INFO_CLASS;
     if (!info_sizes[class])

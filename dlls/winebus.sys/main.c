@@ -19,6 +19,7 @@
  */
 
 #include <stdarg.h>
+#include <stdlib.h>
 #include <assert.h>
 
 #include "ntstatus.h"
@@ -51,6 +52,7 @@ static DEVICE_OBJECT *keyboard_obj;
 static DEVICE_OBJECT *bus_pdo;
 static DEVICE_OBJECT *bus_fdo;
 
+static struct bus_options options = {.devices = LIST_INIT(options.devices)};
 static HANDLE driver_key;
 
 struct hid_report
@@ -407,8 +409,8 @@ static DWORD check_bus_option(const WCHAR *option, DWORD default_value)
     UNICODE_STRING str;
     DWORD size;
 
+    /* @@ Wine registry key: HKLM\System\CurrentControlSet\Services\WineBus */
     RtlInitUnicodeString(&str, option);
-
     if (NtQueryValueKey(driver_key, &str, KeyValuePartialInformation, info, sizeof(buffer), &size) == STATUS_SUCCESS)
     {
         if (info->Type == REG_DWORD) return *(DWORD *)info->Data;
@@ -421,12 +423,21 @@ static BOOL is_hidraw_enabled(WORD vid, WORD pid, const USAGE_AND_PAGE *usages, 
 {
     char buffer[FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data[1024])];
     KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
+    struct device_options *device;
     WCHAR vidpid[MAX_PATH], *tmp;
     BOOL prefer_hidraw = FALSE;
     UNICODE_STRING str;
     DWORD size;
 
-    if (check_bus_option(L"DisableHidraw", FALSE)) return FALSE;
+    if (options.disable_hidraw) return FALSE;
+
+    LIST_FOR_EACH_ENTRY(device, &options.devices, struct device_options, entry)
+    {
+        if (device->vid != vid) continue;
+        if (device->pid != -1 && device->pid != pid) continue;
+        if (device->hidraw == -1) continue;
+        return !!device->hidraw;
+    }
 
     if (usages->UsagePage == HID_USAGE_PAGE_DIGITIZER)
     {
@@ -441,9 +452,7 @@ static BOOL is_hidraw_enabled(WORD vid, WORD pid, const USAGE_AND_PAGE *usages, 
     }
     if (usages->Usage != HID_USAGE_GENERIC_GAMEPAD && usages->Usage != HID_USAGE_GENERIC_JOYSTICK) return TRUE;
 
-    if (!check_bus_option(L"Enable SDL", 1) && check_bus_option(L"DisableInput", 0))
-        prefer_hidraw = TRUE;
-
+    if (options.disable_sdl && options.disable_input) prefer_hidraw = TRUE;
     if (is_dualshock4_gamepad(vid, pid)) prefer_hidraw = TRUE;
     if (is_dualsense_gamepad(vid, pid)) prefer_hidraw = TRUE;
 
@@ -474,13 +483,10 @@ static BOOL is_hidraw_enabled(WORD vid, WORD pid, const USAGE_AND_PAGE *usages, 
         if (pid == 0x0127) prefer_hidraw = TRUE; /* VKB-Sim Space Gunfighter L */
         break;
     case 0x3344:
-        /* comes with 31 buttons in the default configuration, or 128 max */
-        if ((buttons == 31) || (buttons == 128)) prefer_hidraw = TRUE;
-        /* users may have configured button limits, usually 32/50/64 */
-        if ((buttons == 32) || (buttons == 50) || (buttons == 64)) prefer_hidraw = TRUE;
-        /* if customized, arbitrary amount of buttons may be shown, decide by PID */
-        if (pid == 0x412f) prefer_hidraw = TRUE; /* Virpil Constellation ALPHA-R */
-        if (pid == 0x812c) prefer_hidraw = TRUE; /* Virpil Constellation ALPHA-L */
+        /* all VPC devices require hidraw, have variable numbers of axis/buttons, & in many cases
+         * have functionally random PID. due to this, the only safe way to grab all VPC devices is
+         * a catch-all on VID and exclude any hypothetical future device that wants hidraw=false */
+        prefer_hidraw = TRUE;
         break;
     case 0x03eb:
         /* users may have configured button limits, usually 32/50/64 */
@@ -586,11 +592,11 @@ static void process_hid_report(DEVICE_OBJECT *device, BYTE *report_buf, DWORD re
          * Extended #41 report:
          *   Prefix X  Y  Z  Rz  TriggerLeft  TriggerRight  Counter  Buttons[3] ...
          */
-        if (report->buffer[0] == 0x31 && report->length >= 11)
+        if (report->buffer[0] == 0x31 && report->length >= 12)
         {
             BYTE trigger[2];
 
-            memmove(report->buffer, report->buffer + 1, 10);
+            memmove(report->buffer, report->buffer + 1, 11);
             report->buffer[0] = 1; /* fake report #1 */
             report->length = 10;
 
@@ -914,7 +920,7 @@ static NTSTATUS bus_main_thread_start(struct bus_main_params *bus)
     return status;
 }
 
-static void sdl_bus_free_mappings(struct sdl_bus_options *options)
+static void sdl_bus_free_mappings(struct bus_options *options)
 {
     DWORD count = options->mappings_count;
     char **mappings = options->mappings;
@@ -923,7 +929,7 @@ static void sdl_bus_free_mappings(struct sdl_bus_options *options)
     RtlFreeHeap(GetProcessHeap(), 0, mappings);
 }
 
-static void sdl_bus_load_mappings(struct sdl_bus_options *options)
+static void sdl_bus_load_mappings(struct bus_options *options)
 {
     ULONG idx = 0, len, count = 0, capacity, info_size, info_max_size;
     UNICODE_STRING path = RTL_CONSTANT_STRING(L"map");
@@ -990,74 +996,171 @@ done:
     NtClose(key);
 }
 
+static struct device_options *add_device_options(UINT vid, UINT pid)
+{
+    struct device_options *device, *next;
+
+    LIST_FOR_EACH_ENTRY(device, &options.devices, struct device_options, entry)
+        if (device->vid == vid && device->pid == pid) return device;
+
+    if (!(device = calloc(1, sizeof(*device)))) return NULL;
+    device->vid = vid;
+    device->pid = pid;
+    device->hidraw = -1;
+
+    LIST_FOR_EACH_ENTRY(next, &options.devices, struct device_options, entry)
+        if (next->vid > vid || (next->vid == vid && next->pid > pid)) break;
+    list_add_before(&next->entry, &device->entry);
+
+    return device;
+}
+
+static void load_device_options(void)
+{
+    char buffer[FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data[1024])];
+    KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
+    UNICODE_STRING path = RTL_CONSTANT_STRING(L"Devices");
+    ULONG idx = 0, size, name_max_size;
+    OBJECT_ATTRIBUTES attr = {0};
+    KEY_NAME_INFORMATION *name;
+    WCHAR name_buffer[32];
+    HANDLE key, subkey;
+    NTSTATUS status;
+
+    /* @@ Wine registry key: HKLM\System\CurrentControlSet\Services\WineBus\Devices */
+    InitializeObjectAttributes(&attr, &path, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, driver_key, NULL);
+    status = NtOpenKey(&key, KEY_ALL_ACCESS, &attr);
+    if (status) return;
+
+    name_max_size = offsetof(KEY_NAME_INFORMATION, Name) + 512;
+    name = RtlAllocateHeap(GetProcessHeap(), 0, name_max_size);
+
+    while (!status && name)
+    {
+        static const UNICODE_STRING hidraw = RTL_CONSTANT_STRING(L"Hidraw");
+        static const UNICODE_STRING backslash = RTL_CONSTANT_STRING(L"\\");
+        struct device_options *device;
+        UNICODE_STRING name_str;
+        UINT vid, pid;
+        USHORT pos;
+        int ret;
+
+        status = NtEnumerateKey(key, idx, KeyNameInformation, name, name_max_size, &size);
+        while (status == STATUS_BUFFER_OVERFLOW)
+        {
+            name_max_size = size;
+            if (!(name = RtlReAllocateHeap(GetProcessHeap(), 0, name, name_max_size))) break;
+            status = NtEnumerateKey(key, idx, KeyNameInformation, name, name_max_size, &size);
+        }
+        if (status == STATUS_NO_MORE_ENTRIES) break;
+        idx++;
+
+        /* @@ Wine registry key: HKLM\System\CurrentControlSet\Services\WineBus\Devices\<VID[/PID]> */
+        name_str.Buffer = name->Name;
+        name_str.Length = name->NameLength;
+        InitializeObjectAttributes(&attr, &name_str, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, 0, NULL);
+        if (NtOpenKey(&subkey, KEY_ALL_ACCESS, &attr)) continue;
+
+        if (!RtlFindCharInUnicodeString(1, &name_str, &backslash, &pos)) pos += sizeof(WCHAR);
+        if (name->NameLength - pos >= sizeof(name_buffer)) continue;
+
+        memcpy(name_buffer, name->Name + pos / sizeof(WCHAR), name->NameLength - pos);
+        name_buffer[(name->NameLength - pos) / sizeof(WCHAR)] = 0;
+
+        if ((ret = swscanf(name_buffer, L"%04x/%04x", &vid, &pid)) < 1) continue;
+        if (!(device = add_device_options(vid, ret == 1 ? -1 : pid))) continue;
+
+        if (!NtQueryValueKey(subkey, &hidraw, KeyValuePartialInformation, info, sizeof(buffer), &size) && info->Type == REG_DWORD)
+            device->hidraw = *(DWORD *)info->Data;
+        if (device->hidraw != -1) TRACE("- %04x/%04x: %sabling hidraw\n", device->vid, device->pid, device->hidraw ? "en" : "dis");
+
+        NtClose(subkey);
+    }
+
+    RtlFreeHeap(GetProcessHeap(), 0, name);
+    NtClose(key);
+}
+
+static void bus_options_init(void)
+{
+    options.disable_sdl = !check_bus_option(L"Enable SDL", 1);
+    if (options.disable_sdl) TRACE("SDL devices disabled in registry\n");
+    options.disable_hidraw = check_bus_option(L"DisableHidraw", 0);
+    if (options.disable_hidraw) TRACE("UDEV hidraw devices disabled in registry\n");
+    options.disable_input = check_bus_option(L"DisableInput", 0);
+    if (options.disable_input) TRACE("UDEV input devices disabled in registry\n");
+    options.disable_udevd = check_bus_option(L"DisableUdevd", 0);
+    if (options.disable_udevd) TRACE("UDEV udevd use disabled in registry\n");
+
+    if (!options.disable_sdl)
+    {
+        options.split_controllers = check_bus_option(L"Split Controllers", 0);
+        if (options.split_controllers) TRACE("SDL controller splitting enabled\n");
+        options.map_controllers = check_bus_option(L"Map Controllers", 1);
+        if (!options.map_controllers) TRACE("SDL controller to XInput HID gamepad mapping disabled\n");
+        sdl_bus_load_mappings(&options);
+    }
+
+    load_device_options();
+}
+
+static void bus_options_cleanup(void)
+{
+    struct device_options *device, *next;
+
+    if (!options.disable_sdl) sdl_bus_free_mappings(&options);
+
+    LIST_FOR_EACH_ENTRY_SAFE(device, next, &options.devices, struct device_options, entry)
+    {
+        list_remove(&device->entry);
+        free(device);
+    }
+
+    memset(&options, 0, sizeof(options));
+    list_init(&options.devices);
+}
+
 static NTSTATUS sdl_driver_init(void)
 {
-    struct sdl_bus_options bus_options;
     struct bus_main_params bus =
     {
         .name = L"SDL",
-        .init_args = &bus_options,
+        .init_args = &options,
         .init_code = sdl_init,
         .wait_code = sdl_wait,
     };
-    NTSTATUS status;
-
-    bus_options.split_controllers = check_bus_option(L"Split Controllers", 0);
-    if (bus_options.split_controllers) TRACE("SDL controller splitting enabled\n");
-    bus_options.map_controllers = check_bus_option(L"Map Controllers", 1);
-    if (!bus_options.map_controllers) TRACE("SDL controller to XInput HID gamepad mapping disabled\n");
-    sdl_bus_load_mappings(&bus_options);
-
-    status = bus_main_thread_start(&bus);
-    sdl_bus_free_mappings(&bus_options);
-    return status;
+    if (options.disable_sdl) return STATUS_NOT_SUPPORTED;
+    return bus_main_thread_start(&bus);
 }
 
-static NTSTATUS udev_driver_init(BOOL enable_sdl)
+static NTSTATUS udev_driver_init(void)
 {
-    struct udev_bus_options bus_options;
     struct bus_main_params bus =
     {
         .name = L"UDEV",
-        .init_args = &bus_options,
+        .init_args = &options,
         .init_code = udev_init,
         .wait_code = udev_wait,
     };
-
-    bus_options.disable_hidraw = check_bus_option(L"DisableHidraw", 0);
-    if (bus_options.disable_hidraw) TRACE("UDEV hidraw devices disabled in registry\n");
-    bus_options.disable_input = check_bus_option(L"DisableInput", 0) || enable_sdl;
-    if (bus_options.disable_input) TRACE("UDEV input devices disabled in registry\n");
-    bus_options.disable_udevd = check_bus_option(L"DisableUdevd", 0);
-    if (bus_options.disable_udevd) TRACE("UDEV udevd use disabled in registry\n");
-
     return bus_main_thread_start(&bus);
 }
 
 static NTSTATUS iohid_driver_init(void)
 {
-    struct iohid_bus_options bus_options;
     struct bus_main_params bus =
     {
         .name = L"IOHID",
-        .init_args = &bus_options,
+        .init_args = &options,
         .init_code = iohid_init,
         .wait_code = iohid_wait,
     };
-
-    if (check_bus_option(L"DisableHidraw", FALSE))
-    {
-        TRACE("IOHID hidraw devices disabled in registry\n");
-        return STATUS_SUCCESS;
-    }
-
+    if (options.disable_hidraw) return STATUS_SUCCESS;
     return bus_main_thread_start(&bus);
 }
 
 static NTSTATUS fdo_pnp_dispatch(DEVICE_OBJECT *device, IRP *irp)
 {
     IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation(irp);
-    BOOL enable_sdl;
     NTSTATUS ret;
 
     switch (irpsp->MinorFunction)
@@ -1066,12 +1169,13 @@ static NTSTATUS fdo_pnp_dispatch(DEVICE_OBJECT *device, IRP *irp)
         irp->IoStatus.Status = handle_IRP_MN_QUERY_DEVICE_RELATIONS(irp);
         break;
     case IRP_MN_START_DEVICE:
+        bus_options_init();
+
         mouse_device_create();
         keyboard_device_create();
 
-        if ((enable_sdl = check_bus_option(L"Enable SDL", 1)))
-            enable_sdl = !sdl_driver_init();
-        udev_driver_init(enable_sdl);
+        if (!sdl_driver_init()) options.disable_input = TRUE;
+        udev_driver_init();
         iohid_driver_init();
 
         irp->IoStatus.Status = STATUS_SUCCESS;
@@ -1092,6 +1196,8 @@ static NTSTATUS fdo_pnp_dispatch(DEVICE_OBJECT *device, IRP *irp)
         ret = IoCallDriver(bus_pdo, irp);
         IoDetachDevice(bus_pdo);
         IoDeleteDevice(device);
+
+        bus_options_cleanup();
         return ret;
     default:
         FIXME("Unhandled minor function %#x.\n", irpsp->MinorFunction);

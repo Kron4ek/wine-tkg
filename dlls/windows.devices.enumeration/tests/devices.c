@@ -27,6 +27,7 @@
 
 #include "initguid.h"
 #include "roapi.h"
+#include "weakreference.h"
 
 #define WIDL_using_Windows_Foundation
 #define WIDL_using_Windows_Foundation_Collections
@@ -339,6 +340,9 @@ static void test_DeviceInformation( void )
     IAsyncOperation_DeviceInformationCollection *info_collection_async = NULL;
     IVectorView_DeviceInformation *info_collection = NULL;
     IDeviceInformation *info;
+    IWeakReferenceSource *weak_src;
+    IWeakReference *weak_ref;
+    IDeviceWatcher *watcher;
     UINT32 i, size;
     HSTRING str;
     HRESULT hr;
@@ -385,6 +389,18 @@ static void test_DeviceInformation( void )
     check_interface( device_watcher, &IID_IAgileObject, TRUE );
     check_interface( device_watcher, &IID_IDeviceWatcher, TRUE );
 
+    hr = IDeviceWatcher_QueryInterface( device_watcher, &IID_IWeakReferenceSource, (void **)&weak_src );
+    ok( hr == S_OK, "got hr %#lx\n", hr );
+    check_interface( weak_src, &IID_IAgileObject, TRUE );
+    hr = IWeakReferenceSource_GetWeakReference( weak_src, &weak_ref );
+    IWeakReferenceSource_Release( weak_src );
+    ok( hr == S_OK, "got hr %#lx\n", hr );
+    hr = IWeakReference_Resolve( weak_ref, &IID_IDeviceWatcher, (IInspectable **)&watcher );
+    IWeakReference_Release( weak_ref );
+    ok( hr == S_OK, "got hr %#lx\n", hr );
+    ref = IDeviceWatcher_Release( watcher );
+    ok( ref == 1, "got ref %lu\n", ref );
+
     hr = IDeviceWatcher_add_Added( device_watcher, (void *)&added_handler.ITypedEventHandler_DeviceWatcher_IInspectable_iface, &added_token );
     ok( hr == S_OK, "got hr %#lx\n", hr );
     hr = IDeviceWatcher_add_Stopped( device_watcher, &stopped_handler.ITypedEventHandler_DeviceWatcher_IInspectable_iface, &stopped_token );
@@ -401,7 +417,7 @@ static void test_DeviceInformation( void )
     ok( status == DeviceWatcherStatus_Started, "got status %u\n", status );
 
     ref = IDeviceWatcher_AddRef( device_watcher );
-    todo_wine ok( ref == 2, "got ref %lu\n", ref );
+    ok( ref == 2, "got ref %lu\n", ref );
     hr = IDeviceWatcher_Stop( device_watcher );
     ok( hr == S_OK, "got hr %#lx\n", hr );
     ok( !WaitForSingleObject( stopped_handler.event, 1000 ), "wait for stopped_handler.event failed\n" );
@@ -448,7 +464,7 @@ static void test_DeviceInformation( void )
     ok( status == DeviceWatcherStatus_Started, "got status %u\n", status );
 
     ref = IDeviceWatcher_AddRef( device_watcher );
-    todo_wine ok( ref == 2, "got ref %lu\n", ref );
+    ok( ref == 2, "got ref %lu\n", ref );
     hr = IDeviceWatcher_Stop( device_watcher );
     ok( hr == S_OK, "got hr %#lx\n", hr );
     ok( !WaitForSingleObject( stopped_handler.event, 1000 ), "wait for stopped_handler.event failed\n" );
@@ -475,7 +491,7 @@ static void test_DeviceInformation( void )
         hr = IDeviceWatcher_Start( device_watcher );
         ok( hr == S_OK, "got hr %#lx\n", hr );
         ok( !WaitForSingleObject( enumerated_handler.event, 5000 ), "wait for enumerated_handler.event failed\n" );
-        ok( added_handler.devices_added > 0, "devices_added should be greater than 0" );
+        ok( added_handler.devices_added > 0, "devices_added should be greater than 0\n" );
         hr = IDeviceWatcher_get_Status( device_watcher, &status );
         ok( hr == S_OK, "got hr %#lx\n", hr );
         ok( status == DeviceWatcherStatus_EnumerationCompleted, "got status %u\n", status );

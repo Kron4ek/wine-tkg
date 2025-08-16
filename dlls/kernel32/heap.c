@@ -41,8 +41,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(globalmem);
 
-extern BOOL CDECL __wine_needs_override_large_address_aware(void);
 
+extern BOOL WINAPI __wine_needs_override_large_address_aware(void);
 
 /***********************************************************************
  *           HeapCreate   (KERNEL32.@)
@@ -426,11 +426,8 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
     OSVERSIONINFOW osver;
 #ifndef _WIN64
     IMAGE_NT_HEADERS *nt = RtlImageNtHeader( GetModuleHandleW(0) );
-#endif
     static int force_large_address_aware = -1;
-
-    if (force_large_address_aware == -1)
-        force_large_address_aware = __wine_needs_override_large_address_aware();
+#endif
 
     /* Because GlobalMemoryStatus is identical to GlobalMemoryStatusEX save
        for one extra field in the struct, and the lack of a bug, we simply
@@ -456,6 +453,8 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
     lpBuffer->dwAvailVirtual = memstatus.ullAvailVirtual;
 
 #ifndef _WIN64
+    if (force_large_address_aware == -1)
+        force_large_address_aware = __wine_needs_override_large_address_aware();
     if ( osver.dwMajorVersion >= 5 || osver.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS )
     {
         lpBuffer->dwTotalPhys = min( memstatus.ullTotalPhys, MAXDWORD );

@@ -563,7 +563,7 @@ static void d3dbc_parse_register(struct vkd3d_shader_sm1_parser *d3dbc,
 
     reg_type = parse_register_type(d3dbc, param, &index_offset);
     idx_count = idx_count_from_reg_type(reg_type);
-    vsir_register_init(reg, reg_type, VKD3D_DATA_FLOAT, idx_count);
+    vsir_register_init(reg, reg_type, VSIR_DATA_F32, idx_count);
     reg->precision = VKD3D_SHADER_REGISTER_PRECISION_DEFAULT;
     reg->non_uniform = false;
     if (idx_count == 1)
@@ -1088,10 +1088,10 @@ static void shader_sm1_read_semantic(struct vkd3d_shader_sm1_parser *sm1,
     {
         semantic->resource_type = resource_type_table[resource_type];
     }
-    semantic->resource_data_type[0] = VKD3D_DATA_FLOAT;
-    semantic->resource_data_type[1] = VKD3D_DATA_FLOAT;
-    semantic->resource_data_type[2] = VKD3D_DATA_FLOAT;
-    semantic->resource_data_type[3] = VKD3D_DATA_FLOAT;
+    semantic->resource_data_type[0] = VSIR_DATA_F32;
+    semantic->resource_data_type[1] = VSIR_DATA_F32;
+    semantic->resource_data_type[2] = VSIR_DATA_F32;
+    semantic->resource_data_type[3] = VSIR_DATA_F32;
     shader_sm1_parse_dst_param(sm1, dst_token, NULL, &semantic->resource.reg);
     range = &semantic->resource.range;
     range->space = 0;
@@ -1101,7 +1101,7 @@ static void shader_sm1_read_semantic(struct vkd3d_shader_sm1_parser *sm1,
 }
 
 static void shader_sm1_read_immconst(struct vkd3d_shader_sm1_parser *sm1, const uint32_t **ptr,
-        struct vkd3d_shader_src_param *src_param, enum vsir_dimension dimension, enum vkd3d_data_type data_type)
+        struct vkd3d_shader_src_param *src_param, enum vsir_dimension dimension, enum vsir_data_type data_type)
 {
     unsigned int count = dimension == VSIR_DIMENSION_VEC4 ? 4 : 1;
 
@@ -1272,10 +1272,10 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
 
     ins->resource_type = VKD3D_SHADER_RESOURCE_NONE;
     ins->resource_stride = 0;
-    ins->resource_data_type[0] = VKD3D_DATA_FLOAT;
-    ins->resource_data_type[1] = VKD3D_DATA_FLOAT;
-    ins->resource_data_type[2] = VKD3D_DATA_FLOAT;
-    ins->resource_data_type[3] = VKD3D_DATA_FLOAT;
+    ins->resource_data_type[0] = VSIR_DATA_F32;
+    ins->resource_data_type[1] = VSIR_DATA_F32;
+    ins->resource_data_type[2] = VSIR_DATA_F32;
+    ins->resource_data_type[3] = VSIR_DATA_F32;
     memset(&ins->texel_offset, 0, sizeof(ins->texel_offset));
 
     p = *ptr;
@@ -1295,19 +1295,19 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
     else if (ins->opcode == VSIR_OP_DEF)
     {
         shader_sm1_read_dst_param(sm1, &p, dst_param);
-        shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_VEC4, VKD3D_DATA_FLOAT);
+        shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_VEC4, VSIR_DATA_F32);
         shader_sm1_scan_register(sm1, &dst_param->reg, dst_param->write_mask, true);
     }
     else if (ins->opcode == VSIR_OP_DEFB)
     {
         shader_sm1_read_dst_param(sm1, &p, dst_param);
-        shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_SCALAR, VKD3D_DATA_UINT);
+        shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_SCALAR, VSIR_DATA_U32);
         shader_sm1_scan_register(sm1, &dst_param->reg, dst_param->write_mask, true);
     }
     else if (ins->opcode == VSIR_OP_DEFI)
     {
         shader_sm1_read_dst_param(sm1, &p, dst_param);
-        shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_VEC4, VKD3D_DATA_INT);
+        shader_sm1_read_immconst(sm1, &p, &src_params[0], VSIR_DIMENSION_VEC4, VSIR_DATA_I32);
         shader_sm1_scan_register(sm1, &dst_param->reg, dst_param->write_mask, true);
     }
     else if (ins->opcode == VSIR_OP_TEXKILL)
@@ -1472,7 +1472,6 @@ static uint32_t get_external_constant_count(struct vkd3d_shader_sm1_parser *sm1,
 int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t config_flags,
         struct vkd3d_shader_message_context *message_context, struct vsir_program *program)
 {
-    struct vkd3d_shader_instruction_array *instructions;
     struct vkd3d_shader_sm1_parser sm1 = {0};
     struct vkd3d_shader_instruction *ins;
     unsigned int i;
@@ -1484,17 +1483,14 @@ int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t c
         return ret;
     }
 
-    instructions = &program->instructions;
     while (!shader_sm1_is_end(&sm1))
     {
-        if (!shader_instruction_array_reserve(instructions, instructions->count + 1))
+        if (!(ins = vsir_program_append(program)))
         {
-            ERR("Failed to allocate instructions.\n");
             vkd3d_shader_parser_error(&sm1.p, VKD3D_SHADER_ERROR_D3DBC_OUT_OF_MEMORY, "Out of memory.");
             vsir_program_cleanup(program);
             return VKD3D_ERROR_OUT_OF_MEMORY;
         }
-        ins = &instructions->elements[instructions->count];
         shader_sm1_read_instruction(&sm1, ins);
 
         if (ins->opcode == VSIR_OP_INVALID)
@@ -1503,7 +1499,6 @@ int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t c
             vsir_program_cleanup(program);
             return VKD3D_ERROR_INVALID_SHADER;
         }
-        ++instructions->count;
     }
 
     for (i = 0; i < ARRAY_SIZE(program->flat_constant_count); ++i)
@@ -1518,7 +1513,10 @@ int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t c
         return ret;
     }
 
-    return VKD3D_OK;
+    if (program->normalisation_level >= VSIR_NORMALISED_SM4)
+        ret = vsir_program_lower_d3dbc(program, config_flags, compile_info, message_context);
+
+    return ret;
 }
 
 bool sm1_register_from_semantic_name(const struct vkd3d_shader_version *version, const char *semantic_name,
@@ -1690,7 +1688,7 @@ static const struct vkd3d_sm1_opcode_info *shader_sm1_get_opcode_info_from_vsir_
     if (ins->dst_count != info->dst_count)
     {
         vkd3d_shader_error(d3dbc->message_context, &ins->location, VKD3D_SHADER_ERROR_D3DBC_INVALID_REGISTER_COUNT,
-                "Invalid destination parameter count %u for instruction \"%s\" (%#x); expected %u.",
+                "Invalid destination parameter count %zu for instruction \"%s\" (%#x); expected %u.",
                 ins->dst_count, vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode, info->dst_count);
         d3dbc->failed = true;
         return NULL;
@@ -1698,7 +1696,7 @@ static const struct vkd3d_sm1_opcode_info *shader_sm1_get_opcode_info_from_vsir_
     if (ins->src_count != info->src_count)
     {
         vkd3d_shader_error(d3dbc->message_context, &ins->location, VKD3D_SHADER_ERROR_D3DBC_INVALID_REGISTER_COUNT,
-                "Invalid source parameter count %u for instruction \"%s\" (%#x); expected %u.",
+                "Invalid source parameter count %zu for instruction \"%s\" (%#x); expected %u.",
                 ins->src_count, vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode, info->src_count);
         d3dbc->failed = true;
         return NULL;
@@ -2023,6 +2021,7 @@ static void d3dbc_write_vsir_instruction(struct d3dbc_compiler *d3dbc, const str
         case VSIR_OP_SINCOS:
         case VSIR_OP_SLT:
         case VSIR_OP_TEXLD:
+        case VSIR_OP_TEXLDL:
         case VSIR_OP_TEXLDD:
             d3dbc_write_instruction(d3dbc, ins);
             break;
@@ -2128,11 +2127,13 @@ static void d3dbc_write_semantic_dcls(struct d3dbc_compiler *d3dbc)
 
 static void d3dbc_write_program_instructions(struct d3dbc_compiler *d3dbc)
 {
-    struct vsir_program *program = d3dbc->program;
-    unsigned int i;
+    struct vsir_program_iterator it = vsir_program_iterator(&d3dbc->program->instructions);
+    struct vkd3d_shader_instruction *ins;
 
-    for (i = 0; i < program->instructions.count; ++i)
-        d3dbc_write_vsir_instruction(d3dbc, &program->instructions.elements[i]);
+    for (ins = vsir_program_iterator_head(&it); ins; ins = vsir_program_iterator_next(&it))
+    {
+        d3dbc_write_vsir_instruction(d3dbc, ins);
+    }
 }
 
 int d3dbc_compile(struct vsir_program *program, uint64_t config_flags,
@@ -2145,6 +2146,9 @@ int d3dbc_compile(struct vsir_program *program, uint64_t config_flags,
     int result;
 
     if ((result = vsir_allocate_temp_registers(program, message_context)))
+        return result;
+
+    if ((result = vsir_update_dcl_temps(program, message_context)))
         return result;
 
     d3dbc.program = program;

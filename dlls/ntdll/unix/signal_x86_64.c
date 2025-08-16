@@ -852,6 +852,15 @@ static inline ucontext_t *init_handler( void *sigcontext )
 #elif defined __APPLE__
     struct ntdll_thread_data *thread_data = (struct ntdll_thread_data *)&get_current_teb()->GdiTebBatch;
     _thread_set_tsd_base( (uint64_t)((struct amd64_thread_data *)thread_data->cpu_data)->pthread_teb );
+
+    /* When in a syscall, CS will be the kernel's selector (0x07, SYSCALL_CS in xnu source)
+     * instead of the user selector (cs64_sel: 0x2b, USER64_CS).
+     * Fix up sigcontext so later code can compare it to cs64_sel.
+     *
+     * Only applies on Intel, not under Rosetta.
+     */
+    if (CS_sig((ucontext_t *)sigcontext) == 0x07 /* SYSCALL_CS */)
+        CS_sig((ucontext_t *)sigcontext) = cs64_sel;
 #endif
     return sigcontext;
 }
@@ -1653,8 +1662,8 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "andq $~63,%rsp\n\t"
                    "leaq 0x10(%rbp),%rax\n\t"
                    "movq %rax,0xa8(%rsp)\n\t"  /* frame->syscall_cfa */
-                   "movq 0x378(%r13),%r10\n\t" /* thread_data->syscall_frame */
-                   "movq %r10,0xa0(%rsp)\n\t"  /* frame->prev_frame */
+                   "movq 0x378(%r13),%r14\n\t" /* thread_data->syscall_frame */
+                   "movq %r14,0xa0(%rsp)\n\t"  /* frame->prev_frame */
                    "movq %rsp,0x378(%r13)\n\t" /* thread_data->syscall_frame */
                    "testl $1,0x380(%r13)\n\t"  /* thread_data->syscall_trace */
                    "jz 1f\n\t"
@@ -1669,6 +1678,7 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "movq %r15,%rcx\n"          /* func */
                    /* switch to user stack */
                    "1:\tmovq %rdi,%rsp\n\t"    /* user_rsp */
+                   "movq 0x98(%r14),%rbp\n\t"  /* prev_frame->rbp */
 #ifdef __linux__
                    "movw 0x338(%r13),%ax\n"    /* amd64_thread_data()->fs */
                    "testw %ax,%ax\n\t"
@@ -1687,8 +1697,14 @@ __ASM_GLOBAL_FUNC( call_user_mode_callback,
                    "movq (%r10),%r10\n\t"
                    "test %r10,%r10\n\t"
                    "jz 1f\n\t"
-                   "xchgq %rcx,%r10\n\t"
-                   "1\t:jmpq *%rcx" )          /* func */
+                   "xchgq %rcx,%r10\n"
+                   "1:\n\t"
+                   "xor %rbx,%rbx\n\t"
+                   "xor %r12,%r12\n\t"
+                   "xor %r13,%r13\n\t"
+                   "xor %r14,%r14\n\t"
+                   "xor %r15,%r15\n\t"
+                   "jmpq *%rcx" )          /* func */
 
 
 /***********************************************************************

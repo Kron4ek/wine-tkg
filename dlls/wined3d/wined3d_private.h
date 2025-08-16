@@ -1459,9 +1459,6 @@ enum wined3d_ffp_ps_fog_mode
  * into the shader code
  */
 
-#define WINED3D_PSARGS_PROJECTED (1u << 3)
-#define WINED3D_PSARGS_TEXTRANSFORM_SHIFT 4
-#define WINED3D_PSARGS_TEXTRANSFORM_MASK 0xfu
 #define WINED3D_PSARGS_TEXTYPE_SHIFT 2
 #define WINED3D_PSARGS_TEXTYPE_MASK 0x3u
 
@@ -1480,16 +1477,16 @@ struct ps_compile_args
     enum wined3d_vertex_processing_mode vp_mode;
     enum wined3d_ffp_ps_fog_mode fog;
     DWORD                       tex_types; /* ps 1 - 3, 16 textures */
-    WORD                        tex_transform; /* ps 1.0-1.3, 4 textures */
-    WORD                        srgb_correction;
     WORD shadow; /* WINED3D_MAX_FRAGMENT_SAMPLERS, 16 */
     WORD texcoords_initialized; /* WINED3D_MAX_FFP_TEXTURES, 8 */
+    DWORD srgb_correction : 1;
     DWORD pointsprite : 1;
     DWORD flatshading : 1;
     DWORD alpha_test_func : 3;
     DWORD rt_alpha_swizzle : 8; /* WINED3D_MAX_RENDER_TARGETS, 8 */
     DWORD dual_source_blend : 1;
-    DWORD padding : 18;
+    DWORD projected : 4;
+    DWORD padding : 13;
 };
 
 enum fog_src_type
@@ -2159,6 +2156,7 @@ enum wined3d_pci_device
     CARD_AMD_RADEON_RX_NAVI_10      = 0x731f,
     CARD_AMD_RADEON_RX_NAVI_14      = 0x7340,
     CARD_AMD_RADEON_RX_NAVI_21      = 0x73bf,
+    CARD_AMD_RADEON_RX_NAVI_44      = 0x7590,
     CARD_AMD_RADEON_PRO_V620        = 0x73a1,
     CARD_AMD_RADEON_PRO_V620_VF     = 0x73ae,
     CARD_AMD_VANGOGH                = 0x163f,
@@ -2328,6 +2326,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_TESLA_T4            = 0x1eb8,
     CARD_NVIDIA_AMPERE_A10          = 0x2236,
     CARD_NVIDIA_GEFORCE_RTX4060     = 0x2882,
+    CARD_NVIDIA_GEFORCE_RTX4060M    = 0x28a0,
     CARD_NVIDIA_GEFORCE_RTX4060TI8G = 0x2803,
     CARD_NVIDIA_GEFORCE_RTX4060TI16G = 0x2805,
     CARD_NVIDIA_GEFORCE_RTX4070     = 0x2786,
@@ -2637,16 +2636,6 @@ BOOL wined3d_adapter_no3d_init_format_info(struct wined3d_adapter *adapter);
 ssize_t adapter_adjust_mapped_memory(struct wined3d_adapter *adapter, ssize_t size);
 UINT64 adapter_adjust_memory(struct wined3d_adapter *adapter, INT64 amount);
 
-enum wined3d_projection_type
-{
-    WINED3D_PROJECTION_NONE    = 0,
-    WINED3D_PROJECTION_COUNT3  = 1,
-    WINED3D_PROJECTION_COUNT4  = 2
-};
-
-/*****************************************************************************
- * Fixed function pipeline replacements
- */
 #define ARG_UNUSED          0xff
 struct texture_stage_op
 {
@@ -2663,8 +2652,8 @@ struct texture_stage_op
     struct color_fixup_desc color_fixup;
     unsigned                tex_type : 3;
     unsigned                tmp_dst : 1;
-    unsigned                projected : 2;
-    unsigned                padding : 10;
+    unsigned                projected : 1;
+    unsigned                padding : 11;
 };
 
 struct ffp_frag_settings

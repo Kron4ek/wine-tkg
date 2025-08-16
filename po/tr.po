@@ -3871,15 +3871,15 @@ msgstr "Devre dışı"
 msgid "DInput"
 msgstr "DGirişi"
 
-#: dlls/joy.cpl/joy.rc:62
+#: dlls/joy.cpl/joy.rc:62 dlls/joy.cpl/joy.rc:111
 msgid "Axes"
 msgstr "Eksenler"
 
-#: dlls/joy.cpl/joy.rc:63
+#: dlls/joy.cpl/joy.rc:63 dlls/joy.cpl/joy.rc:112
 msgid "POVs"
 msgstr "POVs"
 
-#: dlls/joy.cpl/joy.rc:64
+#: dlls/joy.cpl/joy.rc:64 dlls/joy.cpl/joy.rc:113
 msgid "Buttons"
 msgstr "Düğmeler"
 
@@ -3952,9 +3952,13 @@ msgstr ""
 "kılınmadığından emin olun."
 
 #: dlls/joy.cpl/joy.rc:98 dlls/joy.cpl/joy.rc:99 dlls/joy.cpl/joy.rc:100
-#: dlls/joy.cpl/joy.rc:101
+#: dlls/joy.cpl/joy.rc:101 dlls/joy.cpl/joy.rc:115
 msgid "Rumble"
 msgstr "Gürlemek"
+
+#: dlls/joy.cpl/joy.rc:106
+msgid "Windows.Gaming.Input"
+msgstr ""
 
 #: dlls/joy.cpl/joy.rc:31
 msgid "Game Controllers"
@@ -8012,7 +8016,7 @@ msgid "Vector property is required.\n"
 msgstr "Vektör özelliği gerekli.\n"
 
 #: dlls/mferror/mferror.mc:389
-msgid "Operation was cancelled.\n"
+msgid "Operation was canceled.\n"
 msgstr "İşlem iptal edildi.\n"
 
 #: dlls/mferror/mferror.mc:396
@@ -9212,12 +9216,12 @@ msgstr "ekran dışında"
 
 #: dlls/oleacc/oleacc.rc:115
 msgctxt "object state"
-msgid "sizeable"
+msgid "sizable"
 msgstr "boyutlandırılabilir"
 
 #: dlls/oleacc/oleacc.rc:116
 msgctxt "object state"
-msgid "moveable"
+msgid "movable"
 msgstr "taşınabilir"
 
 #: dlls/oleacc/oleacc.rc:117
@@ -16262,7 +16266,7 @@ msgid "reg: The operation completed successfully\n"
 msgstr "kayıt:İşlem başarıyla tamamlandı\n"
 
 #: programs/reg/reg.rc:131
-msgid "reg: The registry operation was cancelled\n"
+msgid "reg: The registry operation was canceled\n"
 msgstr "kayıt: Kayıt işlemi iptal edildi\n"
 
 #: programs/reg/reg.rc:174

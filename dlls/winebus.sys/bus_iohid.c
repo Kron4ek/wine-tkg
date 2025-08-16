@@ -106,7 +106,7 @@ static IOHIDManagerRef hid_manager;
 static CFRunLoopRef run_loop;
 static struct list event_queue = LIST_INIT(event_queue);
 static struct list device_list = LIST_INIT(device_list);
-static struct iohid_bus_options options;
+static const struct bus_options *options;
 
 struct iohid_device
 {
@@ -297,7 +297,7 @@ static void handle_DeviceMatchingCallback(void *context, IOReturn result, void *
          * opening keyboards, mice, or the Touch Bar on older MacBooks triggers
          * a permissions dialog for input monitoring.
          */
-        ERR("Ignoring HID device %p (vid %04x, pid %04x): not a joystick or gamepad\n", IOHIDDevice, desc.vid, desc.pid);
+        WARN("Ignoring HID device %p (vid %04x, pid %04x): not a joystick or gamepad\n", IOHIDDevice, desc.vid, desc.pid);
         return;
     }
 
@@ -352,7 +352,7 @@ NTSTATUS iohid_bus_init(void *args)
 {
     TRACE("args %p\n", args);
 
-    options = *(struct iohid_bus_options *)args;
+    options = args;
 
     if (!(hid_manager = IOHIDManagerCreate(kCFAllocatorDefault, 0L)))
     {

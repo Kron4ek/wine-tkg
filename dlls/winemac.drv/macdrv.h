@@ -179,8 +179,7 @@ struct macdrv_win_data
 {
     HWND                hwnd;                   /* hwnd that this private data belongs to */
     macdrv_window       cocoa_window;
-    macdrv_view         cocoa_view;
-    macdrv_view         client_cocoa_view;
+    macdrv_view         client_view;
     struct window_rects rects;                  /* window rects in monitor DPI, relative to parent client area */
     int                 pixel_format;           /* pixel format for GL */
     HANDLE              drag_event;             /* event to signal that Cocoa-driven window dragging has ended */
@@ -191,6 +190,21 @@ struct macdrv_win_data
     unsigned int        per_pixel_alpha : 1;    /* is window using per-pixel alpha? */
     unsigned int        minimized : 1;          /* is window minimized? */
 };
+
+struct macdrv_client_surface
+{
+    struct client_surface client;
+    macdrv_view           cocoa_view;
+    macdrv_metal_device   metal_device;
+    macdrv_metal_view     metal_view;
+};
+
+static inline struct macdrv_client_surface *impl_from_client_surface(struct client_surface *client)
+{
+    return CONTAINING_RECORD(client, struct macdrv_client_surface, client);
+}
+
+extern struct macdrv_client_surface *macdrv_client_surface_create(HWND hwnd);
 
 extern struct macdrv_win_data *get_win_data(HWND hwnd);
 extern void release_win_data(struct macdrv_win_data *data);

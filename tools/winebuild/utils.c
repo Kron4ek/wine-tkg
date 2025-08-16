@@ -676,7 +676,7 @@ char *make_c_identifier( const char *str )
  *
  * Generate an internal name for a stub entry point.
  */
-const char *get_stub_name( const ORDDEF *odp, const DLLSPEC *spec )
+static const char *get_stub_name( const ORDDEF *odp )
 {
     static char *buffer;
 
@@ -690,7 +690,7 @@ const char *get_stub_name( const ORDDEF *odp, const DLLSPEC *spec )
         if (!*p) return buffer;
         free( buffer );
     }
-    buffer = strmake( "__wine_stub_%s_%d", make_c_identifier(spec->file_name), odp->ordinal );
+    buffer = strmake( "__wine_stub_%d", odp->ordinal );
     return buffer;
 }
 
@@ -704,6 +704,7 @@ const char *get_abi_name( const ORDDEF *odp, const char *name )
 
     switch (odp->type)
     {
+    case TYPE_STUB:
     case TYPE_STDCALL:
         if (is_pe())
         {
@@ -741,6 +742,8 @@ const char *get_abi_name( const ORDDEF *odp, const char *name )
 
 const char *get_link_name( const ORDDEF *odp )
 {
+    if (odp->type == TYPE_STUB && !(odp->flags & FLAG_SYSCALL)) return get_stub_name( odp );
+
     return get_abi_name( odp, odp->link_name );
 }
 

@@ -1,5 +1,5 @@
 MODULE = windows.devices.enumeration.dll
-IMPORTS = advapi32 combase setupapi uuid
+IMPORTS = cfgmgr32 combase uuid
 
 SOURCES = \
 	access.c \
@@ -9,4 +9,5 @@ SOURCES = \
 	event_handlers.c \
 	information.c \
 	main.c \
-	vector.c
+	vector.c \
+	weakref.c
