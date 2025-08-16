@@ -3397,7 +3397,37 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFileType( HANDLE file )
 BOOL WINAPI DECLSPEC_HOTPATCH GetOverlappedResult( HANDLE file, LPOVERLAPPED overlapped,
                                                    LPDWORD result, BOOL wait )
 {
-    return GetOverlappedResultEx( file, overlapped, result, wait ? INFINITE : 0, FALSE );
+    NTSTATUS status;
+    DWORD ret;
+
+    TRACE( "(%p %p %p %d)\n", file, overlapped, result, wait );
+
+    /* Paired with the write-release in set_async_iosb() in ntdll; see the
+     * latter for details. */
+    status = ReadAcquire( (LONG *)&overlapped->Internal );
+    if (status == STATUS_PENDING)
+    {
+        if (!wait)
+        {
+            SetLastError( ERROR_IO_INCOMPLETE );
+            return FALSE;
+        }
+        ret = WaitForSingleObject( overlapped->hEvent ? overlapped->hEvent : file, INFINITE );
+        if (ret == WAIT_FAILED) return FALSE;
+        if (ret)
+        {
+            SetLastError( ret );
+            return FALSE;
+        }
+
+        /* We don't need to give this load acquire semantics; the wait above
+         * already guarantees that the IOSB and output buffer are filled. */
+        status = overlapped->Internal;
+    }
+
+    *result = overlapped->InternalHigh;
+    SetLastError( RtlNtStatusToDosError( status ));
+    return !status || status == STATUS_PENDING;
 }
 
 
@@ -3407,38 +3437,41 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetOverlappedResult( HANDLE file, LPOVERLAPPED ove
 BOOL WINAPI DECLSPEC_HOTPATCH GetOverlappedResultEx( HANDLE file, OVERLAPPED *overlapped,
                                                      DWORD *result, DWORD timeout, BOOL alertable )
 {
-    NTSTATUS status;
+    NTSTATUS status = STATUS_PENDING;
+    BOOL compat_mode;
     DWORD ret;
 
     TRACE( "(%p %p %p %lu %d)\n", file, overlapped, result, timeout, alertable );
 
-    /* Paired with the write-release in set_async_iosb() in ntdll; see the
-     * latter for details. */
-    status = ReadAcquire( (LONG *)&overlapped->Internal );
-    if (status == STATUS_PENDING)
+    compat_mode = (ULONG_PTR)file & 1;
+    if (compat_mode || !timeout)
     {
-        if (!timeout)
-        {
-            SetLastError( ERROR_IO_INCOMPLETE );
-            return FALSE;
-        }
+        /* Paired with the write-release in set_async_iosb() in ntdll; see the
+         * latter for details. */
+        status = ReadAcquire( (LONG *)&overlapped->Internal );
+    }
+
+    if (timeout && status == STATUS_PENDING)
+    {
         ret = WaitForSingleObjectEx( overlapped->hEvent ? overlapped->hEvent : file, timeout, alertable );
-        if (ret == WAIT_FAILED)
-            return FALSE;
-        else if (ret)
+        if (ret == WAIT_FAILED) return FALSE;
+        if (ret && !(compat_mode && ret == WAIT_TIMEOUT))
         {
             SetLastError( ret );
             return FALSE;
         }
-
         /* We don't need to give this load acquire semantics; the wait above
          * already guarantees that the IOSB and output buffer are filled. */
         status = overlapped->Internal;
-        if (status == STATUS_PENDING) status = STATUS_SUCCESS;
     }
-
+    else if (status == STATUS_PENDING)
+    {
+        SetLastError( ERROR_IO_INCOMPLETE );
+        return FALSE;
+    }
     *result = overlapped->InternalHigh;
-    return set_ntstatus( status );
+    SetLastError( RtlNtStatusToDosError( status ));
+    return !status || status == STATUS_PENDING;
 }
 
 
@@ -3846,6 +3879,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH SetFileInformationByHandle( HANDLE file, FILE_INFO
         status = NtSetInformationFile( file, &io, info, size, FileIoPriorityHintInformation );
         break;
     case FileRenameInfo:
+    case FileRenameInfoEx:
         {
             FILE_RENAME_INFORMATION *rename_info;
             UNICODE_STRING nt_name;
@@ -3861,7 +3895,8 @@ BOOL WINAPI DECLSPEC_HOTPATCH SetFileInformationByHandle( HANDLE file, FILE_INFO
                 memcpy( rename_info, info, sizeof(*rename_info) );
                 memcpy( rename_info->FileName, nt_name.Buffer, nt_name.Length + sizeof(WCHAR) );
                 rename_info->FileNameLength = nt_name.Length;
-                status = NtSetInformationFile( file, &io, rename_info, size, FileRenameInformation );
+                status = NtSetInformationFile( file, &io, rename_info, size,
+                        class == FileRenameInfo ? FileRenameInformation : FileRenameInformationEx );
                 HeapFree( GetProcessHeap(), 0, rename_info );
             }
             RtlFreeUnicodeString( &nt_name );

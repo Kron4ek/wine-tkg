@@ -1137,7 +1137,7 @@ static void wined3d_cs_exec_draw(struct wined3d_cs *cs, const void *data)
 }
 
 static void reference_graphics_pipeline_resources(struct wined3d_device_context *context,
-        BOOL indexed, const struct wined3d_d3d_info *d3d_info)
+        bool indexed, const struct wined3d_d3d_info *d3d_info)
 {
     const struct wined3d_state *state = context->state;
     unsigned int i;
@@ -1204,6 +1204,13 @@ void CDECL wined3d_device_context_draw_indirect(struct wined3d_device_context *c
     struct wined3d_cs_draw *op;
 
     wined3d_device_context_lock(context);
+
+    if (indexed && !state->index_buffer)
+    {
+        wined3d_device_context_unlock(context);
+        return;
+    }
+
     op = wined3d_device_context_require_space(context, sizeof(*op), WINED3D_CS_QUEUE_DEFAULT);
     op->opcode = WINED3D_CS_OP_DRAW;
     op->primitive_type = state->primitive_type;

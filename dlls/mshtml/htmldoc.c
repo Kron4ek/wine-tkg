@@ -235,28 +235,15 @@ static const IDOMDocumentTypeVtbl DocumentTypeVtbl = {
     DocumentType_get_internalSubset
 };
 
-static inline DocumentType *DocumentType_from_HTMLDOMNode(HTMLDOMNode *iface)
-{
-    return CONTAINING_RECORD(iface, DocumentType, node);
-}
-
 static inline DocumentType *DocumentType_from_DispatchEx(DispatchEx *iface)
 {
     return CONTAINING_RECORD(iface, DocumentType, node.event_target.dispex);
-}
-
-static HRESULT DocumentType_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTMLDOMNode **ret)
-{
-    DocumentType *This = DocumentType_from_HTMLDOMNode(iface);
-
-    return create_doctype_node(This->node.doc, nsnode, ret);
 }
 
 static const cpc_entry_t DocumentType_cpc[] = {{NULL}};
 
 static const NodeImplVtbl DocumentTypeImplVtbl = {
     .cpc_entries           = DocumentType_cpc,
-    .clone                 = DocumentType_clone
 };
 
 static void *DocumentType_query_interface(DispatchEx *dispex, REFIID riid)
@@ -3535,13 +3522,35 @@ static HRESULT WINAPI HTMLDocument7_createElement(IHTMLDocument7 *iface, BSTR bs
     return IHTMLDocument2_createElement(&This->IHTMLDocument2_iface, bstrTag, newElem);
 }
 
-static HRESULT WINAPI HTMLDocument7_createAttribute(IHTMLDocument7 *iface, BSTR bstrAttrName, IHTMLDOMAttribute **ppAttribute)
+static HRESULT WINAPI HTMLDocument7_createAttribute(IHTMLDocument7 *iface, BSTR name, IHTMLDOMAttribute **p)
 {
     HTMLDocumentNode *This = impl_from_IHTMLDocument7(iface);
+    HTMLDOMAttribute *attr;
+    nsIDOMAttr *nsattr;
+    nsAString nsstr;
+    nsresult nsres;
+    HRESULT hres;
 
-    TRACE("(%p)->(%s %p)\n", This, debugstr_w(bstrAttrName), ppAttribute);
+    TRACE("(%p)->(%s %p)\n", This, debugstr_w(name), p);
 
-    return IHTMLDocument5_createAttribute(&This->IHTMLDocument5_iface, bstrAttrName, ppAttribute);
+    if(!This->dom_document) {
+        FIXME("NULL dom_document\n");
+        return E_FAIL;
+    }
+
+    nsAString_InitDepend(&nsstr, name);
+    nsres = nsIDOMDocument_CreateAttribute(This->dom_document, &nsstr, &nsattr);
+    nsAString_Finish(&nsstr);
+    if(NS_FAILED(nsres))
+        return map_nsresult(nsres);
+
+    hres = create_attr_node(This, nsattr, &attr);
+    nsIDOMAttr_Release(nsattr);
+    if(FAILED(hres))
+        return hres;
+
+    *p = &attr->IHTMLDOMAttribute_iface;
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLDocument7_getElementsByClassName(IHTMLDocument7 *iface, BSTR v, IHTMLElementCollection **pel)

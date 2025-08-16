@@ -27,16 +27,15 @@ WINE_DEFAULT_DEBUG_CHANNEL(cmd);
 static RETURN_CODE WCMD_batch_main_loop(void)
 {
     RETURN_CODE return_code = NO_ERROR;
-    /* Work through the file line by line until an exit is called. */
-    while (!context->skip_rest)
-    {
-        CMD_NODE *node;
+    enum read_parse_line rpl;
+    CMD_NODE *node;
 
-        switch (WCMD_ReadAndParseLine(NULL, &node))
+    /* Work through the file line by line until an exit is called. */
+    while ((rpl = WCMD_ReadAndParseLine(&node)) != RPL_EOF)
+    {
+        switch (rpl)
         {
-        case RPL_EOF:
-            context->skip_rest = TRUE;
-            break;
+        case RPL_EOF: break; /* never reached; get rid of warning */
         case RPL_SUCCESS:
             if (node)
             {
@@ -51,7 +50,8 @@ static RETURN_CODE WCMD_batch_main_loop(void)
     }
 
     /* If there are outstanding setlocal's to the current context, unwind them. */
-    while (WCMD_endlocal() == NO_ERROR) {}
+    if (WCMD_is_in_context(NULL))
+        while (WCMD_endlocal() == NO_ERROR) {}
 
     return return_code;
 }
@@ -63,6 +63,7 @@ static struct batch_file *find_or_alloc_batch_file(const WCHAR *file)
     HANDLE h;
     unsigned int i;
 
+    if (!file) return NULL;
     for (ctx = context; ctx; ctx = ctx->prev_context)
     {
         if (ctx->batch_file && !wcscmp(ctx->batch_file->path_name, file))
@@ -95,9 +96,8 @@ static struct batch_context *push_batch_context(WCHAR *command, struct batch_fil
     context->command = command;
     memset(context->shift_count, 0x00, sizeof(context->shift_count));
     context->prev_context = prev;
-    context->skip_rest = FALSE;
     context->batch_file = batch_file;
-    batch_file->ref_count++;
+    if (batch_file) batch_file->ref_count++;
 
     return context;
 }
@@ -121,32 +121,26 @@ static struct batch_context *pop_batch_context(struct batch_context *ctx)
 }
 
 /****************************************************************************
- * WCMD_batch
+ * WCMD_call_batch
  *
  * Open and execute a batch file.
  * On entry *command includes the complete command line beginning with the name
  * of the batch file (if a CALL command was entered the CALL has been removed).
  * *file is the name of the file, which might not exist and may not have the
- * .BAT suffix on. Called is 1 for a CALL, 0 otherwise.
+ * .BAT suffix on.
  *
  * We need to handle recursion correctly, since one batch program might call another.
  * So parameters for this batch file are held in a BATCH_CONTEXT structure.
- *
- * To support call within the same batch program, another input parameter is
- * a label to goto once opened.
  */
-
 RETURN_CODE WCMD_call_batch(const WCHAR *file, WCHAR *command)
 {
-    RETURN_CODE return_code = NO_ERROR;
+    RETURN_CODE return_code;
 
     context = push_batch_context(command, find_or_alloc_batch_file(file), 0);
     return_code = WCMD_batch_main_loop();
     context = pop_batch_context(context);
 
-    if (return_code != NO_ERROR && return_code != RETURN_CODE_ABORTED)
-        errorlevel = return_code;
-    return errorlevel;
+    return return_code;
 }
 
 /*******************************************************************
@@ -387,7 +381,7 @@ void WCMD_HandleTildeModifiers(WCHAR **start, BOOL atExecute)
   BOOL  doneModifier    = FALSE;
 
   /* Search forwards until find invalid character modifier */
-  for (; wcschr(validmodifiers, towlower(*lastModifier)); lastModifier = pos++) {
+  for (; *lastModifier && wcschr(validmodifiers, towlower(*lastModifier)); lastModifier = pos++) {
     /* Special case '$' to skip until : found */
     if (*lastModifier == L'$') {
       if (!(pos = wcschr(pos, L':'))) return; /* Invalid syntax */
@@ -426,7 +420,7 @@ void WCMD_HandleTildeModifiers(WCHAR **start, BOOL atExecute)
      Special case param 0 - With %~0 you get the batch label which was called
      whereas if you start applying other modifiers to it, you get the filename
      the batch label is in                                                     */
-  if (*lastModifier == '0' && modifierLen > 1) {
+  if (*lastModifier == '0' && modifierLen > 1 && context->batch_file) {
     lstrcpyW(outputparam, context->batch_file->path_name);
   } else if ((*lastModifier >= '0' && *lastModifier <= '9')) {
     lstrcpyW(outputparam,

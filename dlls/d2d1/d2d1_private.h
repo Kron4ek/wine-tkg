@@ -410,12 +410,25 @@ struct d2d_layer
 
 HRESULT d2d_layer_create(ID2D1Factory *factory, const D2D1_SIZE_F *size, struct d2d_layer **layer);
 
+enum d2d_mesh_state
+{
+    D2D_MESH_STATE_INITIAL = 0,
+    D2D_MESH_STATE_OPEN,
+    D2D_MESH_STATE_CLOSED,
+};
+
 struct d2d_mesh
 {
     ID2D1Mesh ID2D1Mesh_iface;
+    ID2D1TessellationSink ID2D1TessellationSink_iface;
     LONG refcount;
 
     ID2D1Factory *factory;
+    enum d2d_mesh_state state;
+
+    D2D1_TRIANGLE *triangles;
+    size_t count;
+    size_t size;
 };
 
 HRESULT d2d_mesh_create(ID2D1Factory *factory, struct d2d_mesh **mesh);
@@ -606,6 +619,23 @@ void d2d_transformed_geometry_init(struct d2d_geometry *geometry, ID2D1Factory *
 HRESULT d2d_geometry_group_init(struct d2d_geometry *geometry, ID2D1Factory *factory,
         D2D1_FILL_MODE fill_mode, ID2D1Geometry **src_geometries, unsigned int geometry_count);
 struct d2d_geometry *unsafe_impl_from_ID2D1Geometry(ID2D1Geometry *iface);
+
+struct d2d_geometry_realization
+{
+    ID2D1GeometryRealization ID2D1GeometryRealization_iface;
+    LONG refcount;
+
+    ID2D1Factory *factory;
+    ID2D1Geometry *geometry;
+    bool filled;
+
+    ID2D1StrokeStyle *stroke_style;
+    float stroke_width;
+};
+
+HRESULT d2d_geometry_realization_init(struct d2d_geometry_realization *realization,
+        ID2D1Factory *factory, ID2D1Geometry *geometry);
+struct d2d_geometry_realization *unsafe_impl_from_ID2D1GeometryRealization(ID2D1GeometryRealization *iface);
 
 struct d2d_device
 {
@@ -1007,6 +1037,13 @@ static inline const char *debug_d2d_point_2l(const D2D1_POINT_2L *point)
     return wine_dbg_sprintf("{%ld, %ld}", point->x, point->y);
 }
 
+static inline const char *debug_d2d_point_2u(const D2D1_POINT_2U *point)
+{
+    if (!point)
+        return "(null)";
+    return wine_dbg_sprintf("{%u, %u}", point->x, point->y);
+}
+
 static inline const char *debug_d2d_rect_f(const D2D1_RECT_F *rect)
 {
     if (!rect)
@@ -1019,6 +1056,13 @@ static inline const char *debug_d2d_rect_l(const D2D1_RECT_L *rect)
     if (!rect)
         return "(null)";
     return wine_dbg_sprintf("(%ld, %ld)-(%ld, %ld)", rect->left, rect->top, rect->right, rect->bottom);
+}
+
+static inline const char *debug_d2d_rect_u(const D2D1_RECT_U *rect)
+{
+    if (!rect)
+        return "(null)";
+    return wine_dbg_sprintf("(%u, %u)-(%u, %u)", rect->left, rect->top, rect->right, rect->bottom);
 }
 
 static inline const char *debug_d2d_rounded_rect(const D2D1_ROUNDED_RECT *rounded_rect)

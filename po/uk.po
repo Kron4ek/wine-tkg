@@ -3881,15 +3881,15 @@ msgstr "Вимкнений"
 msgid "DInput"
 msgstr ""
 
-#: dlls/joy.cpl/joy.rc:62
+#: dlls/joy.cpl/joy.rc:62 dlls/joy.cpl/joy.rc:111
 msgid "Axes"
 msgstr ""
 
-#: dlls/joy.cpl/joy.rc:63
+#: dlls/joy.cpl/joy.rc:63 dlls/joy.cpl/joy.rc:112
 msgid "POVs"
 msgstr ""
 
-#: dlls/joy.cpl/joy.rc:64
+#: dlls/joy.cpl/joy.rc:64 dlls/joy.cpl/joy.rc:113
 msgid "Buttons"
 msgstr "Кнопки"
 
@@ -3960,8 +3960,12 @@ msgid ""
 msgstr ""
 
 #: dlls/joy.cpl/joy.rc:98 dlls/joy.cpl/joy.rc:99 dlls/joy.cpl/joy.rc:100
-#: dlls/joy.cpl/joy.rc:101
+#: dlls/joy.cpl/joy.rc:101 dlls/joy.cpl/joy.rc:115
 msgid "Rumble"
+msgstr ""
+
+#: dlls/joy.cpl/joy.rc:106
+msgid "Windows.Gaming.Input"
 msgstr ""
 
 #: dlls/joy.cpl/joy.rc:31
@@ -8138,7 +8142,7 @@ msgid "Vector property is required.\n"
 msgstr "Потребується векторна властивість.\n"
 
 #: dlls/mferror/mferror.mc:389
-msgid "Operation was cancelled.\n"
+msgid "Operation was canceled.\n"
 msgstr "Операція була скасована.\n"
 
 #: dlls/mferror/mferror.mc:396
@@ -9390,14 +9394,14 @@ msgstr ""
 #, fuzzy
 #| msgid "&enable"
 msgctxt "object state"
-msgid "sizeable"
+msgid "sizable"
 msgstr "вв&імкнути"
 
 #: dlls/oleacc/oleacc.rc:116
 #, fuzzy
 #| msgid "&enable"
 msgctxt "object state"
-msgid "moveable"
+msgid "movable"
 msgstr "вв&імкнути"
 
 #: dlls/oleacc/oleacc.rc:117
@@ -16550,7 +16554,7 @@ msgid "reg: The operation completed successfully\n"
 msgstr "reg: Операція успішно завершена\n"
 
 #: programs/reg/reg.rc:131
-msgid "reg: The registry operation was cancelled\n"
+msgid "reg: The registry operation was canceled\n"
 msgstr "reg: Операцію з реєстром було скасовано\n"
 
 #: programs/reg/reg.rc:174

@@ -5407,6 +5407,7 @@ NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T 
             *size_ptr = result.virtual_protect.size;
             *old_prot = result.virtual_protect.prot;
         }
+        else *old_prot = PAGE_NOACCESS;
         return result.virtual_protect.status;
     }
 
@@ -5439,6 +5440,7 @@ NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T 
         *size_ptr = size;
         *old_prot = old;
     }
+    else *old_prot = PAGE_NOACCESS;
     return status;
 }
 

@@ -64,11 +64,13 @@ enum alg_id
     ALG_ID_DH,
     ALG_ID_ECDH_P256,
     ALG_ID_ECDH_P384,
+    ALG_ID_ECDH_P521,
 
     /* signature */
     ALG_ID_RSA_SIGN,
     ALG_ID_ECDSA_P256,
     ALG_ID_ECDSA_P384,
+    ALG_ID_ECDSA_P521,
     ALG_ID_DSA,
 
     /* rng */
@@ -276,5 +278,10 @@ enum key_funcs
     unix_key_asymmetric_derive_key,
     unix_funcs_count,
 };
+
+static inline ULONG len_from_bitlen( ULONG bitlen )
+{
+    return (bitlen + 7) / 8;
+}
 
 #endif /* __BCRYPT_INTERNAL_H */

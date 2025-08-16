@@ -5679,20 +5679,28 @@ void get_modelview_matrix(const struct wined3d_stateblock_state *state, unsigned
 }
 
 /* Setup this textures matrix according to the texture flags. */
-static void compute_texture_matrix(const struct wined3d_matrix *matrix, uint32_t flags, BOOL calculated_coords,
-        enum wined3d_format_id format_id, struct wined3d_matrix *out_matrix)
+static void compute_texture_matrix(const struct wined3d_matrix *matrix, uint32_t flags,
+        unsigned int attrib_count, struct wined3d_matrix *out_matrix)
 {
+    unsigned int count = (flags & ~WINED3D_TTFF_PROJECTED);
     struct wined3d_matrix mat;
 
-    if (flags == WINED3D_TTFF_DISABLE || flags == WINED3D_TTFF_COUNT1)
+    if (count < 2 || count > 4)
     {
         get_identity_matrix(out_matrix);
-        return;
-    }
+        if (attrib_count < 4)
+            out_matrix->_44 = 0.0f;
 
-    if (flags == (WINED3D_TTFF_COUNT1 | WINED3D_TTFF_PROJECTED))
-    {
-        ERR("Invalid texture transform flags: WINED3D_TTFF_COUNT1 | WINED3D_TTFF_PROJECTED.\n");
+        if (flags & WINED3D_TTFF_PROJECTED)
+        {
+            /* As below: effectively copy the component to divide by to W. */
+            if (attrib_count == 1)
+                out_matrix->_14 = 1.0f;
+            else if (attrib_count == 2)
+                out_matrix->_24 = 1.0f;
+            else if (attrib_count == 3)
+                out_matrix->_34 = 1.0f;
+        }
         return;
     }
 
@@ -5714,46 +5722,74 @@ static void compute_texture_matrix(const struct wined3d_matrix *matrix, uint32_t
      * actually has a value of 1. The coefficients for other columns don't need
      * to be modified, since the corresponding texcoord components are zero. */
 
-    if (!(flags & WINED3D_TTFF_PROJECTED) && !calculated_coords)
+    if (attrib_count == 1)
     {
-        switch (format_id)
+        mat._41 = mat._21;
+        mat._42 = mat._22;
+        mat._43 = mat._23;
+        mat._44 = mat._24;
+    }
+    else if (attrib_count == 2)
+    {
+        mat._41 = mat._31;
+        mat._42 = mat._32;
+        mat._43 = mat._33;
+        mat._44 = mat._34;
+    }
+
+    /* When using the FFP, components greater than the count are set to zero. */
+
+    if (count < 4)
+    {
+        mat._14 = 0.0f;
+        mat._24 = 0.0f;
+        mat._34 = 0.0f;
+        mat._44 = 0.0f;
+    }
+
+    if (count < 3)
+    {
+        mat._13 = 0.0f;
+        mat._23 = 0.0f;
+        mat._33 = 0.0f;
+        mat._43 = 0.0f;
+    }
+
+    /* Projection is handled in two steps. In the vertex pipeline, the
+     * component to be divided by is copied to W. In the fragment pipeline,
+     * sampling the projected texture always divides by W. */
+
+    if (flags & WINED3D_TTFF_PROJECTED)
+    {
+        if (count == 2)
         {
-            case WINED3DFMT_R32_FLOAT:
-                mat._41 = mat._21;
-                mat._42 = mat._22;
-                mat._43 = mat._23;
-                mat._44 = mat._24;
-                break;
-
-            case WINED3DFMT_R32G32_FLOAT:
-                mat._41 = mat._31;
-                mat._42 = mat._32;
-                mat._43 = mat._33;
-                mat._44 = mat._34;
-                break;
-
-            case WINED3DFMT_R32G32B32_FLOAT:
-            case WINED3DFMT_R32G32B32A32_FLOAT:
-            case WINED3DFMT_UNKNOWN:
-                break;
-            default:
-                FIXME("Unexpected fixed function texture coord input\n");
+            mat._14 = mat._12;
+            mat._24 = mat._22;
+            mat._34 = mat._32;
+            mat._44 = mat._42;
+        }
+        else if (count == 3)
+        {
+            mat._14 = mat._13;
+            mat._24 = mat._23;
+            mat._34 = mat._33;
+            mat._44 = mat._43;
         }
     }
 
     *out_matrix = mat;
 }
 
-static enum wined3d_format_id get_texcoord_format(const struct wined3d_vertex_declaration *decl, unsigned int index)
+static unsigned int get_texcoord_attrib_count(const struct wined3d_vertex_declaration *decl, unsigned int index)
 {
     for (unsigned int i = 0; i < decl->element_count; ++i)
     {
         if (decl->elements[i].usage == WINED3D_DECL_USAGE_TEXCOORD
                 && decl->elements[i].usage_idx == index)
-            return decl->elements[i].format->id;
+            return decl->elements[i].format->component_count;
     }
 
-    return WINED3DFMT_UNKNOWN;
+    return 0;
 }
 
 void get_texture_matrix(const struct wined3d_stateblock_state *state,
@@ -5766,7 +5802,7 @@ void get_texture_matrix(const struct wined3d_stateblock_state *state,
 
     compute_texture_matrix(&state->transforms[WINED3D_TS_TEXTURE0 + tex],
             state->texture_states[tex][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS],
-            generated, get_texcoord_format(state->vertex_declaration, coord_idx), mat);
+            generated ? 3 : get_texcoord_attrib_count(state->vertex_declaration, coord_idx), mat);
 }
 
 static BOOL wined3d_get_primary_display(WCHAR *display)
@@ -6204,7 +6240,6 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_state *state,
         /* D3DTOP_LERP                      */  ARG1 | ARG2 | ARG0
     };
     unsigned int i;
-    DWORD ttff;
     DWORD cop, aop, carg0, carg1, carg2, aarg0, aarg1, aarg2;
     struct wined3d_texture *texture;
 
@@ -6222,7 +6257,7 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_state *state,
             settings->op[i].color_fixup = COLOR_FIXUP_IDENTITY;
             settings->op[i].tmp_dst = 0;
             settings->op[i].tex_type = WINED3D_GL_RES_TYPE_TEX_1D;
-            settings->op[i].projected = WINED3D_PROJECTION_NONE;
+            settings->op[i].projected = 0;
             i++;
             break;
         }
@@ -6314,21 +6349,9 @@ void wined3d_ffp_get_fs_settings(const struct wined3d_state *state,
                aop = WINED3D_TOP_SELECT_ARG1;
         }
 
-        if (carg1 == WINED3DTA_TEXTURE || carg2 == WINED3DTA_TEXTURE || carg0 == WINED3DTA_TEXTURE
+        settings->op[i].projected = (carg1 == WINED3DTA_TEXTURE || carg2 == WINED3DTA_TEXTURE || carg0 == WINED3DTA_TEXTURE
                 || aarg1 == WINED3DTA_TEXTURE || aarg2 == WINED3DTA_TEXTURE || aarg0 == WINED3DTA_TEXTURE)
-        {
-            ttff = state->texture_states[i][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS];
-            if (ttff == (WINED3D_TTFF_PROJECTED | WINED3D_TTFF_COUNT3))
-                settings->op[i].projected = WINED3D_PROJECTION_COUNT3;
-            else if (ttff & WINED3D_TTFF_PROJECTED)
-                settings->op[i].projected = WINED3D_PROJECTION_COUNT4;
-            else
-                settings->op[i].projected = WINED3D_PROJECTION_NONE;
-        }
-        else
-        {
-            settings->op[i].projected = WINED3D_PROJECTION_NONE;
-        }
+                && (state->texture_states[i][WINED3D_TSS_TEXTURE_TRANSFORM_FLAGS] & WINED3D_TTFF_PROJECTED);
 
         settings->op[i].cop = cop;
         settings->op[i].aop = aop;

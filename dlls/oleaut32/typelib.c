@@ -7855,7 +7855,8 @@ static HRESULT WINAPI ITypeInfo_fnGetRefTypeInfo(
         pTypeInfoImpl->ref = 0;
         list_init(&pTypeInfoImpl->custdata_list);
 
-        if (This->typeattr.typekind == TKIND_INTERFACE)
+        if (This->typeattr.typekind == TKIND_INTERFACE &&
+            This->typeattr.wTypeFlags & TYPEFLAG_FDISPATCHABLE)
             pTypeInfoImpl->typeattr.typekind = TKIND_DISPATCH;
         else
             pTypeInfoImpl->typeattr.typekind = TKIND_INTERFACE;

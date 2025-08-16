@@ -39,7 +39,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(cmd);
 
 extern int defaultColor;
 extern BOOL echo_mode;
-extern BOOL interactive;
 
 struct env_stack *pushd_directories;
 const WCHAR inbuilt[][10] = {
@@ -844,7 +843,7 @@ RETURN_CODE WCMD_copy(WCHAR * args)
   else {
     /* By default, we will force the overwrite in batch mode and ask for
      * confirmation in interactive mode. */
-    prompt = interactive;
+    prompt = !context;
     /* If COPYCMD is set, then we force the overwrite with /Y and ask for
      * confirmation with /-Y. If COPYCMD is neither of those, then we use the
      * default behavior. */
@@ -1749,11 +1748,12 @@ RETURN_CODE WCMD_goto(void)
             return ERROR_INVALID_FUNCTION;
         }
 
+        if (!context->batch_file) return ERROR_INVALID_FUNCTION;
         /* Handle special :EOF label */
         if (lstrcmpiW(L":eof", param1) == 0)
         {
-            context->skip_rest = TRUE;
-            return RETURN_CODE_ABORTED;
+            context->file_position.QuadPart = WCMD_FILE_POSITION_EOF;
+            return RETURN_CODE_GOTO;
         }
         h = CreateFileW(context->batch_file->path_name, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
                         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -1771,9 +1771,9 @@ RETURN_CODE WCMD_goto(void)
 
         ret = WCMD_find_label(h, paramStart, &context->file_position);
         CloseHandle(h);
-        if (ret) return RETURN_CODE_ABORTED;
+        if (ret) return RETURN_CODE_GOTO;
         WCMD_output_stderr(WCMD_LoadMessage(WCMD_NOTARGET));
-        context->skip_rest = TRUE;
+        context->file_position.QuadPart = WCMD_FILE_POSITION_EOF;
     }
     return ERROR_INVALID_FUNCTION;
 }
@@ -1935,7 +1935,7 @@ RETURN_CODE WCMD_move(void)
       else {
         /* By default, we will force the overwrite in batch mode and ask for
          * confirmation in interactive mode. */
-        force = !interactive;
+        force = !!context;
         /* If COPYCMD is set, then we force the overwrite with /Y and ask for
          * confirmation with /-Y. If COPYCMD is neither of those, then we use the
          * default behavior. */
@@ -2198,7 +2198,7 @@ RETURN_CODE WCMD_setlocal(WCHAR *args)
   WCHAR *argN = args;
 
   /* setlocal does nothing outside of batch programs */
-  if (!context)
+  if (!WCMD_is_in_context(NULL))
       return NO_ERROR;
   newdelay = delayedsubst;
   while (argN)
@@ -2254,7 +2254,7 @@ RETURN_CODE WCMD_endlocal(void)
   int len, n;
 
   /* setlocal does nothing outside of batch programs */
-  if (!context) return NO_ERROR;
+  if (!WCMD_is_in_context(NULL)) return NO_ERROR;
 
   /* setlocal needs a saved environment from within the same context (batch
      program) as it was saved in                                            */
@@ -3129,7 +3129,7 @@ RETURN_CODE WCMD_setshow_env(WCHAR *s)
       return_code = ERROR_INVALID_FUNCTION;
     }
     /* If we have no context (interactive or cmd.exe /c) print the final result */
-    else if (!context) {
+    else if (!WCMD_is_in_context(NULL)) {
       swprintf(string, ARRAY_SIZE(string), L"%d", result);
       WCMD_output_asis(string);
     }
@@ -3757,7 +3757,7 @@ RETURN_CODE WCMD_exit(void)
     if (context && lstrcmpiW(quals, L"/B") == 0)
     {
         errorlevel = rc;
-        context -> skip_rest = TRUE;
+        context->file_position.QuadPart = WCMD_FILE_POSITION_EOF;
         return RETURN_CODE_ABORTED;
     }
     ExitProcess(rc);

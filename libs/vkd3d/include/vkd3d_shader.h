@@ -2966,6 +2966,7 @@ VKD3D_SHADER_API int vkd3d_shader_convert_root_signature(struct vkd3d_shader_ver
  * - VKD3D_SHADER_SOURCE_DXBC_DXIL
  * - VKD3D_SHADER_SOURCE_DXBC_TPF
  * - VKD3D_SHADER_SOURCE_D3D_BYTECODE
+ * - VKD3D_SHADER_SOURCE_HLSL
  *
  * \param compile_info A chained structure containing scan parameters.
  * \n

@@ -19,9 +19,6 @@
 #ifndef _WS2AFUNIX_
 #define _WS2AFUNIX_
 
-#include "windef.h"
-#include "ws2def.h"
-
 #ifdef USE_WS_PREFIX
 # define WS(x)    WS_##x
 #else
@@ -30,8 +27,9 @@
 
 #define UNIX_PATH_MAX 108
 
-typedef struct WS(sockaddr_un) {
-    USHORT sun_family;
+typedef struct WS(sockaddr_un)
+{
+    ADDRESS_FAMILY sun_family;
     char sun_path[UNIX_PATH_MAX];
 } SOCKADDR_UN, *PSOCKADDR_UN;
 

@@ -164,8 +164,8 @@ static void fill_system_info( SYSTEM_INFO *si, const SYSTEM_BASIC_INFORMATION *b
     si->lpMinimumApplicationAddress = basic_info->LowestUserAddress;
     si->lpMaximumApplicationAddress = basic_info->HighestUserAddress;
     si->dwActiveProcessorMask       = basic_info->ActiveProcessorsAffinityMask;
-    si->dwNumberOfProcessors        = basic_info->NumberOfProcessors;
     si->dwAllocationGranularity     = basic_info->AllocationGranularity;
+    si->dwNumberOfProcessors        = cpu_info->MaximumProcessors;
     si->wProcessorLevel             = cpu_info->ProcessorLevel;
     si->wProcessorRevision          = cpu_info->ProcessorRevision;
 
@@ -574,6 +574,15 @@ BOOL WINAPI DECLSPEC_HOTPATCH VirtualProtectEx( HANDLE process, void *addr, SIZE
     return set_ntstatus( NtProtectVirtualMemory( process, &addr, &size, new_prot, old_prot ));
 }
 
+/***********************************************************************
+ *             VirtualProtectFromApp   (kernelbase.@)
+ */
+BOOL WINAPI VirtualProtectFromApp( void *addr, SIZE_T size,
+                                   ULONG new_prot, ULONG *old_prot )
+{
+    /* Contrary to the documentation, VirtualProtectFromApp allows write+execute on desktop. */
+    return VirtualProtect( addr, size, new_prot, old_prot );
+}
 
 /***********************************************************************
  *             VirtualQuery   (kernelbase.@)
