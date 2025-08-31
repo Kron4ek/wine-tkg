@@ -730,9 +730,9 @@ BOOL WINAPI NtUserSetCursorPos( INT x, INT y )
 }
 
 /***********************************************************************
- *	     get_cursor_pos
+ *	     NtUserGetCursorPos (win32u.@)
  */
-BOOL get_cursor_pos( POINT *pt )
+BOOL WINAPI NtUserGetCursorPos( POINT *pt )
 {
     struct object_lock lock = OBJECT_LOCK_INIT;
     const desktop_shm_t *desktop_shm;
@@ -783,7 +783,7 @@ BOOL WINAPI NtUserGetCursorInfo( CURSORINFO *info )
         info->flags = CURSOR_SHOWING;
     }
 
-    get_cursor_pos( &info->ptScreenPos );
+    NtUserGetCursorPos( &info->ptScreenPos );
     return TRUE;
 }
 
@@ -1019,14 +1019,25 @@ SHORT WINAPI NtUserGetKeyState( INT vkey )
 {
     struct object_lock lock = OBJECT_LOCK_INIT;
     const input_shm_t *input_shm;
+    UINT64 keystate_serial = 0;
     BOOL ret = FALSE;
     SHORT retval = 0;
     NTSTATUS status;
 
     while ((status = get_shared_input( GetCurrentThreadId(), &lock, &input_shm )) == STATUS_PENDING)
     {
-        ret = !!input_shm->keystate_lock; /* needs a request for sync_input_keystate */
+        ret = !!input_shm->keystate_lock; /* needs a request for sync_input_keystate if desktop keystate differs. */
+        keystate_serial = input_shm->keystate_serial;
         retval = (signed char)(input_shm->keystate[vkey & 0xff] & 0x81);
+    }
+
+    if (!ret)
+    {
+        struct object_lock lock = OBJECT_LOCK_INIT;
+        const desktop_shm_t *desktop_shm;
+
+        while ((status = get_shared_desktop( &lock, &desktop_shm )) == STATUS_PENDING)
+            ret = keystate_serial == desktop_shm->keystate_serial;
     }
 
     if (!ret) SERVER_START_REQ( get_key_state )
@@ -1661,7 +1672,7 @@ void update_mouse_tracking_info( HWND hwnd )
 
     TRACE( "hwnd %p\n", hwnd );
 
-    get_cursor_pos( &pos );
+    NtUserGetCursorPos( &pos );
     hwnd = window_from_point( hwnd, pos, &hittest );
 
     TRACE( "point %s hwnd %p hittest %d\n", wine_dbgstr_point(&pos), hwnd, hittest );
@@ -1757,7 +1768,7 @@ BOOL WINAPI NtUserTrackMouseEvent( TRACKMOUSEEVENT *info )
     if (hover_time == HOVER_DEFAULT || hover_time == 0)
         NtUserSystemParametersInfo( SPI_GETMOUSEHOVERTIME, 0, &hover_time, 0 );
 
-    get_cursor_pos( &pos );
+    NtUserGetCursorPos( &pos );
     hwnd = window_from_point( info->hwndTrack, pos, &hittest );
     TRACE( "point %s hwnd %p hittest %d\n", wine_dbgstr_point(&pos), hwnd, hittest );
 

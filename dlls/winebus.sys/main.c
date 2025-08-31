@@ -41,6 +41,9 @@
 
 #include "unixlib.h"
 
+#include "initguid.h"
+DEFINE_GUID(GUID_NULL,0,0,0,0,0,0,0,0,0,0,0);
+
 WINE_DEFAULT_DEBUG_CHANNEL(hid);
 
 static DRIVER_OBJECT *driver_obj;
@@ -81,6 +84,7 @@ struct device_extension
     enum device_state state;
 
     struct device_desc desc;
+    GUID container_id;
     DWORD index;
 
     BYTE *report_desc;
@@ -200,21 +204,31 @@ static WCHAR *get_instance_id(DEVICE_OBJECT *device)
     return dst;
 }
 
+static const WCHAR *bus_type_str[] =
+{
+    L"WINEBUS", /* BUS_TYPE_UNKNOWN */
+    L"USB", /* BUS_TYPE_USB */
+    L"BTHENUM", /* BUS_TYPE_BLUETOOTH */
+};
+
 static WCHAR *get_device_id(DEVICE_OBJECT *device)
 {
     static const WCHAR input_format[] = L"&MI_%02u";
-    static const WCHAR winebus_format[] = L"WINEBUS\\VID_%04X&PID_%04X";
+    static const WCHAR winebus_format[] = L"%s\\VID_%04X&PID_%04X";
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD pos = 0, len = 0, input_len = 0, winebus_len = 25;
+    DWORD pos = 0, len = 0, input_len = 0, winebus_len = 18;
+    const WCHAR *bus_str;
     WCHAR *dst;
 
+    assert(ext->desc.bus_type < BUS_TYPE_COUNT);
+    bus_str = bus_type_str[ext->desc.bus_type];
     if (ext->desc.input != -1) input_len = 14;
 
-    len += winebus_len + input_len + 1;
+    len += winebus_len + input_len + wcslen(bus_str) + 1;
 
     if ((dst = ExAllocatePool(PagedPool, len * sizeof(WCHAR))))
     {
-        pos += swprintf(dst + pos, len - pos, winebus_format, ext->desc.vid, ext->desc.pid);
+        pos += swprintf(dst + pos, len - pos, winebus_format, bus_str, ext->desc.vid, ext->desc.pid);
         if (input_len) pos += swprintf(dst + pos, len - pos, input_format, ext->desc.input);
     }
 
@@ -264,6 +278,39 @@ static WCHAR *get_compatible_ids(DEVICE_OBJECT *device)
     return dst;
 }
 
+static WCHAR *get_device_text(DEVICE_OBJECT *device)
+{
+    struct device_extension *ext = device->DeviceExtension;
+    const WCHAR *src = ext->desc.product;
+    DWORD size;
+    WCHAR *dst;
+
+    size = (wcslen(src) + 1) * sizeof(WCHAR);
+    if ((dst = ExAllocatePool( PagedPool, size )))
+        memcpy( dst, src, size );
+
+    TRACE("Returning %s.\n", debugstr_w(dst));
+    return dst;
+}
+
+#define GUID_STRING_LENGTH 39
+static WCHAR *get_container_id(DEVICE_OBJECT *device)
+{
+    struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
+    GUID *guid = &ext->container_id;
+    WCHAR *dst;
+
+    if ((dst = ExAllocatePool(PagedPool, GUID_STRING_LENGTH * sizeof(WCHAR))))
+    {
+        swprintf(dst, GUID_STRING_LENGTH, L"{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+                guid->Data1, guid->Data2, guid->Data3, guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
+                guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
+    }
+
+    TRACE("Returning container ID %s.\n", debugstr_w(dst));
+    return dst;
+}
+
 static IRP *pop_pending_read(struct device_extension *ext)
 {
     IRP *pending;
@@ -287,6 +334,34 @@ static void remove_pending_irps(DEVICE_OBJECT *device)
         pending->IoStatus.Information = 0;
         IoCompleteRequest(pending, IO_NO_INCREMENT);
     }
+}
+
+static void make_unique_serial(struct device_extension *device)
+{
+    struct device_extension *ext;
+
+    LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
+        if (!wcscmp(device->desc.serialnumber, ext->desc.serialnumber)) break;
+    if (&ext->entry == &device_list && *device->desc.serialnumber) return;
+
+    swprintf(device->desc.serialnumber, ARRAY_SIZE(device->desc.serialnumber), L"%04x%08x%04x%04x",
+             device->index, device->desc.input, device->desc.pid, device->desc.vid);
+}
+
+static void make_unique_container_id(struct device_extension *device)
+{
+    struct device_extension *ext;
+    LARGE_INTEGER ticks;
+
+    LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
+        if (IsEqualGUID(&device->container_id, &ext->container_id)) break;
+    if (&ext->entry == &device_list && !IsEqualGUID(&device->container_id, &GUID_NULL)) return;
+
+    device->container_id.Data1 = MAKELONG(device->desc.vid, device->desc.pid);
+    device->container_id.Data2 = device->index;
+    device->container_id.Data3 = device->desc.input;
+    QueryPerformanceCounter(&ticks);
+    memcpy(device->container_id.Data4, &ticks.QuadPart, sizeof(device->container_id.Data4));
 }
 
 static DEVICE_OBJECT *bus_create_hid_device(struct device_desc *desc, UINT64 unix_device)
@@ -319,12 +394,12 @@ static DEVICE_OBJECT *bus_create_hid_device(struct device_desc *desc, UINT64 uni
     ext->unix_device        = unix_device;
     list_init(&ext->reports);
 
-    if (desc->is_hidraw && desc->is_bluetooth && is_dualshock4_gamepad(desc->vid, desc->pid))
+    if (desc->is_hidraw && (desc->bus_type == BUS_TYPE_BLUETOOTH) && is_dualshock4_gamepad(desc->vid, desc->pid))
     {
         TRACE("Enabling report fixup for Bluetooth DualShock4 device %p\n", device);
         ext->report_fixups |= HIDRAW_FIXUP_DUALSHOCK_BT;
     }
-    if (desc->is_hidraw && desc->is_bluetooth && is_dualsense_gamepad(desc->vid, desc->pid))
+    if (desc->is_hidraw && (desc->bus_type == BUS_TYPE_BLUETOOTH) && is_dualsense_gamepad(desc->vid, desc->pid))
     {
         TRACE("Enabling report fixup for Bluetooth DualSense device %p\n", device);
         ext->report_fixups |= HIDRAW_FIXUP_DUALSENSE_BT;
@@ -332,6 +407,17 @@ static DEVICE_OBJECT *bus_create_hid_device(struct device_desc *desc, UINT64 uni
 
     InitializeCriticalSectionEx(&ext->cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO);
     ext->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": cs");
+
+    /* Overcooked! All You Can Eat only adds controllers with unique serial numbers
+     * Prefer keeping serial numbers unique over keeping them consistent across runs */
+    make_unique_serial(ext);
+
+    /*
+     * Some games use container ID to match the bus device to the HID
+     * device in order to get things like DEVPKEY_Device_BusReportedDeviceDesc.
+     * Create a unique container ID to facilitate this.
+     */
+    make_unique_container_id(ext);
 
     /* add to list of pnp devices */
     if (before)
@@ -691,8 +777,36 @@ static NTSTATUS handle_IRP_MN_QUERY_ID(DEVICE_OBJECT *device, IRP *irp)
             TRACE("BusQueryInstanceID\n");
             irp->IoStatus.Information = (ULONG_PTR)get_instance_id(device);
             break;
+        case BusQueryContainerID:
+            TRACE("BusQueryContainerID\n");
+            irp->IoStatus.Information = (ULONG_PTR)get_container_id(device);
+            break;
         default:
             WARN("Unhandled type %08x\n", type);
+            return status;
+    }
+
+    status = irp->IoStatus.Information ? STATUS_SUCCESS : STATUS_NO_MEMORY;
+    return status;
+}
+
+static NTSTATUS handle_IRP_MN_QUERY_DEVICE_TEXT(DEVICE_OBJECT *device, IRP *irp)
+{
+    IO_STACK_LOCATION *irpsp = IoGetCurrentIrpStackLocation( irp );
+    DEVICE_TEXT_TYPE type = irpsp->Parameters.QueryDeviceText.DeviceTextType;
+    NTSTATUS status = irp->IoStatus.Status;
+
+    TRACE("(%p, %p)\n", device, irp);
+
+    switch (type)
+    {
+        case DeviceTextDescription:
+            TRACE("DeviceTextDescription.\n");
+            irp->IoStatus.Information = (ULONG_PTR)get_device_text(device);
+            break;
+
+        default:
+            WARN("Unhandled type %08x.\n", type);
             return status;
     }
 
@@ -1085,9 +1199,9 @@ static void bus_options_init(void)
 {
     options.disable_sdl = !check_bus_option(L"Enable SDL", 1);
     if (options.disable_sdl) TRACE("SDL devices disabled in registry\n");
-    options.disable_hidraw = check_bus_option(L"DisableHidraw", 0);
+    options.disable_hidraw = check_bus_option(L"DisableHidraw", 1);
     if (options.disable_hidraw) TRACE("UDEV hidraw devices disabled in registry\n");
-    options.disable_input = check_bus_option(L"DisableInput", 0);
+    options.disable_input = check_bus_option(L"DisableInput", 1);
     if (options.disable_input) TRACE("UDEV input devices disabled in registry\n");
     options.disable_udevd = check_bus_option(L"DisableUdevd", 0);
     if (options.disable_udevd) TRACE("UDEV udevd use disabled in registry\n");
@@ -1222,6 +1336,10 @@ static NTSTATUS pdo_pnp_dispatch(DEVICE_OBJECT *device, IRP *irp)
     {
         case IRP_MN_QUERY_ID:
             status = handle_IRP_MN_QUERY_ID(device, irp);
+            break;
+
+        case IRP_MN_QUERY_DEVICE_TEXT:
+            status = handle_IRP_MN_QUERY_DEVICE_TEXT(device, irp);
             break;
 
         case IRP_MN_QUERY_CAPABILITIES:

@@ -899,8 +899,8 @@ static void screen_buffer_destroy( struct object *obj )
             queue_host_ioctl( screen_buffer->input->server, IOCTL_CONDRV_CLOSE_OUTPUT,
                               screen_buffer->id, NULL, NULL );
     }
-    if (screen_buffer->fd) release_object( screen_buffer->fd );
     free_async_queue( &screen_buffer->ioctl_q );
+    if (screen_buffer->fd) release_object( screen_buffer->fd );
     if (use_inproc_sync()) close( screen_buffer->inproc_sync );
 }
 

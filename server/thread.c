@@ -88,6 +88,7 @@ struct thread_apc
     struct list         entry;    /* queue linked list */
     struct thread      *caller;   /* thread that queued this apc */
     struct object      *owner;    /* object that queued this apc */
+    struct reserve     *reserve;  /* reserve object associated with apc object */
     int                 executed; /* has it been executed by the client? */
     union apc_call      call;     /* call arguments */
     union apc_result    result;   /* call results once executed */
@@ -413,6 +414,7 @@ static inline void init_thread_structure( struct thread *thread )
     thread->exit_code       = 0;
     thread->priority        = 0;
     thread->base_priority   = 0;
+    thread->disable_boost   = 0;
     thread->suspend         = 0;
     thread->dbg_hidden      = 0;
     thread->bypass_proc_suspend = 0;
@@ -521,6 +523,7 @@ struct thread *create_thread( int fd, struct process *process, const struct secu
     thread->process = (struct process *)grab_object( process );
     thread->desktop = 0;
     thread->affinity = process->affinity;
+    thread->disable_boost = process->disable_boost;
     if (!current) current = thread;
 
     list_add_tail( &thread_list, &thread->entry );
@@ -699,6 +702,7 @@ static void thread_apc_destroy( struct object *obj )
             async_set_result( apc->owner, apc->call.async_io.status, 0 );
         release_object( apc->owner );
     }
+    reserve_obj_unbind( apc->reserve );
 }
 
 /* queue an async procedure call */
@@ -712,6 +716,7 @@ static struct thread_apc *create_apc( struct object *owner, const union apc_call
         else apc->call.type = APC_NONE;
         apc->caller      = NULL;
         apc->owner       = owner;
+        apc->reserve     = NULL;
         apc->executed    = 0;
         apc->result.type = APC_NONE;
         if (owner) grab_object( owner );
@@ -879,6 +884,8 @@ static void set_thread_info( struct thread *thread,
         thread->entry_point = req->entry_point;
     if (req->mask & SET_THREAD_INFO_DBG_HIDDEN)
         thread->dbg_hidden = 1;
+    if (req->mask & SET_THREAD_INFO_DISABLE_BOOST)
+        thread->disable_boost = req->disable_boost;
     if (req->mask & SET_THREAD_INFO_DESCRIPTION)
     {
         WCHAR *desc;
@@ -1793,6 +1800,8 @@ DECL_HANDLER(get_thread_info)
             reply->flags |= GET_THREAD_INFO_FLAG_TERMINATED;
         if (thread->process->running_threads == 1)
             reply->flags |= GET_THREAD_INFO_FLAG_LAST;
+        if (thread->disable_boost)
+            reply->flags |= GET_THREAD_INFO_FLAG_DISABLE_BOOST;
 
         if (thread->desc && get_reply_max_size())
         {
@@ -2012,7 +2021,20 @@ DECL_HANDLER(queue_apc)
     {
     case APC_NONE:
     case APC_USER:
+        if (req->reserve_handle &&
+            !(apc->reserve = reserve_obj_associate_apc( current->process, req->reserve_handle, &apc->obj )))
+        {
+            release_object( apc );
+            return;
+        }
         thread = get_thread_from_handle( req->handle, THREAD_SET_CONTEXT );
+        if (thread && call && call->user.flags & SERVER_USER_APC_SPECIAL && is_wow64_process( thread->process ))
+        {
+            release_object( apc );
+            release_object( thread );
+            set_error( STATUS_NOT_SUPPORTED );
+            return;
+        }
         break;
     case APC_VIRTUAL_ALLOC:
     case APC_VIRTUAL_ALLOC_EX:

@@ -196,6 +196,9 @@ extern void dump_objects(void);
 extern void close_objects(void);
 #endif
 
+struct reserve *reserve_obj_associate_apc( struct process *process, obj_handle_t handle, struct object *apc );
+void reserve_obj_unbind( struct reserve *reserve );
+
 static inline void make_object_permanent( struct object *obj ) { obj->is_permanent = 1; }
 static inline void make_object_temporary( struct object *obj ) { obj->is_permanent = 0; }
 
@@ -301,7 +304,7 @@ extern struct atom_table *get_global_atom_table(void);
 extern struct atom_table *get_user_atom_table(void);
 extern atom_t add_atom( struct atom_table *table, const struct unicode_str *str );
 extern atom_t find_atom( struct atom_table *table, const struct unicode_str *str );
-extern int grab_atom( struct atom_table *table, atom_t atom );
+extern atom_t grab_atom( struct atom_table *table, atom_t atom );
 extern void release_atom( struct atom_table *table, atom_t atom );
 
 /* directory functions */

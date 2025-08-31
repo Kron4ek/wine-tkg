@@ -5552,8 +5552,8 @@ static void test_GetFinalPathNameByHandleW(void)
     static WCHAR prefix[] = {'G','e','t','F','i','n','a','l','P','a','t','h',
                              'N','a','m','e','B','y','H','a','n','d','l','e','W','\0'};
     static WCHAR dos_prefix[] = {'\\','\\','?','\\','\0'};
-    WCHAR temp_path[MAX_PATH], test_path[MAX_PATH];
-    WCHAR long_path[MAX_PATH], result_path[MAX_PATH];
+    WCHAR temp_path[MAX_PATH], test_path[MAX_PATH * 2];
+    WCHAR long_path[MAX_PATH], result_path[MAX_PATH * 2];
     WCHAR dos_path[MAX_PATH + sizeof(dos_prefix)];
     WCHAR drive_part[MAX_PATH];
     WCHAR *file_part;
@@ -5562,7 +5562,7 @@ static void test_GetFinalPathNameByHandleW(void)
     BOOL success;
     HANDLE file;
     DWORD count;
-    UINT ret;
+    UINT i, ret;
 
     if (!pGetFinalPathNameByHandleW)
     {
@@ -5691,6 +5691,23 @@ static void test_GetFinalPathNameByHandleW(void)
     ok(count == lstrlenW(dos_path), "Expected length %u, got %lu\n", lstrlenW(dos_path), count);
     ok(lstrcmpiW(dos_path, result_path) == 0, "Expected %s, got %s\n",
        wine_dbgstr_w(dos_path), wine_dbgstr_w(result_path));
+    CloseHandle(file);
+
+    lstrcpyW(test_path, L"\\\\?\\");
+    lstrcatW(test_path, temp_path);
+    for (i = 0; i < ARRAY_SIZE(long_path) - 5; i++) long_path[i] = 'a';
+    long_path[i] = 0;
+    lstrcatW(test_path, long_path);
+
+    file = CreateFileW(test_path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                       CREATE_ALWAYS, FILE_FLAG_DELETE_ON_CLOSE, 0);
+    ok(file != INVALID_HANDLE_VALUE, "CreateFileW error %lu\n", GetLastError());
+
+    memset(result_path, 0xcb, sizeof(result_path));
+    count = pGetFinalPathNameByHandleW(file, result_path, ARRAY_SIZE(result_path), FILE_NAME_NORMALIZED);
+    ok(count == lstrlenW(test_path), "Expected length %u, got %lu\n", lstrlenW(test_path), count);
+    ok(lstrcmpiW(test_path, result_path) == 0, "Expected %s, got %s\n",
+       wine_dbgstr_w(test_path), wine_dbgstr_w(result_path));
     CloseHandle(file);
 }
 
@@ -6790,6 +6807,64 @@ static void test_symbolic_link(void)
     ok( ret == TRUE, "got error %lu\n", GetLastError() );
 }
 
+static void test_posix_semantics(void)
+{
+    static const DWORD flags[] = { FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_BACKUP_SEMANTICS | FILE_ATTRIBUTE_DIRECTORY,
+                                   FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_POSIX_SEMANTICS | FILE_ATTRIBUTE_DIRECTORY,
+                                   FILE_FLAG_POSIX_SEMANTICS | FILE_ATTRIBUTE_DIRECTORY };
+    static const struct
+    {
+        DWORD disposition, cleanup;
+    } td[] =
+    {
+        { CREATE_NEW, 1 },
+        { OPEN_ALWAYS, 0 },
+        { TRUNCATE_EXISTING, 0 },
+        { CREATE_ALWAYS, 1 }
+    };
+    HANDLE hFile, hFile2;
+    WCHAR temp_path[MAX_PATH];
+    WCHAR filename[MAX_PATH];
+    DWORD ret, i, j;
+    BY_HANDLE_FILE_INFORMATION info;
+
+    GetTempPathW(MAX_PATH, temp_path);
+    GetTempFileNameW(temp_path, L"psx", 0, filename);
+    DeleteFileW(filename);
+
+    for (i = 0; i < ARRAY_SIZE(td); i++)
+    {
+        for (j = 0; j < ARRAY_SIZE(flags); j++)
+        {
+            winetest_push_context("%lu/%lu", i, j);
+
+            hFile = CreateFileW(filename, GENERIC_WRITE, FILE_SHARE_WRITE, NULL, td[i].disposition, flags[j], NULL);
+            ok(hFile != INVALID_HANDLE_VALUE, "CreateFileW error %lu\n", GetLastError());
+            ret = GetFileInformationByHandle(hFile, &info);
+            ok(ret, "GetFileInformationByHandle error %lu\n", GetLastError());
+            if (td[i].disposition == CREATE_NEW && flags[j] == (FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_POSIX_SEMANTICS | FILE_ATTRIBUTE_DIRECTORY))
+                ok(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY, "created file is not a directory\n");
+            else
+                ok(!(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY), "created file is a directory\n");
+
+            hFile2 = CreateFileW(filename, GENERIC_WRITE, FILE_SHARE_WRITE, NULL, OPEN_EXISTING, flags[j], NULL);
+            ok(hFile2 != INVALID_HANDLE_VALUE, "CreateFileW error %lu\n", GetLastError());
+            CloseHandle(hFile2);
+            CloseHandle(hFile);
+
+            if (td[i].cleanup)
+            {
+                if (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                    RemoveDirectoryW(filename);
+                else
+                    DeleteFileW(filename);
+            }
+
+            winetest_pop_context();
+        }
+    }
+}
+
 START_TEST(file)
 {
     char temp_path[MAX_PATH];
@@ -6869,4 +6944,5 @@ START_TEST(file)
     test_move_file();
     test_eof();
     test_symbolic_link();
+    test_posix_semantics();
 }

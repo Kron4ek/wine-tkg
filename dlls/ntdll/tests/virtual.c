@@ -298,6 +298,7 @@ static void check_region_size_(void *p, SIZE_T s, unsigned int line)
 
 static void test_NtAllocateVirtualMemoryEx(void)
 {
+    MEMORY_REGION_INFORMATION mri;
     MEMORY_BASIC_INFORMATION mbi;
     MEM_EXTENDED_PARAMETER ext[2];
     char *p, *p1, *p2, *p3;
@@ -615,6 +616,35 @@ static void test_NtAllocateVirtualMemoryEx(void)
     ok(p2 == p1 + size / 2, "Unexpected addr %p, expected %p.\n", p2, p1 + size / 2);
     check_region_size(p1, size / 2);
     check_region_size(p2, size / 2);
+
+    status = NtQueryVirtualMemory( NtCurrentProcess(), p1, MemoryBasicInformation, &mbi, sizeof(mbi), NULL );
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status );
+    ok( mbi.AllocationBase == p1, "got %p.\n", mbi.AllocationBase );
+    ok( mbi.Type == MEM_PRIVATE, "got %#lx.\n", mbi.Type );
+    ok( mbi.State == MEM_RESERVE, "got %#lx.\n", mbi.State );
+    ok( mbi.RegionSize == size / 2, "Unexpected size %Iu, expected %Iu.\n", mbi.RegionSize, size / 2 );
+    ok( mbi.AllocationProtect == PAGE_NOACCESS, "got %#lx.\n", mbi.AllocationProtect );
+    status = NtQueryVirtualMemory( NtCurrentProcess(), p1, MemoryRegionInformation, &mri, sizeof(mri), NULL );
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status );
+    ok( mri.AllocationBase == p1, "got %p.\n", mri.AllocationBase );
+    ok( mri.RegionSize == size / 2, "Unexpected size %Iu, expected %Iu.\n", mri.RegionSize, size / 2 );
+    ok( !mri.CommitSize, "Unexpected size %Iu.\n", mri.CommitSize );
+    ok( mri.AllocationProtect == PAGE_NOACCESS, "got %#lx.\n", mri.AllocationProtect );
+
+    status = NtQueryVirtualMemory( NtCurrentProcess(), p2, MemoryBasicInformation, &mbi, sizeof(mbi), NULL );
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status );
+    ok( mbi.AllocationBase == p2, "got %p.\n", mbi.AllocationBase );
+    ok( mbi.Type == MEM_PRIVATE, "got %#lx.\n", mbi.Type );
+    ok( mbi.State == MEM_RESERVE, "got %#lx.\n", mbi.State );
+    ok( mbi.RegionSize == size / 2, "Unexpected size %Iu, expected %Iu.\n", mbi.RegionSize, size / 2 );
+    ok( mbi.AllocationProtect == PAGE_NOACCESS, "got %#lx.\n", mbi.AllocationProtect );
+    status = NtQueryVirtualMemory( NtCurrentProcess(), p2, MemoryRegionInformation, &mri, sizeof(mri), NULL );
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status );
+    ok( mri.AllocationBase == p2, "got %p.\n", mri.AllocationBase );
+    ok( mri.RegionSize == size / 2, "Unexpected size %Iu, expected %Iu.\n", mri.RegionSize, size / 2 );
+    ok( !mri.CommitSize, "Unexpected size %Iu.\n", mri.CommitSize );
+    ok( mri.AllocationProtect == PAGE_NOACCESS, "got %#lx.\n", mri.AllocationProtect );
+
     status = NtFreeVirtualMemory(NtCurrentProcess(), (void **)&p1, &size2, MEM_RELEASE);
     ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
     ok(size2 == 0x8000, "Unexpected size %#Ix.\n", size2);
@@ -1961,8 +1991,6 @@ static void test_NtMapViewOfSectionEx(void)
     CloseHandle(process);
 }
 
-#define SUPPORTED_XSTATE_FEATURES ((1 << XSTATE_LEGACY_FLOATING_POINT) | (1 << XSTATE_LEGACY_SSE) | (1 << XSTATE_AVX))
-
 static void test_user_shared_data(void)
 {
     struct old_xstate_configuration
@@ -1974,13 +2002,13 @@ static void test_user_shared_data(void)
         XSTATE_FEATURE Features[MAXIMUM_XSTATE_FEATURES];
     };
 
-    static const ULONG feature_offsets[] =
+    ULONG feature_offsets[] =
     {
             0,
             160, /*offsetof(XMM_SAVE_AREA32, XmmRegisters)*/
             512  /* sizeof(XMM_SAVE_AREA32) */ + offsetof(XSTATE, YmmContext),
     };
-    static const ULONG feature_sizes[] =
+    ULONG feature_sizes[] =
     {
             160,
             256, /*sizeof(M128A) * 16 */
@@ -1989,6 +2017,8 @@ static void test_user_shared_data(void)
     const KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
     XSTATE_CONFIGURATION xstate = user_shared_data->XState;
     ULONG64 feature_mask;
+    ULONG64 supported_xstate_features = (1 << XSTATE_LEGACY_FLOATING_POINT) | (1 << XSTATE_LEGACY_SSE) | (1 << XSTATE_AVX);
+    ULONG xstate_part_size = sizeof(XSTATE);
     unsigned int i;
 
     ok(user_shared_data->NumberOfPhysicalPages == sbi.MmNumberOfPhysicalPages,
@@ -2030,6 +2060,15 @@ static void test_user_shared_data(void)
         return;
     }
 
+    if (!(xstate.EnabledFeatures & (1 << XSTATE_AVX)))
+    {
+        trace("AVX not present\n");
+        feature_offsets[2] = 0;
+        feature_sizes[2] = 0;
+        xstate_part_size = offsetof( XSTATE, YmmContext );
+        supported_xstate_features = (1 << XSTATE_LEGACY_FLOATING_POINT) | (1 << XSTATE_LEGACY_SSE);
+    }
+
     trace("XState EnabledFeatures %#I64x, EnabledSupervisorFeatures %#I64x, EnabledVolatileFeatures %I64x.\n",
             xstate.EnabledFeatures, xstate.EnabledSupervisorFeatures, xstate.EnabledVolatileFeatures);
     feature_mask = pRtlGetEnabledExtendedFeatures(0);
@@ -2040,16 +2079,17 @@ static void test_user_shared_data(void)
     feature_mask = pGetEnabledXStateFeatures();
     ok(feature_mask == (xstate.EnabledFeatures | xstate.EnabledSupervisorFeatures), "Got unexpected feature_mask %s.\n",
             wine_dbgstr_longlong(feature_mask));
-    ok((xstate.EnabledFeatures & SUPPORTED_XSTATE_FEATURES) == SUPPORTED_XSTATE_FEATURES,
+    ok((xstate.EnabledFeatures & supported_xstate_features) == supported_xstate_features,
             "Got unexpected EnabledFeatures %s.\n", wine_dbgstr_longlong(xstate.EnabledFeatures));
-    ok((xstate.EnabledVolatileFeatures & SUPPORTED_XSTATE_FEATURES) == (xstate.EnabledFeatures & SUPPORTED_XSTATE_FEATURES),
+    ok((xstate.EnabledVolatileFeatures & supported_xstate_features) == (xstate.EnabledFeatures & supported_xstate_features),
             "Got unexpected EnabledVolatileFeatures %s.\n", wine_dbgstr_longlong(xstate.EnabledVolatileFeatures));
-    ok(xstate.Size >= 512 + sizeof(XSTATE), "Got unexpected Size %lu.\n", xstate.Size);
+    ok(xstate.Size >= 512 + xstate_part_size,
+            "Got unexpected Size %lu, expected %lu.\n", xstate.Size, (ULONG)(512 + xstate_part_size));
     if (xstate.CompactionEnabled)
         ok(xstate.OptimizedSave, "Got zero OptimizedSave with compaction enabled.\n");
     ok(!xstate.AlignedFeatures, "Got unexpected AlignedFeatures %s.\n",
             wine_dbgstr_longlong(xstate.AlignedFeatures));
-    ok(xstate.AllFeatureSize >= 512 + sizeof(XSTATE)
+    ok(xstate.AllFeatureSize >= 512 + xstate_part_size
             || !xstate.AllFeatureSize /* win8 on CPUs without XSAVEC */,
             "Got unexpected AllFeatureSize %lu.\n", xstate.AllFeatureSize);
 
@@ -2707,7 +2747,8 @@ static void test_query_region_information(void)
     SIZE_T len, size;
     NTSTATUS status;
     HANDLE mapping;
-    void *ptr;
+    void *ptr, *addr;
+    ULONG old;
 
     size = 0x10000;
     ptr = NULL;
@@ -2730,6 +2771,10 @@ static void test_query_region_information(void)
     memset(&info, 0x11, sizeof(info));
     status = NtQueryVirtualMemory(NtCurrentProcess(), ptr, MemoryRegionInformation, &info, sizeof(info), &len);
     ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+    ok(len == sizeof(info) ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId)) /* <= Win10-1909 */ ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, CommitSize)) /* Win7 */,
+       "Unexpected len %Ix\n", len);
     ok(info.AllocationBase == ptr, "Unexpected base %p.\n", info.AllocationBase);
     ok(info.AllocationProtect == PAGE_READWRITE, "Unexpected protection %lu.\n", info.AllocationProtect);
     ok(!info.Private, "Unexpected flag %d.\n", info.Private);
@@ -2739,6 +2784,8 @@ static void test_query_region_information(void)
     ok(!info.MappedPhysical, "Unexpected flag %d.\n", info.MappedPhysical);
     ok(!info.DirectMapped, "Unexpected flag %d.\n", info.DirectMapped);
     ok(info.RegionSize == size, "Unexpected region size.\n");
+    if (len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId))
+        ok(!info.CommitSize, "Unexpected commit size %#Ix.\n", info.CommitSize);
 
     size = 0;
     status = NtFreeVirtualMemory(NtCurrentProcess(), &ptr, &size, MEM_RELEASE);
@@ -2750,9 +2797,14 @@ static void test_query_region_information(void)
     status = NtAllocateVirtualMemory(NtCurrentProcess(), &ptr, 0, &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
 
+    len = 0;
     memset(&info, 0x11, sizeof(info));
     status = NtQueryVirtualMemory(NtCurrentProcess(), ptr, MemoryRegionInformation, &info, sizeof(info), &len);
     ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+    ok(len == sizeof(info) ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId)) /* <= Win10-1909 */ ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, CommitSize)) /* Win7 */,
+       "Unexpected len %Ix\n", len);
     ok(info.AllocationBase == ptr, "Unexpected base %p.\n", info.AllocationBase);
     ok(info.AllocationProtect == PAGE_READWRITE, "Unexpected protection %lu.\n", info.AllocationProtect);
     ok(!info.Private, "Unexpected flag %d.\n", info.Private);
@@ -2762,13 +2814,64 @@ static void test_query_region_information(void)
     ok(!info.MappedPhysical, "Unexpected flag %d.\n", info.MappedPhysical);
     ok(!info.DirectMapped, "Unexpected flag %d.\n", info.DirectMapped);
     ok(info.RegionSize == size, "Unexpected region size.\n");
+    if (len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId))
+        ok(info.CommitSize == size, "Unexpected commit size %#Ix.\n", info.CommitSize);
+
+    len = 0;
+    addr = (char *)ptr + 0x1000;
+    size = 0x1000;
+    status = NtProtectVirtualMemory(NtCurrentProcess(), &addr, &size, PAGE_NOACCESS, &old );
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+    status = NtQueryVirtualMemory(NtCurrentProcess(), ptr, MemoryRegionInformation, &info, sizeof(info), &len);
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+    ok(len == sizeof(info) ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId)) /* <= Win10-1909 */ ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, CommitSize)) /* Win7 */,
+       "Unexpected len %Ix\n", len);
+    ok(info.AllocationBase == ptr, "Unexpected base %p.\n", info.AllocationBase);
+    ok(info.AllocationProtect == PAGE_READWRITE, "Unexpected protection %lu.\n", info.AllocationProtect);
+    ok(!info.Private, "Unexpected flag %d.\n", info.Private);
+    ok(!info.MappedDataFile, "Unexpected flag %d.\n", info.MappedDataFile);
+    ok(!info.MappedImage, "Unexpected flag %d.\n", info.MappedImage);
+    ok(!info.MappedPageFile, "Unexpected flag %d.\n", info.MappedPageFile);
+    ok(!info.MappedPhysical, "Unexpected flag %d.\n", info.MappedPhysical);
+    ok(!info.DirectMapped, "Unexpected flag %d.\n", info.DirectMapped);
+    ok(info.RegionSize == 0x10000, "Unexpected region size %#Ix.\n", info.RegionSize);
+    if (len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId))
+        ok(info.CommitSize == 0x10000, "Unexpected commit size %#Ix.\n", info.CommitSize);
+
+    len = 0;
+    status = NtQueryVirtualMemory(NtCurrentProcess(), (char *)ptr + 0x1000, MemoryRegionInformation, &info, sizeof(info), &len);
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+    ok(len == sizeof(info) ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId)) /* <= Win10-1909 */ ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, CommitSize)) /* Win7 */,
+       "Unexpected len %Ix\n", len);
+    ok(info.AllocationBase == ptr, "Unexpected base %p.\n", info.AllocationBase);
+    ok(info.AllocationProtect == PAGE_READWRITE, "Unexpected protection %lu.\n", info.AllocationProtect);
+    ok(!info.Private, "Unexpected flag %d.\n", info.Private);
+    ok(!info.MappedDataFile, "Unexpected flag %d.\n", info.MappedDataFile);
+    ok(!info.MappedImage, "Unexpected flag %d.\n", info.MappedImage);
+    ok(!info.MappedPageFile, "Unexpected flag %d.\n", info.MappedPageFile);
+    ok(!info.MappedPhysical, "Unexpected flag %d.\n", info.MappedPhysical);
+    ok(!info.DirectMapped, "Unexpected flag %d.\n", info.DirectMapped);
+    ok(info.RegionSize == 0x10000, "Unexpected region size %#Ix.\n", info.RegionSize);
+    if (len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId))
+        ok(info.CommitSize == 0x10000, "Unexpected commit size %#Ix.\n", info.CommitSize);
 
     size = 0;
     status = NtFreeVirtualMemory(NtCurrentProcess(), &ptr, &size, MEM_RELEASE);
     ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
 
+    memset(&info, 0xcc, sizeof(info));
+    status = NtQueryVirtualMemory(NtCurrentProcess(), ptr, MemoryRegionInformation, &info, sizeof(info), &len);
+    ok(status == STATUS_INVALID_ADDRESS, "Unexpected status %08lx.\n", status);
+    ok(info.AllocationBase == (void *)(ULONG_PTR)0xcccccccccccccccc, "got %p.\n", info.AllocationBase);
+    ok(info.AllocationProtect == 0xcccccccc, "Unexpected protection %lu.\n", info.AllocationProtect);
+    ok(info.RegionType == 0xcccccccc, "got %#lx.\n", info.RegionType);
+
     /* Pagefile mapping */
-    mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096, NULL);
+    mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE | SEC_COMMIT, 0, 4096, NULL);
     ok(mapping != 0, "CreateFileMapping failed\n");
 
     ptr = NULL;
@@ -2777,9 +2880,14 @@ static void test_query_region_information(void)
     status = NtMapViewOfSection(mapping, NtCurrentProcess(), &ptr, 0, 0, &offset, &size, 1, 0, PAGE_READONLY);
     ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
 
+    len = 0;
     memset(&info, 0x11, sizeof(info));
     status = NtQueryVirtualMemory(NtCurrentProcess(), ptr, MemoryRegionInformation, &info, sizeof(info), &len);
     ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+    ok(len == sizeof(info) ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId)) /* <= Win10-1909 */ ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, CommitSize)) /* Win7 */,
+       "Unexpected len %Ix\n", len);
     ok(info.AllocationBase == ptr, "Unexpected base %p.\n", info.AllocationBase);
     ok(info.AllocationProtect == PAGE_READONLY, "Unexpected protection %lu.\n", info.AllocationProtect);
     ok(!info.Private, "Unexpected flag %d.\n", info.Private);
@@ -2789,6 +2897,88 @@ static void test_query_region_information(void)
     ok(!info.MappedPhysical, "Unexpected flag %d.\n", info.MappedPhysical);
     ok(!info.DirectMapped, "Unexpected flag %d.\n", info.DirectMapped);
     ok(info.RegionSize == 4096, "Unexpected region size.\n");
+    if (len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId))
+        ok(!info.CommitSize, "Unexpected commit size %#Ix.\n", info.CommitSize);
+
+    status = NtUnmapViewOfSection(NtCurrentProcess(), ptr);
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+
+    ptr = NULL;
+    size = 0;
+    offset.QuadPart = 0;
+    status = NtMapViewOfSection(mapping, NtCurrentProcess(), &ptr, 0, 0, &offset, &size, 1, 0, PAGE_WRITECOPY);
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+
+    len = 0;
+    memset(&info, 0x11, sizeof(info));
+    status = NtQueryVirtualMemory(NtCurrentProcess(), ptr, MemoryRegionInformation, &info, sizeof(info), &len);
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+    ok(len == sizeof(info) ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId)) /* <= Win10-1909 */ ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, CommitSize)) /* Win7 */,
+       "Unexpected len %Ix\n", len);
+    ok(info.AllocationBase == ptr, "Unexpected base %p.\n", info.AllocationBase);
+    ok(info.AllocationProtect == PAGE_WRITECOPY, "Unexpected protection %lu.\n", info.AllocationProtect);
+    ok(!info.Private, "Unexpected flag %d.\n", info.Private);
+    ok(!info.MappedDataFile, "Unexpected flag %d.\n", info.MappedDataFile);
+    ok(!info.MappedImage, "Unexpected flag %d.\n", info.MappedImage);
+    ok(!info.MappedPageFile, "Unexpected flag %d.\n", info.MappedPageFile);
+    ok(!info.MappedPhysical, "Unexpected flag %d.\n", info.MappedPhysical);
+    ok(!info.DirectMapped, "Unexpected flag %d.\n", info.DirectMapped);
+    ok(info.RegionSize == 4096, "Unexpected region size.\n");
+    if (len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId))
+        ok(info.CommitSize == 4096, "Unexpected commit size %#Ix.\n", info.CommitSize);
+
+    len = 0;
+    *(volatile int *)ptr = 1;
+    memset(&info, 0x11, sizeof(info));
+    status = NtQueryVirtualMemory(NtCurrentProcess(), ptr, MemoryRegionInformation, &info, sizeof(info), &len);
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+    ok(len == sizeof(info) ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId)) /* <= Win10-1909 */ ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, CommitSize)) /* Win7 */,
+       "Unexpected len %Ix\n", len);
+    ok(info.AllocationBase == ptr, "Unexpected base %p.\n", info.AllocationBase);
+    ok(info.AllocationProtect == PAGE_WRITECOPY, "Unexpected protection %lu.\n", info.AllocationProtect);
+    ok(!info.Private, "Unexpected flag %d.\n", info.Private);
+    ok(!info.MappedDataFile, "Unexpected flag %d.\n", info.MappedDataFile);
+    ok(!info.MappedImage, "Unexpected flag %d.\n", info.MappedImage);
+    ok(!info.MappedPageFile, "Unexpected flag %d.\n", info.MappedPageFile);
+    ok(!info.MappedPhysical, "Unexpected flag %d.\n", info.MappedPhysical);
+    ok(!info.DirectMapped, "Unexpected flag %d.\n", info.DirectMapped);
+    ok(info.RegionSize == 4096, "Unexpected region size.\n");
+    if (len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId))
+        ok(info.CommitSize == 4096, "Unexpected commit size %#Ix.\n", info.CommitSize);
+
+    status = NtUnmapViewOfSection(NtCurrentProcess(), ptr);
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+
+    ptr = NULL;
+    size = 0;
+    offset.QuadPart = 0;
+    status = NtMapViewOfSection(mapping, NtCurrentProcess(), &ptr, 0, 0, &offset, &size, 1, 0, PAGE_READWRITE);
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+    *(volatile int *)ptr = 1;
+
+    len = 0;
+    memset(&info, 0x11, sizeof(info));
+    status = NtQueryVirtualMemory(NtCurrentProcess(), ptr, MemoryRegionInformation, &info, sizeof(info), &len);
+    ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);
+    ok(len == sizeof(info) ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId)) /* <= Win10-1909 */ ||
+       broken(len >= offsetof(MEMORY_REGION_INFORMATION, CommitSize)) /* Win7 */,
+       "Unexpected len %Ix\n", len);
+    ok(info.AllocationBase == ptr, "Unexpected base %p.\n", info.AllocationBase);
+    ok(info.AllocationProtect == PAGE_READWRITE, "Unexpected protection %lu.\n", info.AllocationProtect);
+    ok(!info.Private, "Unexpected flag %d.\n", info.Private);
+    ok(!info.MappedDataFile, "Unexpected flag %d.\n", info.MappedDataFile);
+    ok(!info.MappedImage, "Unexpected flag %d.\n", info.MappedImage);
+    ok(!info.MappedPageFile, "Unexpected flag %d.\n", info.MappedPageFile);
+    ok(!info.MappedPhysical, "Unexpected flag %d.\n", info.MappedPhysical);
+    ok(!info.DirectMapped, "Unexpected flag %d.\n", info.DirectMapped);
+    ok(info.RegionSize == 4096, "Unexpected region size.\n");
+    if (len >= offsetof(MEMORY_REGION_INFORMATION, PartitionId))
+        ok(!info.CommitSize, "Unexpected commit size %#Ix.\n", info.CommitSize);
 
     status = NtUnmapViewOfSection(NtCurrentProcess(), ptr);
     ok(status == STATUS_SUCCESS, "Unexpected status %08lx.\n", status);

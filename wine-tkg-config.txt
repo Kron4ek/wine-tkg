@@ -1,18 +1,15 @@
-# Last wine-tkg-staging-ntsync-git configuration - Sat Aug 16 07:14:06 PM UTC 2025 :
+# Last wine-tkg-staging-ntsync-git configuration - Sun Aug 31 09:57:26 AM UTC 2025 :
 
 Local cfg files used
 
-Wine (plain) version: 10.13.r0.g75b9e1722d1
-Using wine-staging patchset (version 10.13.r0.ga8a6d7b0)
+Wine (plain) version: 10.14.r0.g1d1e5fb3e51
+Using wine-staging patchset (version 10.14.r0.ge004127f)
 
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
 Done applying backports hotfixes (if any) - list available in prepare.log
 Done applying reverting hotfixes (if any) - list available in prepare.log
 
-1a139434dcfa7857da3970dfc34606611149ae59 reverted 
-92113c9f48b78928a838ba3d1d7ad2da3015d035 reverted 
-23511fcc583b6d8b52c6ed5b2bb50b9797cd6ada reverted 
 CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
 Staging overrides, if any: 
@@ -24,6 +21,7 @@ LAA-unix-staging-wow64.patch -- ( Applied large address aware override support )
 ntsync5-staging.patch -- ( Using ntsync patchset )
 proton-win10-default.patch -- ( Enforce win10 as default wine version )
 proton_battleye.patch -- ( Add support for Proton's Battleye runtime )
+Revert-ntdll-Get-rid-of-the-wine_nt_to_unix_file_nam.patch -- ( Revert ntdll: Get rid of the wine_nt_to_unix_file_name syscall )
 proton-eac_bridge.patch -- ( Add support for Proton's EAC bridge )
 wow64_loader_hack.patch -- ( Hack around loader name for EAC on 10.2+ )
 
@@ -32,6 +30,7 @@ Applied hotfix a608ef1.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
 Applied hotfix opencl-fixup.mypatch
 Applied hotfix 0001-wine-staging-Fix-build.mypatch
+Applied your own patch disable-hidraw-and-evdev.mypatch
 Applied your own patch hags.mypatch
 Applied your own patch win32u-hdr.mypatch
 

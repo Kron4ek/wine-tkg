@@ -57,6 +57,7 @@ struct process
     affinity_t           affinity;        /* process affinity mask */
     int                  priority;        /* priority class */
     int                  base_priority;   /* base priority to calculate thread priority */
+    int                  disable_boost;   /* disable priority boost */
     int                  suspend;         /* global process suspend count */
     unsigned int         is_system:1;     /* is it a system process? */
     unsigned int         debug_children:1;/* also debug all child processes */
@@ -143,6 +144,11 @@ static inline process_id_t get_process_id( struct process *process ) { return pr
 static inline int is_process_init_done( struct process *process )
 {
     return process->startup_state == STARTUP_DONE;
+}
+
+static inline int is_wow64_process( struct process *process )
+{
+    return is_machine_64bit( native_machine ) && !is_machine_64bit( process->machine );
 }
 
 static const unsigned int default_session_id = 1;

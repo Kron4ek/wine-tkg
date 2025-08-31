@@ -1809,6 +1809,76 @@ struct hlsl_ir_node *hlsl_new_null_constant(struct hlsl_ctx *ctx, const struct v
     return hlsl_new_constant(ctx, ctx->builtin_types.null, &value, loc);
 }
 
+bool hlsl_constant_is_zero(struct hlsl_ir_constant *c)
+{
+    struct hlsl_type *data_type = c->node.data_type;
+    unsigned int k;
+
+    for (k = 0; k < data_type->e.numeric.dimx; ++k)
+    {
+        switch (data_type->e.numeric.type)
+        {
+            case HLSL_TYPE_FLOAT:
+            case HLSL_TYPE_HALF:
+                if (c->value.u[k].f != 0.0f)
+                    return false;
+                break;
+
+            case HLSL_TYPE_DOUBLE:
+                if (c->value.u[k].d != 0.0)
+                    return false;
+                break;
+
+            case HLSL_TYPE_UINT:
+            case HLSL_TYPE_INT:
+            case HLSL_TYPE_BOOL:
+            case HLSL_TYPE_MIN16UINT:
+                if (c->value.u[k].u != 0)
+                    return false;
+                break;
+        }
+    }
+
+    return true;
+}
+
+bool hlsl_constant_is_one(struct hlsl_ir_constant *c)
+{
+    struct hlsl_type *data_type = c->node.data_type;
+    unsigned int k;
+
+    for (k = 0; k < data_type->e.numeric.dimx; ++k)
+    {
+        switch (data_type->e.numeric.type)
+        {
+            case HLSL_TYPE_FLOAT:
+            case HLSL_TYPE_HALF:
+                if (c->value.u[k].f != 1.0f)
+                    return false;
+                break;
+
+            case HLSL_TYPE_DOUBLE:
+                if (c->value.u[k].d != 1.0)
+                    return false;
+                break;
+
+            case HLSL_TYPE_UINT:
+            case HLSL_TYPE_INT:
+            case HLSL_TYPE_MIN16UINT:
+                if (c->value.u[k].u != 1)
+                    return false;
+                break;
+
+            case HLSL_TYPE_BOOL:
+                if (c->value.u[k].u != ~0)
+                    return false;
+                break;
+        }
+    }
+
+    return true;
+}
+
 static struct hlsl_ir_node *hlsl_new_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
         struct hlsl_ir_node *operands[HLSL_MAX_OPERANDS],
         struct hlsl_type *data_type, const struct vkd3d_shader_location *loc)

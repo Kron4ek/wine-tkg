@@ -491,10 +491,13 @@ enum apc_type
 struct user_apc
 {
     enum apc_type    type;
-    int              __pad;
+    unsigned int     flags;
     client_ptr_t     func;
     apc_param_t      args[3];
 };
+
+#define SERVER_USER_APC_SPECIAL               0x01
+#define SERVER_USER_APC_CALLBACK_DATA_CONTEXT 0x02
 
 union apc_call
 {
@@ -966,6 +969,7 @@ typedef volatile struct
     struct shared_cursor cursor;
     unsigned char        keystate[256];
     unsigned __int64     monitor_serial;
+    unsigned __int64     keystate_serial;
 } desktop_shm_t;
 
 typedef volatile struct
@@ -991,6 +995,7 @@ typedef volatile struct
     int                  cursor_count;
     unsigned char        keystate[256];
     int                  keystate_lock;
+    unsigned __int64     keystate_serial;
 } input_shm_t;
 
 typedef volatile struct
@@ -1215,8 +1220,9 @@ struct get_process_info_reply
     timeout_t    end_time;
     unsigned int session_id;
     int          exit_code;
-    int          priority;
+    unsigned short priority;
     unsigned short base_priority;
+    unsigned short disable_boost;
     unsigned short machine;
     /* VARARG(image,pe_image_info); */
 };
@@ -1277,11 +1283,13 @@ struct set_process_info_request
 {
     struct request_header __header;
     obj_handle_t handle;
+    affinity_t   affinity;
     int          priority;
     int          base_priority;
-    affinity_t   affinity;
+    int          disable_boost;
     obj_handle_t token;
     int          mask;
+    char __pad_44[4];
 };
 struct set_process_info_reply
 {
@@ -1289,8 +1297,9 @@ struct set_process_info_reply
 };
 #define SET_PROCESS_INFO_PRIORITY      0x01
 #define SET_PROCESS_INFO_BASE_PRIORITY 0x02
-#define SET_PROCESS_INFO_AFFINITY      0x04
-#define SET_PROCESS_INFO_TOKEN         0x08
+#define SET_PROCESS_INFO_DISABLE_BOOST 0x04
+#define SET_PROCESS_INFO_AFFINITY      0x08
+#define SET_PROCESS_INFO_TOKEN         0x10
 
 
 
@@ -1317,9 +1326,10 @@ struct get_thread_info_reply
     data_size_t  desc_len;
     /* VARARG(desc,unicode_str); */
 };
-#define GET_THREAD_INFO_FLAG_DBG_HIDDEN 0x01
-#define GET_THREAD_INFO_FLAG_TERMINATED 0x02
-#define GET_THREAD_INFO_FLAG_LAST       0x04
+#define GET_THREAD_INFO_FLAG_DBG_HIDDEN    0x01
+#define GET_THREAD_INFO_FLAG_TERMINATED    0x02
+#define GET_THREAD_INFO_FLAG_LAST          0x04
+#define GET_THREAD_INFO_FLAG_DISABLE_BOOST 0x08
 
 
 
@@ -1348,8 +1358,10 @@ struct set_thread_info_request
     affinity_t   affinity;
     client_ptr_t entry_point;
     obj_handle_t token;
+    int          disable_boost;
     unsigned int mask;
     /* VARARG(desc,unicode_str); */
+    char __pad_52[4];
 };
 struct set_thread_info_reply
 {
@@ -1362,6 +1374,7 @@ struct set_thread_info_reply
 #define SET_THREAD_INFO_ENTRYPOINT      0x10
 #define SET_THREAD_INFO_DESCRIPTION     0x20
 #define SET_THREAD_INFO_DBG_HIDDEN      0x40
+#define SET_THREAD_INFO_DISABLE_BOOST   0x80
 
 
 
@@ -1397,7 +1410,9 @@ struct queue_apc_request
 {
     struct request_header __header;
     obj_handle_t handle;
+    obj_handle_t reserve_handle;
     /* VARARG(call,apc_call); */
+    char __pad_20[4];
 };
 struct queue_apc_reply
 {
@@ -4522,32 +4537,29 @@ struct set_class_info_request
 {
     struct request_header __header;
     user_handle_t  window;
-    unsigned int   flags;
-    atom_t         atom;
-    unsigned int   style;
-    int            win_extra;
-    mod_handle_t   instance;
-    int            extra_offset;
-    data_size_t    extra_size;
-    lparam_t       extra_value;
+    int            offset;
+    data_size_t    size;
+    lparam_t       new_info;
 };
 struct set_class_info_reply
 {
     struct reply_header __header;
-    atom_t         old_atom;
-    atom_t         base_atom;
-    mod_handle_t   old_instance;
-    lparam_t       old_extra_value;
-    unsigned int   old_style;
-    int            old_extra;
-    int            old_win_extra;
-    char __pad_44[4];
+    lparam_t       old_info;
 };
-#define SET_CLASS_ATOM      0x0001
-#define SET_CLASS_STYLE     0x0002
-#define SET_CLASS_WINEXTRA  0x0004
-#define SET_CLASS_INSTANCE  0x0008
-#define SET_CLASS_EXTRA     0x0010
+
+
+struct get_class_info_request
+{
+    struct request_header __header;
+    user_handle_t  window;
+    int            offset;
+    data_size_t    size;
+};
+struct get_class_info_reply
+{
+    struct reply_header __header;
+    lparam_t       info;
+};
 
 
 
@@ -6253,6 +6265,7 @@ enum request
     REQ_create_class,
     REQ_destroy_class,
     REQ_set_class_info,
+    REQ_get_class_info,
     REQ_open_clipboard,
     REQ_close_clipboard,
     REQ_empty_clipboard,
@@ -6562,6 +6575,7 @@ union generic_request
     struct create_class_request create_class_request;
     struct destroy_class_request destroy_class_request;
     struct set_class_info_request set_class_info_request;
+    struct get_class_info_request get_class_info_request;
     struct open_clipboard_request open_clipboard_request;
     struct close_clipboard_request close_clipboard_request;
     struct empty_clipboard_request empty_clipboard_request;
@@ -6869,6 +6883,7 @@ union generic_reply
     struct create_class_reply create_class_reply;
     struct destroy_class_reply destroy_class_reply;
     struct set_class_info_reply set_class_info_reply;
+    struct get_class_info_reply get_class_info_reply;
     struct open_clipboard_reply open_clipboard_reply;
     struct close_clipboard_reply close_clipboard_reply;
     struct empty_clipboard_reply empty_clipboard_reply;
@@ -6965,6 +6980,6 @@ union generic_reply
     struct get_inproc_alert_event_reply get_inproc_alert_event_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 885
+#define SERVER_PROTOCOL_VERSION 895
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

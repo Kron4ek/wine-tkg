@@ -3983,6 +3983,53 @@ static bool intrinsic_frac(struct hlsl_ctx *ctx,
     return !!add_unary_arithmetic_expr(ctx, params->instrs, HLSL_OP1_FRACT, arg, loc);
 }
 
+static bool intrinsic_frexp(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_type *type, *uint_dim_type, *int_dim_type, *bool_dim_type;
+    struct hlsl_ir_function_decl *func;
+    char *body;
+
+    static const char template[] =
+            "%s frexp(%s x, out %s exp)\n"
+            "{\n"
+            /* If x is zero, always return zero for exp and mantissa. */
+            "    %s is_nonzero_mask = x != 0.0;\n"
+            "    %s bits = asuint(x);\n"
+            /* Subtract 126, not 127, to increase the exponent */
+            "    %s exp_int = asint((bits & 0x7f800000u) >> 23) - 126;\n"
+            /* Clear the given exponent and replace it with the bit pattern
+             * for 2^-1 */
+            "    %s mantissa = asfloat((bits & 0x007fffffu) | 0x3f000000);\n"
+            "    exp = is_nonzero_mask * %s(exp_int);\n"
+            "    return is_nonzero_mask * mantissa;\n"
+            "}\n";
+
+    if (!elementwise_intrinsic_float_convert_args(ctx, params, loc))
+        return false;
+    type = params->args[0]->data_type;
+
+    if (type->e.numeric.type == HLSL_TYPE_DOUBLE)
+    {
+        hlsl_fixme(ctx, loc, "frexp() on doubles.");
+        return false;
+    }
+    type = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_FLOAT, type->e.numeric.dimx, type->e.numeric.dimy);
+    uint_dim_type = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_UINT, type->e.numeric.dimx, type->e.numeric.dimy);
+    int_dim_type = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_INT, type->e.numeric.dimx, type->e.numeric.dimy);
+    bool_dim_type = hlsl_get_numeric_type(ctx, type->class, HLSL_TYPE_BOOL, type->e.numeric.dimx, type->e.numeric.dimy);
+
+    if (!(body = hlsl_sprintf_alloc(ctx, template, type->name, type->name, type->name,
+            bool_dim_type->name, uint_dim_type->name, int_dim_type->name, type->name, type->name)))
+        return false;
+    func = hlsl_compile_internal_function(ctx, "frexp", body);
+    vkd3d_free(body);
+    if (!func)
+        return false;
+
+    return !!add_user_call(ctx, func, params, false, loc);
+}
+
 static bool intrinsic_fwidth(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
@@ -5283,6 +5330,7 @@ intrinsic_functions[] =
     {"floor",                               1, true,  intrinsic_floor},
     {"fmod",                                2, true,  intrinsic_fmod},
     {"frac",                                1, true,  intrinsic_frac},
+    {"frexp",                               2, true,  intrinsic_frexp},
     {"fwidth",                              1, true,  intrinsic_fwidth},
     {"isinf",                               1, true,  intrinsic_isinf},
     {"ldexp",                               2, true,  intrinsic_ldexp},

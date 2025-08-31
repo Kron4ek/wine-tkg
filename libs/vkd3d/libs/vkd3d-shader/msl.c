@@ -1516,6 +1516,7 @@ static void msl_handle_instruction(struct msl_generator *gen, const struct vkd3d
             break;
         case VSIR_OP_GEO:
         case VSIR_OP_IGE:
+        case VSIR_OP_UGE:
             msl_relop(gen, ins, ">=");
             break;
         case VSIR_OP_IF:
@@ -1995,6 +1996,7 @@ static void msl_generate_entrypoint_epilogue(struct msl_generator *gen)
 static void msl_generate_entrypoint(struct msl_generator *gen)
 {
     enum vkd3d_shader_type type = gen->program->shader_version.type;
+    bool output = true;
 
     switch (type)
     {
@@ -2006,13 +2008,21 @@ static void msl_generate_entrypoint(struct msl_generator *gen)
                 vkd3d_string_buffer_printf(gen->buffer, "[[early_fragment_tests]]\n");
             vkd3d_string_buffer_printf(gen->buffer, "fragment ");
             break;
+        case VKD3D_SHADER_TYPE_COMPUTE:
+            vkd3d_string_buffer_printf(gen->buffer, "kernel ");
+            output = false;
+            break;
         default:
             msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                     "Internal compiler error: Unhandled shader type %#x.", type);
             return;
     }
 
-    vkd3d_string_buffer_printf(gen->buffer, "vkd3d_%s_out shader_entry(\n", gen->prefix);
+    if (output)
+        vkd3d_string_buffer_printf(gen->buffer, "vkd3d_%s_out ", gen->prefix);
+    else
+        vkd3d_string_buffer_printf(gen->buffer, "void ");
+    vkd3d_string_buffer_printf(gen->buffer, "shader_entry(\n");
 
     if (gen->program->descriptors.descriptor_count)
     {
@@ -2054,7 +2064,9 @@ static void msl_generate_entrypoint(struct msl_generator *gen)
 
     msl_generate_entrypoint_epilogue(gen);
 
-    vkd3d_string_buffer_printf(gen->buffer, "    return output;\n}\n");
+    if (output)
+        vkd3d_string_buffer_printf(gen->buffer, "    return output;\n");
+    vkd3d_string_buffer_printf(gen->buffer, "}\n");
 }
 
 static int msl_generator_generate(struct msl_generator *gen, struct vkd3d_shader_code *out)

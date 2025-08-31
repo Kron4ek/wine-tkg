@@ -12,8 +12,8 @@
 @ stub -arch=win64 ?Equals@OnePhaseConstructedAttribute@CompilerServices@Runtime@Platform@@QE$AAA_NPE$AAVObject@4@@Z
 @ stub -arch=win32 ?Equals@STAThreadAttribute@Platform@@Q$AAA_NP$AAVObject@2@@Z
 @ stub -arch=win64 ?Equals@STAThreadAttribute@Platform@@QE$AAA_NPE$AAVObject@2@@Z
-@ stub -arch=win32 ?Equals@Type@Platform@@U$AAA_NP$AAVObject@2@@Z
-@ stub -arch=win64 ?Equals@Type@Platform@@UE$AAA_NPE$AAVObject@2@@Z
+@ cdecl -arch=win32 ?Equals@Type@Platform@@U$AAA_NP$AAVObject@2@@Z(ptr ptr) platform_type_Equals_Object
+@ cdecl -arch=win64 ?Equals@Type@Platform@@UE$AAA_NPE$AAVObject@2@@Z(ptr ptr) platform_type_Equals_Object
 @ stub -arch=win32 ?Equals@ValueType@Platform@@Q$AAA_NP$AAVObject@2@@Z
 @ stub -arch=win64 ?Equals@ValueType@Platform@@QE$AAA_NPE$AAVObject@2@@Z
 @ stub -arch=win32 ?Equals@char16@default@@QAA_NP$AAVObject@Platform@@@Z
@@ -66,8 +66,8 @@
 @ stub -arch=i386 ?FlushFactoryCache@@YGXXZ
 @ stub -arch=arm ?FlushFactoryCache@@YAXXZ
 @ stub -arch=win64 ?FlushFactoryCache@@YAXXZ
-@ stub -arch=win32 ?Free@Heap@Details@Platform@@SAXPAX@Z
-@ stub -arch=win64 ?Free@Heap@Details@Platform@@SAXPEAX@Z
+@ cdecl -arch=win32 ?Free@Heap@Details@Platform@@SAXPAX@Z(ptr) Free
+@ cdecl -arch=win64 ?Free@Heap@Details@Platform@@SAXPEAX@Z(ptr) Free
 @ stub -arch=win32 ?FreeException@Heap@Details@Platform@@SAXPAX@Z
 @ stub -arch=win64 ?FreeException@Heap@Details@Platform@@SAXPEAX@Z
 @ stub -arch=i386 ?GetActivationFactory@Details@Platform@@YGJPAVModuleBase@1WRL@Microsoft@@PAUHSTRING__@@PAPAUIActivationFactory@@@Z
@@ -177,12 +177,13 @@
 @ stub -arch=win64 ?GetType@uint64@default@@QEAAPE$AAVType@Platform@@XZ
 @ stub -arch=win32 ?GetType@uint8@default@@QAAP$AAVType@Platform@@XZ
 @ stub -arch=win64 ?GetType@uint8@default@@QEAAPE$AAVType@Platform@@XZ
-@ stub -arch=win32 ?GetTypeCode@Type@Platform@@SA?AW4TypeCode@2@P$AAV12@@Z
-@ stub -arch=win64 ?GetTypeCode@Type@Platform@@SA?AW4TypeCode@2@PE$AAV12@@Z
+@ cdecl -arch=win32 ?GetTypeCode@Type@Platform@@SA?AW4TypeCode@2@P$AAV12@@Z(ptr) platform_type_GetTypeCode
+@ cdecl -arch=win64 ?GetTypeCode@Type@Platform@@SA?AW4TypeCode@2@PE$AAV12@@Z(ptr) platform_type_GetTypeCode
 @ stub -arch=i386 ?GetWeakReference@Details@Platform@@YGPAU__abi_IUnknown@@Q$ADVObject@2@@Z
 @ stub -arch=arm ?GetWeakReference@Details@Platform@@YAPAU__abi_IUnknown@@Q$ADVObject@2@@Z
 @ stub -arch=win64 ?GetWeakReference@Details@Platform@@YAPEAU__abi_IUnknown@@QE$ADVObject@2@@Z
-@ stub -arch=win32 ?InitControlBlock@ControlBlock@Details@Platform@@AAEXPAX_N11@Z
+@ stub -arch=i386 ?InitControlBlock@ControlBlock@Details@Platform@@AAEXPAX_N11@Z
+@ stub -arch=arm ?InitControlBlock@ControlBlock@Details@Platform@@AAAXPAX_N11@Z
 @ stub -arch=win64 ?InitControlBlock@ControlBlock@Details@Platform@@AEAAXPEAX_N11@Z
 @ cdecl ?InitializeData@Details@Platform@@YAJH@Z(long) InitializeData
 @ stub -arch=win32 ?Intersect@Rect@Foundation@Windows@@QAAXV123@@Z
@@ -205,8 +206,9 @@
 @ stub -arch=i386 ?ReleaseInContextImpl@Details@Platform@@YGJPAUIUnknown@@0@Z
 @ stub -arch=arm ?ReleaseInContextImpl@Details@Platform@@YAJPAUIUnknown@@0@Z
 @ stub -arch=win64 ?ReleaseInContextImpl@Details@Platform@@YAJPEAUIUnknown@@0@Z
-@ stub -arch=win32 ?ReleaseTarget@ControlBlock@Details@Platform@@AAEXXZ
-@ stub -arch=win64 ?ReleaseTarget@ControlBlock@Details@Platform@@AEAAXXZ
+@ thiscall -arch=i386 ?ReleaseTarget@ControlBlock@Details@Platform@@AAEXXZ(ptr) control_block_ReleaseTarget
+@ cdecl -arch=arm ?ReleaseTarget@ControlBlock@Details@Platform@@AAAXXZ(ptr) control_block_ReleaseTarget
+@ cdecl -arch=win64 ?ReleaseTarget@ControlBlock@Details@Platform@@AEAAXXZ(ptr) control_block_ReleaseTarget
 @ stub -arch=i386 ?ResolveWeakReference@Details@Platform@@YGP$AAVObject@2@ABU_GUID@@PAPAU__abi_IUnknown@@@Z
 @ stub -arch=arm ?ResolveWeakReference@Details@Platform@@YAP$AAVObject@2@ABU_GUID@@PAPAU__abi_IUnknown@@@Z
 @ stub -arch=win64 ?ResolveWeakReference@Details@Platform@@YAPE$AAVObject@2@AEBU_GUID@@PEAPEAU__abi_IUnknown@@@Z
@@ -245,8 +247,8 @@
 @ stub -arch=win64 ?<Dispose>@String@Platform@@UE$AAAXXZ
 @ stub -arch=win32 ??0FailureException@Platform@@Q$AAA@P$AAVString@1@@Z
 @ stub -arch=win64 ??0FailureException@Platform@@QE$AAA@PE$AAVString@1@@Z
-@ stub -arch=win32 ?ToString@Type@Platform@@U$AAAP$AAVString@2@XZ
-@ stub -arch=win64 ?ToString@Type@Platform@@UE$AAAPE$AAVString@2@XZ
+@ cdecl -arch=win32 ?ToString@Type@Platform@@U$AAAP$AAVString@2@XZ(ptr) platform_type_ToString
+@ cdecl -arch=win64 ?ToString@Type@Platform@@UE$AAAPE$AAVString@2@XZ(ptr) platform_type_ToString
 @ stub -arch=win32 ?ToString@ValueType@Platform@@Q$AAAP$AAVString@2@XZ
 @ stub -arch=win64 ?ToString@ValueType@Platform@@QE$AAAPE$AAVString@2@XZ
 @ stub -arch=win32 ?ToString@char16@default@@QAAP$AAVString@Platform@@XZ
@@ -346,9 +348,9 @@
 @ stub -arch=i386 ?__abi_cast_String_to_Object@__abi_details@@YGP$AAVObject@Platform@@P$AAVString@3@@Z
 @ stub -arch=arm ?__abi_cast_String_to_Object@__abi_details@@YAP$AAVObject@Platform@@P$AAVString@3@@Z
 @ stub -arch=win64 ?__abi_cast_String_to_Object@__abi_details@@YAPE$AAVObject@Platform@@PE$AAVString@3@@Z
-@ stub -arch=i386 ?__abi_make_type_id@@YGP$AAVType@Platform@@ABU__abi_type_descriptor@@@Z
-@ stub -arch=arm ?__abi_make_type_id@@YAP$AAVType@Platform@@ABU__abi_type_descriptor@@@Z
-@ stub -arch=win64 ?__abi_make_type_id@@YAPE$AAVType@Platform@@AEBU__abi_type_descriptor@@@Z
+@ stdcall -arch=i386 ?__abi_make_type_id@@YGP$AAVType@Platform@@ABU__abi_type_descriptor@@@Z(ptr) __abi_make_type_id
+@ stdcall -arch=arm ?__abi_make_type_id@@YAP$AAVType@Platform@@ABU__abi_type_descriptor@@@Z(ptr) __abi_make_type_id
+@ stdcall -arch=win64 ?__abi_make_type_id@@YAPE$AAVType@Platform@@AEBU__abi_type_descriptor@@@Z(ptr) __abi_make_type_id
 @ stub -arch=win32 ??0IntPtr@Platform@@QAA@PAX@Z
 @ stub -arch=win64 ??0IntPtr@Platform@@QEAA@PEAX@Z
 @ stub -arch=i386 ?__abi_translateCurrentException@@YGJ_N@Z
@@ -364,8 +366,8 @@
 @ stub ?get@CurrentAllocationId@Heap@Details@Platform@@SAHXZ
 @ stub ?get@Empty@Rect@Foundation@Windows@@SA?AV234@XZ
 @ stub ?get@Empty@Size@Foundation@Windows@@SA?AV234@XZ
-@ stub -arch=win32 ?get@FullName@Type@Platform@@Q$AAAP$AAVString@3@XZ
-@ stub -arch=win64 ?get@FullName@Type@Platform@@QE$AAAPE$AAVString@3@XZ
+@ cdecl -arch=win32 ?get@FullName@Type@Platform@@Q$AAAP$AAVString@3@XZ(ptr) platform_type_get_FullName
+@ cdecl -arch=win64 ?get@FullName@Type@Platform@@QE$AAAPE$AAVString@3@XZ(ptr) platform_type_get_FullName
 @ stub -arch=win32 ?get@HasInverse@Matrix3D@Media3D@Media@Xaml@UI@Windows@@QAA_NXZ
 @ stub -arch=win64 ?get@HasInverse@Matrix3D@Media3D@Media@Xaml@UI@Windows@@QEAA_NXZ
 @ stub -arch=win32 ??0InvalidArgumentException@Platform@@Q$AAA@P$AAVString@1@@Z
@@ -501,10 +503,10 @@
 @ stub -arch=win64 ?AlignedFree@Heap@Details@Platform@@SAXPEAX@Z
 @ stub -arch=win32 ?AlignedFreeException@Heap@Details@Platform@@SAXPAX@Z
 @ stub -arch=win64 ?AlignedFreeException@Heap@Details@Platform@@SAXPEAX@Z
-@ stub -arch=win32 ?Allocate@Heap@Details@Platform@@SAPAXI@Z
-@ stub -arch=win64 ?Allocate@Heap@Details@Platform@@SAPEAX_K0@Z
-@ stub -arch=win32 ?Allocate@Heap@Details@Platform@@SAPAXII@Z
-@ stub -arch=win64 ?Allocate@Heap@Details@Platform@@SAPEAX_K@Z
+@ cdecl -arch=win32 ?Allocate@Heap@Details@Platform@@SAPAXI@Z(long) Allocate
+@ cdecl -arch=win64 ?Allocate@Heap@Details@Platform@@SAPEAX_K@Z(long) Allocate
+@ cdecl -arch=win32 ?Allocate@Heap@Details@Platform@@SAPAXII@Z(long long) AllocateWithWeakRef
+@ cdecl -arch=win64 ?Allocate@Heap@Details@Platform@@SAPEAX_K0@Z(long long) AllocateWithWeakRef
 @ stub -arch=win32 ?AllocateException@Heap@Details@Platform@@SAPAXI@Z
 @ stub -arch=win64 ?AllocateException@Heap@Details@Platform@@SAPEAX_K0@Z
 @ stub -arch=win32 ?AllocateException@Heap@Details@Platform@@SAPAXII@Z
@@ -518,9 +520,9 @@
 @ stub -arch=win64 ?CreateException@Exception@Platform@@SAPE$AAV12@H@Z
 @ stub -arch=win32 ?CreateException@Exception@Platform@@SAP$AAV12@HP$AAVString@2@@Z
 @ stub -arch=win64 ?CreateException@Exception@Platform@@SAPE$AAV12@HPE$AAVString@2@@Z
-@ stub -arch=i386 ?CreateValue@Details@Platform@@YGP$AAVObject@2@W4TypeCode@2@PBX@Z
-@ stub -arch=arm ?CreateValue@Details@Platform@@YAP$AAVObject@2@W4TypeCode@2@PBX@Z
-@ stub -arch=win64 ?CreateValue@Details@Platform@@YAPE$AAVObject@2@W4TypeCode@2@PEBX@Z
+@ stdcall -arch=i386 ?CreateValue@Details@Platform@@YGP$AAVObject@2@W4TypeCode@2@PBX@Z(long ptr) CreateValue
+@ stdcall -arch=arm ?CreateValue@Details@Platform@@YAP$AAVObject@2@W4TypeCode@2@PBX@Z(long ptr) CreateValue
+@ stdcall -arch=win64 ?CreateValue@Details@Platform@@YAPE$AAVObject@2@W4TypeCode@2@PEBX@Z(long ptr) CreateValue
 @ stub ?EnableFactoryCache@@YAXXZ
 @ stub -arch=win32 ?EnumerateAllocatedObjects@Heap@Details@Platform@@SAXP$AAVHeapEntryHandler@23@@Z
 @ stub -arch=win64 ?EnumerateAllocatedObjects@Heap@Details@Platform@@SAXPE$AAVHeapEntryHandler@23@@Z

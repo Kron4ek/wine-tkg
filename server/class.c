@@ -97,12 +97,11 @@ void destroy_process_classes( struct process *process )
 
 static struct window_class *find_class( struct process *process, atom_t atom, mod_handle_t instance )
 {
-    struct list *ptr;
+    struct window_class *class;
+    int is_win16;
 
-    LIST_FOR_EACH( ptr, &process->classes )
+    LIST_FOR_EACH_ENTRY( class, &process->classes, struct window_class, entry )
     {
-        int is_win16;
-        struct window_class *class = LIST_ENTRY( ptr, struct window_class, entry );
         if (class->atom != atom) continue;
         is_win16 = !(class->instance >> 16);
         if (!instance || !class->local || class->instance == instance ||
@@ -135,7 +134,7 @@ int is_desktop_class( struct window_class *class )
     return (class->atom == DESKTOP_ATOM && !class->local);
 }
 
-int is_hwnd_message_class( struct window_class *class )
+int is_message_class( struct window_class *class )
 {
     static const WCHAR messageW[] = {'M','e','s','s','a','g','e'};
     static const struct unicode_str name = { messageW, sizeof(messageW) };
@@ -165,35 +164,23 @@ DECL_HANDLER(create_class)
     struct window_class *class;
     struct unicode_str name = get_req_unicode_str();
     struct atom_table *table = get_user_atom_table();
-    atom_t atom, base_atom;
+    atom_t atom = req->atom, base_atom;
 
-    if (name.len)
+    if (!atom && !(atom = add_atom( table, &name ))) return;
+
+    if (req->name_offset && req->name_offset < name.len / sizeof(WCHAR))
     {
-        atom = add_atom( table, &name );
-        if (!atom) return;
-        if (req->name_offset && req->name_offset < name.len / sizeof(WCHAR))
+        name.str += req->name_offset;
+        name.len -= req->name_offset * sizeof(WCHAR);
+        if (!(base_atom = add_atom( table, &name )))
         {
-            name.str += req->name_offset;
-            name.len -= req->name_offset * sizeof(WCHAR);
-
-            base_atom = add_atom( table, &name );
-            if (!base_atom)
-            {
-                release_atom( table, atom );
-                return;
-            }
-        }
-        else
-        {
-            base_atom = atom;
-            grab_atom( table, atom );
+            release_atom( table, atom );
+            return;
         }
     }
     else
     {
-        base_atom = atom = req->atom;
-        if (!grab_atom( table, atom )) return;
-        grab_atom( table, base_atom );
+        base_atom = grab_atom( table, atom );
     }
 
     class = find_class( current->process, atom, req->instance );
@@ -225,7 +212,7 @@ DECL_HANDLER(create_class)
     class->style      = req->style;
     class->win_extra  = req->win_extra;
     class->client_ptr = req->client_ptr;
-    reply->atom = atom;
+    reply->atom = base_atom;
 }
 
 /* destroy a window class */
@@ -236,7 +223,7 @@ DECL_HANDLER(destroy_class)
     struct atom_table *table = get_user_atom_table();
     atom_t atom = req->atom;
 
-    if (name.len) atom = find_atom( table, &name );
+    if (!atom) atom = find_atom( table, &name );
 
     if (!(class = find_class( current->process, atom, req->instance )))
         set_win32_error( ERROR_CLASS_DOES_NOT_EXIST );
@@ -254,54 +241,82 @@ DECL_HANDLER(destroy_class)
 DECL_HANDLER(set_class_info)
 {
     struct window_class *class = get_window_class( req->window );
-    struct atom_table *table = get_user_atom_table();
 
     if (!class) return;
 
-    if (req->flags && class->process != current->process)
+    if (class->process != current->process)
     {
         set_error( STATUS_ACCESS_DENIED );
         return;
     }
 
-    if (req->extra_size > sizeof(req->extra_value) ||
-        req->extra_offset < -1 ||
-        req->extra_offset > class->nb_extra_bytes - (int)req->extra_size)
+    switch (req->offset)
     {
+    case GCL_STYLE:
+        reply->old_info = class->style;
+        class->style = req->new_info;
+        break;
+    case GCL_CBWNDEXTRA:
+        if (req->new_info > 4096)
+        {
+            set_error( STATUS_INVALID_PARAMETER );
+            return;
+        }
+        reply->old_info = class->win_extra;
+        class->win_extra = req->new_info;
+        break;
+    case GCL_CBCLSEXTRA:
         set_win32_error( ERROR_INVALID_INDEX );
-        return;
+        break;
+    case GCLP_HMODULE:
+        reply->old_info = class->instance;
+        class->instance = req->new_info;
+        break;
+    default:
+        if (req->size > sizeof(req->new_info) || req->offset < 0 ||
+            req->offset > class->nb_extra_bytes - (int)req->size)
+        {
+            set_win32_error( ERROR_INVALID_INDEX );
+            return;
+        }
+        memcpy( &reply->old_info, class->extra_bytes + req->offset, req->size );
+        memcpy( class->extra_bytes + req->offset, &req->new_info, req->size );
+        break;
     }
-    if ((req->flags & SET_CLASS_WINEXTRA) && (req->win_extra < 0 || req->win_extra > 4096))
-    {
-        set_error( STATUS_INVALID_PARAMETER );
-        return;
-    }
-    if (req->extra_offset != -1)
-    {
-        memcpy( &reply->old_extra_value, class->extra_bytes + req->extra_offset, req->extra_size );
-    }
-    else if (req->flags & SET_CLASS_EXTRA)
-    {
-        set_win32_error( ERROR_INVALID_INDEX );
-        return;
-    }
+}
 
-    reply->old_atom      = class->atom;
-    reply->old_style     = class->style;
-    reply->old_extra     = class->nb_extra_bytes;
-    reply->old_win_extra = class->win_extra;
-    reply->old_instance  = class->instance;
-    reply->base_atom     = class->base_atom;
 
-    if (req->flags & SET_CLASS_ATOM)
+/* get some information in a class */
+DECL_HANDLER(get_class_info)
+{
+    struct window_class *class;
+
+    if (!(class = get_window_class( req->window ))) return;
+
+    switch (req->offset)
     {
-        if (!grab_atom( table, req->atom )) return;
-        release_atom( table, class->atom );
-        class->atom = req->atom;
+    case GCLP_HBRBACKGROUND:
+    case GCLP_HCURSOR:
+    case GCLP_HICON:
+    case GCLP_HICONSM:
+    case GCLP_WNDPROC:
+    case GCLP_MENUNAME:
+        /* not supported */
+        set_win32_error( ERROR_INVALID_HANDLE );
+        break;
+    case GCL_STYLE:          reply->info = class->style; break;
+    case GCL_CBWNDEXTRA:     reply->info = class->win_extra; break;
+    case GCL_CBCLSEXTRA:     reply->info = class->nb_extra_bytes; break;
+    case GCLP_HMODULE:       reply->info = class->instance; break;
+    case GCW_ATOM:           reply->info = class->atom; break;
+    default:
+        if (req->size > sizeof(reply->info) || req->offset < 0 ||
+            req->offset > class->nb_extra_bytes - (int)req->size)
+        {
+            set_win32_error( ERROR_INVALID_INDEX );
+            return;
+        }
+        memcpy( &reply->info, class->extra_bytes + req->offset, req->size );
+        break;
     }
-    if (req->flags & SET_CLASS_STYLE) class->style = req->style;
-    if (req->flags & SET_CLASS_WINEXTRA) class->win_extra = req->win_extra;
-    if (req->flags & SET_CLASS_INSTANCE) class->instance = req->instance;
-    if (req->flags & SET_CLASS_EXTRA) memcpy( class->extra_bytes + req->extra_offset,
-                                              &req->extra_value, req->extra_size );
 }

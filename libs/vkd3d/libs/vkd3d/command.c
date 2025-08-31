@@ -3049,7 +3049,7 @@ static void d3d12_command_list_update_descriptor_table(struct d3d12_command_list
 
             if (descriptor_count > range->vk_binding_count)
             {
-                ERR("Heap descriptor count %u exceeds maximum Vulkan count %u. Reducing to the Vulkan maximum.\n",
+                MESSAGE("Heap descriptor count %u exceeds maximum Vulkan count %u. Reducing to the Vulkan maximum.\n",
                         descriptor_count, range->vk_binding_count);
                 descriptor_count = range->vk_binding_count;
             }

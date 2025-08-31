@@ -59,7 +59,7 @@ typedef struct tagCLASS
     HICON        hIconSmIntern; /* Internal small icon, derived from hIcon */
     HCURSOR      hCursor;       /* Default cursor */
     HBRUSH       hbrBackground; /* Default background */
-    ATOM         atomName;      /* Name of the class */
+    ATOM         atom;          /* name of the class */
     WCHAR        name[MAX_ATOM_LEN + 1];
     WCHAR       *basename;      /* Base name for redirected classes, pointer within 'name'. */
     struct client_menu_name menu_name; /* Default menu name */
@@ -287,7 +287,7 @@ NTSTATUS WINAPI NtUserInitializeClientPfnArrays( const ntuser_client_func_ptr *c
 /***********************************************************************
  *           get_int_atom_value
  */
-ATOM get_int_atom_value( UNICODE_STRING *name )
+static ATOM get_int_atom_value( UNICODE_STRING *name )
 {
     const WCHAR *ptr = name->Buffer;
     const WCHAR *end = ptr + name->Length / sizeof(WCHAR);
@@ -303,6 +303,25 @@ ATOM get_int_atom_value( UNICODE_STRING *name )
         if (ret >= MAXINTATOM) return 0;
     }
     return ret;
+}
+
+atom_t wine_server_add_atom( void *req, UNICODE_STRING *str )
+{
+    atom_t atom;
+    if (!(atom = get_int_atom_value( str ))) wine_server_add_data( req, str->Buffer, str->Length );
+    return atom;
+}
+
+BOOL is_desktop_class( UNICODE_STRING *name )
+{
+    static const WCHAR desktopW[] = {'#','3','2','7','6','9'};
+    return name->Length == sizeof(desktopW) && !wcsnicmp( name->Buffer, desktopW, ARRAY_SIZE(desktopW) );
+}
+
+BOOL is_message_class( UNICODE_STRING *name )
+{
+    static const WCHAR messageW[] = {'M','e','s','s','a','g','e'};
+    return name->Length == sizeof(messageW) && !wcsnicmp( name->Buffer, messageW, ARRAY_SIZE(messageW) );
 }
 
 static unsigned int is_integral_atom( const WCHAR *atomstr, ULONG len, RTL_ATOM *ret_atom )
@@ -381,7 +400,6 @@ static void release_class_ptr( CLASS *ptr )
 
 static CLASS *find_class( HINSTANCE module, UNICODE_STRING *name )
 {
-    ATOM atom = get_int_atom_value( name );
     ULONG_PTR instance = (UINT_PTR)module;
     CLASS *class;
     int is_win16;
@@ -389,15 +407,8 @@ static CLASS *find_class( HINSTANCE module, UNICODE_STRING *name )
     user_lock();
     LIST_FOR_EACH_ENTRY( class, &class_list, CLASS, entry )
     {
-        if (atom)
-        {
-            if (class->atomName != atom) continue;
-        }
-        else
-        {
-            if (wcsnicmp( class->name, name->Buffer, name->Length / sizeof(WCHAR) ) ||
-                class->name[name->Length / sizeof(WCHAR)]) continue;
-        }
+        if (wcsnicmp( class->name, name->Buffer, name->Length / sizeof(WCHAR) ) ||
+            class->name[name->Length / sizeof(WCHAR)]) continue;
         is_win16 = !(class->instance >> 16);
         if (!instance || !class->local || class->instance == instance ||
             (!is_win16 && ((class->instance & ~0xffff) == (instance & ~0xffff))))
@@ -473,19 +484,9 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
 
     if (!(class = calloc( 1, sizeof(CLASS) + wc->cbClsExtra ))) return 0;
 
-    class->atomName = get_int_atom_value( name );
-    class->basename = class->name;
-    if (!class->atomName && name)
-    {
-        memcpy( class->name, name->Buffer, name->Length );
-        class->name[name->Length / sizeof(WCHAR)] = 0;
-        class->basename += version->Length / sizeof(WCHAR);
-    }
-    else
-    {
-        UNICODE_STRING str = { .MaximumLength = sizeof(class->name), .Buffer = class->name };
-        NtUserGetAtomName( class->atomName, &str );
-    }
+    memcpy( class->name, name->Buffer, name->Length );
+    class->name[name->Length / sizeof(WCHAR)] = 0;
+    class->basename = class->name + version->Length / sizeof(WCHAR);
 
     class->style      = wc->style;
     class->local      = !is_builtin && !(wc->style & CS_GLOBALCLASS);
@@ -501,11 +502,10 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
         req->extra      = class->cbClsExtra;
         req->win_extra  = class->cbWndExtra;
         req->client_ptr = wine_server_client_ptr( class );
-        req->atom       = class->atomName;
+        req->atom       = wine_server_add_atom( req, name );
         req->name_offset = version->Length / sizeof(WCHAR);
-        if (!req->atom && name) wine_server_add_data( req, name->Buffer, name->Length );
         ret = !wine_server_call_err( req );
-        class->atomName = reply->atom;
+        atom = reply->atom;
     }
     SERVER_END_REQ;
     if (!ret)
@@ -525,8 +525,6 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
     if (class->local) list_add_head( &class_list, &class->entry );
     else list_add_tail( &class_list, &class->entry );
 
-    atom = class->atomName;
-
     TRACE( "name=%s->%s atom=%04x wndproc=%p hinst=%p bg=%p style=%08x clsExt=%d winExt=%d class=%p\n",
            debugstr_w(wc->lpszClassName), debugstr_us(name), atom, wc->lpfnWndProc, instance,
            wc->hbrBackground, wc->style, wc->cbClsExtra, wc->cbWndExtra, class );
@@ -536,6 +534,7 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
     class->hIconSmIntern = sm_icon;
     class->hCursor       = wc->hCursor;
     class->hbrBackground = wc->hbrBackground;
+    class->atom          = atom;
     class->winproc       = alloc_winproc( wc->lpfnWndProc, ansi );
     if (client_menu_name) class->menu_name = *client_menu_name;
     release_class_ptr( class );
@@ -556,8 +555,7 @@ BOOL WINAPI NtUserUnregisterClass( UNICODE_STRING *name, HINSTANCE instance,
     SERVER_START_REQ( destroy_class )
     {
         req->instance = wine_server_client_ptr( instance );
-        if (!(req->atom = get_int_atom_value( name )) && name->Length)
-            wine_server_add_data( req, name->Buffer, name->Length );
+        req->atom     = wine_server_add_atom( req, name );
         if (!wine_server_call_err( req )) class = wine_server_get_ptr( reply->client_ptr );
     }
     SERVER_END_REQ;
@@ -583,15 +581,11 @@ BOOL WINAPI NtUserUnregisterClass( UNICODE_STRING *name, HINSTANCE instance,
 ATOM WINAPI NtUserGetClassInfoEx( HINSTANCE instance, UNICODE_STRING *name, WNDCLASSEXW *wc,
                                   struct client_menu_name *menu_name, BOOL ansi )
 {
-    static const WCHAR messageW[] = {'M','e','s','s','a','g','e'};
     CLASS *class;
     ATOM atom;
 
     /* create the desktop window to trigger builtin class registration */
-    if (name->Buffer != (const WCHAR *)DESKTOP_CLASS_ATOM &&
-        (IS_INTRESOURCE(name->Buffer) || name->Length != sizeof(messageW) ||
-         wcsnicmp( name->Buffer, messageW, ARRAYSIZE(messageW) )))
-        get_desktop_window();
+    if (!is_desktop_class( name ) && !is_message_class( name )) get_desktop_window();
 
     if (!(class = find_class( instance, name ))) return 0;
 
@@ -611,7 +605,7 @@ ATOM WINAPI NtUserGetClassInfoEx( HINSTANCE instance, UNICODE_STRING *name, WNDC
     }
 
     if (menu_name) *menu_name = class->menu_name;
-    atom = class->atomName;
+    atom = class->atom;
     release_class_ptr( class );
     return atom;
 }
@@ -717,14 +711,13 @@ INT WINAPI NtUserGetClassName( HWND hwnd, BOOL real, UNICODE_STRING *name )
     {
         ATOM atom = 0;
 
-        SERVER_START_REQ( set_class_info )
+        SERVER_START_REQ( get_class_info )
         {
             req->window = wine_server_user_handle( hwnd );
-            req->flags = 0;
-            req->extra_offset = -1;
-            req->extra_size = 0;
-            if (!wine_server_call_err( req ))
-                atom = reply->base_atom;
+            req->offset = GCW_ATOM;
+            req->size = sizeof(atom);
+            wine_server_call_err( req );
+            atom = reply->info;
         }
         SERVER_END_REQ;
 
@@ -746,46 +739,16 @@ static BOOL set_server_info( HWND hwnd, INT offset, LONG_PTR newval, UINT size )
     SERVER_START_REQ( set_class_info )
     {
         req->window = wine_server_user_handle( hwnd );
-        req->extra_offset = -1;
-        switch(offset)
-        {
-        case GCW_ATOM:
-            req->flags = SET_CLASS_ATOM;
-            req->atom = LOWORD(newval);
-            break;
-        case GCL_STYLE:
-            req->flags = SET_CLASS_STYLE;
-            req->style = newval;
-            break;
-        case GCL_CBWNDEXTRA:
-            req->flags = SET_CLASS_WINEXTRA;
-            req->win_extra = newval;
-            break;
-        case GCLP_HMODULE:
-            req->flags = SET_CLASS_INSTANCE;
-            req->instance = wine_server_client_ptr( (void *)newval );
-            break;
-        default:
-            assert( offset >= 0 );
-            req->flags = SET_CLASS_EXTRA;
-            req->extra_offset = offset;
-            req->extra_size = size;
-            if ( size == sizeof(LONG) )
-            {
-                LONG newlong = newval;
-                memcpy( &req->extra_value, &newlong, sizeof(LONG) );
-            }
-            else
-                memcpy( &req->extra_value, &newval, sizeof(LONG_PTR) );
-            break;
-        }
+        req->offset = offset;
+        req->size = size;
+        req->new_info = newval;
         ret = !wine_server_call_err( req );
     }
     SERVER_END_REQ;
     return ret;
 }
 
-static ULONG_PTR set_class_long( HWND hwnd, INT offset, LONG_PTR newval, UINT size, BOOL ansi )
+static ULONG_PTR set_class_long_size( HWND hwnd, INT offset, LONG_PTR newval, UINT size, BOOL ansi )
 {
     ULONG_PTR retval = 0;
     HICON small_icon = 0;
@@ -798,19 +761,8 @@ static ULONG_PTR set_class_long( HWND hwnd, INT offset, LONG_PTR newval, UINT si
         if (set_server_info( hwnd, offset, newval, size ))
         {
             void *ptr = (char *)(class + 1) + offset;
-            if ( size == sizeof(LONG) )
-            {
-                DWORD retdword;
-                LONG newlong = newval;
-                memcpy( &retdword, ptr, sizeof(DWORD) );
-                memcpy( ptr, &newlong, sizeof(LONG) );
-                retval = retdword;
-            }
-            else
-            {
-                memcpy( &retval, ptr, sizeof(ULONG_PTR) );
-                memcpy( ptr, &newval, sizeof(LONG_PTR) );
-            }
+            memcpy( &retval, ptr, size );
+            memcpy( ptr, &newval, size );
         }
     }
     else switch(offset)
@@ -858,7 +810,7 @@ static ULONG_PTR set_class_long( HWND hwnd, INT offset, LONG_PTR newval, UINT si
                 /* someone beat us, restart */
                 release_class_ptr( class );
                 NtUserDestroyCursor( small_icon, 0 );
-                return set_class_long( hwnd, offset, newval, size, ansi );
+                return set_class_long_size( hwnd, offset, newval, size, ansi );
             }
         }
         if (class->hIconSmIntern) NtUserDestroyCursor( class->hIconSmIntern, 0 );
@@ -888,7 +840,7 @@ static ULONG_PTR set_class_long( HWND hwnd, INT offset, LONG_PTR newval, UINT si
                 /* someone beat us, restart */
                 release_class_ptr( class );
                 NtUserDestroyCursor( small_icon, 0 );
-                return set_class_long( hwnd, offset, newval, size, ansi );
+                return set_class_long_size( hwnd, offset, newval, size, ansi );
             }
         }
         if (class->hIconSmIntern) NtUserDestroyCursor( class->hIconSmIntern, 0 );
@@ -910,17 +862,6 @@ static ULONG_PTR set_class_long( HWND hwnd, INT offset, LONG_PTR newval, UINT si
         retval = class->instance;
         class->instance = newval;
         break;
-    case GCW_ATOM:
-        {
-            UNICODE_STRING us;
-            if (!set_server_info( hwnd, offset, newval, size )) break;
-            retval = class->atomName;
-            class->atomName = newval;
-            us.Buffer = class->name;
-            us.MaximumLength = sizeof(class->name);
-            NtUserGetAtomName( newval, &us );
-        }
-        break;
     case GCL_CBCLSEXTRA:  /* cannot change this one */
         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
         break;
@@ -937,7 +878,7 @@ static ULONG_PTR set_class_long( HWND hwnd, INT offset, LONG_PTR newval, UINT si
  */
 DWORD WINAPI NtUserSetClassLong( HWND hwnd, INT offset, LONG newval, BOOL ansi )
 {
-    return set_class_long( hwnd, offset, newval, sizeof(LONG), ansi );
+    return set_class_long_size( hwnd, offset, newval, sizeof(LONG), ansi );
 }
 
 /***********************************************************************
@@ -945,7 +886,7 @@ DWORD WINAPI NtUserSetClassLong( HWND hwnd, INT offset, LONG newval, BOOL ansi )
  */
 ULONG_PTR WINAPI NtUserSetClassLongPtr( HWND hwnd, INT offset, LONG_PTR newval, BOOL ansi )
 {
-    return set_class_long( hwnd, offset, newval, sizeof(LONG_PTR), ansi );
+    return set_class_long_size( hwnd, offset, newval, sizeof(LONG_PTR), ansi );
 }
 
 /***********************************************************************
@@ -953,30 +894,7 @@ ULONG_PTR WINAPI NtUserSetClassLongPtr( HWND hwnd, INT offset, LONG_PTR newval, 
  */
 WORD WINAPI NtUserSetClassWord( HWND hwnd, INT offset, WORD newval )
 {
-    CLASS *class;
-    WORD retval = 0;
-
-    if (offset < 0) return NtUserSetClassLong( hwnd, offset, (DWORD)newval, TRUE );
-
-    if (!(class = get_class_ptr( hwnd, TRUE ))) return 0;
-
-    SERVER_START_REQ( set_class_info )
-    {
-        req->window = wine_server_user_handle( hwnd );
-        req->flags = SET_CLASS_EXTRA;
-        req->extra_offset = offset;
-        req->extra_size = sizeof(newval);
-        memcpy( &req->extra_value, &newval, sizeof(newval) );
-        if (!wine_server_call_err( req ))
-        {
-            void *ptr = (char *)(class + 1) + offset;
-            memcpy( &retval, ptr, sizeof(retval) );
-            memcpy( ptr, &newval, sizeof(newval) );
-        }
-    }
-    SERVER_END_REQ;
-    release_class_ptr( class );
-    return retval;
+    return set_class_long_size( hwnd, offset, newval, sizeof(WORD), TRUE );
 }
 
 static ULONG_PTR get_class_long_size( HWND hwnd, INT offset, UINT size, BOOL ansi )
@@ -988,15 +906,14 @@ static ULONG_PTR get_class_long_size( HWND hwnd, INT offset, UINT size, BOOL ans
 
     if (class == OBJ_OTHER_PROCESS)
     {
-        SERVER_START_REQ( set_class_info )
+        SERVER_START_REQ( get_class_info )
         {
             req->window = wine_server_user_handle( hwnd );
-            req->flags = 0;
-            req->extra_offset = (offset >= 0) ? offset : -1;
-            req->extra_size = (offset >= 0) ? size : 0;
+            req->offset = offset;
+            req->size = size;
             if (!wine_server_call_err( req ))
             {
-                switch(offset)
+                switch (offset)
                 {
                 case GCLP_HBRBACKGROUND:
                 case GCLP_HCURSOR:
@@ -1005,37 +922,9 @@ static ULONG_PTR get_class_long_size( HWND hwnd, INT offset, UINT size, BOOL ans
                 case GCLP_WNDPROC:
                 case GCLP_MENUNAME:
                     FIXME( "offset %d not supported on other process window %p\n", offset, hwnd );
-                    RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
-                    break;
-                case GCL_STYLE:
-                    retvalue = reply->old_style;
-                    break;
-                case GCL_CBWNDEXTRA:
-                    retvalue = reply->old_win_extra;
-                    break;
-                case GCL_CBCLSEXTRA:
-                    retvalue = reply->old_extra;
-                    break;
-                case GCLP_HMODULE:
-                    retvalue = (ULONG_PTR)wine_server_get_ptr( reply->old_instance );
-                    break;
-                case GCW_ATOM:
-                    retvalue = reply->old_atom;
                     break;
                 default:
-                    if (offset >= 0)
-                    {
-                        if (size == sizeof(DWORD))
-                        {
-                            DWORD retdword;
-                            memcpy( &retdword, &reply->old_extra_value, sizeof(DWORD) );
-                            retvalue = retdword;
-                        }
-                        else
-                            memcpy( &retvalue, &reply->old_extra_value,
-                                    sizeof(ULONG_PTR) );
-                    }
-                    else RtlSetLastWin32Error( ERROR_INVALID_INDEX );
+                    retvalue = reply->info;
                     break;
                 }
             }
@@ -1096,7 +985,7 @@ static ULONG_PTR get_class_long_size( HWND hwnd, INT offset, UINT size, BOOL ans
         retvalue = ansi ? (ULONG_PTR)class->menu_name.nameA : (ULONG_PTR)class->menu_name.nameW;
         break;
     case GCW_ATOM:
-        retvalue = class->atomName;
+        retvalue = class->atom;
         break;
     default:
         RtlSetLastWin32Error( ERROR_INVALID_INDEX );
@@ -1118,34 +1007,7 @@ ULONG_PTR get_class_long_ptr( HWND hwnd, INT offset, BOOL ansi )
 
 WORD get_class_word( HWND hwnd, INT offset )
 {
-    CLASS *class;
-    WORD retvalue = 0;
-
-    if (offset < 0) return get_class_long( hwnd, offset, TRUE );
-
-    if (!(class = get_class_ptr( hwnd, FALSE ))) return 0;
-
-    if (class == OBJ_OTHER_PROCESS)
-    {
-        SERVER_START_REQ( set_class_info )
-        {
-            req->window = wine_server_user_handle( hwnd );
-            req->flags = 0;
-            req->extra_offset = offset;
-            req->extra_size = sizeof(retvalue);
-            if (!wine_server_call_err( req ))
-                memcpy( &retvalue, &reply->old_extra_value, sizeof(retvalue) );
-        }
-        SERVER_END_REQ;
-        return retvalue;
-    }
-
-    if (offset <= class->cbClsExtra - sizeof(WORD))
-        memcpy( &retvalue, (char *)(class + 1) + offset, sizeof(retvalue) );
-    else
-        RtlSetLastWin32Error( ERROR_INVALID_INDEX );
-    release_class_ptr( class );
-    return retvalue;
+    return get_class_long_size( hwnd, offset, sizeof(WORD), TRUE );
 }
 
 BOOL needs_ime_window( HWND hwnd )
@@ -1162,7 +1024,7 @@ BOOL needs_ime_window( HWND hwnd )
 
 static const struct builtin_class_descr desktop_builtin_class =
 {
-    .name = MAKEINTRESOURCEA(DESKTOP_CLASS_ATOM),
+    .name = "#32769", /* DESKTOP_CLASS_ATOM */
     .style = CS_DBLCLKS,
     .proc = NTUSER_WNDPROC_DESKTOP,
     .brush = (HBRUSH)(COLOR_BACKGROUND + 1),
@@ -1202,7 +1064,7 @@ static const struct builtin_class_descr builtin_classes[] =
     },
     /* dialog */
     {
-        .name = MAKEINTRESOURCEA(DIALOG_CLASS_ATOM),
+        .name = "#32770", /* DIALOG_CLASS_ATOM */
         .style = CS_SAVEBITS | CS_DBLCLKS,
         .proc = NTUSER_WNDPROC_DIALOG,
         .extra = DLGWINDOWEXTRA,
@@ -1210,7 +1072,7 @@ static const struct builtin_class_descr builtin_classes[] =
     },
     /* icon title */
     {
-        .name = MAKEINTRESOURCEA(ICONTITLE_CLASS_ATOM),
+        .name = "#32772", /* ICONTITLE_CLASS_ATOM */
         .proc = NTUSER_WNDPROC_ICONTITLE,
         .cursor = IDC_ARROW,
     },
@@ -1231,7 +1093,7 @@ static const struct builtin_class_descr builtin_classes[] =
     },
     /* menu */
     {
-        .name = MAKEINTRESOURCEA(POPUPMENU_CLASS_ATOM),
+        .name = "#32768", /* POPUPMENU_CLASS_ATOM */
         .style = CS_DROPSHADOW | CS_SAVEBITS | CS_DBLCLKS,
         .proc = NTUSER_WNDPROC_MENU,
         .extra = sizeof(HMENU),
@@ -1288,16 +1150,8 @@ static void register_builtin( const struct builtin_class_descr *descr )
         class.hCursor = LoadImageW( 0, (const WCHAR *)descr->cursor, IMAGE_CURSOR,
                                     0, 0, LR_SHARED | LR_DEFAULTSIZE );
 
-    if (IS_INTRESOURCE( descr->name ))
-    {
-        name.Buffer = (WCHAR *)descr->name;
-        name.Length = name.MaximumLength = 0;
-    }
-    else
-    {
-        asciiz_to_unicode( nameW, descr->name );
-        RtlInitUnicodeString( &name, nameW );
-    }
+    asciiz_to_unicode( nameW, descr->name );
+    RtlInitUnicodeString( &name, nameW );
 
     if (!NtUserRegisterClassExWOW( &class, &name, &version, &menu_name, 1, 0, NULL ) && class.hCursor)
         NtUserDestroyCursor( class.hCursor, 0 );
