@@ -1,7 +1,5 @@
 /*
- * futex-based synchronization objects
- *
- * Copyright (C) 2018 Zebediah Figura
+ * Copyright 2024 Rémi Bernon for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,17 +16,26 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-extern int do_fsync(void);
-extern void fsync_init(void);
-extern unsigned int fsync_alloc_shm( int low, int high );
-extern void fsync_wake_futex( unsigned int shm_idx );
-extern void fsync_clear_futex( unsigned int shm_idx );
-extern void fsync_wake_up( struct object *obj );
-extern void fsync_clear( struct object *obj );
+#include <stddef.h>
+#include <stdarg.h>
 
-struct fsync;
+#define COBJMACROS
+#include "windef.h"
+#include "winbase.h"
 
-extern const struct object_ops fsync_ops;
-extern void fsync_set_event( struct fsync *fsync );
-extern void fsync_reset_event( struct fsync *fsync );
-extern void fsync_abandon_mutexes( struct thread *thread );
+#include "gameinput.h"
+#include "wine/debug.h"
+
+WINE_DEFAULT_DEBUG_CHANNEL(ginput);
+
+HRESULT WINAPI GameInputCreate( v0_IGameInput **out )
+{
+    FIXME( "out %p, stub!\n", out );
+    return E_NOTIMPL;
+}
+
+HRESULT WINAPI DllGetClassObject( REFCLSID clsid, REFIID riid, void **out )
+{
+    FIXME( "clsid %s, riid %s, out %p stub!\n", debugstr_guid(clsid), debugstr_guid(riid), out );
+    return CLASS_E_CLASSNOTAVAILABLE;
+}

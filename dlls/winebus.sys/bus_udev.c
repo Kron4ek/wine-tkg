@@ -708,7 +708,7 @@ static void *lnxev_device_haptics_thread(void *args)
     {
         while (!memcmp(&effect, &impl->haptics, sizeof(effect)))
             pthread_cond_wait(&impl->haptics_cond, &udev_cs);
-        if (impl->haptics.type == (__u16)-1) break;
+        if (impl->haptics.type == (uint16_t)-1) break;
 
         effect = impl->haptics;
         pthread_mutex_unlock(&udev_cs);
@@ -1362,7 +1362,8 @@ static void udev_add_device(struct udev_device *dev, int fd)
     get_device_subsystem_info(dev, "hid", NULL, &desc, &bus);
     get_device_subsystem_info(dev, "input", NULL, &desc, &bus);
     get_device_subsystem_info(dev, "usb", "usb_device", &desc, &bus);
-    if (bus == BUS_BLUETOOTH) desc.is_bluetooth = TRUE;
+    if (bus == BUS_BLUETOOTH) desc.bus_type = BUS_TYPE_BLUETOOTH;
+    else if (bus == BUS_USB) desc.bus_type = BUS_TYPE_USB;
 
     if (!(subsystem = udev_device_get_subsystem(dev)))
     {

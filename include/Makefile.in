@@ -104,6 +104,7 @@ SOURCES = \
 	crtrow.idl \
 	cryptdlg.h \
 	cryptuiapi.h \
+	cryptxml.h \
 	ctfutb.idl \
 	ctxtcall.idl \
 	custcntl.h \
@@ -342,6 +343,7 @@ SOURCES = \
 	fltdefs.h \
 	fontsub.h \
 	fusion.idl \
+	gameinput.idl \
 	gameux.idl \
 	gamingtcui.h \
 	gdiplus.h \

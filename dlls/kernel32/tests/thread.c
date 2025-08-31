@@ -77,9 +77,11 @@
 
 static void (WINAPI *pGetCurrentThreadStackLimits)(PULONG_PTR,PULONG_PTR);
 static BOOL (WINAPI *pGetThreadPriorityBoost)(HANDLE,PBOOL);
+static BOOL (WINAPI *pGetProcessPriorityBoost)(HANDLE,PBOOL);
 static HANDLE (WINAPI *pOpenThread)(DWORD,BOOL,DWORD);
 static BOOL (WINAPI *pQueueUserWorkItem)(LPTHREAD_START_ROUTINE,PVOID,ULONG);
 static BOOL (WINAPI *pSetThreadPriorityBoost)(HANDLE,BOOL);
+static BOOL (WINAPI *pSetProcessPriorityBoost)(HANDLE,BOOL);
 static BOOL (WINAPI *pSetThreadStackGuarantee)(ULONG*);
 static BOOL (WINAPI *pRegisterWaitForSingleObject)(PHANDLE,HANDLE,WAITORTIMERCALLBACK,PVOID,ULONG,ULONG);
 static BOOL (WINAPI *pUnregisterWait)(HANDLE);
@@ -770,25 +772,44 @@ static VOID test_thread_priority(void)
                        0,curthreadId);
      ok(access_thread!=NULL,"OpenThread returned an invalid handle\n");
      if (access_thread!=NULL) {
-       todo_wine obey_ar(pSetThreadPriorityBoost(access_thread,1)==0);
-       todo_wine obey_ar(pGetThreadPriorityBoost(access_thread,&disabled)==0);
+       obey_ar(pSetThreadPriorityBoost(access_thread, 1) == 0);
+       obey_ar(pGetThreadPriorityBoost(access_thread, &disabled) == 0);
        ok(CloseHandle(access_thread),"Error Closing thread handle\n");
      }
    }
 
-   rc = pSetThreadPriorityBoost(curthread,1);
-   ok( rc != 0, "error=%ld\n",GetLastError());
-   todo_wine {
-     rc=pGetThreadPriorityBoost(curthread,&disabled);
-     ok(rc!=0 && disabled==1,
-        "rc=%d error=%ld disabled=%d\n",rc,GetLastError(),disabled);
-   }
+   rc = pSetThreadPriorityBoost(curthread, 1);
+   ok(rc != 0, "error=%ld\n", GetLastError());
+   rc = pGetThreadPriorityBoost(curthread, &disabled);
+   ok(rc != 0 && disabled == 1,
+      "rc=%d error=%ld disabled=%d\n", rc, GetLastError(), disabled);
 
-   rc = pSetThreadPriorityBoost(curthread,0);
-   ok( rc != 0, "error=%ld\n",GetLastError());
-   rc=pGetThreadPriorityBoost(curthread,&disabled);
-   ok(rc!=0 && disabled==0,
-      "rc=%d error=%ld disabled=%d\n",rc,GetLastError(),disabled);
+   rc = pSetThreadPriorityBoost(curthread, 0);
+   ok(rc != 0, "error=%ld\n", GetLastError());
+   rc = pGetThreadPriorityBoost(curthread, &disabled);
+   ok(rc != 0 && disabled == 0,
+      "rc=%d error=%ld disabled=%d\n", rc, GetLastError(), disabled);
+
+   rc = pSetProcessPriorityBoost(GetCurrentProcess(), 1);
+   ok(rc != 0, "error=%ld\n", GetLastError());
+   rc = pGetThreadPriorityBoost(curthread, &disabled);
+   ok(rc != 0 && disabled == 1,
+      "rc=%d error=%ld disabled=%d\n", rc, GetLastError(), disabled);
+   rc = pGetProcessPriorityBoost(GetCurrentProcess(), &disabled);
+   ok(rc != 0 && disabled == 1,
+      "rc=%d error=%ld disabled=%d\n", rc, GetLastError(), disabled);
+
+   rc = pSetThreadPriorityBoost(curthread, 0);
+   ok(rc != 0, "error=%ld\n", GetLastError());
+   rc = pGetThreadPriorityBoost(curthread, &disabled);
+   ok(rc != 0 && disabled == 0,
+      "rc=%d error=%ld disabled=%d\n", rc, GetLastError(), disabled);
+   rc = pGetProcessPriorityBoost(GetCurrentProcess(), &disabled);
+   ok(rc != 0 && disabled == 1,
+      "rc=%d error=%ld disabled=%d\n", rc, GetLastError(), disabled);
+
+   rc = pSetProcessPriorityBoost(GetCurrentProcess(), 0);
+   ok(rc != 0, "error=%ld\n", GetLastError());
 }
 
 /* check the GetThreadTimes function */
@@ -2087,6 +2108,8 @@ static void test_thread_fpu_cw(void)
     unsigned int initial_cw, cw;
     unsigned long fpu_cw;
 
+    _clearfp();  /* clear status flags before checks */
+
     fpu_cw = get_fpu_cw();
     initial_cw = _control87( 0, 0 );
     ok(initial_cw == expected_cw[0].cw, "expected %#x got %#x\n", expected_cw[0].cw, initial_cw);
@@ -2656,9 +2679,11 @@ static void init_funcs(void)
 #define X(f) p##f = (void*)GetProcAddress(hKernel32, #f)
     X(GetCurrentThreadStackLimits);
     X(GetThreadPriorityBoost);
+    X(GetProcessPriorityBoost);
     X(OpenThread);
     X(QueueUserWorkItem);
     X(SetThreadPriorityBoost);
+    X(SetProcessPriorityBoost);
     X(SetThreadStackGuarantee);
     X(RegisterWaitForSingleObject);
     X(UnregisterWait);

@@ -78,11 +78,10 @@ static const struct object_ops atom_table_ops =
     no_add_queue,                 /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
-    NULL,                         /* get_esync_fd */
-    NULL,                         /* get_fsync_idx */
     NULL,                         /* satisfied */
     no_signal,                    /* signal */
     no_get_fd,                    /* get_fd */
+    default_get_sync,             /* get_sync */
     default_map_access,           /* map_access */
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
@@ -249,6 +248,22 @@ static void atom_table_destroy( struct object *obj )
     for (i = 0; i < table->count; i++) free( table->atoms[i] );
 }
 
+static atom_t get_int_atom_value( const struct unicode_str *name )
+{
+    const WCHAR *ptr = name->str;
+    const WCHAR *end = ptr + name->len / sizeof(WCHAR);
+    unsigned int ret = 0;
+
+    if (*ptr++ != '#') return 0;
+    while (ptr < end)
+    {
+        if (*ptr < '0' || *ptr > '9') return 0;
+        ret = ret * 10 + *ptr++ - '0';
+        if (ret >= MAXINTATOM) return 0;
+    }
+    return ret;
+}
+
 /* find an atom entry in its hash list */
 static struct atom_entry *find_atom_entry( struct atom_table *table, const struct unicode_str *str,
                                            unsigned short hash )
@@ -279,6 +294,7 @@ atom_t add_atom( struct atom_table *table, const struct unicode_str *str )
         set_error( STATUS_INVALID_PARAMETER );
         return 0;
     }
+    if ((atom = get_int_atom_value( str ))) return atom;
 
     hash = hash_strW( str->str, str->len, ARRAY_SIZE(table->entries) );
     if ((entry = find_atom_entry( table, str, hash )))  /* exists already */
@@ -329,6 +345,7 @@ atom_t find_atom( struct atom_table *table, const struct unicode_str *str )
 {
     struct atom_entry *entry;
     unsigned short hash;
+    atom_t atom;
 
     if (!str->len)
     {
@@ -340,6 +357,7 @@ atom_t find_atom( struct atom_table *table, const struct unicode_str *str )
         set_error( STATUS_INVALID_PARAMETER );
         return 0;
     }
+    if ((atom = get_int_atom_value( str ))) return atom;
 
     hash = hash_strW( str->str, str->len, ARRAY_SIZE(table->entries) );
     if (!(entry = find_atom_entry( table, str, hash )))
@@ -351,15 +369,15 @@ atom_t find_atom( struct atom_table *table, const struct unicode_str *str )
 }
 
 /* increment the ref count of a global atom; used for window properties */
-int grab_atom( struct atom_table *table, atom_t atom )
+atom_t grab_atom( struct atom_table *table, atom_t atom )
 {
     if (atom >= MIN_STR_ATOM)
     {
         struct atom_entry *entry = get_atom_entry( table, atom );
-        if (entry) entry->count++;
-        return (entry != NULL);
+        if (!entry) return 0;
+        entry->count++;
     }
-    else return 1;
+    return atom;
 }
 
 /* decrement the ref count of a global atom; used for window properties */

@@ -555,7 +555,7 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, const char *unix_name, i
     pid_t pid;
     int fd[2], stdin_fd = -1, stdout_fd = -1;
     char **argv, **envp;
-    NTSTATUS status;
+    NTSTATUS status = STATUS_SUCCESS;
 
 #ifdef HAVE_PIPE2
     if (pipe2( fd, O_CLOEXEC ) == -1)
@@ -752,6 +752,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
     {
         if (status == STATUS_INVALID_IMAGE_NOT_MZ && !fork_and_exec( &attr, unix_name, unixdir, params ))
         {
+            *process_handle_ptr = *thread_handle_ptr = 0;
             memset( info, 0, sizeof(*info) );
             free( unix_name );
             free( nt_name.Buffer );
@@ -1094,7 +1095,6 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
     UNIMPLEMENTED_INFO_CLASS(ProcessUserModeIOPL);
     UNIMPLEMENTED_INFO_CLASS(ProcessEnableAlignmentFaultFixup);
     UNIMPLEMENTED_INFO_CLASS(ProcessWx86Information);
-    UNIMPLEMENTED_INFO_CLASS(ProcessPriorityBoost);
     UNIMPLEMENTED_INFO_CLASS(ProcessDeviceMap);
     UNIMPLEMENTED_INFO_CLASS(ProcessForegroundInformation);
     UNIMPLEMENTED_INFO_CLASS(ProcessLUIDDeviceMapsEnabled);
@@ -1288,6 +1288,23 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
                 ret = STATUS_SUCCESS;
             }
             else return ret;
+        }
+        break;
+
+    case ProcessPriorityBoost:
+        len = sizeof(ULONG);
+        if (size != len) return STATUS_INFO_LENGTH_MISMATCH;
+        if (!info) ret = STATUS_ACCESS_VIOLATION;
+        else
+        {
+            ULONG *disable_boost = info;
+            SERVER_START_REQ(get_process_info)
+            {
+                req->handle = wine_server_obj_handle( handle );
+                ret = wine_server_call( req );
+                *disable_boost = reply->disable_boost;
+            }
+            SERVER_END_REQ;
         }
         break;
 
@@ -1726,6 +1743,23 @@ NTSTATUS WINAPI NtSetInformationProcess( HANDLE handle, PROCESSINFOCLASS class, 
                 req->handle        = wine_server_obj_handle( handle );
                 req->base_priority = *base_priority;
                 req->mask          = SET_PROCESS_INFO_BASE_PRIORITY;
+                ret = wine_server_call( req );
+            }
+            SERVER_END_REQ;
+        }
+        break;
+
+    case ProcessPriorityBoost:
+        if (size != sizeof(ULONG)) return STATUS_INVALID_PARAMETER;
+        else
+        {
+            ULONG* disable_boost = info;
+
+            SERVER_START_REQ( set_process_info )
+            {
+                req->handle        = wine_server_obj_handle( handle );
+                req->disable_boost = *disable_boost;
+                req->mask          = SET_PROCESS_INFO_DISABLE_BOOST;
                 ret = wine_server_call( req );
             }
             SERVER_END_REQ;

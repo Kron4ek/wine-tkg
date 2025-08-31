@@ -346,7 +346,7 @@ while                   {return KW_WHILE;               }
 <pp>{ANY}               {}
 
 {ANY}                   {
-                            return yytext[0];
+                            return (unsigned char)yytext[0];
                         }
 
 %%

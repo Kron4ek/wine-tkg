@@ -28,22 +28,39 @@
 #include "winternl.h"
 #include "wine/test.h"
 
+static BOOL is_wow64;
+static BOOL old_wow64;
+
+static NTSTATUS (WINAPI *pNtAllocateReserveObject)( HANDLE *, const OBJECT_ATTRIBUTES *, MEMORY_RESERVE_OBJECT_TYPE );
 static NTSTATUS (WINAPI *pNtCreateThreadEx)( HANDLE *, ACCESS_MASK, OBJECT_ATTRIBUTES *,
                                              HANDLE, PRTL_THREAD_START_ROUTINE, void *,
                                              ULONG, ULONG_PTR, SIZE_T, SIZE_T, PS_ATTRIBUTE_LIST * );
 static NTSTATUS  (WINAPI *pNtSuspendProcess)(HANDLE process);
 static NTSTATUS  (WINAPI *pNtResumeProcess)(HANDLE process);
+static NTSTATUS  (WINAPI *pNtQueueApcThreadEx)(HANDLE handle, HANDLE reserve_handle, PNTAPCFUNC func,
+                                               ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3);
+static NTSTATUS  (WINAPI *pNtQueueApcThreadEx2)(HANDLE handle, HANDLE reserve_handle, ULONG flags, PNTAPCFUNC func,
+                                                ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3);
 
 static int * (CDECL *p_errno)(void);
 
+static BOOL (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
+
 static void init_function_pointers(void)
 {
-    HMODULE hntdll = GetModuleHandleA( "ntdll.dll" );
-#define GET_FUNC(name) p##name = (void *)GetProcAddress( hntdll, #name );
+    HMODULE hdll;
+#define GET_FUNC(name) p##name = (void *)GetProcAddress( hdll, #name );
+    hdll = GetModuleHandleA( "ntdll.dll" );
+    GET_FUNC( NtAllocateReserveObject );
     GET_FUNC( NtCreateThreadEx );
     GET_FUNC( NtSuspendProcess );
+    GET_FUNC( NtQueueApcThreadEx );
+    GET_FUNC( NtQueueApcThreadEx2 );
     GET_FUNC( NtResumeProcess );
     GET_FUNC( _errno );
+
+    hdll = GetModuleHandleA( "kernel32.dll" );
+    GET_FUNC( IsWow64Process );
 #undef GET_FUNC
 }
 
@@ -267,19 +284,98 @@ static void test_thread_bypass_process_freeze(void)
 
     status = pNtCreateThreadEx( &thread, THREAD_ALL_ACCESS, NULL, GetCurrentProcess(), test_thread_bypass_process_freeze_proc,
                                 NULL, THREAD_CREATE_FLAGS_BYPASS_PROCESS_FREEZE, 0, 0, 0, NULL );
-    ok( status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status );
+    ok( status == STATUS_SUCCESS ||
+        broken(status == STATUS_INVALID_PARAMETER_7) /* <= Win10-1809 */,
+        "Got unexpected status %#lx.\n", status );
 
     WaitForSingleObject( thread, INFINITE );
     CloseHandle( thread );
+}
+
+static int apc_count;
+
+static void CALLBACK apc_func( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3 )
+{
+    ++apc_count;
+}
+
+static void test_NtQueueApcThreadEx(void)
+{
+    NTSTATUS status, expected;
+    HANDLE reserve;
+
+    if (!pNtQueueApcThreadEx)
+    {
+        win_skip( "NtQueueApcThreadEx is not available.\n" );
+        return;
+    }
+
+    status = pNtQueueApcThreadEx( GetCurrentThread(), (HANDLE)QUEUE_USER_APC_CALLBACK_DATA_CONTEXT, apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    ok( status == STATUS_INVALID_HANDLE, "got %#lx, expected %#lx.\n", status, STATUS_INVALID_HANDLE );
+
+    status = pNtQueueApcThreadEx( GetCurrentThread(), (HANDLE)QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC, apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    todo_wine_if(old_wow64)
+    ok( status == STATUS_SUCCESS || status == STATUS_INVALID_HANDLE /* wow64 and win64 on Win version before Win10 1809 */,
+        "got %#lx.\n", status );
+
+    status = pNtQueueApcThreadEx( GetCurrentThread(), GetCurrentThread(), apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    ok( status == STATUS_OBJECT_TYPE_MISMATCH, "got %#lx.\n", status );
+
+    status = pNtAllocateReserveObject( &reserve, NULL, MemoryReserveObjectTypeUserApc );
+    ok( status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status );
+    status = pNtQueueApcThreadEx( GetCurrentThread(), reserve, apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    ok( !status, "got %#lx.\n", status );
+    status = pNtQueueApcThreadEx( GetCurrentThread(), reserve, apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    ok( status == STATUS_INVALID_PARAMETER_2, "got %#lx.\n", status );
+    SleepEx( 0, TRUE );
+    status = pNtQueueApcThreadEx( GetCurrentThread(), reserve, apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    ok( !status, "got %#lx.\n", status );
+
+    NtClose( reserve );
+
+    status = pNtAllocateReserveObject( &reserve, NULL, MemoryReserveObjectTypeIoCompletion );
+    ok( status == STATUS_SUCCESS, "Got unexpected status %#lx.\n", status );
+    status = pNtQueueApcThreadEx( GetCurrentThread(), reserve, apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    ok( status == STATUS_OBJECT_TYPE_MISMATCH, "got %#lx.\n", status );
+    NtClose( reserve );
+
+    SleepEx( 0, TRUE );
+
+    if (!pNtQueueApcThreadEx2)
+    {
+        win_skip( "NtQueueApcThreadEx2 is not available.\n" );
+        return;
+    }
+    expected = is_wow64 ? STATUS_NOT_SUPPORTED : STATUS_SUCCESS;
+    status = pNtQueueApcThreadEx2( GetCurrentThread(), NULL, QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC, apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    ok( status == expected, "got %#lx, expected %#lx.\n", status, expected );
+
+    status = pNtQueueApcThreadEx2( GetCurrentThread(), (HANDLE)QUEUE_USER_APC_CALLBACK_DATA_CONTEXT, 0, apc_func, 0x1234, 0x5678, 0xdeadbeef );
+    ok( status == STATUS_INVALID_HANDLE, "got %#lx.\n", status );
+
+    SleepEx( 0, TRUE );
 }
 
 START_TEST(thread)
 {
     init_function_pointers();
 
+    if (!pIsWow64Process || !pIsWow64Process( GetCurrentProcess(), &is_wow64 )) is_wow64 = FALSE;
+    if (is_wow64)
+    {
+        TEB64 *teb64 = ULongToPtr( NtCurrentTeb()->GdiBatchCount );
+
+        if (teb64)
+        {
+            PEB64 *peb64 = ULongToPtr(teb64->Peb);
+            old_wow64 = !peb64->LdrData;
+        }
+    }
+
     test_dbg_hidden_thread_creation();
     test_unique_teb();
     test_errno();
     test_NtCreateUserProcess();
     test_thread_bypass_process_freeze();
+    test_NtQueueApcThreadEx();
 }

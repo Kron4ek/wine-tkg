@@ -90,8 +90,6 @@
 #include "winioctl.h"
 #include "winternl.h"
 #include "unix_private.h"
-#include "esync.h"
-#include "fsync.h"
 #include "wine/list.h"
 #include "ntsyscalls.h"
 #include "wine/debug.h"
@@ -113,6 +111,32 @@ void *pLdrInitializeThunk = NULL;
 void *pRtlUserThreadStart = NULL;
 void *p__wine_ctrl_routine = NULL;
 SYSTEM_DLL_INIT_BLOCK *pLdrSystemDllInitBlock = NULL;
+
+static void stub_syscall( const char *name )
+{
+    CONTEXT context = { .ContextFlags = CONTEXT_FULL };
+    EXCEPTION_RECORD rec =
+    {
+        .ExceptionCode = EXCEPTION_WINE_STUB,
+        .ExceptionFlags = EXCEPTION_NONCONTINUABLE,
+        .NumberParameters = 2,
+        .ExceptionInformation[0] = (ULONG_PTR)"ntdll",
+        .ExceptionInformation[1] = (ULONG_PTR)name,
+    };
+    NtGetContextThread( GetCurrentThread(), &context );
+#ifdef __i386__
+    rec.ExceptionAddress = (void *)context.Eip;
+#elif defined __x86_64__
+    rec.ExceptionAddress = (void *)context.Rip;
+#elif defined __arm__ || defined __aarch64__
+    rec.ExceptionAddress = (void *)context.Pc;
+#endif
+    NtRaiseException( &rec, &context, TRUE );
+}
+
+
+#define SYSCALL_STUB(name) static void name(void) { stub_syscall( #name ); }
+ALL_SYSCALL_STUBS
 
 static void * const syscalls[] =
 {
@@ -1213,34 +1237,6 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
 
 #endif  /* _WIN64 */
 
-BOOL ac_odyssey;
-BOOL fsync_simulate_sched_quantum;
-
-static void hacks_init(void)
-{
-    static const char upc_exe[] = "Ubisoft Game Launcher\\upc.exe";
-    static const char ac_odyssey_exe[] = "ACOdyssey.exe";
-    const char *env_str;
-
-    if (main_argc > 1 && strstr(main_argv[1], ac_odyssey_exe))
-    {
-        ERR("HACK: AC Odyssey sync tweak on.\n");
-        ac_odyssey = TRUE;
-        return;
-    }
-    env_str = getenv("WINE_FSYNC_SIMULATE_SCHED_QUANTUM");
-    if (env_str)
-        fsync_simulate_sched_quantum = !!atoi(env_str);
-    else if (main_argc > 1)
-        fsync_simulate_sched_quantum = !!strstr(main_argv[1], upc_exe);
-    if (fsync_simulate_sched_quantum)
-        ERR("HACK: Simulating sched quantum in fsync.\n");
-
-    env_str = getenv("SteamGameId");
-    if (env_str && !strcmp(env_str, "50130"))
-        setenv("WINESTEAMNOEXEC", "1", 0);
-}
-
 
 static inline char *prepend( char *buffer, const char *str, size_t len )
 {
@@ -1981,9 +1977,6 @@ static void start_main_thread(void)
     signal_alloc_thread( teb );
     dbg_init();
     startup_info_size = server_init_process();
-    hacks_init();
-    fsync_init();
-    esync_init();
     virtual_map_user_shared_data();
     init_cpu_info();
     init_files();
