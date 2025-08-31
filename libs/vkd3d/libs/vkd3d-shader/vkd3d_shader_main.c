@@ -724,14 +724,13 @@ uint64_t vkd3d_shader_init_config_flags(void)
     return config_flags;
 }
 
-void vkd3d_shader_parser_init(struct vkd3d_shader_parser *parser, struct vsir_program *program,
+void vkd3d_shader_parser_init(struct vkd3d_shader_parser *parser,
         struct vkd3d_shader_message_context *message_context, const char *source_name)
 {
     parser->message_context = message_context;
     parser->location.source_name = source_name;
     parser->location.line = 1;
     parser->location.column = 0;
-    parser->program = program;
 }
 
 void VKD3D_PRINTF_FUNC(3, 4) vkd3d_shader_parser_error(struct vkd3d_shader_parser *parser,
@@ -1685,6 +1684,7 @@ static int vsir_program_scan(struct vsir_program *program, const struct vkd3d_sh
     struct vsir_program_iterator it = vsir_program_iterator(&program->instructions);
     struct vkd3d_shader_scan_combined_resource_sampler_info *combined_sampler_info;
     struct vkd3d_shader_scan_hull_shader_tessellation_info *tessellation_info;
+    struct vkd3d_shader_scan_thread_group_size_info *thread_group_size_info;
     struct vkd3d_shader_scan_descriptor_info *descriptor_info;
     struct vkd3d_shader_scan_signature_info *signature_info;
     struct vkd3d_shader_scan_context context;
@@ -1706,6 +1706,7 @@ static int vsir_program_scan(struct vsir_program *program, const struct vkd3d_sh
     }
 
     tessellation_info = vkd3d_find_struct(compile_info->next, SCAN_HULL_SHADER_TESSELLATION_INFO);
+    thread_group_size_info = vkd3d_find_struct(compile_info->next, SCAN_THREAD_GROUP_SIZE_INFO);
 
     vkd3d_shader_scan_context_init(&context, &program->shader_version, compile_info,
             add_descriptor_info ? &program->descriptors : NULL, combined_sampler_info, message_context);
@@ -1756,6 +1757,13 @@ static int vsir_program_scan(struct vsir_program *program, const struct vkd3d_sh
     {
         tessellation_info->output_primitive = context.output_primitive;
         tessellation_info->partitioning = context.partitioning;
+    }
+
+    if (!ret && thread_group_size_info)
+    {
+        thread_group_size_info->x = program->thread_group_size.x;
+        thread_group_size_info->y = program->thread_group_size.y;
+        thread_group_size_info->z = program->thread_group_size.z;
     }
 
     if (ret < 0)
@@ -2184,6 +2192,9 @@ const enum vkd3d_shader_target_type *vkd3d_shader_get_supported_target_types(
         VKD3D_SHADER_TARGET_D3D_BYTECODE,
         VKD3D_SHADER_TARGET_DXBC_TPF,
         VKD3D_SHADER_TARGET_FX,
+#ifdef VKD3D_SHADER_UNSUPPORTED_MSL
+        VKD3D_SHADER_TARGET_MSL,
+#endif
     };
 
     static const enum vkd3d_shader_target_type d3dbc_types[] =
@@ -2255,6 +2266,7 @@ int vkd3d_shader_preprocess(const struct vkd3d_shader_compile_info *compile_info
         struct vkd3d_shader_code *out, char **messages)
 {
     struct vkd3d_shader_message_context message_context;
+    struct shader_dump_data dump_data;
     int ret;
 
     TRACE("compile_info %p, out %p, messages %p.\n", compile_info, out, messages);
@@ -2267,7 +2279,11 @@ int vkd3d_shader_preprocess(const struct vkd3d_shader_compile_info *compile_info
 
     vkd3d_shader_message_context_init(&message_context, compile_info->log_level);
 
-    ret = preproc_lexer_parse(compile_info, out, &message_context);
+    fill_shader_dump_data(compile_info, &dump_data);
+    vkd3d_shader_dump_shader(&dump_data, compile_info->source.code, compile_info->source.size, SHADER_DUMP_TYPE_SOURCE);
+
+    if ((ret = preproc_lexer_parse(compile_info, out, &message_context)) >= 0)
+        vkd3d_shader_dump_shader(&dump_data, out->code, out->size, SHADER_DUMP_TYPE_PREPROC);
 
     vkd3d_shader_message_context_trace_messages(&message_context);
     if (!vkd3d_shader_message_context_copy_messages(&message_context, messages))

@@ -68,6 +68,7 @@ struct reserve
 {
     struct object obj;          /* object header */
     int    type;                /* reserve object type. See MEMORY_RESERVE_OBJECT_TYPE */
+    struct object *bound_obj;   /* object using reserve object */
     /* BYTE *memory */;         /* reserved memory */
 };
 
@@ -108,11 +109,10 @@ static const struct object_ops apc_reserve_ops =
     no_add_queue,               /* add_queue */
     NULL,                       /* remove_queue */
     NULL,                       /* signaled */
-    NULL,                       /* get_esync_fd */
-    NULL,                       /* get_fsync_idx */
     no_satisfied,               /* satisfied */
     no_signal,                  /* signal */
     no_get_fd,                  /* get_fd */
+    default_get_sync,           /* get_sync */
     default_map_access,         /* map_access */
     default_get_sd,             /* get_sd */
     default_set_sd,             /* set_sd */
@@ -134,11 +134,10 @@ static const struct object_ops completion_reserve_ops =
     no_add_queue,              /* add_queue */
     NULL,                      /* remove_queue */
     NULL,                      /* signaled */
-    NULL,                      /* get_esync_fd */
-    NULL,                      /* get_fsync_idx */
     no_satisfied,              /* satisfied */
     no_signal,                 /* signal */
     no_get_fd,                 /* get_fd */
+    default_get_sync,          /* get_sync */
     default_map_access,        /* map_access */
     default_get_sd,            /* get_sd */
     default_set_sd,            /* set_sd */
@@ -565,14 +564,13 @@ struct object *find_object( const struct namespace *namespace, const struct unic
                             unsigned int attributes )
 {
     const struct list *list;
-    struct list *p;
+    const struct object_name *ptr;
 
     if (!name || !name->len) return NULL;
 
     list = &namespace->names[ hash_strW( name->str, name->len, namespace->hash_size ) ];
-    LIST_FOR_EACH( p, list )
+    LIST_FOR_EACH_ENTRY( ptr, list, struct object_name, entry )
     {
-        const struct object_name *ptr = LIST_ENTRY( p, struct object_name, entry );
         if (ptr->len != name->len) continue;
         if (attributes & OBJ_CASE_INSENSITIVE)
         {
@@ -642,6 +640,11 @@ struct fd *no_get_fd( struct object *obj )
 {
     set_error( STATUS_OBJECT_TYPE_MISMATCH );
     return NULL;
+}
+
+struct object *default_get_sync( struct object *obj )
+{
+    return grab_object( obj );
 }
 
 unsigned int default_map_access( struct object *obj, unsigned int access )
@@ -869,7 +872,11 @@ static struct reserve *create_reserve( struct object *root, const struct unicode
         return NULL;
     }
 
-    if (reserve && get_error() != STATUS_OBJECT_NAME_EXISTS) reserve->type = type;
+    if (reserve && get_error() != STATUS_OBJECT_NAME_EXISTS)
+    {
+        reserve->type = type;
+        reserve->bound_obj = NULL;
+    }
 
     return reserve;
 }
@@ -877,6 +884,28 @@ static struct reserve *create_reserve( struct object *root, const struct unicode
 struct reserve *get_completion_reserve_obj( struct process *process, obj_handle_t handle, unsigned int access )
 {
     return (struct reserve *)get_handle_obj( process, handle, access, &completion_reserve_ops );
+}
+
+struct reserve *reserve_obj_associate_apc( struct process *process, obj_handle_t handle, struct object *apc )
+{
+    struct reserve *reserve;
+
+    if (!(reserve = (struct reserve *)get_handle_obj( process, handle, 0, &apc_reserve_ops ))) return NULL;
+    if (reserve->bound_obj)
+    {
+        release_object( reserve );
+        set_error( STATUS_INVALID_PARAMETER_2 );
+        return NULL;
+    }
+    reserve->bound_obj = apc;
+    return reserve;
+}
+
+void reserve_obj_unbind( struct reserve *reserve )
+{
+    if (!reserve) return;
+    reserve->bound_obj = NULL;
+    release_object( reserve );
 }
 
 /* Allocate a reserve object for pre-allocating memory for object types */

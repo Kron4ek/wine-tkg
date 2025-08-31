@@ -253,7 +253,9 @@ HRESULT jsdisp_call(jsdisp_t*,DISPID,WORD,unsigned,jsval_t*,jsval_t*);
 HRESULT jsdisp_call_name(jsdisp_t*,const WCHAR*,WORD,unsigned,jsval_t*,jsval_t*);
 HRESULT disp_propget(script_ctx_t*,IDispatch*,DISPID,jsval_t*);
 HRESULT disp_propput(script_ctx_t*,IDispatch*,DISPID,jsval_t);
+HRESULT disp_propget_name(script_ctx_t*,IDispatch*,const WCHAR*,jsval_t*);
 HRESULT disp_propput_name(script_ctx_t*,IDispatch*,const WCHAR*,jsval_t);
+HRESULT disp_propget_idx(script_ctx_t*,IDispatch*,DWORD,jsval_t*);
 HRESULT jsdisp_propget(jsdisp_t*,DISPID,jsval_t*);
 HRESULT jsdisp_propput(jsdisp_t*,const WCHAR*,DWORD,BOOL,jsval_t);
 HRESULT jsdisp_propput_name(jsdisp_t*,const WCHAR*,jsval_t);
@@ -494,6 +496,7 @@ HRESULT localize_number(script_ctx_t*,DOUBLE,BOOL,jsstr_t**);
 BOOL is_builtin_eval_func(jsdisp_t*);
 HRESULT builtin_eval(script_ctx_t*,struct _call_frame_t*,WORD,unsigned,jsval_t*,jsval_t*);
 HRESULT JSGlobal_eval(script_ctx_t*,jsval_t,WORD,unsigned,jsval_t*,jsval_t*);
+HRESULT Object_toString(script_ctx_t*,jsval_t,WORD,unsigned,jsval_t*,jsval_t*);
 HRESULT Object_get_proto_(script_ctx_t*,jsval_t,WORD,unsigned,jsval_t*,jsval_t*);
 HRESULT Object_set_proto_(script_ctx_t*,jsval_t,WORD,unsigned,jsval_t*,jsval_t*);
 
@@ -547,6 +550,7 @@ static inline HRESULT disp_call_value(script_ctx_t *ctx, IDispatch *disp, jsval_
 #define JS_E_DISABLED_CC             MAKE_JSERROR(IDS_DISABLED_CC)
 #define JS_E_EXPECTED_AT             MAKE_JSERROR(IDS_EXPECTED_AT)
 #define JS_E_FUNCTION_EXPECTED       MAKE_JSERROR(IDS_NOT_FUNC)
+#define JS_E_STRING_EXPECTED         MAKE_JSERROR(IDS_NOT_STRING)
 #define JS_E_DATE_EXPECTED           MAKE_JSERROR(IDS_NOT_DATE)
 #define JS_E_NUMBER_EXPECTED         MAKE_JSERROR(IDS_NOT_NUM)
 #define JS_E_OBJECT_EXPECTED         MAKE_JSERROR(IDS_OBJECT_EXPECTED)
@@ -565,6 +569,7 @@ static inline HRESULT disp_call_value(script_ctx_t *ctx, IDispatch *disp, jsval_
 #define JS_E_INVALID_URI_CHAR        MAKE_JSERROR(IDS_URI_INVALID_CHAR)
 #define JS_E_FRACTION_DIGITS_OUT_OF_RANGE MAKE_JSERROR(IDS_FRACTION_DIGITS_OUT_OF_RANGE)
 #define JS_E_PRECISION_OUT_OF_RANGE  MAKE_JSERROR(IDS_PRECISION_OUT_OF_RANGE)
+#define JS_E_ARRAY_OR_ARGS_EXPECTED  MAKE_JSERROR(IDS_ARRAY_OR_ARGS_EXPECTED)
 #define JS_E_INVALID_LENGTH          MAKE_JSERROR(IDS_INVALID_LENGTH)
 #define JS_E_ARRAY_EXPECTED          MAKE_JSERROR(IDS_ARRAY_EXPECTED)
 #define JS_E_CYCLIC_PROTO_VALUE      MAKE_JSERROR(IDS_CYCLIC_PROTO_VALUE)

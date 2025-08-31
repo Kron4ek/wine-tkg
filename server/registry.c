@@ -180,11 +180,10 @@ static const struct object_ops key_ops =
     no_add_queue,            /* add_queue */
     NULL,                    /* remove_queue */
     NULL,                    /* signaled */
-    NULL,                    /* get_esync_fd */
-    NULL,                    /* get_fsync_idx */
     NULL,                    /* satisfied */
     no_signal,               /* signal */
     no_get_fd,               /* get_fd */
+    default_get_sync,        /* get_sync */
     key_map_access,          /* map_access */
     key_get_sd,              /* get_sd */
     default_set_sd,          /* set_sd */
@@ -2217,12 +2216,6 @@ void flush_registry(void)
     if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
 }
 
-/* determine if the thread is wow64 (32-bit client running on 64-bit prefix) */
-static int is_wow64_thread( struct thread *thread )
-{
-    return (is_machine_64bit( native_machine ) && !is_machine_64bit( thread->process->machine ));
-}
-
 /* find all the branches inside the specified key or the branch containing the key */
 static void find_branches_for_key( struct key *key, int *branches, int *branch_count )
 {
@@ -2266,7 +2259,7 @@ DECL_HANDLER(create_key)
 
     if (!objattr) return;
 
-    if (!is_wow64_thread( current )) access = (access & ~KEY_WOW64_32KEY) | KEY_WOW64_64KEY;
+    if (!is_wow64_process( current->process )) access = (access & ~KEY_WOW64_32KEY) | KEY_WOW64_64KEY;
 
     if (objattr->rootdir)
     {
@@ -2297,7 +2290,7 @@ DECL_HANDLER(open_key)
     unsigned int access = req->access;
     struct unicode_str name = get_req_unicode_str();
 
-    if (!is_wow64_thread( current )) access = (access & ~KEY_WOW64_32KEY) | KEY_WOW64_64KEY;
+    if (!is_wow64_process( current->process )) access = (access & ~KEY_WOW64_32KEY) | KEY_WOW64_64KEY;
 
     if (req->parent && !(parent = get_hkey_obj( req->parent, 0 ))) return;
 

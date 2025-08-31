@@ -35,6 +35,8 @@
  */
 
 #include <stdarg.h>
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "winsock2.h"
 #include "windef.h"
 #include "winbase.h"
@@ -943,31 +945,25 @@ static void testSetTcpEntry(void)
 }
 
 static BOOL icmp_send_echo_test_apc_expect;
-static void WINAPI icmp_send_echo_test_apc_xp(void *context)
-{
-    ok(icmp_send_echo_test_apc_expect, "Unexpected APC execution\n");
-    ok(context == (void*)0xdeadc0de, "Wrong context: %p\n", context);
-    icmp_send_echo_test_apc_expect = FALSE;
-}
+static int icmp_send_echo_test_line;
+static IO_STATUS_BLOCK icmp_send_echo_io;
 
 static void WINAPI icmp_send_echo_test_apc(void *context, IO_STATUS_BLOCK *io_status, ULONG reserved)
 {
-    icmp_send_echo_test_apc_xp(context);
-    ok(io_status->Status == 0, "Got IO Status 0x%08lx\n", io_status->Status);
-    ok(io_status->Information == sizeof(ICMP_ECHO_REPLY) + 32 /* sizeof(senddata) */,
-        "Got IO Information %Iu\n", io_status->Information);
+    ok_(__FILE__, icmp_send_echo_test_line)(icmp_send_echo_test_apc_expect, "Unexpected APC execution\n");
+    ok_(__FILE__, icmp_send_echo_test_line)(context == (void*)0xdeadc0de, "Wrong context: %p\n", context);
+    icmp_send_echo_test_apc_expect = FALSE;
+    icmp_send_echo_io = *io_status;
 }
 
 static void testIcmpSendEcho(void)
 {
     /* The APC's signature is different pre-Vista */
-    const PIO_APC_ROUTINE apc = broken(LOBYTE(LOWORD(GetVersion())) < 6)
-                                ? (PIO_APC_ROUTINE)icmp_send_echo_test_apc_xp
-                                : icmp_send_echo_test_apc;
     HANDLE icmp;
     char senddata[32], replydata[sizeof(senddata) + sizeof(ICMP_ECHO_REPLY)];
     char replydata2[sizeof(replydata) + sizeof(IO_STATUS_BLOCK)];
     DWORD ret, error, replysz = sizeof(replydata);
+    IP_OPTION_INFORMATION opt;
     IPAddr address;
     ICMP_ECHO_REPLY *reply;
     HANDLE event;
@@ -1024,6 +1020,12 @@ static void testIcmpSendEcho(void)
 
     SetLastError(0xdeadbeef);
     ret = IcmpSendEcho(icmp, address, NULL, 0, NULL, replydata, replysz, 1000);
+    error = GetLastError();
+    ok (ret, "IcmpSendEcho failed unexpectedly with error %ld\n", error);
+
+    memset(&opt, 0, sizeof(opt));
+    SetLastError(0xdeadbeef);
+    ret = IcmpSendEcho(icmp, address, NULL, 0, &opt, replydata, replysz, 1000);
     error = GetLastError();
     ok (ret, "IcmpSendEcho failed unexpectedly with error %ld\n", error);
 
@@ -1241,6 +1243,12 @@ static void testIcmpSendEcho(void)
     ok(ret, "IcmpSendEcho2 failed unexpectedly with error %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
+    ret = IcmpSendEcho2Ex(icmp, NULL, NULL, NULL, 0x01010101, address, senddata, ICMP_MINLEN, NULL, replydata2, replysz, 1000);
+    ok(!ret, "IcmpSendEcho2 succeded unexpectedly\n");
+    error = GetLastError();
+    ok(error == ERROR_INVALID_NETNAME, "got %ld\n", error);
+
+    SetLastError(0xdeadbeef);
     replysz = sizeof(replydata2);
     ret = IcmpSendEcho2(icmp, NULL, NULL, NULL, address, senddata, sizeof(senddata), NULL, replydata2, replysz, 1000);
     if (!ret)
@@ -1326,6 +1334,22 @@ static void testIcmpSendEcho(void)
     /* pre-Vista, reply->Data is an offset; otherwise it's a pointer, so hardcode the offset */
     ok(!memcmp(senddata, reply + 1, min(sizeof(senddata), reply->DataSize)), "Data mismatch\n");
 
+    SetLastError(0xdeadbeef);
+    for (i = 0; i < ARRAY_SIZE(senddata); i++) senddata[i] = i & 0xff;
+    ret = IcmpSendEcho2(icmp, event, icmp_send_echo_test_apc, NULL, address, senddata, sizeof(senddata),
+            NULL, replydata2, replysz, 1000);
+    error = GetLastError();
+    ok(!ret, "IcmpSendEcho2 returned success unexpectedly\n");
+    ok(error == ERROR_IO_PENDING, "Expect last error: 0x%08x, got: 0x%08lx\n", ERROR_IO_PENDING, error);
+    ret = WaitForSingleObjectEx(event, 2000, TRUE);
+    ok(ret == WAIT_OBJECT_0, "WaitForSingleObjectEx failed unexpectedly with %lu\n", ret);
+    reply = (ICMP_ECHO_REPLY*)replydata2;
+    ok(ntohl(reply->Address) == INADDR_LOOPBACK, "Address mismatch, expect: %s, got: %s\n", ntoa(INADDR_LOOPBACK),
+       ntoa(reply->Address));
+    ok(reply->Status == IP_SUCCESS, "Expect status: 0x%08x, got: 0x%08lx\n", IP_SUCCESS, reply->Status);
+    ok(reply->DataSize == sizeof(senddata), "Got size: %d\n", reply->DataSize);
+    ok(!memcmp(senddata, reply + 1, min(sizeof(senddata), reply->DataSize)), "Data mismatch\n");
+
     CloseHandle(event);
 
     /* asynchronous tests with APC */
@@ -1334,16 +1358,18 @@ static void testIcmpSendEcho(void)
     address = htonl(INADDR_LOOPBACK);
     for (i = 0; i < ARRAY_SIZE(senddata); i++) senddata[i] = ~i & 0xff;
     icmp_send_echo_test_apc_expect = TRUE;
-    /*
-       NOTE: Supplying both event and apc has varying behavior across Windows versions, so not tested.
-    */
-    ret = IcmpSendEcho2(icmp, NULL, apc, (void*)0xdeadc0de, address, senddata, sizeof(senddata), NULL, replydata2, replysz, 1000);
+    memset(&icmp_send_echo_io, 0xcc, sizeof(icmp_send_echo_io));
+    icmp_send_echo_test_line = __LINE__;
+    ret = IcmpSendEcho2(icmp, NULL, icmp_send_echo_test_apc, (void*)0xdeadc0de, address, senddata, sizeof(senddata),
+            NULL, replydata2, replysz, 1000);
     error = GetLastError();
     ok(!ret, "IcmpSendEcho2 returned success unexpectedly\n");
     ok(error == ERROR_IO_PENDING, "Expect last error: 0x%08x, got: 0x%08lx\n", ERROR_IO_PENDING, error);
     SleepEx(200, TRUE);
     SleepEx(0, TRUE);
     ok(icmp_send_echo_test_apc_expect == FALSE, "APC was not executed!\n");
+    ok(!icmp_send_echo_io.Status, "got %#lx.\n", icmp_send_echo_io.Status);
+    ok(icmp_send_echo_io.Information == sizeof(replydata), "got %Iu.\n", icmp_send_echo_io.Information);
     reply = (ICMP_ECHO_REPLY*)replydata2;
     ok(ntohl(reply->Address) == INADDR_LOOPBACK, "Address mismatch, expect: %s, got: %s\n", ntoa(INADDR_LOOPBACK),
        ntoa(reply->Address));
@@ -1389,6 +1415,184 @@ static void testIcmpParseReplies( void )
     ok( !reply.Reserved, "reserved %d\n", reply.Reserved );
 }
 
+static void test_Icmp6SendEcho(void)
+{
+    char senddata[32], replydata[sizeof(senddata) + sizeof(ICMPV6_ECHO_REPLY)];
+    struct sockaddr_in6 src_addr, address;
+    IP_OPTION_INFORMATION opt;
+    ICMPV6_ECHO_REPLY *reply;
+    DWORD ret, replysz;
+    char str[256];
+    HANDLE event;
+    HANDLE icmp;
+
+    icmp = Icmp6CreateFile();
+    ok(icmp != INVALID_HANDLE_VALUE, "got error %ld.\n", GetLastError());
+
+    memset(senddata, 0xdd, sizeof(senddata));
+
+    memset(&src_addr, 0, sizeof(src_addr));
+    memset(&address, 0, sizeof(address));
+    ret = inet_pton( AF_INET6, "::1", &address.sin6_addr);
+    ok(ret, "got error %u.\n", WSAGetLastError());
+
+    SetLastError(0xdeadbeef);
+    replysz = sizeof(replydata);
+    memset(replydata, 0xcc, sizeof(replydata));
+    reply = (ICMPV6_ECHO_REPLY*)replydata;
+    ret = Icmp6SendEcho2(icmp, NULL, NULL, NULL, &src_addr, &address, senddata, sizeof(senddata), NULL,
+            replydata, replysz, 1000);
+    todo_wine_if(!ret && GetLastError() == ERROR_ACCESS_DENIED)
+    ok(ret == 1, "got ret %lu, error %ld.\n", ret, GetLastError());
+    if (!ret)
+    {
+        skip( "ipv6 ping is prohibited.\n" );
+        IcmpCloseHandle(icmp);
+        return;
+    }
+    ok(!GetLastError(), "got %ld.\n", GetLastError());
+    ok(!reply->Status, "got %lu.\n", reply->Status);
+    ok(!memcmp(reply->Address.sin6_addr, &address.sin6_addr, sizeof(address.sin6_addr)), "got %s.\n",
+            inet_ntop(AF_INET6, (void *)&reply->Address.sin6_addr, str, sizeof(str)));
+    ok(!reply->Address.sin6_port, "got %#x.\n", reply->Address.sin6_port);
+    ok(!reply->Address.sin6_flowinfo, "got %#lx.\n", reply->Address.sin6_flowinfo);
+    ok(!reply->Address.sin6_scope_id, "got %#lx.\n", reply->Address.sin6_scope_id);
+    ok(!memcmp(reply + 1, senddata, sizeof(senddata)), "reply data does not match.\n");
+
+    memset(&src_addr, 0, sizeof(src_addr));
+    memset(&address, 0, sizeof(address));
+    memset(&opt, 0, sizeof(opt));
+    ret = inet_pton( AF_INET6, "::1", &address.sin6_addr);
+    ok(ret, "got error %u.\n", WSAGetLastError());
+    ret = inet_pton( AF_INET6, "::1", &src_addr.sin6_addr);
+    ok(ret, "got error %u.\n", WSAGetLastError());
+    memset(replydata, 0xcc, sizeof(replydata));
+    ret = Icmp6SendEcho2(icmp, NULL, NULL, NULL, &src_addr, &address, senddata, sizeof(senddata), &opt,
+            replydata, replysz, 1000);
+    ok(!ret && GetLastError() == IP_GENERAL_FAILURE, "got ret %#lx, error %ld.\n", ret, GetLastError());
+    ok(reply->Status == IP_GENERAL_FAILURE, "got %#lx.\n", reply->Status);
+
+    opt.Ttl = 1;
+    ret = Icmp6SendEcho2(icmp, NULL, NULL, NULL, &src_addr, &address, senddata, sizeof(senddata), &opt,
+            replydata, replysz, 1000);
+    ok(ret == 1, "got ret %lu, error %ld.\n", ret, GetLastError());
+    ok(!GetLastError(), "got %ld.\n", GetLastError());
+    ok(!reply->Status, "got %#lx.\n", reply->Status);
+    ok(!memcmp(reply->Address.sin6_addr, &address.sin6_addr, sizeof(address.sin6_addr)), "got %s.\n",
+            inet_ntop(AF_INET6, (void *)&reply->Address.sin6_addr, str, sizeof(str)));
+    ok(!reply->Address.sin6_port, "got %#x.\n", reply->Address.sin6_port);
+    ok(!reply->Address.sin6_flowinfo, "got %#lx.\n", reply->Address.sin6_flowinfo);
+    ok(!reply->Address.sin6_scope_id, "got %#lx.\n", reply->Address.sin6_scope_id);
+    ok(!memcmp(reply + 1, senddata, sizeof(senddata)), "reply data does not match.\n");
+
+    memset(&src_addr, 0, sizeof(src_addr));
+    memset(&address, 0, sizeof(address));
+    event = CreateEventW(NULL, FALSE, FALSE, NULL);
+
+    icmp_send_echo_test_apc_expect = FALSE;
+    icmp_send_echo_test_line = __LINE__;
+    memset(&icmp_send_echo_io, 0xcc, sizeof(icmp_send_echo_io));
+    memset(replydata, 0xcc, sizeof(replydata));
+    replysz = sizeof(replydata);
+    ret = Icmp6SendEcho2(icmp, NULL, icmp_send_echo_test_apc, (void*)0xdeadc0de, &src_addr, &address, senddata,
+            sizeof(senddata), NULL, replydata, replysz, 1000);
+    ok(!ret && GetLastError() == ERROR_INVALID_NETNAME, "got ret %lu, error %ld.\n", ret, GetLastError());
+
+    ret = inet_pton( AF_INET6, "::1", &address.sin6_addr);
+    ok(ret, "got error %u.\n", WSAGetLastError());
+
+    icmp_send_echo_test_apc_expect = TRUE;
+    icmp_send_echo_test_line = __LINE__;
+    memset(&icmp_send_echo_io, 0xcc, sizeof(icmp_send_echo_io));
+    memset(replydata, 0xcc, sizeof(replydata));
+    replysz = sizeof(replydata);
+    ret = Icmp6SendEcho2(icmp, NULL, icmp_send_echo_test_apc, (void*)0xdeadc0de, &src_addr, &address, senddata,
+            sizeof(senddata), NULL, replydata, replysz, 1000);
+    ok(!ret && GetLastError() == ERROR_IO_PENDING, "got ret %lu, error %ld.\n", ret, GetLastError());
+    ret = WaitForSingleObjectEx(event, INFINITE, TRUE);
+    ok(ret == WAIT_IO_COMPLETION, "got %#lx.\n", ret);
+    ok(!icmp_send_echo_io.Status, "got %#lx.\n", icmp_send_echo_io.Status);
+    ok(icmp_send_echo_io.Information == sizeof(replydata), "got %Iu.\n", icmp_send_echo_io.Information);
+    ok(!reply->Status, "got %#lx.\n", reply->Status);
+    ok(!icmp_send_echo_test_apc_expect, "APC was not called.\n");
+    ok(!memcmp(reply->Address.sin6_addr, &address.sin6_addr, sizeof(address.sin6_addr)), "got %s.\n",
+            inet_ntop(AF_INET6, (void *)&reply->Address.sin6_addr, str, sizeof(str)));
+    ok(!reply->Address.sin6_port, "got %#x.\n", reply->Address.sin6_port);
+    ok(!reply->Address.sin6_flowinfo, "got %#lx.\n", reply->Address.sin6_flowinfo);
+    ok(!reply->Address.sin6_scope_id, "got %#lx.\n", reply->Address.sin6_scope_id);
+    ok(!memcmp(reply + 1, senddata, sizeof(senddata)), "reply data does not match.\n");
+
+    ret = inet_pton( AF_INET6, "::1", &address.sin6_addr);
+    icmp_send_echo_test_apc_expect = FALSE;
+    icmp_send_echo_test_line = __LINE__;
+    memset(replydata, 0xcc, sizeof(replydata));
+    replysz = sizeof(replydata);
+    ret = Icmp6SendEcho2(icmp, event, icmp_send_echo_test_apc, (void*)0xdeadc0de, &src_addr, &address, senddata,
+            sizeof(senddata), NULL, replydata, replysz, 1000);
+    ok(!ret && GetLastError() == ERROR_IO_PENDING, "got ret %lu, error %ld.\n", ret, GetLastError());
+    ret = WaitForSingleObjectEx(event, INFINITE, TRUE);
+    ok(ret == WAIT_OBJECT_0, "got %#lx.\n", ret);
+    icmp_send_echo_test_line = __LINE__;
+    SleepEx(0, TRUE);
+    ok(!reply->Status, "got %#lx.\n", reply->Status);
+    ok(!memcmp(reply->Address.sin6_addr, &address.sin6_addr, sizeof(address.sin6_addr)), "got %s.\n",
+            inet_ntop(AF_INET6, (void *)&reply->Address.sin6_addr, str, sizeof(str)));
+    ok(!reply->Address.sin6_port, "got %#x.\n", reply->Address.sin6_port);
+    ok(!reply->Address.sin6_flowinfo, "got %#lx.\n", reply->Address.sin6_flowinfo);
+    ok(!reply->Address.sin6_scope_id, "got %#lx.\n", reply->Address.sin6_scope_id);
+    ok(!memcmp(reply + 1, senddata, sizeof(senddata)), "reply data does not match.\n");
+
+    memset(replydata, 0xcc, sizeof(replydata));
+    replysz = sizeof(replydata);
+    opt.Ttl = 0;
+    icmp_send_echo_test_apc_expect = TRUE;
+    icmp_send_echo_test_line = __LINE__;
+    memset(&icmp_send_echo_io, 0xcc, sizeof(icmp_send_echo_io));
+    ret = Icmp6SendEcho2(icmp, NULL, icmp_send_echo_test_apc, (void*)0xdeadc0de, &src_addr, &address, senddata,
+            sizeof(senddata), &opt, replydata, replysz, 1000);
+    ok(!ret && GetLastError() == ERROR_IO_PENDING, "got ret %lu, error %ld.\n", ret, GetLastError());
+    ret = WaitForSingleObjectEx(event, INFINITE, TRUE);
+    ok(ret == WAIT_IO_COMPLETION, "got %#lx.\n", ret);
+    ok(!icmp_send_echo_test_apc_expect, "APC was not called.\n");
+    todo_wine ok(icmp_send_echo_io.Status == STATUS_INVALID_PARAMETER, "got %#lx.\n", icmp_send_echo_io.Status);
+    ok(icmp_send_echo_io.Information == sizeof(ICMPV6_ECHO_REPLY), "got %Iu.\n", icmp_send_echo_io.Information);
+    ok(reply->Status == IP_GENERAL_FAILURE, "got %#lx.\n", reply->Status);
+    ok(IN6_IS_ADDR_UNSPECIFIED((IN6_ADDR *)&reply->Address.sin6_addr), "got %s.\n",
+            inet_ntop(AF_INET6, (void *)&reply->Address.sin6_addr, str, sizeof(str)));
+    ok(!reply->Address.sin6_port, "got %#x.\n", reply->Address.sin6_port);
+    ok(!reply->Address.sin6_flowinfo, "got %#lx.\n", reply->Address.sin6_flowinfo);
+    ok(!reply->Address.sin6_scope_id, "got %#lx.\n", reply->Address.sin6_scope_id);
+
+    ResetEvent(event);
+    ret = inet_pton( AF_INET6, "::ffff", &src_addr.sin6_addr);
+    ok(ret, "got error %u.\n", WSAGetLastError());
+    ret = Icmp6SendEcho2(icmp, event, NULL, NULL, &src_addr, &address, senddata,
+            sizeof(senddata), NULL, replydata, replysz, 1000);
+    ok(!ret && GetLastError() == ERROR_INVALID_NETNAME, "got ret %lu, error %ld.\n", ret, GetLastError());
+
+    CloseHandle(event);
+    ret = IcmpCloseHandle(icmp);
+    ok(ret, "got error %u.\n", WSAGetLastError());
+}
+
+static void testIcmp6ParseReplies( void )
+{
+    ICMPV6_ECHO_REPLY reply = { 0 };
+    DWORD ret;
+
+    SetLastError( 0xdeadbeef );
+    ret = Icmp6ParseReplies( &reply, sizeof(reply) );
+    ok( ret == 1, "got %ld.\n", ret );
+    ok( GetLastError() == 0xdeadbeef, "got error %ld.\n", GetLastError() );
+
+    reply.Status = 12345;
+    SetLastError( 0xdeadbeef );
+    ret = Icmp6ParseReplies( &reply, sizeof(reply) );
+    ok( ret == 0, "ret %ld\n", ret );
+    ok( GetLastError() == 12345, "got error %ld.\n", GetLastError() );
+    ok( reply.Status == 12345, "got %ld,\n", reply.Status );
+}
+
 static void testWinNT4Functions(void)
 {
   testGetNumberOfInterfaces();
@@ -1409,6 +1613,8 @@ static void testWinNT4Functions(void)
   testSetTcpEntry();
   testIcmpSendEcho();
   testIcmpParseReplies();
+  test_Icmp6SendEcho();
+  testIcmp6ParseReplies();
 }
 
 static void testGetInterfaceInfo(void)

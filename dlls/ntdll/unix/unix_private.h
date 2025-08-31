@@ -105,8 +105,6 @@ struct ntdll_thread_data
     SYSTEM_SERVICE_TABLE     *syscall_table; /* 214/0370 syscall table */
     struct syscall_frame     *syscall_frame; /* 218/0378 current syscall frame */
     int                       syscall_trace; /* 21c/0380 syscall trace flag */
-    int                       esync_apc_fd;  /* fd to wait on for user APCs */
-    int                      *fsync_apc_futex;
     int                       request_fd;    /* fd for sending server requests */
     int                       reply_fd;      /* fd for receiving server replies */
     int                       wait_fd[2];    /* fd for sleeping server requests */
@@ -206,9 +204,6 @@ extern struct _KUSER_SHARED_DATA *user_shared_data;
 #ifdef __i386__
 extern struct ldt_copy __wine_ldt_copy;
 #endif
-
-extern BOOL ac_odyssey;
-extern BOOL fsync_simulate_sched_quantum;
 
 extern void init_environment(void);
 extern void init_startup_info(void);
@@ -394,8 +389,8 @@ extern NTSTATUS wow64_wine_spawnvp( void *args );
 
 extern void dbg_init(void);
 
-extern NTSTATUS call_user_apc_dispatcher( CONTEXT *context_ptr, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3,
-                                          PNTAPCFUNC func, NTSTATUS status );
+extern NTSTATUS call_user_apc_dispatcher( CONTEXT *context_ptr, unsigned int flags, ULONG_PTR arg1, ULONG_PTR arg2,
+                                          ULONG_PTR arg3, PNTAPCFUNC func, NTSTATUS status );
 extern NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context );
 extern void call_raise_user_exception_dispatcher(void);
 

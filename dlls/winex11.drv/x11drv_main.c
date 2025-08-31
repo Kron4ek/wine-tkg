@@ -762,6 +762,7 @@ static NTSTATUS x11drv_init( void *arg )
     X11DRV_InitMouse( gdi_display );
     if (use_xim) use_xim = xim_init( input_style );
 
+    init_icm_profile();
     init_user_driver();
     return STATUS_SUCCESS;
 }

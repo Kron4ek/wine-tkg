@@ -612,7 +612,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     WCHAR name[MAX_PATH];
     WCHAR *p, *tidy_cmdline = cmd_line;
     RTL_USER_PROCESS_PARAMETERS *params = NULL;
-    RTL_USER_PROCESS_INFORMATION rtl_info;
+    RTL_USER_PROCESS_INFORMATION rtl_info = { 0 };
     HANDLE parent = 0, debug = 0;
     ULONG nt_flags = 0;
     USHORT machine = 0;
@@ -1030,9 +1030,7 @@ BOOL WINAPI /* DECLSPEC_HOTPATCH */ GetProcessMitigationPolicy( HANDLE process, 
  */
 BOOL WINAPI DECLSPEC_HOTPATCH GetProcessPriorityBoost( HANDLE process, PBOOL disable )
 {
-    FIXME( "(%p,%p): semi-stub\n", process, disable );
-    *disable = FALSE;  /* report that no boost is present */
-    return TRUE;
+    return set_ntstatus( NtQueryInformationProcess( process, ProcessPriorityBoost, disable, sizeof(*disable), NULL ));
 }
 
 
@@ -1376,8 +1374,7 @@ BOOL WINAPI /* DECLSPEC_HOTPATCH */ SetProcessMitigationPolicy( PROCESS_MITIGATI
  */
 BOOL WINAPI /* DECLSPEC_HOTPATCH */ SetProcessPriorityBoost( HANDLE process, BOOL disable )
 {
-    FIXME( "(%p,%d): stub\n", process, disable );
-    return TRUE;
+    return set_ntstatus( NtSetInformationProcess( process, ProcessPriorityBoost, &disable, sizeof(disable) ));
 }
 
 

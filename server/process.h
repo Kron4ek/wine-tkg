@@ -36,6 +36,7 @@ enum startup_state { STARTUP_IN_PROGRESS, STARTUP_DONE, STARTUP_ABORTED };
 struct process
 {
     struct object        obj;             /* object header */
+    struct event_sync   *sync;            /* sync object for wait/signal */
     struct list          entry;           /* entry in system-wide process list */
     process_id_t         parent_id;       /* parent process id (at the time of creation) */
     struct list          thread_list;     /* thread list */
@@ -57,6 +58,7 @@ struct process
     affinity_t           affinity;        /* process affinity mask */
     int                  priority;        /* priority class */
     int                  base_priority;   /* base priority to calculate thread priority */
+    int                  disable_boost;   /* disable priority boost */
     int                  suspend;         /* global process suspend count */
     unsigned int         is_system:1;     /* is it a system process? */
     unsigned int         debug_children:1;/* also debug all child processes */
@@ -87,8 +89,6 @@ struct process
     struct list          rawinput_entry;  /* entry in the rawinput process list */
     struct list          kernel_object;   /* list of kernel object pointers */
     struct pe_image_info image_info;      /* main exe image info */
-    int                  esync_fd;        /* esync file descriptor (signaled on exit) */
-    unsigned int         fsync_idx;
 };
 
 /* process functions */
@@ -144,6 +144,11 @@ static inline process_id_t get_process_id( struct process *process ) { return pr
 static inline int is_process_init_done( struct process *process )
 {
     return process->startup_state == STARTUP_DONE;
+}
+
+static inline int is_wow64_process( struct process *process )
+{
+    return is_machine_64bit( native_machine ) && !is_machine_64bit( process->machine );
 }
 
 static const unsigned int default_session_id = 1;

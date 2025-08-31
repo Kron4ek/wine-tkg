@@ -107,6 +107,7 @@ static struct wg_transform *get_transform(wg_transform_t trans)
 static void align_video_info_planes(MFVideoInfo *video_info, gsize plane_align,
         GstVideoInfo *info, GstVideoAlignment *align)
 {
+    bool fix_nv12 = !plane_align && info->finfo->format == GST_VIDEO_FORMAT_NV12 && (info->width & 3) && (info->width & 3) != 3;
     const MFVideoArea *aperture = &video_info->MinimumDisplayAperture;
 
     gst_video_alignment_reset(align);
@@ -129,9 +130,24 @@ static void align_video_info_planes(MFVideoInfo *video_info, gsize plane_align,
         align->padding_bottom = top;
     }
 
-    align->stride_align[0] = plane_align;
-
-    gst_video_info_align(info, align);
+    /* TODO: set NV12 GstVideoInfo correctly when padding is present */
+    if (fix_nv12 && !align->padding_left && !align->padding_top && !align->padding_right && !align->padding_bottom)
+    {
+        /* NV12 minimum stride alignment is 2, and Windows expects 2,
+         * but gst_video_info_align() imposes a minimum of 4. */
+        gint aligned_height = GST_ROUND_UP_2(info->height);
+        info->stride[0] = GST_ROUND_UP_2(info->width);
+        info->stride[1] = info->stride[0];
+        info->offset[0] = 0;
+        info->offset[1] = info->stride[0] * aligned_height;
+        info->size = info->offset[1] + info->stride[0] * aligned_height / 2;
+        align->stride_align[0] = 1;
+    }
+    else
+    {
+        align->stride_align[0] = plane_align;
+        gst_video_info_align(info, align);
+    }
 
     if (video_info->VideoFlags & MFVideoFlag_BottomUpLinearRep)
     {
@@ -206,12 +222,16 @@ static WgVideoBufferPool *wg_video_buffer_pool_create(GstCaps *caps, gsize plane
 {
     WgVideoBufferPool *pool;
     GstStructure *config;
+    gsize max_size;
 
     if (!(pool = g_object_new(wg_video_buffer_pool_get_type(), NULL)))
         return NULL;
 
     gst_video_info_from_caps(&pool->info, caps);
+    max_size = pool->info.size;
     align_video_info_planes(video_info, plane_align, &pool->info, align);
+    /* GStreamer assumes NV12 pools must accommodate a stride alignment of 4, but we use 2 */
+    max_size = max(max_size, pool->info.size);
 
     if (!(config = gst_buffer_pool_get_config(GST_BUFFER_POOL(pool))))
         GST_ERROR("Failed to get %"GST_PTR_FORMAT" config.", pool);
@@ -221,7 +241,7 @@ static WgVideoBufferPool *wg_video_buffer_pool_create(GstCaps *caps, gsize plane
         gst_buffer_pool_config_add_option(config, GST_BUFFER_POOL_OPTION_VIDEO_ALIGNMENT);
         gst_buffer_pool_config_set_video_alignment(config, align);
 
-        gst_buffer_pool_config_set_params(config, caps, pool->info.size, 0, 0);
+        gst_buffer_pool_config_set_params(config, caps, max_size, 0, 0);
         gst_buffer_pool_config_set_allocator(config, allocator, NULL);
         if (!gst_buffer_pool_set_config(GST_BUFFER_POOL(pool), config))
             GST_ERROR("Failed to set %"GST_PTR_FORMAT" config.", pool);
@@ -495,15 +515,7 @@ static GstCaps *transform_get_parsed_caps(GstCaps *caps, const char *media_type)
     else if (gst_structure_get_int(structure, "wmvversion", &value))
         gst_caps_set_simple(parsed_caps, "parsed", G_TYPE_BOOLEAN, true, "wmvversion", G_TYPE_INT, value, NULL);
     else
-    {
-        if (!strcmp(media_type, "video/x-h264"))
-        {
-            gst_caps_set_simple(parsed_caps, "stream-format", G_TYPE_STRING, "byte-stream", NULL);
-            gst_caps_set_simple(parsed_caps, "alignment", G_TYPE_STRING, "au", NULL);
-        }
-
         gst_caps_set_simple(parsed_caps, "parsed", G_TYPE_BOOLEAN, true, NULL);
-    }
 
     return parsed_caps;
 }
@@ -512,7 +524,9 @@ static bool transform_create_decoder_elements(struct wg_transform *transform,
         const gchar *input_mime, const gchar *output_mime, GstElement **first, GstElement **last)
 {
     GstCaps *parsed_caps = NULL, *sink_caps = NULL;
-    GstElement *element;
+    GstElement *element, *capsfilter;
+    const char *shortname = NULL;
+    GstElementFactory *factory;
     bool ret = false;
     char *str;
 
@@ -535,15 +549,6 @@ static bool transform_create_decoder_elements(struct wg_transform *transform,
 
     if (element)
     {
-        if (!(element = create_element("capsfilter", "good")) ||
-                !append_element(transform->container, element, first, last))
-            goto done;
-        if ((str = gst_caps_to_string(parsed_caps)))
-        {
-            gst_util_set_object_arg(G_OBJECT(element), "caps", str);
-            free(str);
-        }
-
         /* We try to intercept buffers produced by the parser, so if we push a large buffer into the
          * parser, it won't push everything into the decoder all in one go.
          */
@@ -558,8 +563,38 @@ static bool transform_create_decoder_elements(struct wg_transform *transform,
         parsed_caps = gst_caps_ref(transform->input_caps);
     }
 
-    if (!(element = find_element(GST_ELEMENT_FACTORY_TYPE_DECODER, parsed_caps, sink_caps))
-            || !append_element(transform->container, element, first, last))
+    if (!(element = find_element(GST_ELEMENT_FACTORY_TYPE_DECODER, parsed_caps, sink_caps)))
+        goto done;
+
+    /* h264parse currently has a bug where it will send an avc caps without codec_data when it
+     * has received an SPS but not PPS. As a result, when a drain request is made, the caps is fixated
+     * to avc but no codec_data is provided to the decoder. This results in libav rejecting every
+     * packet it receives.
+     * As a workaround, we need to insert a capsfilter for avdec_h264 in order for it to use
+     * the byte-stream stream-format.
+     */
+    if ((factory = gst_element_get_factory(element)) &&
+            (shortname = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory))) &&
+            !strcmp(shortname, "avdec_h264"))
+    {
+        if (!(capsfilter = create_element("capsfilter", "good")) ||
+                !append_element(transform->container, capsfilter, first, last))
+        {
+            g_object_unref(element);
+            goto done;
+        }
+
+        gst_caps_set_simple(parsed_caps, "stream-format", G_TYPE_STRING, "byte-stream", NULL);
+        gst_caps_set_simple(parsed_caps, "alignment", G_TYPE_STRING, "au", NULL);
+
+        if ((str = gst_caps_to_string(parsed_caps)))
+        {
+            gst_util_set_object_arg(G_OBJECT(capsfilter), "caps", str);
+            free(str);
+        }
+    }
+
+    if (!append_element(transform->container, element, first, last))
         goto done;
 
     set_max_threads(element);

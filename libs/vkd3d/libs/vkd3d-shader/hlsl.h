@@ -1541,6 +1541,12 @@ static inline bool hlsl_var_has_buffer_offset_register_reservation(struct hlsl_c
     return var->reg_reservation.reg_type == 'c' && var->buffer == ctx->globals_buffer;
 }
 
+static inline bool hlsl_is_comparison_op(enum hlsl_ir_expr_op op)
+{
+    return op == HLSL_OP2_EQUAL || op == HLSL_OP2_GEQUAL
+            || op == HLSL_OP2_LESS || op == HLSL_OP2_NEQUAL;
+}
+
 char *hlsl_sprintf_alloc(struct hlsl_ctx *ctx, const char *fmt, ...) VKD3D_PRINTF_FUNC(2, 3);
 
 const char *debug_hlsl_expr_op(enum hlsl_ir_expr_op op);
@@ -1692,6 +1698,9 @@ struct hlsl_type *hlsl_new_stream_output_type(struct hlsl_ctx *ctx,
         enum hlsl_so_object_type so_type, struct hlsl_type *type);
 struct hlsl_ir_node *hlsl_new_ternary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
         struct hlsl_ir_node *arg1, struct hlsl_ir_node *arg2, struct hlsl_ir_node *arg3);
+
+bool hlsl_constant_is_zero(struct hlsl_ir_constant *c);
+bool hlsl_constant_is_one(struct hlsl_ir_constant *c);
 
 void hlsl_init_simple_deref_from_var(struct hlsl_deref *deref, struct hlsl_ir_var *var);
 

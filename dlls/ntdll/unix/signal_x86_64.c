@@ -387,11 +387,16 @@ C_ASSERT( sizeof(struct exc_stack_layout) == 0x5c0 );
 struct apc_stack_layout
 {
     CONTEXT              context;        /* 000 */
-    struct machine_frame machine_frame;  /* 4d0 */
-    ULONG64              align;          /* 4f8 */
+    CONTEXT_EX           context_ex;     /* 4d0 */
+    KCONTINUE_ARGUMENT   continue_arg;   /* 4f0 */
+    ULONG64              align1;         /* 508 */
+    APC_CALLBACK_DATA    callback_data;  /* 510 */
+    struct machine_frame machine_frame;  /* 530 */
+    ULONG64              align2;         /* 558 */
 };
-C_ASSERT( offsetof(struct apc_stack_layout, machine_frame) == 0x4d0 );
-C_ASSERT( sizeof(struct apc_stack_layout) == 0x500 );
+C_ASSERT( offsetof(struct apc_stack_layout, continue_arg) == 0x4f0 );
+C_ASSERT( offsetof(struct apc_stack_layout, machine_frame) == 0x530 );
+C_ASSERT( sizeof(struct apc_stack_layout) == 0x560 );
 
 /* stack layout when calling KiUserCallbackDispatcher */
 struct callback_stack_layout
@@ -1552,12 +1557,14 @@ static void setup_exception( ucontext_t *sigcontext, EXCEPTION_RECORD *rec )
 /***********************************************************************
  *           call_user_apc_dispatcher
  */
-NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3,
+NTSTATUS call_user_apc_dispatcher( CONTEXT *context, unsigned int flags, ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3,
                                    PNTAPCFUNC func, NTSTATUS status )
 {
     struct syscall_frame *frame = get_syscall_frame();
     ULONG64 rsp = context ? context->Rsp : frame->rsp;
     struct apc_stack_layout *stack;
+
+    if (flags & ~SERVER_USER_APC_CALLBACK_DATA_CONTEXT) FIXME( "flags %#x are not supported.\n", flags );
 
     rsp &= ~15;
     stack = (struct apc_stack_layout *)rsp - 1;
@@ -1572,8 +1579,19 @@ NTSTATUS call_user_apc_dispatcher( CONTEXT *context, ULONG_PTR arg1, ULONG_PTR a
         NtGetContextThread( GetCurrentThread(), &stack->context );
         stack->context.Rax = status;
     }
+    memset( &stack->continue_arg, 0, sizeof(stack->continue_arg) );
+    stack->continue_arg.ContinueType = KCONTINUE_RESUME;
+    stack->continue_arg.ContinueFlags = KCONTINUE_FLAG_TEST_ALERT | KCONTINUE_FLAG_DELIVER_APC;
     stack->context.P1Home    = arg1;
-    stack->context.P2Home    = arg2;
+    if (flags & SERVER_USER_APC_CALLBACK_DATA_CONTEXT)
+    {
+        stack->callback_data.ContextRecord = &stack->context;
+        stack->callback_data.Parameter = arg2;
+        stack->callback_data.Reserved0 = 0;
+        stack->callback_data.Reserved1 = 0;
+        stack->context.P2Home = (ULONG_PTR)&stack->callback_data;
+    }
+    else stack->context.P2Home = arg2;
     stack->context.P3Home    = arg3;
     stack->context.P4Home    = (ULONG64)func;
     stack->machine_frame.rip = stack->context.Rip;
@@ -2222,6 +2240,88 @@ static BOOL handle_syscall_trap( ucontext_t *sigcontext, siginfo_t *siginfo )
 }
 
 
+/***********************************************************************
+ *           check_invalid_gsbase
+ *
+ * Check for fault caused by invalid %gs value (some copy protection schemes mess with it).
+ */
+static inline BOOL check_invalid_gsbase( ucontext_t *ucontext )
+{
+    unsigned int prefix_count = 0;
+    const BYTE *instr = (const BYTE *)RIP_sig( ucontext );
+    TEB *teb = NtCurrentTeb();
+    ULONG_PTR cur_gsbase = 0;
+
+    if (CS_sig(ucontext) != cs64_sel) return FALSE;
+
+#ifdef __linux__
+    if (user_shared_data->ProcessorFeatures[PF_RDWRFSGSBASE_AVAILABLE])
+        __asm__("rdgsbase %0" : "=r" (cur_gsbase));
+    else
+        arch_prctl( ARCH_GET_GS, &cur_gsbase );
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+    amd64_get_gsbase( &cur_gsbase );
+#elif defined(__NetBSD__)
+    sysarch( X86_64_GET_GSBASE, &cur_gsbase );
+#endif
+
+    if (cur_gsbase == (ULONG_PTR)teb) return FALSE;
+
+    for (;;)
+    {
+        switch (*instr)
+        {
+        /* instruction prefixes */
+        case 0x2e:  /* %cs: */
+        case 0x36:  /* %ss: */
+        case 0x3e:  /* %ds: */
+        case 0x26:  /* %es: */
+        case 0x40:  /* rex */
+        case 0x41:  /* rex */
+        case 0x42:  /* rex */
+        case 0x43:  /* rex */
+        case 0x44:  /* rex */
+        case 0x45:  /* rex */
+        case 0x46:  /* rex */
+        case 0x47:  /* rex */
+        case 0x48:  /* rex */
+        case 0x49:  /* rex */
+        case 0x4a:  /* rex */
+        case 0x4b:  /* rex */
+        case 0x4c:  /* rex */
+        case 0x4d:  /* rex */
+        case 0x4e:  /* rex */
+        case 0x4f:  /* rex */
+        case 0x64:  /* %fs: */
+        case 0x66:  /* opcode size */
+        case 0x67:  /* addr size */
+        case 0xf0:  /* lock */
+        case 0xf2:  /* repne */
+        case 0xf3:  /* repe */
+            if (++prefix_count >= 15) return FALSE;
+            instr++;
+            continue;
+        case 0x65:  /* %gs: */
+            break;
+        default:
+            return FALSE;
+        }
+        break;
+    }
+
+    TRACE( "gsbase %016lx teb %p at instr %p, fixing up\n", cur_gsbase, teb, instr );
+
+#ifdef __linux__
+    arch_prctl( ARCH_SET_GS, teb );
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+    amd64_set_gsbase( teb );
+#elif defined(__NetBSD__)
+    sysarch( X86_64_SET_GSBASE, &teb );
+#endif
+    return TRUE;
+}
+
+
 /**********************************************************************
  *		segv_handler
  *
@@ -2266,7 +2366,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         rec.NumberParameters = 2;
         rec.ExceptionInformation[0] = (ERROR_sig(ucontext) >> 1) & 0x09;
         rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
-        if (!virtual_handle_fault( &rec, (void *)RSP_sig(ucontext) ))
+        if (!virtual_handle_fault( &rec, (void *)RSP_sig(ucontext) ) || check_invalid_gsbase( ucontext ))
         {
             leave_handler( ucontext );
             return;

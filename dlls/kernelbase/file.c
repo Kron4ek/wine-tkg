@@ -818,12 +818,18 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileA( LPCSTR name, DWORD access, DWORD sh
     return CreateFileW( nameW, access, sharing, sa, creation, attributes, template );
 }
 
-static UINT get_nt_file_options( DWORD attributes )
+static UINT get_nt_file_options( DWORD attributes, DWORD creation )
 {
     UINT options = 0;
 
     if (attributes & FILE_FLAG_BACKUP_SEMANTICS)
+    {
         options |= FILE_OPEN_FOR_BACKUP_INTENT;
+        if ((attributes & FILE_FLAG_POSIX_SEMANTICS) &&
+            (attributes & FILE_ATTRIBUTE_DIRECTORY) &&
+            creation == CREATE_NEW)
+            options |= FILE_DIRECTORY_FILE;
+    }
     else
         options |= FILE_NON_DIRECTORY_FILE;
     if (attributes & FILE_FLAG_DELETE_ON_CLOSE)
@@ -926,7 +932,7 @@ HANDLE WINAPI DECLSPEC_HOTPATCH CreateFileW( LPCWSTR filename, DWORD access, DWO
     status = NtCreateFile( &ret, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES, &attr, &io,
                            NULL, attributes & FILE_ATTRIBUTE_VALID_FLAGS, sharing,
                            nt_disposition[creation - CREATE_NEW],
-                           get_nt_file_options( attributes ), NULL, 0 );
+                           get_nt_file_options( attributes, creation ), NULL, 0 );
     if (status)
     {
         if (vxd_name && vxd_name[0])
@@ -1967,7 +1973,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFinalPathNameByHandleW( HANDLE file, LPWSTR pa
     DWORD drive_part_len = 0;
     NTSTATUS status;
     DWORD result = 0;
-    ULONG dummy;
+    ULONG buffer_size;
     WCHAR *ptr;
 
     TRACE( "(%p,%p,%ld,%lx)\n", file, path, count, flags );
@@ -1980,20 +1986,25 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFinalPathNameByHandleW( HANDLE file, LPWSTR pa
     }
 
     /* get object name */
-    status = NtQueryObject( file, ObjectNameInformation, &buffer, sizeof(buffer) - sizeof(WCHAR), &dummy );
-    if (!set_ntstatus( status )) return 0;
+    status = NtQueryObject( file, ObjectNameInformation, &buffer, sizeof(buffer), &buffer_size );
+    if (status == STATUS_BUFFER_OVERFLOW)
+    {
+        if (!(info = HeapAlloc( GetProcessHeap(), 0, buffer_size ))) return 0;
+        status = NtQueryObject( file, ObjectNameInformation, info, buffer_size, &buffer_size );
+    }
+    if (!set_ntstatus( status )) goto done;
 
     if (!info->Name.Buffer)
     {
         SetLastError( ERROR_INVALID_HANDLE );
-        return 0;
+        goto done;
     }
     if (info->Name.Length < 4 * sizeof(WCHAR) || info->Name.Buffer[0] != '\\' ||
         info->Name.Buffer[1] != '?' || info->Name.Buffer[2] != '?' || info->Name.Buffer[3] != '\\' )
     {
         FIXME("Unexpected object name: %s\n", debugstr_wn(info->Name.Buffer, info->Name.Length / sizeof(WCHAR)));
         SetLastError( ERROR_GEN_FAILURE );
-        return 0;
+        goto done;
     }
 
     /* add terminating null character, remove "\\??\\" */
@@ -2014,7 +2025,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFinalPathNameByHandleW( HANDLE file, LPWSTR pa
     /* Get information required for VOLUME_NAME_NONE, VOLUME_NAME_GUID and VOLUME_NAME_NT */
     if (flags == VOLUME_NAME_NONE || flags == VOLUME_NAME_GUID || flags == VOLUME_NAME_NT)
     {
-        if (!GetVolumePathNameW( info->Name.Buffer, drive_part, MAX_PATH )) return 0;
+        if (!GetVolumePathNameW( info->Name.Buffer, drive_part, MAX_PATH )) goto done;
         drive_part_len = lstrlenW(drive_part);
         if (!drive_part_len || drive_part_len > lstrlenW(info->Name.Buffer) ||
             drive_part[drive_part_len-1] != '\\' ||
@@ -2023,7 +2034,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFinalPathNameByHandleW( HANDLE file, LPWSTR pa
             FIXME( "Path %s returned by GetVolumePathNameW does not match file path %s\n",
                    debugstr_w(drive_part), debugstr_w(info->Name.Buffer) );
             SetLastError( ERROR_GEN_FAILURE );
-            return 0;
+            goto done;
         }
     }
 
@@ -2039,7 +2050,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFinalPathNameByHandleW( HANDLE file, LPWSTR pa
         WCHAR volume_prefix[51];
 
         /* GetVolumeNameForVolumeMountPointW sets error code on failure */
-        if (!GetVolumeNameForVolumeMountPointW( drive_part, volume_prefix, 50 )) return 0;
+        if (!GetVolumeNameForVolumeMountPointW( drive_part, volume_prefix, 50 )) goto done;
         ptr = info->Name.Buffer + drive_part_len;
         result = lstrlenW(volume_prefix) + lstrlenW(ptr);
         if (result < count)
@@ -2059,7 +2070,7 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFinalPathNameByHandleW( HANDLE file, LPWSTR pa
 
         /* QueryDosDeviceW sets error code on failure */
         drive_part[drive_part_len - 1] = 0;
-        if (!QueryDosDeviceW( drive_part, nt_prefix, MAX_PATH )) return 0;
+        if (!QueryDosDeviceW( drive_part, nt_prefix, MAX_PATH )) goto done;
         ptr = info->Name.Buffer + drive_part_len - 1;
         result = lstrlenW(nt_prefix) + lstrlenW(ptr);
         if (result < count)
@@ -2093,6 +2104,9 @@ DWORD WINAPI DECLSPEC_HOTPATCH GetFinalPathNameByHandleW( HANDLE file, LPWSTR pa
         WARN("Invalid combination of flags: %lx\n", flags);
         SetLastError( ERROR_INVALID_PARAMETER );
     }
+
+ done:
+    if ((WCHAR *)info != buffer) HeapFree( GetProcessHeap(), 0, info );
     return result;
 }
 
@@ -3600,7 +3614,9 @@ HANDLE WINAPI DECLSPEC_HOTPATCH ReOpenFile( HANDLE handle, DWORD access, DWORD s
     }
 
     status = NtCreateFile( &file, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES, &attr, &io, NULL,
-                           0, sharing, FILE_OPEN, FILE_NON_DIRECTORY_FILE | get_nt_file_options( attributes ), NULL, 0 );
+                           0, sharing, FILE_OPEN,
+                           FILE_NON_DIRECTORY_FILE | get_nt_file_options( attributes, OPEN_EXISTING ),
+                           NULL, 0 );
     if (!set_ntstatus( status ))
         return INVALID_HANDLE_VALUE;
     return file;

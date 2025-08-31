@@ -108,11 +108,10 @@ static const struct object_ops window_ops =
     no_add_queue,             /* add_queue */
     NULL,                     /* remove_queue */
     NULL,                     /* signaled */
-    NULL,                     /* get_esync_fd */
-    NULL,                     /* get_fsync_idx */
     NULL,                     /* satisfied */
     no_signal,                /* signal */
     no_get_fd,                /* get_fd */
+    default_get_sync,         /* get_sync */
     default_map_access,       /* map_access */
     default_get_sd,           /* get_sd */
     default_set_sd,           /* set_sd */
@@ -632,7 +631,7 @@ static struct window *create_window( struct window *parent, struct window *owner
     {
         if (is_desktop_class( class ))
             parent = desktop->top_window;  /* use existing desktop if any */
-        else if (is_hwnd_message_class( class ))
+        else if (is_message_class( class ))
             /* use desktop window if message window is already created */
             parent = desktop->msg_window ? desktop->top_window : NULL;
         else if (!(parent = desktop->top_window))  /* must already have a desktop then */
@@ -2206,7 +2205,7 @@ DECL_HANDLER(create_window)
     struct unicode_str cls_name = get_req_unicode_str();
     struct atom_table *table = get_user_atom_table();
     unsigned int dpi_context;
-    atom_t atom;
+    atom_t atom = req->atom;
 
     reply->handle = 0;
     if (req->parent)
@@ -2234,7 +2233,7 @@ DECL_HANDLER(create_window)
                 owner = owner->parent;
     }
 
-    atom = cls_name.len ? find_atom( table, &cls_name ) : req->atom;
+    if (!atom) atom = find_atom( table, &cls_name );
 
     if (!(win = create_window( parent, owner, atom, req->class_instance, req->instance ))) return;
 
@@ -2539,7 +2538,7 @@ DECL_HANDLER(get_class_windows)
     user_handle_t *data;
     unsigned int count = 0, max_count = get_reply_max_size() / sizeof(*data);
 
-    if (cls_name.len && !(atom = find_atom( table, &cls_name ))) return;
+    if (!atom && cls_name.len && !(atom = find_atom( table, &cls_name ))) return;
     if (req->parent && !(parent = get_window( req->parent ))) return;
 
     if (req->child)

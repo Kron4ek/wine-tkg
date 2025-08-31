@@ -3324,7 +3324,8 @@ static void init_sys_menu_popup( HMENU hmenu, DWORD style, DWORD class_style )
 
 static BOOL init_popup( HWND owner, HMENU hmenu, UINT flags )
 {
-    UNICODE_STRING class_name = { .Buffer = MAKEINTRESOURCEW( POPUPMENU_CLASS_ATOM ) };
+    static const WCHAR atomW[] = {'#','3','2','7','6','8',0}; /* POPUPMENU_CLASS_ATOM */
+    UNICODE_STRING class_name = RTL_CONSTANT_STRING(atomW);
     DWORD ex_style = 0;
     struct menu *menu;
 
@@ -3343,7 +3344,7 @@ static BOOL init_popup( HWND owner, HMENU hmenu, UINT flags )
     if (flags & TPM_LAYOUTRTL) ex_style = WS_EX_LAYOUTRTL;
 
     /* NOTE: In Windows, top menu popup is not owned. */
-    menu->hWnd = NtUserCreateWindowEx( ex_style, &class_name, &class_name, NULL,
+    menu->hWnd = NtUserCreateWindowEx( ex_style, &class_name, NULL, NULL,
                                        WS_POPUP, 0, 0, 0, 0, owner, 0,
                                        (HINSTANCE)get_window_long_ptr( owner, GWLP_HINSTANCE, FALSE ),
                                        (void *)hmenu, 0, NULL, 0, FALSE );

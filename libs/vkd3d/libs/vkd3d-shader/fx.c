@@ -4205,7 +4205,7 @@ static void fx_parse_shader_blob(struct fx_parser *parser, enum vkd3d_shader_sou
 
     static const struct vkd3d_shader_compile_option options[] =
     {
-        {VKD3D_SHADER_COMPILE_OPTION_API_VERSION, VKD3D_SHADER_API_VERSION_1_16},
+        {VKD3D_SHADER_COMPILE_OPTION_API_VERSION, VKD3D_SHADER_API_VERSION_CURRENT},
     };
 
     info.type = VKD3D_SHADER_STRUCTURE_TYPE_COMPILE_INFO;

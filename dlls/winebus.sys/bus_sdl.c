@@ -652,7 +652,7 @@ static NTSTATUS sdl_device_physical_effect_update(struct unix_device *iface, BYT
     struct sdl_device *impl = impl_from_unix_device(iface);
     int id = impl->effect_ids[index];
     SDL_HapticEffect effect = {0};
-    INT16 direction;
+    INT32 direction;
     NTSTATUS status;
 
     TRACE("iface %p, index %u, params %p.\n", iface, index, params);
@@ -662,8 +662,7 @@ static NTSTATUS sdl_device_physical_effect_update(struct unix_device *iface, BYT
 
     /* The first direction we get from PID is in polar coordinate space, so we need to
      * remove 90° to make it match SDL spherical coordinates. */
-    direction = (params->direction[0] - 9000) % 36000;
-    if (direction < 0) direction += 36000;
+    direction = (params->direction[0] + 27000) % 36000;
 
     switch (params->effect_type)
     {
@@ -941,7 +940,7 @@ static void sdl_add_device(unsigned int index)
     SDL_JoystickType joystick_type;
     SDL_GameController *controller = NULL;
     const char *product, *sdl_serial;
-    char guid_str[33], buffer[ARRAY_SIZE(desc.product)];
+    char buffer[ARRAY_SIZE(desc.product)];
     int axis_count, axis_offset;
 
     if ((joystick = pSDL_JoystickOpen(index)) == NULL)
@@ -975,18 +974,7 @@ static void sdl_add_device(unsigned int index)
     }
 
     if (pSDL_JoystickGetSerial && (sdl_serial = pSDL_JoystickGetSerial(joystick)))
-    {
         ntdll_umbstowcs(sdl_serial, strlen(sdl_serial) + 1, desc.serialnumber, ARRAY_SIZE(desc.serialnumber));
-    }
-    else
-    {
-        /* Overcooked! All You Can Eat only adds controllers with unique serial numbers
-         * Prefer keeping serial numbers unique over keeping them consistent across runs */
-        pSDL_JoystickGetGUIDString(pSDL_JoystickGetGUID(joystick), guid_str, sizeof(guid_str));
-        snprintf(buffer, sizeof(buffer), "%s.%d", guid_str, index);
-        TRACE("Making up serial number for %s: %s\n", product, buffer);
-        ntdll_umbstowcs(buffer, strlen(buffer) + 1, desc.serialnumber, ARRAY_SIZE(desc.serialnumber));
-    }
 
     if (controller)
     {

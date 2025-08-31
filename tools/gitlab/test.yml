@@ -2,12 +2,12 @@
 
 .wine-test:
   stage: test
-  image: $CI_REGISTRY/wine/wine:debian-bookworm
+  image: $CI_REGISTRY/wine/wine:debian-trixie
   interruptible: true
   variables:
     GIT_STRATEGY: none
     GECKO_VER: 2.47.4
-    MONO_VER: 10.1.0
+    MONO_VER: 10.2.0
   cache:
     - key: wine-gecko-$GECKO_VER
       paths:

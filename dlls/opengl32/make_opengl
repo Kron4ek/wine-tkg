@@ -201,16 +201,90 @@ my %manual_unix_thunks =
      "glDebugMessageCallback" => 1,
      "glDebugMessageCallbackAMD" => 1,
      "glDebugMessageCallbackARB" => 1,
+     "glDrawBuffer" => 1,
+     "glDrawBuffers" => 1,
      "glDrawPixels" => 1,
      "glFinish" => 1,
      "glFlush" => 1,
+     "glFramebufferDrawBufferEXT" => 1,
+     "glFramebufferDrawBuffersEXT" => 1,
+     "glFramebufferReadBufferEXT" => 1,
+     "glGetBooleanv" => 1,
+     "glGetDoublev" => 1,
+     "glGetFloatv" => 1,
+     "glGetFramebufferParameterivEXT" => 1,
+     "glGetInteger64v" => 1,
      "glGetIntegerv" => 1,
      "glGetString" => 1,
      "glGetStringi" => 1,
+     "glNamedFramebufferDrawBuffer" => 1,
+     "glNamedFramebufferDrawBuffers" => 1,
+     "glNamedFramebufferReadBuffer" => 1,
+     "glReadBuffer" => 1,
      "glReadPixels" => 1,
      "glViewport" => 1,
      "wglGetProcAddress" => 1,
      "wglSwapBuffers" => 1,
+    );
+my %hide_default_fbo_thunks =
+    (
+     "glFramebufferRenderbuffer" => 1,
+     "glFramebufferRenderbufferEXT" => 1,
+     "glFramebufferTexture" => 1,
+     "glFramebufferTexture1D" => 1,
+     "glFramebufferTexture1DEXT" => 1,
+     "glFramebufferTexture2D" => 1,
+     "glFramebufferTexture2DEXT" => 1,
+     "glFramebufferTexture3D" => 1,
+     "glFramebufferTexture3DEXT" => 1,
+     "glFramebufferTextureARB" => 1,
+     "glFramebufferTextureEXT" => 1,
+     "glFramebufferTextureFaceARB" => 1,
+     "glFramebufferTextureFaceEXT" => 1,
+     "glFramebufferTextureLayer" => 1,
+     "glFramebufferTextureLayerARB" => 1,
+     "glFramebufferTextureLayerEXT" => 1,
+     "glFramebufferTextureMultiviewOVR" => 1,
+     "glGetFramebufferAttachmentParameteriv" => 1,
+     "glGetFramebufferAttachmentParameterivEXT" => 1,
+    );
+my %resolve_default_fbo_thunks =
+    (
+     "glCopyColorTable" => 1,
+     "glCopyPixels" => 1,
+     "glCopyTexImage1D" => 1,
+     "glCopyTexImage2D" => 1,
+     "glCopyTexSubImage1D" => 1,
+     "glCopyTexSubImage2D" => 1,
+     "glCopyTexSubImage3D" => 1,
+     "glCopyTextureSubImage1D" => 1,
+     "glCopyTextureSubImage2D" => 1,
+     "glCopyTextureSubImage3D" => 1,
+     "glReadPixels" => 1,
+    );
+my %map_default_fbo_thunks =
+    (
+     "glBindFramebuffer" => [ "framebuffer" ],
+     "glBindFramebufferEXT" => [ "framebuffer" ],
+     "glBlitNamedFramebuffer" => [ "readFramebuffer", "drawFramebuffer" ],
+     "glCheckNamedFramebufferStatus" => [ "framebuffer" ],
+     "glCheckNamedFramebufferStatusEXT" => [ "framebuffer" ],
+     "glClearNamedFramebufferfi" => [ "framebuffer" ],
+     "glClearNamedFramebufferfv" => [ "framebuffer" ],
+     "glClearNamedFramebufferiv" => [ "framebuffer" ],
+     "glClearNamedFramebufferuiv" => [ "framebuffer" ],
+     "glGetNamedFramebufferAttachmentParameteriv" => [ "framebuffer" ],
+     "glGetNamedFramebufferAttachmentParameterivEXT" => [ "framebuffer" ],
+     "glGetNamedFramebufferParameterfvAMD" => [ "framebuffer" ],
+     "glGetNamedFramebufferParameteriv" => [ "framebuffer" ],
+     "glGetNamedFramebufferParameterivEXT" => [ "framebuffer" ],
+     "glInvalidateNamedFramebufferData" => [ "framebuffer" ],
+     "glInvalidateNamedFramebufferSubData" => [ "framebuffer" ],
+     "glNamedFramebufferParameteri" => [ "framebuffer" ],
+     "glNamedFramebufferParameteriEXT" => [ "framebuffer" ],
+     "glNamedFramebufferSampleLocationsfvARB" => [ "framebuffer" ],
+     "glNamedFramebufferSampleLocationsfvNV" => [ "framebuffer" ],
+     "glNamedFramebufferSamplePositionsfvAMD" => [ "framebuffer" ],
     );
 my %manual_wow64_wrappers =
     (
@@ -488,6 +562,15 @@ sub generate_unix_thunk($$$$)
     {
         $ret .= "    const struct opengl_funcs *funcs = $teb->glTable;\n";
     }
+    foreach my $arg (@{$map_default_fbo_thunks{$name}})
+    {
+        my $target = "GL_DRAW_FRAMEBUFFER";
+        $target = "GL_READ_FRAMEBUFFER" if $arg =~ "readFramebuffer";
+        $target = "params->target" if $call_args =~ "params->target";
+        $ret .= "    if (!params->$arg) params->$arg = get_default_fbo( $teb, $target );\n";
+    }
+    $ret .= "    resolve_default_fbo( $teb, TRUE );\n" if defined $resolve_default_fbo_thunks{$name};
+    $ret .= "    push_default_fbo( $teb );\n" if defined $hide_default_fbo_thunks{$name};
     $ret .= "    pthread_mutex_lock( &wgl_lock );\n" if $need_lock;
     $ret .= "    $ret_expr";
     $call_args =~ s/,$/ /;
@@ -505,6 +588,8 @@ sub generate_unix_thunk($$$$)
         $ret .= "funcs->p_$name($call_args);\n";
     }
     $ret .= "    pthread_mutex_unlock( &wgl_lock );\n" if $need_lock;
+    $ret .= "    set_current_fbo( $teb, params->target, params->framebuffer );\n" if $name =~ /glBindFramebuffer/;
+    $ret .= "    pop_default_fbo( $teb );\n" if defined $hide_default_fbo_thunks{$name};
     if (defined $state_attrib_funcs{$name})
     {
         my $state_args = $state_attrib_funcs{$name};
