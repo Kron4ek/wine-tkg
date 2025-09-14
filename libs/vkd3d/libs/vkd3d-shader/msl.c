@@ -943,8 +943,8 @@ static void msl_print_texel_offset(struct vkd3d_string_buffer *buffer, struct ms
 
 static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruction *ins)
 {
+    unsigned int resource_id, resource_idx, resource_space, sample_count;
     const struct msl_resource_type_info *resource_type_info;
-    unsigned int resource_id, resource_idx, resource_space;
     const struct vkd3d_shader_descriptor_info1 *descriptor;
     const struct vkd3d_shader_descriptor_binding *binding;
     enum vkd3d_shader_resource_type resource_type;
@@ -969,6 +969,7 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
     {
         resource_type = descriptor->resource_type;
         resource_space = descriptor->register_space;
+        sample_count = descriptor->sample_count;
         data_type = descriptor->resource_data_type;
     }
     else
@@ -977,6 +978,7 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
                 "Internal compiler error: Undeclared resource descriptor %u.", resource_id);
         resource_space = 0;
         resource_type = VKD3D_SHADER_RESOURCE_TEXTURE_2D;
+        sample_count = 1;
         data_type = VSIR_DATA_F32;
     }
 
@@ -987,6 +989,16 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
                     || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY)))
         msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_UNSUPPORTED,
                 "Texel fetches from resource type %#x are not supported.", resource_type);
+
+    if (sample_count == 1)
+    {
+        /* Similar to the SPIR-V and GLSL targets, we map multi-sample
+         * textures with sample count 1 to their single-sample equivalents. */
+        if (resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_2DMS)
+            resource_type = VKD3D_SHADER_RESOURCE_TEXTURE_2D;
+        else if (resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY)
+            resource_type = VKD3D_SHADER_RESOURCE_TEXTURE_2DARRAY;
+    }
 
     if (!(resource_type_info = msl_get_resource_type_info(resource_type)))
     {
@@ -1030,6 +1042,10 @@ static void msl_ld(struct msl_generator *gen, const struct vkd3d_shader_instruct
         vkd3d_string_buffer_printf(read, ", ");
         if (ins->opcode != VSIR_OP_LD2DMS)
             msl_print_src_with_type(read, gen, &ins->src[0], VKD3DSP_WRITEMASK_3, VSIR_DATA_U32);
+        else if (sample_count == 1)
+            /* If the resource isn't a true multisample resource, this is the
+             * "lod" parameter instead of the "sample" parameter. */
+            vkd3d_string_buffer_printf(read, "0");
         else
             msl_print_src_with_type(read, gen, &ins->src[2], VKD3DSP_WRITEMASK_0, VSIR_DATA_U32);
     }
@@ -1294,6 +1310,11 @@ static void msl_store_uav_typed(struct msl_generator *gen, const struct vkd3d_sh
         data_type = VSIR_DATA_F32;
     }
 
+    if (resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_2DMS
+            || resource_type == VKD3D_SHADER_RESOURCE_TEXTURE_2DMSARRAY)
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_UNSUPPORTED,
+                "Storing to resource type %#x is not supported.", resource_type);
+
     if (!(resource_type_info = msl_get_resource_type_info(resource_type)))
     {
         msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
@@ -1414,6 +1435,12 @@ static void msl_ret(struct msl_generator *gen, const struct vkd3d_shader_instruc
 static void msl_dcl_indexable_temp(struct msl_generator *gen, const struct vkd3d_shader_instruction *ins)
 {
     const char *type = ins->declaration.indexable_temp.component_count == 4 ? "vkd3d_vec4" : "vkd3d_scalar";
+
+    if (ins->declaration.indexable_temp.initialiser)
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
+                "Internal compiler error: Unhandled initialiser for indexable temporary %u.",
+                ins->declaration.indexable_temp.register_idx);
+
     msl_print_indent(gen->buffer, gen->indent);
     vkd3d_string_buffer_printf(gen->buffer, "%s x%u[%u];\n", type,
             ins->declaration.indexable_temp.register_idx,

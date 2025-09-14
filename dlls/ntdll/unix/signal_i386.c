@@ -164,7 +164,7 @@ __ASM_GLOBAL_FUNC( rt_sigreturn,
 struct modify_ldt_s
 {
     unsigned int  entry_number;
-    void         *base_addr;
+    unsigned int  base_addr;
     unsigned int  limit;
     unsigned int  seg_32bit : 1;
     unsigned int  contents : 2;
@@ -547,15 +547,6 @@ static inline void set_gs( WORD val ) { __asm__( "mov %0,%%gs" :: "r" (val)); }
 NTSTATUS unwind_builtin_dll( void *args )
 {
     return STATUS_UNSUCCESSFUL;
-}
-
-
-/***********************************************************************
- *           is_gdt_sel
- */
-static inline int is_gdt_sel( WORD sel )
-{
-    return !(sel & 4);
 }
 
 
@@ -2180,63 +2171,14 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
  *           LDT support
  */
 
-#define LDT_SIZE 8192
-
-#define LDT_FLAGS_DATA      0x13  /* Data segment */
-#define LDT_FLAGS_CODE      0x1b  /* Code segment */
-#define LDT_FLAGS_32BIT     0x40  /* Segment is 32-bit (code or stack) */
-#define LDT_FLAGS_ALLOCATED 0x80  /* Segment is allocated */
-
-struct ldt_copy
-{
-    void         *base[LDT_SIZE];
-    unsigned int  limit[LDT_SIZE];
-    unsigned char flags[LDT_SIZE];
-} __wine_ldt_copy;
-
+struct ldt_copy __wine_ldt_copy;
 static WORD gdt_fs_sel;
 static pthread_mutex_t ldt_mutex = PTHREAD_MUTEX_INITIALIZER;
-static const LDT_ENTRY null_entry;
-
-static inline void *ldt_get_base( LDT_ENTRY ent )
-{
-    return (void *)(ent.BaseLow |
-                    (ULONG_PTR)ent.HighWord.Bits.BaseMid << 16 |
-                    (ULONG_PTR)ent.HighWord.Bits.BaseHi << 24);
-}
-
-static inline unsigned int ldt_get_limit( LDT_ENTRY ent )
-{
-    unsigned int limit = ent.LimitLow | (ent.HighWord.Bits.LimitHi << 16);
-    if (ent.HighWord.Bits.Granularity) limit = (limit << 12) | 0xfff;
-    return limit;
-}
-
-static LDT_ENTRY ldt_make_entry( void *base, unsigned int limit, unsigned char flags )
-{
-    LDT_ENTRY entry;
-
-    entry.BaseLow                   = (WORD)(ULONG_PTR)base;
-    entry.HighWord.Bits.BaseMid     = (BYTE)((ULONG_PTR)base >> 16);
-    entry.HighWord.Bits.BaseHi      = (BYTE)((ULONG_PTR)base >> 24);
-    if ((entry.HighWord.Bits.Granularity = (limit >= 0x100000))) limit >>= 12;
-    entry.LimitLow                  = (WORD)limit;
-    entry.HighWord.Bits.LimitHi     = limit >> 16;
-    entry.HighWord.Bits.Dpl         = 3;
-    entry.HighWord.Bits.Pres        = 1;
-    entry.HighWord.Bits.Type        = flags;
-    entry.HighWord.Bits.Sys         = 0;
-    entry.HighWord.Bits.Reserved_0  = 0;
-    entry.HighWord.Bits.Default_Big = (flags & LDT_FLAGS_32BIT) != 0;
-    return entry;
-}
 
 static void ldt_set_entry( WORD sel, LDT_ENTRY entry )
 {
-    int index = sel >> 3;
-
 #ifdef linux
-    struct modify_ldt_s ldt_info = { index };
+    struct modify_ldt_s ldt_info = { .entry_number = sel >> 3 };
 
     ldt_info.base_addr       = ldt_get_base( entry );
     ldt_info.limit           = entry.LimitLow | (entry.HighWord.Bits.LimitHi << 16);
@@ -2250,7 +2192,7 @@ static void ldt_set_entry( WORD sel, LDT_ENTRY entry )
 #elif defined(__NetBSD__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__) || defined(__DragonFly__)
     /* The kernel will only let us set LDTs with user priority level */
     if (entry.HighWord.Bits.Pres && entry.HighWord.Bits.Dpl != 3) entry.HighWord.Bits.Dpl = 3;
-    if (i386_set_ldt(index, (union descriptor *)&entry, 1) < 0)
+    if (i386_set_ldt(sel >> 3, (union descriptor *)&entry, 1) < 0)
     {
         perror("i386_set_ldt");
         fprintf( stderr, "Did you reconfigure the kernel with \"options USER_LDT\"?\n" );
@@ -2260,13 +2202,13 @@ static void ldt_set_entry( WORD sel, LDT_ENTRY entry )
     struct ssd ldt_mod;
 
     ldt_mod.sel  = sel;
-    ldt_mod.bo   = (unsigned long)ldt_get_base( entry );
+    ldt_mod.bo   = ldt_get_base( entry );
     ldt_mod.ls   = entry.LimitLow | (entry.HighWord.Bits.LimitHi << 16);
     ldt_mod.acc1 = entry.HighWord.Bytes.Flags1;
     ldt_mod.acc2 = entry.HighWord.Bytes.Flags2 >> 4;
     if (sysi86(SI86DSCR, &ldt_mod) == -1) perror("sysi86");
 #elif defined(__APPLE__)
-    if (i386_set_ldt(index, (union ldt_entry *)&entry, 1) < 0) perror("i386_set_ldt");
+    if (i386_set_ldt(sel >> 3, (union ldt_entry *)&entry, 1) < 0) perror("i386_set_ldt");
 #elif defined(__GNU__)
     if (i386_set_ldt(mach_thread_self(), sel, (descriptor_list_t)&entry, 1) != KERN_SUCCESS)
         perror("i386_set_ldt");
@@ -2274,12 +2216,7 @@ static void ldt_set_entry( WORD sel, LDT_ENTRY entry )
     fprintf( stderr, "No LDT support on this platform\n" );
     exit(1);
 #endif
-
-    __wine_ldt_copy.base[index]  = ldt_get_base( entry );
-    __wine_ldt_copy.limit[index] = ldt_get_limit( entry );
-    __wine_ldt_copy.flags[index] = (entry.HighWord.Bits.Type |
-                                    (entry.HighWord.Bits.Default_Big ? LDT_FLAGS_32BIT : 0) |
-                                    LDT_FLAGS_ALLOCATED);
+    update_ldt_copy( sel, entry );
 }
 
 static void ldt_set_fs( WORD sel, TEB *teb )
@@ -2287,11 +2224,8 @@ static void ldt_set_fs( WORD sel, TEB *teb )
     if (sel == gdt_fs_sel)
     {
 #ifdef __linux__
-        struct modify_ldt_s ldt_info = { sel >> 3 };
-
-        ldt_info.base_addr = teb;
-        ldt_info.limit     = page_size - 1;
-        ldt_info.seg_32bit = 1;
+        struct modify_ldt_s ldt_info = { .entry_number = sel >> 3, .base_addr = PtrToUlong( teb ),
+                                         .limit = page_size - 1, .seg_32bit = 1 };
         if (set_thread_area( &ldt_info ) < 0) perror( "set_thread_area" );
 #elif defined(__FreeBSD__) || defined (__FreeBSD_kernel__) || defined(__DragonFly__)
         i386_set_fsbase( teb );
@@ -2317,11 +2251,11 @@ NTSTATUS get_thread_ldt_entry( HANDLE handle, void *data, ULONG len, ULONG *ret_
         if (!(info->Selector & ~3))
             info->Entry = null_entry;
         else if ((info->Selector | 3) == get_cs())
-            info->Entry = ldt_make_entry( 0, ~0u, LDT_FLAGS_CODE | LDT_FLAGS_32BIT );
+            info->Entry = ldt_make_cs32_entry();
         else if ((info->Selector | 3) == get_ds())
-            info->Entry = ldt_make_entry( 0, ~0u, LDT_FLAGS_DATA | LDT_FLAGS_32BIT );
+            info->Entry = ldt_make_ds32_entry();
         else if ((info->Selector | 3) == get_fs())
-            info->Entry = ldt_make_entry( NtCurrentTeb(), 0xfff, LDT_FLAGS_DATA | LDT_FLAGS_32BIT );
+            info->Entry = ldt_make_fs32_entry( NtCurrentTeb() );
         else
             return STATUS_UNSUCCESSFUL;
     }
@@ -2335,7 +2269,7 @@ NTSTATUS get_thread_ldt_entry( HANDLE handle, void *data, ULONG len, ULONG *ret_
             if (!status)
             {
                 if (reply->flags)
-                    info->Entry = ldt_make_entry( (void *)reply->base, reply->limit, reply->flags );
+                    info->Entry = ldt_make_entry( reply->base, reply->limit, reply->flags );
                 else
                     status = STATUS_ACCESS_VIOLATION;
             }
@@ -2403,7 +2337,7 @@ NTSTATUS signal_alloc_thread( TEB *teb )
         static int first_thread = 1;
         sigset_t sigset;
         int idx;
-        LDT_ENTRY entry = ldt_make_entry( teb, page_size - 1, LDT_FLAGS_DATA | LDT_FLAGS_32BIT );
+        LDT_ENTRY entry = ldt_make_fs32_entry( teb );
 
         if (first_thread)  /* no locking for first thread */
         {

@@ -213,7 +213,7 @@
     SYSCALL_ENTRY( 0x10d1, NtGdiDdDDICheckMultiPlaneOverlaySupport, 0 ) \
     SYSCALL_ENTRY( 0x10d2, NtGdiDdDDICheckMultiPlaneOverlaySupport2, 0 ) \
     SYSCALL_ENTRY( 0x10d3, NtGdiDdDDICheckMultiPlaneOverlaySupport3, 0 ) \
-    SYSCALL_ENTRY( 0x10d4, NtGdiDdDDICheckOcclusion, 0 ) \
+    SYSCALL_ENTRY( 0x10d4, NtGdiDdDDICheckOcclusion, 4 ) \
     SYSCALL_ENTRY( 0x10d5, NtGdiDdDDICheckSharedResourceAccess, 0 ) \
     SYSCALL_ENTRY( 0x10d6, NtGdiDdDDICheckVidPnExclusiveOwnership, 4 ) \
     SYSCALL_ENTRY( 0x10d7, NtGdiDdDDICloseAdapter, 4 ) \
@@ -307,7 +307,7 @@
     SYSCALL_ENTRY( 0x112f, NtGdiDdDDIOpenKeyedMutex, 4 ) \
     SYSCALL_ENTRY( 0x1130, NtGdiDdDDIOpenKeyedMutex2, 4 ) \
     SYSCALL_ENTRY( 0x1131, NtGdiDdDDIOpenKeyedMutexFromNtHandle, 4 ) \
-    SYSCALL_ENTRY( 0x1132, NtGdiDdDDIOpenNtHandleFromName, 0 ) \
+    SYSCALL_ENTRY( 0x1132, NtGdiDdDDIOpenNtHandleFromName, 4 ) \
     SYSCALL_ENTRY( 0x1133, NtGdiDdDDIOpenProtectedSessionFromNtHandle, 0 ) \
     SYSCALL_ENTRY( 0x1134, NtGdiDdDDIOpenResource, 4 ) \
     SYSCALL_ENTRY( 0x1135, NtGdiDdDDIOpenResource2, 4 ) \
@@ -1755,7 +1755,7 @@
     SYSCALL_ENTRY( 0x10d1, NtGdiDdDDICheckMultiPlaneOverlaySupport, 0 ) \
     SYSCALL_ENTRY( 0x10d2, NtGdiDdDDICheckMultiPlaneOverlaySupport2, 0 ) \
     SYSCALL_ENTRY( 0x10d3, NtGdiDdDDICheckMultiPlaneOverlaySupport3, 0 ) \
-    SYSCALL_ENTRY( 0x10d4, NtGdiDdDDICheckOcclusion, 0 ) \
+    SYSCALL_ENTRY( 0x10d4, NtGdiDdDDICheckOcclusion, 8 ) \
     SYSCALL_ENTRY( 0x10d5, NtGdiDdDDICheckSharedResourceAccess, 0 ) \
     SYSCALL_ENTRY( 0x10d6, NtGdiDdDDICheckVidPnExclusiveOwnership, 8 ) \
     SYSCALL_ENTRY( 0x10d7, NtGdiDdDDICloseAdapter, 8 ) \
@@ -1849,7 +1849,7 @@
     SYSCALL_ENTRY( 0x112f, NtGdiDdDDIOpenKeyedMutex, 8 ) \
     SYSCALL_ENTRY( 0x1130, NtGdiDdDDIOpenKeyedMutex2, 8 ) \
     SYSCALL_ENTRY( 0x1131, NtGdiDdDDIOpenKeyedMutexFromNtHandle, 8 ) \
-    SYSCALL_ENTRY( 0x1132, NtGdiDdDDIOpenNtHandleFromName, 0 ) \
+    SYSCALL_ENTRY( 0x1132, NtGdiDdDDIOpenNtHandleFromName, 8 ) \
     SYSCALL_ENTRY( 0x1133, NtGdiDdDDIOpenProtectedSessionFromNtHandle, 0 ) \
     SYSCALL_ENTRY( 0x1134, NtGdiDdDDIOpenResource, 8 ) \
     SYSCALL_ENTRY( 0x1135, NtGdiDdDDIOpenResource2, 8 ) \
@@ -3269,7 +3269,6 @@
     SYSCALL_STUB( NtGdiDdDDICheckMultiPlaneOverlaySupport ) \
     SYSCALL_STUB( NtGdiDdDDICheckMultiPlaneOverlaySupport2 ) \
     SYSCALL_STUB( NtGdiDdDDICheckMultiPlaneOverlaySupport3 ) \
-    SYSCALL_STUB( NtGdiDdDDICheckOcclusion ) \
     SYSCALL_STUB( NtGdiDdDDICheckSharedResourceAccess ) \
     SYSCALL_STUB( NtGdiDdDDIConfigureSharedResource ) \
     SYSCALL_STUB( NtGdiDdDDICreateBundleObject ) \
@@ -3338,7 +3337,6 @@
     SYSCALL_STUB( NtGdiDdDDINetDispStopMiracastDisplayDevice ) \
     SYSCALL_STUB( NtGdiDdDDIOfferAllocations ) \
     SYSCALL_STUB( NtGdiDdDDIOpenBundleObjectNtHandleFromName ) \
-    SYSCALL_STUB( NtGdiDdDDIOpenNtHandleFromName ) \
     SYSCALL_STUB( NtGdiDdDDIOpenProtectedSessionFromNtHandle ) \
     SYSCALL_STUB( NtGdiDdDDIOpenSwapChain ) \
     SYSCALL_STUB( NtGdiDdDDIOutputDuplGetFrameInfo ) \

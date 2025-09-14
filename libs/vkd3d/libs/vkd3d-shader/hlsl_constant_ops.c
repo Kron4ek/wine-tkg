@@ -250,6 +250,36 @@ static bool fold_ceil(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
     return true;
 }
 
+static bool fold_cos(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
+        const struct hlsl_type *dst_type, const struct hlsl_ir_constant *src)
+{
+    enum hlsl_base_type type = dst_type->e.numeric.type;
+    unsigned int k;
+
+    VKD3D_ASSERT(type == src->node.data_type->e.numeric.type);
+
+    for (k = 0; k < dst_type->e.numeric.dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_FLOAT:
+            case HLSL_TYPE_HALF:
+                dst->u[k].f = cosf(src->value.u[k].f);
+                break;
+
+            case HLSL_TYPE_DOUBLE:
+                dst->u[k].d = cos(src->value.u[k].d);
+                break;
+
+            default:
+                FIXME("Fold 'cos' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+    }
+
+    return true;
+}
+
 static bool fold_exp2(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
         const struct hlsl_type *dst_type, const struct hlsl_ir_constant *src)
 {
@@ -478,6 +508,48 @@ static bool fold_rcp(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, cons
     return true;
 }
 
+static bool fold_reinterpret(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
+        const struct hlsl_type *dst_type, const struct hlsl_ir_constant *src)
+{
+    unsigned int k;
+
+    for (k = 0; k < dst_type->e.numeric.dimx; ++k)
+    {
+        dst->u[k] = src->value.u[k];
+    }
+
+    return true;
+}
+
+static bool fold_round(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
+        const struct hlsl_type *dst_type, const struct hlsl_ir_constant *src)
+{
+    enum hlsl_base_type type = dst_type->e.numeric.type;
+    unsigned int k;
+
+    VKD3D_ASSERT(type == src->node.data_type->e.numeric.type);
+
+    for (k = 0; k < dst_type->e.numeric.dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_FLOAT:
+            case HLSL_TYPE_HALF:
+                /* Somewhat unfortunately, constant folded round() rounds
+                 * halfway cases towards positive infinity, as opposed to
+                 * nearest even like vsir/TPF round_ne. */
+                dst->u[k].f = floorf(src->value.u[k].f + 0.5f);
+                break;
+
+            default:
+                FIXME("Fold 'round' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+    }
+
+    return true;
+}
+
 static bool fold_rsq(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, const struct hlsl_type *dst_type,
         const struct hlsl_ir_constant *src, const struct vkd3d_shader_location *loc)
 {
@@ -537,6 +609,36 @@ static bool fold_sat(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, cons
 
             default:
                 FIXME("Fold 'sat' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+    }
+
+    return true;
+}
+
+static bool fold_sin(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
+        const struct hlsl_type *dst_type, const struct hlsl_ir_constant *src)
+{
+    enum hlsl_base_type type = dst_type->e.numeric.type;
+    unsigned int k;
+
+    VKD3D_ASSERT(type == src->node.data_type->e.numeric.type);
+
+    for (k = 0; k < dst_type->e.numeric.dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_FLOAT:
+            case HLSL_TYPE_HALF:
+                dst->u[k].f = sinf(src->value.u[k].f);
+                break;
+
+            case HLSL_TYPE_DOUBLE:
+                dst->u[k].d = sin(src->value.u[k].d);
+                break;
+
+            default:
+                FIXME("Fold 'sin' for type %s.\n", debug_hlsl_type(ctx, dst_type));
                 return false;
         }
     }
@@ -974,6 +1076,44 @@ static bool fold_lshift(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, c
     return true;
 }
 
+static bool fold_mad(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, const struct hlsl_type *dst_type,
+        const struct hlsl_ir_constant *src1, const struct hlsl_ir_constant *src2, const struct hlsl_ir_constant *src3)
+{
+    enum hlsl_base_type type = dst_type->e.numeric.type;
+    unsigned int k;
+
+    VKD3D_ASSERT(type == src1->node.data_type->e.numeric.type);
+    VKD3D_ASSERT(type == src2->node.data_type->e.numeric.type);
+    VKD3D_ASSERT(type == src3->node.data_type->e.numeric.type);
+
+    for (k = 0; k < dst_type->e.numeric.dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_FLOAT:
+            case HLSL_TYPE_HALF:
+                dst->u[k].f = fmaf(src1->value.u[k].f, src2->value.u[k].f, src3->value.u[k].f);
+                break;
+
+            case HLSL_TYPE_DOUBLE:
+                dst->u[k].d = fma(src1->value.u[k].d, src2->value.u[k].d, src3->value.u[k].d);
+                break;
+
+            case HLSL_TYPE_INT:
+            case HLSL_TYPE_MIN16UINT:
+            case HLSL_TYPE_UINT:
+                dst->u[k].u = src1->value.u[k].u * src2->value.u[k].u + src3->value.u[k].u;
+                break;
+
+            default:
+                FIXME("Fold 'mad' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+    }
+
+    return true;
+}
+
 static bool fold_max(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst, const struct hlsl_type *dst_type,
         const struct hlsl_ir_constant *src1, const struct hlsl_ir_constant *src2)
 {
@@ -1263,6 +1403,10 @@ bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
             success = fold_ceil(ctx, &res, instr->data_type, arg1);
             break;
 
+        case HLSL_OP1_COS:
+            success = fold_cos(ctx, &res, instr->data_type, arg1);
+            break;
+
         case HLSL_OP1_EXP2:
             success = fold_exp2(ctx, &res, instr->data_type, arg1);
             break;
@@ -1291,12 +1435,24 @@ bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
             success = fold_rcp(ctx, &res, instr->data_type, arg1, &instr->loc);
             break;
 
+        case HLSL_OP1_REINTERPRET:
+            success = fold_reinterpret(ctx, &res, instr->data_type, arg1);
+            break;
+
+        case HLSL_OP1_ROUND:
+            success = fold_round(ctx, &res, instr->data_type, arg1);
+            break;
+
         case HLSL_OP1_RSQ:
             success = fold_rsq(ctx, &res, instr->data_type, arg1, &instr->loc);
             break;
 
         case HLSL_OP1_SAT:
             success = fold_sat(ctx, &res, instr->data_type, arg1);
+            break;
+
+        case HLSL_OP1_SIN:
+            success = fold_sin(ctx, &res, instr->data_type, arg1);
             break;
 
         case HLSL_OP1_SQRT:
@@ -1371,6 +1527,10 @@ bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
 
         case HLSL_OP3_DP2ADD:
             success = fold_dp2add(ctx, &res, instr->data_type, arg1, arg2, arg3);
+            break;
+
+        case HLSL_OP3_MAD:
+            success = fold_mad(ctx, &res, instr->data_type, arg1, arg2, arg3);
             break;
 
         case HLSL_OP3_TERNARY:

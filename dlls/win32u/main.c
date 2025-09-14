@@ -211,6 +211,11 @@ HBRUSH SYSCALL_API NtGdiCreateSolidBrush( COLORREF color, HBRUSH brush )
     SYSCALL_FUNC( NtGdiCreateSolidBrush );
 }
 
+NTSTATUS SYSCALL_API NtGdiDdDDICheckOcclusion( const D3DKMT_CHECKOCCLUSION *desc )
+{
+    SYSCALL_FUNC( NtGdiDdDDICheckOcclusion );
+}
+
 NTSTATUS SYSCALL_API NtGdiDdDDICheckVidPnExclusiveOwnership( const D3DKMT_CHECKVIDPNEXCLUSIVEOWNERSHIP *desc )
 {
     SYSCALL_FUNC( NtGdiDdDDICheckVidPnExclusiveOwnership );
@@ -334,6 +339,11 @@ NTSTATUS SYSCALL_API NtGdiDdDDIOpenKeyedMutex2( D3DKMT_OPENKEYEDMUTEX2 *desc )
 NTSTATUS SYSCALL_API NtGdiDdDDIOpenKeyedMutexFromNtHandle( D3DKMT_OPENKEYEDMUTEXFROMNTHANDLE *desc )
 {
     SYSCALL_FUNC( NtGdiDdDDIOpenKeyedMutexFromNtHandle );
+}
+
+NTSTATUS SYSCALL_API NtGdiDdDDIOpenNtHandleFromName( D3DKMT_OPENNTHANDLEFROMNAME *desc )
+{
+    SYSCALL_FUNC( NtGdiDdDDIOpenNtHandleFromName );
 }
 
 NTSTATUS SYSCALL_API NtGdiDdDDIOpenResource( D3DKMT_OPENRESOURCE *desc )

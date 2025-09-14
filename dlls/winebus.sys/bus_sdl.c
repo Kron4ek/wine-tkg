@@ -652,6 +652,7 @@ static NTSTATUS sdl_device_physical_effect_update(struct unix_device *iface, BYT
     struct sdl_device *impl = impl_from_unix_device(iface);
     int id = impl->effect_ids[index];
     SDL_HapticEffect effect = {0};
+    int i;
     INT32 direction;
     NTSTATUS status;
 
@@ -699,23 +700,23 @@ static NTSTATUS sdl_device_physical_effect_update(struct unix_device *iface, BYT
         effect.condition.direction.type = SDL_HAPTIC_SPHERICAL;
         effect.condition.direction.dir[0] = direction;
         effect.condition.direction.dir[1] = params->direction[1];
-        if (params->condition_count >= 1)
+
+        for (i = 0; i < max(params->condition_count, 3); i++)
         {
-            effect.condition.right_sat[0] = params->condition[0].positive_saturation;
-            effect.condition.left_sat[0] = params->condition[0].negative_saturation;
-            effect.condition.right_coeff[0] = params->condition[0].positive_coefficient;
-            effect.condition.left_coeff[0] = params->condition[0].negative_coefficient;
-            effect.condition.deadband[0] = params->condition[0].dead_band;
-            effect.condition.center[0] = params->condition[0].center_point_offset;
+            effect.condition.right_sat[i] = params->condition[i].positive_saturation;
+            effect.condition.left_sat[i] = params->condition[i].negative_saturation;
+            effect.condition.right_coeff[i] = params->condition[i].positive_coefficient;
+            effect.condition.left_coeff[i] = params->condition[i].negative_coefficient;
+            effect.condition.deadband[i] = params->condition[i].dead_band;
+            effect.condition.center[i] = params->condition[i].center_point_offset;
         }
-        if (params->condition_count >= 2)
+        /* Testing MS Sidewinder 2 indicates unspecified paramater blocks are full strength */
+        for (; i < 3; i++)
         {
-            effect.condition.right_sat[1] = params->condition[1].positive_saturation;
-            effect.condition.left_sat[1] = params->condition[1].negative_saturation;
-            effect.condition.right_coeff[1] = params->condition[1].positive_coefficient;
-            effect.condition.left_coeff[1] = params->condition[1].negative_coefficient;
-            effect.condition.deadband[1] = params->condition[1].dead_band;
-            effect.condition.center[1] = params->condition[1].center_point_offset;
+            effect.condition.right_sat[i] = 65535;
+            effect.condition.left_sat[i] = 65535;
+            effect.condition.right_coeff[i] = 32767;
+            effect.condition.left_coeff[i] = 32767;
         }
         break;
 
@@ -890,18 +891,18 @@ static BOOL set_report_from_controller_event(struct sdl_device *impl, SDL_Event 
             case SDL_CONTROLLER_BUTTON_LEFTSTICK: button = 8; break;
             case SDL_CONTROLLER_BUTTON_RIGHTSTICK: button = 9; break;
             case SDL_CONTROLLER_BUTTON_DPAD_UP: button = 10; break;
-            case SDL_CONTROLLER_BUTTON_DPAD_DOWN: button = 11; break;
-            case SDL_CONTROLLER_BUTTON_DPAD_LEFT: button = 12; break;
-            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: button = 13; break;
+            case SDL_CONTROLLER_BUTTON_DPAD_DOWN: button = 12; break;
+            case SDL_CONTROLLER_BUTTON_DPAD_LEFT: button = 13; break;
+            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: button = 11; break;
             case SDL_CONTROLLER_BUTTON_GUIDE: button = 16; break;
             default: button = -1; break;
             }
 
             if (button == -1) break;
             if (button == 10) hid_device_move_hatswitch(iface, 0, 0, ie->state ? -1 : +1);
-            if (button == 11) hid_device_move_hatswitch(iface, 0, 0, ie->state ? +1 : -1);
-            if (button == 12) hid_device_move_hatswitch(iface, 0, ie->state ? -1 : +1, 0);
-            if (button == 13) hid_device_move_hatswitch(iface, 0, ie->state ? +1 : -1, 0);
+            if (button == 12) hid_device_move_hatswitch(iface, 0, 0, ie->state ? +1 : -1);
+            if (button == 13) hid_device_move_hatswitch(iface, 0, ie->state ? -1 : +1, 0);
+            if (button == 11) hid_device_move_hatswitch(iface, 0, ie->state ? +1 : -1, 0);
             hid_device_set_button(iface, button, ie->state);
             bus_event_queue_input_report(&event_queue, iface, state->report_buf, state->report_len);
             break;

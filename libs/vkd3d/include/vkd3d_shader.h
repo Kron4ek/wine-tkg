@@ -422,10 +422,17 @@ struct vkd3d_shader_code
 {
     /**
      * Pointer to the code. Note that textual formats are not null-terminated.
-     * Therefore \a size should not include a null terminator, when this
-     * structure is passed as input to a vkd3d-shader function, and the
-     * allocated string will not include a null terminator when this structure
-     * is used as output.
+     * Therefore \a size should not include a null terminator when this
+     * structure is passed as input to a vkd3d-shader function, and \a size
+     * will not include a null terminator when this structure is used as
+     * output.
+     *
+     * For convenience, vkd3d_shader_preprocess() and vkd3d_shader_compile()
+     * will append a null terminator past the end of their output when
+     * outputting textual formats like VKD3D_SHADER_TARGET_D3D_ASM. This makes
+     * it safe to call functions like strlen() on \a code for such output,
+     * although doing so will obviously not account for any embedded null
+     * characters that may be present.
      */
     const void *code;
     /** Size of \a code, in bytes. */

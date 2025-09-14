@@ -52,6 +52,16 @@ static enum {
 static const char doc_blank[] =
     "<html></html>";
 
+static const char doc_blank_ie8[] =
+    "<!DOCTYPE html>\n"
+    "<html>"
+    " <head>"
+    "  <meta http-equiv=\"x-ua-compatible\" content=\"IE=8\" />"
+    " </head>"
+    " <body>"
+    " </body>"
+    "</html>";
+
 static const char doc_blank_ie9[] =
     "<!DOCTYPE html>\n"
     "<html>"
@@ -117,6 +127,8 @@ static const char doctype_str[] =
     "    <title>emptydiv test</title>"
     "  </head>"
     "<body><div id=\"divid\"></div></body></html>";
+static const char case_insens_str[] =
+    "<html><script type=\"text/javascript\">window.wineProp = 42;</script></html>";
 
 static WCHAR characterW[] = {'c','h','a','r','a','c','t','e','r',0};
 static WCHAR texteditW[] = {'t','e','x','t','e','d','i','t',0};
@@ -11562,6 +11574,44 @@ static void test_doctype(IHTMLDocument2 *doc)
     IHTMLDOMNode_Release(doctype);
 }
 
+static void test_case_insens(IHTMLDocument2 *doc)
+{
+    DISPID dispid, dispid2;
+    IHTMLWindow2 *window;
+    IDispatchEx *dispex;
+    HRESULT hres;
+    BSTR bstr;
+
+    window = get_doc_window(doc);
+    hres = IHTMLWindow2_QueryInterface(window, &IID_IDispatchEx, (void**)&dispex);
+    ok(hres == S_OK, "Could not get IDispatchEx: %08lx\n", hres);
+    IHTMLWindow2_Release(window);
+
+    bstr = SysAllocString(L"WINEprop");
+    hres = IDispatchEx_GetDispID(dispex, bstr, fdexNameCaseInsensitive, &dispid);
+    ok(hres == S_OK, "GetDispID returned: %08lx\n", hres);
+    SysFreeString(bstr);
+
+    hres = IDispatchEx_GetMemberName(dispex, dispid, &bstr);
+    ok(hres == S_OK, "GetMemberName returned: %08lx\n", hres);
+    ok(!wcscmp(bstr, L"wineProp"), "got %s\n", wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+
+    /* For some reason GetMemberName on native here returns DISP_E_MEMBERNOTFOUND even though DISPID is found, so compare dispids instead */
+    bstr = SysAllocString(L"coLLecTgarbAGE");
+    hres = IDispatchEx_GetDispID(dispex, bstr, fdexNameCaseInsensitive, &dispid);
+    ok(hres == S_OK, "GetDispID returned: %08lx\n", hres);
+    SysFreeString(bstr);
+
+    bstr = SysAllocString(L"CollectGarbage");
+    hres = IDispatchEx_GetDispID(dispex, bstr, 0, &dispid2);
+    ok(hres == S_OK, "GetDispID returned: %08lx\n", hres);
+    ok(dispid == dispid2, "dispid != dispid2\n");
+    SysFreeString(bstr);
+
+    IDispatchEx_Release(dispex);
+}
+
 static void test_null_write(IHTMLDocument2 *doc)
 {
     HRESULT hres;
@@ -12177,6 +12227,68 @@ static void test_quirks_mode_offsetHeight(IHTMLDocument2 *doc)
     ok(hres == S_OK, "get_offsetHeight failed: %08lx\n", hres);
     todo_wine ok(oh == 500, "offsetHeight = %ld\n", oh);
     IHTMLElement_Release(elem);
+}
+
+static void test_quirks_mode_perf_toJSON(IHTMLDocument2 *doc)
+{
+    IHTMLPerformanceNavigation *nav;
+    IHTMLPerformanceTiming *timing;
+    IHTMLPerformance *perf;
+    DISPPARAMS dp = { 0 };
+    IHTMLWindow2 *window;
+    IDispatchEx *dispex;
+    DISPID dispid;
+    HRESULT hres;
+    VARIANT var;
+    BSTR bstr;
+
+    hres = IHTMLDocument2_get_parentWindow(doc, &window);
+    ok(hres == S_OK, "get_parentWindow failed: %08lx\n", hres);
+
+    hres = IHTMLWindow2_QueryInterface(window, &IID_IDispatchEx, (void**)&dispex);
+    ok(hres == S_OK, "QueryInterface(IID_IDispatchEx) failed: %08lx\n", hres);
+    IHTMLWindow2_Release(window);
+
+    bstr = SysAllocString(L"performance");
+    hres = IDispatchEx_GetDispID(dispex, bstr, fdexNameCaseSensitive, &dispid);
+    ok(hres == S_OK, "GetDispID(performance) failed: %08lx\n", hres);
+    SysFreeString(bstr);
+
+    V_VT(&var) = VT_EMPTY;
+    hres = IDispatchEx_InvokeEx(dispex, dispid, 0, DISPATCH_PROPERTYGET, &dp, &var, NULL, NULL);
+    ok(hres == S_OK, "InvokeEx(performance) failed: %08lx\n", hres);
+    ok(V_VT(&var) == VT_DISPATCH, "V_VT(performance) = %d\n", V_VT(&var));
+    ok(V_DISPATCH(&var) != NULL, "V_DISPATCH(performance) = NULL\n");
+    IDispatchEx_Release(dispex);
+
+    hres = IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IHTMLPerformance, (void**)&perf);
+    ok(hres == S_OK, "QueryInterface(IID_IHTMLPerformance) failed: %08lx\n", hres);
+    ok(perf != NULL, "performance is NULL\n");
+    VariantClear(&var);
+
+    hres = IHTMLPerformance_toJSON(perf, &var);
+    ok(hres == E_UNEXPECTED, "toJSON() returned: %08lx\n", hres);
+    ok(V_VT(&var) == VT_EMPTY, "V_VT(toJSON()) = %d\n", V_VT(&var));
+
+    hres = IHTMLPerformance_get_navigation(perf, &nav);
+    ok(hres == S_OK, "get_navigation failed: %08lx\n", hres);
+    ok(nav != NULL, "performance.navigation is NULL\n");
+
+    hres = IHTMLPerformanceNavigation_toJSON(nav, &var);
+    ok(hres == E_UNEXPECTED, "navigation.toJSON() failed: %08lx\n", hres);
+    ok(V_VT(&var) == VT_EMPTY, "V_VT(navigation.toJSON()) = %d\n", V_VT(&var));
+    IHTMLPerformanceNavigation_Release(nav);
+
+    hres = IHTMLPerformance_get_timing(perf, &timing);
+    ok(hres == S_OK, "get_timing failed: %08lx\n", hres);
+    ok(timing != NULL, "performance.timing is NULL\n");
+
+    hres = IHTMLPerformanceTiming_toJSON(timing, &var);
+    ok(hres == E_UNEXPECTED, "timing.toJSON() failed: %08lx\n", hres);
+    ok(V_VT(&var) == VT_EMPTY, "V_VT(timing.toJSON()) = %d\n", V_VT(&var));
+    IHTMLPerformanceTiming_Release(timing);
+
+    IHTMLPerformance_Release(perf);
 }
 
 static IHTMLDocument2 *notif_doc;
@@ -13598,7 +13710,10 @@ START_TEST(dom)
     run_domtest(frameset_str, test_frameset);
     run_domtest(emptydiv_str, test_docfrag);
     run_domtest(doc_blank, test_replacechild_elems);
+    run_domtest(doc_blank, test_quirks_mode_perf_toJSON);
+    run_domtest(doc_blank_ie8, test_quirks_mode_perf_toJSON);
     run_domtest(doctype_str, test_doctype);
+    run_domtest(case_insens_str, test_case_insens);
     if(is_ie9plus) {
         compat_mode = COMPAT_IE9;
         run_domtest(emptydiv_ie9_str, test_docfrag);

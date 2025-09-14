@@ -2475,7 +2475,7 @@ static void register_init_with_id(struct vkd3d_shader_register *reg,
     reg->idx[0].offset = id;
 }
 
-static enum vsir_data_type vsir_data_type_from_dxil(const struct sm6_type *type)
+static enum vsir_data_type vsir_data_type_from_dxil(const struct sm6_type *type, struct sm6_parser *dxil)
 {
     if (type->class == TYPE_CLASS_INTEGER)
     {
@@ -2492,7 +2492,8 @@ static enum vsir_data_type vsir_data_type_from_dxil(const struct sm6_type *type)
             case 64:
                 return VSIR_DATA_U64;
             default:
-                FIXME("Unhandled width %u.\n", type->u.width);
+                vkd3d_shader_parser_error(&dxil->p, VKD3D_SHADER_ERROR_DXIL_UNSUPPORTED,
+                        "Unhandled integer width %u.", type->u.width);
                 return VSIR_DATA_U32;
         }
     }
@@ -2507,12 +2508,14 @@ static enum vsir_data_type vsir_data_type_from_dxil(const struct sm6_type *type)
             case 64:
                 return VSIR_DATA_F64;
             default:
-                FIXME("Unhandled width %u.\n", type->u.width);
+                vkd3d_shader_parser_error(&dxil->p, VKD3D_SHADER_ERROR_DXIL_UNSUPPORTED,
+                        "Unhandled floating-point width %u.", type->u.width);
                 return VSIR_DATA_F32;
         }
     }
 
-    FIXME("Unhandled type %u.\n", type->class);
+    vkd3d_shader_parser_error(&dxil->p, VKD3D_SHADER_ERROR_DXIL_UNSUPPORTED,
+            "Unhandled type %#x.", type->class);
     return VSIR_DATA_U32;
 }
 
@@ -2599,7 +2602,7 @@ static void sm6_register_from_value(struct vkd3d_shader_register *reg, const str
     enum vsir_data_type data_type;
 
     scalar_type = sm6_type_get_scalar_type(value->type, 0);
-    data_type = vsir_data_type_from_dxil(scalar_type);
+    data_type = vsir_data_type_from_dxil(scalar_type, sm6);
 
     switch (value->value_type)
     {
@@ -3239,7 +3242,7 @@ static enum vkd3d_result value_allocate_constant_array(struct sm6_value *dst, co
     dst->u.data = icb;
 
     icb->register_idx = sm6->icb_count++;
-    icb->data_type = vsir_data_type_from_dxil(elem_type);
+    icb->data_type = vsir_data_type_from_dxil(elem_type, sm6);
     icb->element_count = type->u.array.count;
     icb->component_count = 1;
     icb->is_null = !operands;
@@ -3693,7 +3696,15 @@ static void sm6_parser_declare_indexable_temp(struct sm6_parser *sm6, const stru
         unsigned int count, unsigned int alignment, bool has_function_scope, unsigned int init,
         struct vkd3d_shader_instruction *ins, struct sm6_value *dst)
 {
-    enum vsir_data_type data_type = vsir_data_type_from_dxil(elem_type);
+    enum vsir_data_type data_type = vsir_data_type_from_dxil(elem_type, sm6);
+
+    if (!(sm6->program->global_flags & VKD3DSGF_FORCE_NATIVE_LOW_PRECISION))
+    {
+        if (data_type == VSIR_DATA_F16)
+            data_type = VSIR_DATA_F32;
+        else if (data_type == VSIR_DATA_U16)
+            data_type = VSIR_DATA_U32;
+    }
 
     if (ins)
         vsir_instruction_init(ins, &sm6->p.location, VSIR_OP_DCL_INDEXABLE_TEMP);
@@ -4012,8 +4023,7 @@ static enum vkd3d_result sm6_parser_globals_init(struct sm6_parser *sm6)
                     return VKD3D_ERROR_INVALID_SHADER;
                 if ((version = record->operands[0]) != 1)
                 {
-                    FIXME("Unsupported format version %#"PRIx64".\n", version);
-                    vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_UNSUPPORTED_BITCODE_FORMAT,
+                    vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_UNSUPPORTED,
                             "Bitcode format version %#"PRIx64" is unsupported.", version);
                     return VKD3D_ERROR_INVALID_SHADER;
                 }
@@ -5183,7 +5193,7 @@ static void sm6_parser_emit_dx_cbuffer_load(struct sm6_parser *sm6, enum dx_intr
 
     type = sm6_type_get_scalar_type(dst->type, 0);
     VKD3D_ASSERT(type);
-    src_param->reg.data_type = vsir_data_type_from_dxil(type);
+    src_param->reg.data_type = vsir_data_type_from_dxil(type, sm6);
     if (data_type_is_64_bit(src_param->reg.data_type))
         src_param->swizzle = vsir_swizzle_64_from_32(src_param->swizzle);
     else

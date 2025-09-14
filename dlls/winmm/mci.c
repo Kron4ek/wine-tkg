@@ -290,7 +290,7 @@ static DWORD MCI_MapMsgAtoW(UINT msg, DWORD_PTR dwParam1, DWORD_PTR *dwParam2)
             MCI_ANIM_WINDOW_PARMSA *mci_windowA = (MCI_ANIM_WINDOW_PARMSA *)*dwParam2;
             MCI_ANIM_WINDOW_PARMSW *mci_windowW;
 
-            mci_windowW = malloc( sizeof(*mci_windowW));
+            mci_windowW = malloc(sizeof(*mci_windowW));
             if (!mci_windowW) return MCIERR_OUT_OF_MEMORY;
 
             *dwParam2 = (DWORD_PTR)mci_windowW;
@@ -2283,8 +2283,7 @@ DWORD WINAPI mciSendCommandA(MCIDEVICEID wDevID, UINT wMsg, DWORD_PTR dwParam1, 
 {
     DWORD ret;
 
-    TRACE("(%08x, %s, %08Ix, %08Ix)\n",
-	  wDevID, MCI_MessageToString(wMsg), dwParam1, dwParam2);
+    TRACE("(%08x, %s, %08Ix, %08Ix)\n", wDevID, MCI_MessageToString(wMsg), dwParam1, dwParam2);
 
     ret = MCI_MapMsgAtoW(wMsg, dwParam1, &dwParam2);
     if (ret)
@@ -2292,7 +2291,7 @@ DWORD WINAPI mciSendCommandA(MCIDEVICEID wDevID, UINT wMsg, DWORD_PTR dwParam1, 
         FIXME("message %04x mapping failed\n", wMsg);
         return ret;
     }
-     ret = mciSendCommandW(wDevID, wMsg, dwParam1, dwParam2);
+    ret = mciSendCommandW(wDevID, wMsg, dwParam1, dwParam2);
     MCI_UnmapMsgAtoW(wMsg, dwParam1, dwParam2, ret);
     return ret;
 }

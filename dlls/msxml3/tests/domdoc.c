@@ -798,6 +798,13 @@ static const char win936xml[] =
 DECL_WIN_936
 "<open></open>";
 
+#define DECL_WIN_GB2312 \
+"<?xml version=\"1.0\" encoding=\"GB2312\"?>"
+
+static const char gb2312xml[] =
+DECL_WIN_GB2312
+"<open></open>";
+
 #define DECL_WIN_1252 \
 "<?xml version=\"1.0\" encoding=\"Windows-1252\"?>"
 
@@ -10981,6 +10988,7 @@ static void test_load(void)
         { iso8859_1_xml, S_OK,    VARIANT_TRUE  },
         { win1252xml,    S_OK,    VARIANT_TRUE  },
         { win936xml,     S_FALSE, VARIANT_FALSE },
+        { gb2312xml,     S_OK,    VARIANT_TRUE  },
     };
 
 

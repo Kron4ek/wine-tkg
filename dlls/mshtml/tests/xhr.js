@@ -22,6 +22,7 @@ var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<a name=\"test\">wine</a>
 async_test("async_xhr", function() {
     var xhr = new XMLHttpRequest();
     var complete_cnt = 0, loadstart = false;
+    var v = document.documentMode;
 
     xhr.onreadystatechange = function() {
         if(xhr.readyState != 4)
@@ -29,6 +30,28 @@ async_test("async_xhr", function() {
 
         ok(xhr.responseText === xml, "unexpected responseText " + xhr.responseText);
         ok(xhr.responseXML !== null, "unexpected null responseXML");
+
+        var x = xhr.responseXML, r = Object.prototype.toString.call(x);
+        ok(r === (v < 10 ? "[object Object]" : (v < 11 ? "[object Document]" : "[object XMLDocument]")),
+                "XML document Object.toString = " + r);
+
+        r = Object.getPrototypeOf(x);
+        if(v < 10)
+            ok(r === null, "prototype of returned XML document = " + r);
+        else if(v < 11)
+            ok(r === window.Document.prototype, "prototype of returned XML document = " + r);
+        else
+            ok(r === window.XMLDocument.prototype, "prototype of returned XML document = " + r);
+
+        if(v < 10) {
+            ok(!("anchors" in x), "anchors is in returned XML document");
+            ok(Object.prototype.hasOwnProperty.call(x, "createElement"), "createElement not a prop of returned XML document");
+        }else {
+            ok("anchors" in x, "anchors not in returned XML document");
+            ok(!x.hasOwnProperty("createElement"), "createElement is a prop of returned XML document");
+            r = x.anchors;
+            ok(r.length === 0, "anchors.length of returned XML document = " + r.length);
+        }
 
         if(complete_cnt++ && !("onloadend" in xhr))
             next_test();
@@ -229,6 +252,7 @@ async_test("content_types", function() {
     var xml_types = [
         "text/xmL",
         "apPliCation/xml",
+        "application/xHtml+xml",
         "image/SvG+xml",
         "Wine/Test+xml",
         "++Xml",
@@ -237,9 +261,16 @@ async_test("content_types", function() {
 
     function onload() {
         ok(xhr.responseText === xml, "unexpected responseText " + xhr.responseText);
-        if(v < 10 || types === xml_types)
+        if(v < 10 || types === xml_types) {
             ok(xhr.responseXML !== null, "unexpected null responseXML for " + types[i]);
-        else
+            if(v >= 10) {
+                var r = xhr.responseXML.mimeType, e = "text/xml";
+                if(types[i] === "application/xHtml+xml" || types[i] === "image/SvG+xml")
+                    e = types[i].toLowerCase();
+                e = external.getExpectedMimeType(e);
+                ok(r === e, "XML document mimeType for " + types[i] + " = " + r + ", expected " + e);
+            }
+        }else
             ok(xhr.responseXML === null, "unexpected non-null responseXML for " + (override ? "overridden " : "") + types[i]);
 
         if(("overrideMimeType" in xhr) && !override) {

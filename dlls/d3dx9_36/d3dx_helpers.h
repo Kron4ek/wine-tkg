@@ -149,11 +149,19 @@ enum d3dx_image_file_format
     D3DX_IMAGE_FILE_FORMAT_DIB  = 6,
     D3DX_IMAGE_FILE_FORMAT_HDR  = 7,
     D3DX_IMAGE_FILE_FORMAT_PFM  = 8,
+    /* TIFF/GIF/WMP are only available on D3DX10/D3DX11. */
+    D3DX_IMAGE_FILE_FORMAT_TIFF = 10,
+    D3DX_IMAGE_FILE_FORMAT_GIF  = 11,
+    D3DX_IMAGE_FILE_FORMAT_WMP  = 12,
+    /* This is a Wine only file format value. */
+    D3DX_IMAGE_FILE_FORMAT_DDS_DXT10 = 100,
     D3DX_IMAGE_FILE_FORMAT_FORCE_DWORD = 0x7fffffff
 };
 
 enum d3dx_resource_type
 {
+    D3DX_RESOURCE_TYPE_UNKNOWN,
+    D3DX_RESOURCE_TYPE_TEXTURE_1D,
     D3DX_RESOURCE_TYPE_TEXTURE_2D,
     D3DX_RESOURCE_TYPE_TEXTURE_3D,
     D3DX_RESOURCE_TYPE_CUBE_TEXTURE,
@@ -179,6 +187,9 @@ enum d3dx_pixel_format_id
     D3DX_PIXEL_FORMAT_R10G10B10A2_UNORM,
     D3DX_PIXEL_FORMAT_R16G16B16_UNORM,
     D3DX_PIXEL_FORMAT_R16G16B16A16_UNORM,
+    D3DX_PIXEL_FORMAT_R8_UNORM,
+    D3DX_PIXEL_FORMAT_R8G8_UNORM,
+    D3DX_PIXEL_FORMAT_R16_UNORM,
     D3DX_PIXEL_FORMAT_R16G16_UNORM,
     D3DX_PIXEL_FORMAT_A8_UNORM,
     D3DX_PIXEL_FORMAT_L8A8_UNORM,
@@ -190,11 +201,16 @@ enum d3dx_pixel_format_id
     D3DX_PIXEL_FORMAT_DXT3_UNORM,
     D3DX_PIXEL_FORMAT_DXT4_UNORM,
     D3DX_PIXEL_FORMAT_DXT5_UNORM,
+    D3DX_PIXEL_FORMAT_BC4_UNORM,
+    D3DX_PIXEL_FORMAT_BC4_SNORM,
+    D3DX_PIXEL_FORMAT_BC5_UNORM,
+    D3DX_PIXEL_FORMAT_BC5_SNORM,
     D3DX_PIXEL_FORMAT_R16_FLOAT,
     D3DX_PIXEL_FORMAT_R16G16_FLOAT,
     D3DX_PIXEL_FORMAT_R16G16B16A16_FLOAT,
     D3DX_PIXEL_FORMAT_R32_FLOAT,
     D3DX_PIXEL_FORMAT_R32G32_FLOAT,
+    D3DX_PIXEL_FORMAT_R32G32B32_FLOAT,
     D3DX_PIXEL_FORMAT_R32G32B32A32_FLOAT,
     D3DX_PIXEL_FORMAT_P1_UINT,
     D3DX_PIXEL_FORMAT_P2_UINT,
@@ -214,6 +230,15 @@ enum d3dx_pixel_format_id
     D3DX_PIXEL_FORMAT_COUNT,
 };
 
+/* These are aliases. */
+#define D3DX_PIXEL_FORMAT_R16G16B16A16_SNORM D3DX_PIXEL_FORMAT_U16V16W16Q16_SNORM
+#define D3DX_PIXEL_FORMAT_R16G16_SNORM       D3DX_PIXEL_FORMAT_U16V16_SNORM
+#define D3DX_PIXEL_FORMAT_R8G8B8A8_SNORM     D3DX_PIXEL_FORMAT_U8V8W8Q8_SNORM
+#define D3DX_PIXEL_FORMAT_R8G8_SNORM         D3DX_PIXEL_FORMAT_U8V8_SNORM
+#define D3DX_PIXEL_FORMAT_BC1_UNORM          D3DX_PIXEL_FORMAT_DXT1_UNORM
+#define D3DX_PIXEL_FORMAT_BC2_UNORM          D3DX_PIXEL_FORMAT_DXT3_UNORM
+#define D3DX_PIXEL_FORMAT_BC3_UNORM          D3DX_PIXEL_FORMAT_DXT5_UNORM
+
 /* for internal use */
 enum component_type
 {
@@ -231,6 +256,11 @@ enum format_flag
     FMT_FLAG_PACKED = 0x02,
     /* Internal only format, has no exact D3DFORMAT equivalent. */
     FMT_FLAG_INTERNAL = 0x04,
+    /*
+     * For formats that only have a DXGI_FORMAT mapping, no D3DFORMAT
+     * equivalent.
+     */
+    FMT_FLAG_DXGI     = 0x08,
 };
 
 struct pixel_format_desc {
@@ -270,6 +300,7 @@ static inline void set_d3dx_pixels(struct d3dx_pixels *pixels, const void *data,
 }
 
 #define D3DX_IMAGE_INFO_ONLY 1
+#define D3DX_IMAGE_SUPPORT_DXT10 2
 struct d3dx_image
 {
     enum d3dx_resource_type resource_type;
@@ -337,6 +368,11 @@ static inline BOOL format_types_match(const struct pixel_format_desc *src, const
 static inline BOOL is_internal_format(const struct pixel_format_desc *format)
 {
     return !!(format->flags & FMT_FLAG_INTERNAL);
+}
+
+static inline BOOL is_dxgi_format(const struct pixel_format_desc *format)
+{
+    return !!(format->flags & FMT_FLAG_DXGI);
 }
 
 static inline BOOL is_conversion_from_supported(const struct pixel_format_desc *format)

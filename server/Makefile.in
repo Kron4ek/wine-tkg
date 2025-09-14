@@ -11,9 +11,11 @@ SOURCES = \
 	debugger.c \
 	device.c \
 	directory.c \
+	esync.c \
 	event.c \
 	fd.c \
 	file.c \
+	fsync.c \
 	handle.c \
 	hook.c \
 	mach.c \

@@ -484,7 +484,10 @@ HRESULT WINAPI D3DPreprocess(const void *data, SIZE_T size, const char *filename
 
     if (!ret)
     {
-        if (FAILED(hr = vkd3d_blob_create((void *)preprocessed_code.code, preprocessed_code.size, preprocessed_blob)))
+        /* vkd3d-shader output is null-terminated, but the null terminator isn't
+         * included in the size. Increase the size to account for that. */
+        if (FAILED(hr = vkd3d_blob_create((void *)preprocessed_code.code,
+                preprocessed_code.size + 1, preprocessed_blob)))
         {
             vkd3d_shader_free_shader_code(&preprocessed_code);
             return hr;
@@ -1034,7 +1037,9 @@ HRESULT WINAPI D3DDisassemble(const void *data, SIZE_T data_size,
         return hresult_from_vkd3d_result(ret);
     }
 
-    if (FAILED(hr = vkd3d_blob_create((void *)output.code, output.size, blob)))
+    /* vkd3d-shader output is null-terminated, but the null terminator isn't
+     * included in the size. Increase the size to account for that. */
+    if (FAILED(hr = vkd3d_blob_create((void *)output.code, output.size + 1, blob)))
         vkd3d_shader_free_shader_code(&output);
 
     return hr;
