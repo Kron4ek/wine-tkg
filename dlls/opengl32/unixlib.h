@@ -12379,9 +12379,6 @@ struct glMapBuffer_params
     GLenum target;
     GLenum access;
     void *ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glMapBufferARB_params
@@ -12390,9 +12387,6 @@ struct glMapBufferARB_params
     GLenum target;
     GLenum access;
     void *ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glMapBufferRange_params
@@ -12403,9 +12397,6 @@ struct glMapBufferRange_params
     GLsizeiptr length;
     GLbitfield access;
     void *ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glMapControlPointsNV_params
@@ -12446,9 +12437,6 @@ struct glMapNamedBuffer_params
     GLuint buffer;
     GLenum access;
     void *ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glMapNamedBufferEXT_params
@@ -12457,9 +12445,6 @@ struct glMapNamedBufferEXT_params
     GLuint buffer;
     GLenum access;
     void *ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glMapNamedBufferRange_params
@@ -12470,9 +12455,6 @@ struct glMapNamedBufferRange_params
     GLsizeiptr length;
     GLbitfield access;
     void *ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glMapNamedBufferRangeEXT_params
@@ -12483,9 +12465,6 @@ struct glMapNamedBufferRangeEXT_params
     GLsizeiptr length;
     GLbitfield access;
     void *ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glMapObjectBufferATI_params
@@ -21733,9 +21712,6 @@ struct glUnmapBuffer_params
     TEB *teb;
     GLenum target;
     GLboolean ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glUnmapBufferARB_params
@@ -21743,9 +21719,6 @@ struct glUnmapBufferARB_params
     TEB *teb;
     GLenum target;
     GLboolean ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glUnmapNamedBuffer_params
@@ -21753,9 +21726,6 @@ struct glUnmapNamedBuffer_params
     TEB *teb;
     GLuint buffer;
     GLboolean ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glUnmapNamedBufferEXT_params
@@ -21763,9 +21733,6 @@ struct glUnmapNamedBufferEXT_params
     TEB *teb;
     GLuint buffer;
     GLboolean ret;
-#ifndef _WIN64
-    void *client_ptr;
-#endif
 };
 
 struct glUnmapObjectBufferATI_params

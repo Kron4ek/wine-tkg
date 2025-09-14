@@ -105,6 +105,8 @@ struct ntdll_thread_data
     SYSTEM_SERVICE_TABLE     *syscall_table; /* 214/0370 syscall table */
     struct syscall_frame     *syscall_frame; /* 218/0378 current syscall frame */
     int                       syscall_trace; /* 21c/0380 syscall trace flag */
+    int                       esync_apc_fd;  /* fd to wait on for user APCs */
+    int                      *fsync_apc_futex;
     int                       request_fd;    /* fd for sending server requests */
     int                       reply_fd;      /* fd for receiving server replies */
     int                       wait_fd[2];    /* fd for sleeping server requests */
@@ -201,9 +203,9 @@ extern HANDLE keyed_event;
 extern timeout_t server_start_time;
 extern sigset_t server_block_set;
 extern struct _KUSER_SHARED_DATA *user_shared_data;
-#ifdef __i386__
-extern struct ldt_copy __wine_ldt_copy;
-#endif
+
+extern BOOL ac_odyssey;
+extern BOOL fsync_simulate_sched_quantum;
 
 extern void init_environment(void);
 extern void init_startup_info(void);
@@ -590,6 +592,93 @@ static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, UL
     return NtMapViewOfSection( mapping, NtCurrentProcess(), ptr, user_space_wow_limit,
                                0, NULL, size, ViewShare, 0, protect );
 }
+
+/* LDT definitions */
+
+#if defined(__i386__) || defined(__x86_64__)
+
+#define LDT_SIZE 8192
+
+#define LDT_FLAGS_DATA      0x13  /* Data segment */
+#define LDT_FLAGS_CODE      0x1b  /* Code segment */
+#define LDT_FLAGS_32BIT     0x40  /* Segment is 32-bit (code or stack) */
+#define LDT_FLAGS_ALLOCATED 0x80  /* Segment is allocated */
+
+struct ldt_copy
+{
+    unsigned int  base[LDT_SIZE];
+    unsigned int  limit[LDT_SIZE];
+    unsigned char flags[LDT_SIZE];
+};
+extern struct ldt_copy __wine_ldt_copy;
+
+static const LDT_ENTRY null_entry;
+
+static inline unsigned int ldt_get_base( LDT_ENTRY ent )
+{
+    return (ent.BaseLow |
+            (unsigned int)ent.HighWord.Bits.BaseMid << 16 |
+            (unsigned int)ent.HighWord.Bits.BaseHi << 24);
+}
+
+static inline unsigned int ldt_get_limit( LDT_ENTRY ent )
+{
+    unsigned int limit = ent.LimitLow | (ent.HighWord.Bits.LimitHi << 16);
+    if (ent.HighWord.Bits.Granularity) limit = (limit << 12) | 0xfff;
+    return limit;
+}
+
+static inline LDT_ENTRY ldt_make_entry( unsigned int base, unsigned int limit, unsigned char flags )
+{
+    LDT_ENTRY entry;
+
+    entry.BaseLow                   = (WORD)base;
+    entry.HighWord.Bits.BaseMid     = (BYTE)(base >> 16);
+    entry.HighWord.Bits.BaseHi      = (BYTE)(base >> 24);
+    if ((entry.HighWord.Bits.Granularity = (limit >= 0x100000))) limit >>= 12;
+    entry.LimitLow                  = (WORD)limit;
+    entry.HighWord.Bits.LimitHi     = limit >> 16;
+    entry.HighWord.Bits.Dpl         = 3;
+    entry.HighWord.Bits.Pres        = 1;
+    entry.HighWord.Bits.Type        = flags;
+    entry.HighWord.Bits.Sys         = 0;
+    entry.HighWord.Bits.Reserved_0  = 0;
+    entry.HighWord.Bits.Default_Big = (flags & LDT_FLAGS_32BIT) != 0;
+    return entry;
+}
+
+static inline void update_ldt_copy( WORD sel, LDT_ENTRY entry )
+{
+    unsigned int index = sel >> 3;
+
+    __wine_ldt_copy.base[index]  = ldt_get_base( entry );
+    __wine_ldt_copy.limit[index] = ldt_get_limit( entry );
+    __wine_ldt_copy.flags[index] = (entry.HighWord.Bits.Type |
+                                    (entry.HighWord.Bits.Default_Big ? LDT_FLAGS_32BIT : 0) |
+                                    LDT_FLAGS_ALLOCATED);
+}
+
+static inline LDT_ENTRY ldt_make_cs32_entry(void)
+{
+    return ldt_make_entry( 0, ~0u, LDT_FLAGS_CODE | LDT_FLAGS_32BIT );
+}
+
+static inline LDT_ENTRY ldt_make_ds32_entry(void)
+{
+    return ldt_make_entry( 0, ~0u, LDT_FLAGS_DATA | LDT_FLAGS_32BIT );
+}
+
+static inline LDT_ENTRY ldt_make_fs32_entry( void *teb )
+{
+    return ldt_make_entry( PtrToUlong(teb), page_size - 1, LDT_FLAGS_DATA | LDT_FLAGS_32BIT );
+}
+
+static inline int is_gdt_sel( WORD sel )
+{
+    return !(sel & 4);
+}
+
+#endif  /* defined(__i386__) || defined(__x86_64__) */
 
 BOOL WINAPI __wine_needs_override_large_address_aware(void);
 

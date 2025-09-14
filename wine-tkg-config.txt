@@ -1,10 +1,12 @@
-# Last wine-tkg-staging-git configuration - Sun Aug 31 09:52:18 AM UTC 2025 :
+# Last wine-tkg-staging-fsync-git configuration - Sun Sep 14 08:41:33 AM UTC 2025 :
 
 Local cfg files used
 
-Wine (plain) version: 10.14.r0.g1d1e5fb3e51
-Using wine-staging patchset (version 10.14.r0.ge004127f)
+Wine (plain) version: 10.15.r0.g72dc2afb1a7
+Using wine-staging patchset (version 10.15.r0.g978b387c)
 
+Re-enable esync patches since Staging impl is disabled.
+Using esync patchset (version ce79346)
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
 Done applying backports hotfixes (if any) - list available in prepare.log
@@ -14,6 +16,9 @@ CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 
 Staging overrides, if any: 
 
+esync-unix-staging.patch -- ( Using Esync (unix, staging) patchset )
+fsync-unix-staging.patch -- ( Applied fsync patches (unix, staging) )
+fsync_futex_waitv.patch -- ( Applied patches for fsync to support futex_waitv )
 
 LAA-unix-staging-wow64.patch -- ( Applied large address aware override support )
 
@@ -26,9 +31,10 @@ wow64_loader_hack.patch -- ( Hack around loader name for EAC on 10.2+ )
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix a608ef1.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
+Applied hotfix HACK-user32-Always-call-get_message-request-after-waiting.mypatch
 Applied hotfix opencl-fixup.mypatch
-Applied hotfix 0001-wine-staging-Fix-build.mypatch
 Applied your own patch disable-hidraw-and-evdev.mypatch
+Applied your own patch enable_fsync_by_default.mypatch
 Applied your own patch hags.mypatch
 Applied your own patch win32u-hdr.mypatch
 

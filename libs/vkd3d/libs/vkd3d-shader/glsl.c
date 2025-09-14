@@ -288,6 +288,14 @@ static void shader_glsl_print_register_name(struct vkd3d_string_buffer *buffer,
             shader_glsl_print_subscript(buffer, gen, reg->idx[1].rel_addr, reg->idx[1].offset);
             break;
 
+        case VKD3DSPR_SAMPLEMASK:
+            if (gen->program->shader_version.type != VKD3D_SHADER_TYPE_PIXEL)
+                vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
+                        "Internal compiler error: Unhandled sample coverage mask in shader type #%x.",
+                        gen->program->shader_version.type);
+            vkd3d_string_buffer_printf(buffer, "o_mask");
+            break;
+
         default:
             vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
                     "Internal compiler error: Unhandled register type %#x.", reg->type);
@@ -1286,6 +1294,13 @@ static void shader_glsl_print_sysval_name(struct vkd3d_string_buffer *buffer, st
             vkd3d_string_buffer_printf(buffer, "intBitsToFloat(ivec4(gl_VertexID, 0, 0, 0))");
             break;
 
+        case VKD3D_SHADER_SV_INSTANCE_ID:
+            if (version->type != VKD3D_SHADER_TYPE_VERTEX)
+                vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
+                        "Internal compiler error: Unhandled SV_INSTANCE_ID in shader type #%x.", version->type);
+            vkd3d_string_buffer_printf(buffer, "intBitsToFloat(ivec4(gl_InstanceID, 0, 0, 0))");
+            break;
+
         case VKD3D_SHADER_SV_IS_FRONT_FACE:
             if (version->type != VKD3D_SHADER_TYPE_PIXEL)
                 vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
@@ -1433,6 +1448,12 @@ static void shader_glsl_shader_epilogue(struct vkd3d_glsl_generator *gen)
         }
         shader_glsl_print_write_mask(buffer, e->mask);
         vkd3d_string_buffer_printf(buffer, ";\n");
+    }
+
+    if (bitmap_is_set(gen->program->io_dcls, VKD3DSPR_SAMPLEMASK))
+    {
+        shader_glsl_print_indent(buffer, gen->indent);
+        vkd3d_string_buffer_printf(gen->buffer, "gl_SampleMask[0] = floatBitsToInt(o_mask);\n");
     }
 }
 
@@ -1649,6 +1670,9 @@ static void vkd3d_glsl_handle_instruction(struct vkd3d_glsl_generator *gen,
             break;
         case VSIR_OP_UDIV_SIMPLE:
             shader_glsl_binop(gen, ins, "/");
+            break;
+        case VSIR_OP_UREM:
+            shader_glsl_binop(gen, ins, "%");
             break;
         case VSIR_OP_XOR:
             shader_glsl_binop(gen, ins, "^");
@@ -2339,6 +2363,8 @@ static void shader_glsl_generate_declarations(struct vkd3d_glsl_generator *gen)
         vkd3d_string_buffer_printf(buffer, "vec4 %s_in[%u];\n", gen->prefix, gen->limits.input_count);
     if (gen->limits.output_count)
         vkd3d_string_buffer_printf(buffer, "vec4 %s_out[%u];\n", gen->prefix, gen->limits.output_count);
+    if (bitmap_is_set(gen->program->io_dcls, VKD3DSPR_SAMPLEMASK))
+        vkd3d_string_buffer_printf(gen->buffer, "float o_mask;\n");
     if (program->temp_count)
         vkd3d_string_buffer_printf(buffer, "vec4 r[%u];\n", program->temp_count);
     vkd3d_string_buffer_printf(buffer, "\n");

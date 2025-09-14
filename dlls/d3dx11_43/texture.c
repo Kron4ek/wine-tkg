@@ -19,108 +19,265 @@
 
 #include "d3dx11.h"
 #include "d3dcompiler.h"
-#include "wincodec.h"
+#include "dxhelpers.h"
 
+#include "wincodec.h"
 #include "wine/debug.h"
 #include "wine/heap.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3dx);
 
-HRESULT WINAPI WICCreateImagingFactory_Proxy(UINT sdk_version, IWICImagingFactory **imaging_factory);
-
-static const struct
+/*
+ * These are mappings from legacy DDS header formats to DXGI formats. Some
+ * don't map to a DXGI_FORMAT at all, and some only map to the default format.
+ */
+static DXGI_FORMAT dxgi_format_from_legacy_dds_d3dx_pixel_format_id(enum d3dx_pixel_format_id format)
 {
-    const GUID *wic_container_guid;
-    D3DX11_IMAGE_FILE_FORMAT d3dx_file_format;
-}
-file_formats[] =
-{
-    { &GUID_ContainerFormatBmp,  D3DX11_IFF_BMP },
-    { &GUID_ContainerFormatJpeg, D3DX11_IFF_JPG },
-    { &GUID_ContainerFormatPng,  D3DX11_IFF_PNG },
-    { &GUID_ContainerFormatDds,  D3DX11_IFF_DDS },
-    { &GUID_ContainerFormatTiff, D3DX11_IFF_TIFF },
-    { &GUID_ContainerFormatGif,  D3DX11_IFF_GIF },
-    { &GUID_ContainerFormatWmp,  D3DX11_IFF_WMP },
-};
-
-static const struct
-{
-    const GUID *wic_guid;
-    DXGI_FORMAT dxgi_format;
-}
-wic_pixel_formats[] =
-{
-    { &GUID_WICPixelFormatBlackWhite,         DXGI_FORMAT_R1_UNORM },
-    { &GUID_WICPixelFormat8bppAlpha,          DXGI_FORMAT_A8_UNORM },
-    { &GUID_WICPixelFormat8bppGray,           DXGI_FORMAT_R8_UNORM },
-    { &GUID_WICPixelFormat16bppGray,          DXGI_FORMAT_R16_UNORM },
-    { &GUID_WICPixelFormat16bppGrayHalf,      DXGI_FORMAT_R16_FLOAT },
-    { &GUID_WICPixelFormat32bppGrayFloat,     DXGI_FORMAT_R32_FLOAT },
-    { &GUID_WICPixelFormat16bppBGR565,        DXGI_FORMAT_B5G6R5_UNORM },
-    { &GUID_WICPixelFormat16bppBGRA5551,      DXGI_FORMAT_B5G5R5A1_UNORM },
-    { &GUID_WICPixelFormat32bppBGR,           DXGI_FORMAT_B8G8R8X8_UNORM },
-    { &GUID_WICPixelFormat32bppBGRA,          DXGI_FORMAT_B8G8R8A8_UNORM },
-    { &GUID_WICPixelFormat32bppRGBA,          DXGI_FORMAT_R8G8B8A8_UNORM },
-    { &GUID_WICPixelFormat32bppRGBA,          DXGI_FORMAT_R8G8B8A8_UNORM_SRGB },
-    { &GUID_WICPixelFormat32bppRGBA1010102,   DXGI_FORMAT_R10G10B10A2_UNORM },
-    { &GUID_WICPixelFormat32bppRGBA1010102XR, DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM },
-    { &GUID_WICPixelFormat64bppRGBA,          DXGI_FORMAT_R16G16B16A16_UNORM },
-    { &GUID_WICPixelFormat64bppRGBAHalf,      DXGI_FORMAT_R16G16B16A16_FLOAT },
-    { &GUID_WICPixelFormat96bppRGBFloat,      DXGI_FORMAT_R32G32B32_FLOAT },
-    { &GUID_WICPixelFormat128bppRGBAFloat,    DXGI_FORMAT_R32G32B32A32_FLOAT }
-};
-
-static D3DX11_IMAGE_FILE_FORMAT wic_container_guid_to_file_format(GUID *container_format)
-{
-    unsigned int i;
-
-    for (i = 0; i < ARRAY_SIZE(file_formats); ++i)
+    switch (format)
     {
-        if (IsEqualGUID(file_formats[i].wic_container_guid, container_format))
-            return file_formats[i].d3dx_file_format;
-    }
-    return D3DX11_IFF_FORCE_DWORD;
-}
+        /*
+         * Some of these formats do have DXGI_FORMAT equivalents, but get
+         * mapped to DXGI_FORMAT_R8G8B8A8_UNORM instead.
+         */
+        case D3DX_PIXEL_FORMAT_P8_UINT:                  return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_P8_UINT_A8_UNORM:         return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_R8G8B8A8_UNORM:           return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_R8G8B8X8_UNORM:           return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B8G8R8_UNORM:             return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B8G8R8A8_UNORM:           return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B8G8R8X8_UNORM:           return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B5G6R5_UNORM:             return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B5G5R5X1_UNORM:           return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B5G5R5A1_UNORM:           return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B2G3R3_UNORM:             return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B2G3R3A8_UNORM:           return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B4G4R4A4_UNORM:           return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B4G4R4X4_UNORM:           return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_L8A8_UNORM:               return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_L4A4_UNORM:               return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_L8_UNORM:                 return DXGI_FORMAT_R8G8B8A8_UNORM;
 
-static D3D11_RESOURCE_DIMENSION wic_dimension_to_d3dx11_dimension(WICDdsDimension wic_dimension)
-{
-    switch (wic_dimension)
-    {
-        case WICDdsTexture1D:
-            return D3D11_RESOURCE_DIMENSION_TEXTURE1D;
-        case WICDdsTexture2D:
-        case WICDdsTextureCube:
-            return D3D11_RESOURCE_DIMENSION_TEXTURE2D;
-        case WICDdsTexture3D:
-            return D3D11_RESOURCE_DIMENSION_TEXTURE3D;
+        /* B10G10R10A2 doesn't exist in DXGI, both map to R10G10B10A2. */
+        case D3DX_PIXEL_FORMAT_B10G10R10A2_UNORM:
+        case D3DX_PIXEL_FORMAT_R10G10B10A2_UNORM:        return DXGI_FORMAT_R10G10B10A2_UNORM;
+
+        case D3DX_PIXEL_FORMAT_U16V16W16Q16_SNORM:       return DXGI_FORMAT_R16G16B16A16_SNORM;
+        case D3DX_PIXEL_FORMAT_L16_UNORM:                return DXGI_FORMAT_R16G16B16A16_UNORM;
+        case D3DX_PIXEL_FORMAT_R16G16B16A16_UNORM:       return DXGI_FORMAT_R16G16B16A16_UNORM;
+        case D3DX_PIXEL_FORMAT_R16G16_UNORM:             return DXGI_FORMAT_R16G16_UNORM;
+        case D3DX_PIXEL_FORMAT_A8_UNORM:                 return DXGI_FORMAT_A8_UNORM;
+        case D3DX_PIXEL_FORMAT_R16_FLOAT:                return DXGI_FORMAT_R16_FLOAT;
+        case D3DX_PIXEL_FORMAT_R16G16_FLOAT:             return DXGI_FORMAT_R16G16_FLOAT;
+        case D3DX_PIXEL_FORMAT_R16G16B16A16_FLOAT:       return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case D3DX_PIXEL_FORMAT_R32_FLOAT:                return DXGI_FORMAT_R32_FLOAT;
+        case D3DX_PIXEL_FORMAT_R32G32_FLOAT:             return DXGI_FORMAT_R32G32_FLOAT;
+        case D3DX_PIXEL_FORMAT_R32G32B32A32_FLOAT:       return DXGI_FORMAT_R32G32B32A32_FLOAT;
+        case D3DX_PIXEL_FORMAT_G8R8_G8B8_UNORM:          return DXGI_FORMAT_G8R8_G8B8_UNORM;
+        case D3DX_PIXEL_FORMAT_R8G8_B8G8_UNORM:          return DXGI_FORMAT_R8G8_B8G8_UNORM;
+
+        case D3DX_PIXEL_FORMAT_DXT1_UNORM:               return DXGI_FORMAT_BC1_UNORM;
+        case D3DX_PIXEL_FORMAT_DXT2_UNORM:               return DXGI_FORMAT_BC2_UNORM;
+        case D3DX_PIXEL_FORMAT_DXT3_UNORM:               return DXGI_FORMAT_BC2_UNORM;
+        case D3DX_PIXEL_FORMAT_DXT4_UNORM:               return DXGI_FORMAT_BC3_UNORM;
+        case D3DX_PIXEL_FORMAT_DXT5_UNORM:               return DXGI_FORMAT_BC3_UNORM;
+        case D3DX_PIXEL_FORMAT_BC4_UNORM:                return DXGI_FORMAT_BC4_UNORM;
+        case D3DX_PIXEL_FORMAT_BC4_SNORM:                return DXGI_FORMAT_BC4_SNORM;
+        case D3DX_PIXEL_FORMAT_BC5_UNORM:                return DXGI_FORMAT_BC5_UNORM;
+        case D3DX_PIXEL_FORMAT_BC5_SNORM:                return DXGI_FORMAT_BC5_SNORM;
+
+        /* These formats are known and explicitly unsupported on d3dx10+. */
+        case D3DX_PIXEL_FORMAT_U8V8W8Q8_SNORM:
+        case D3DX_PIXEL_FORMAT_U8V8_SNORM:
+        case D3DX_PIXEL_FORMAT_U16V16_SNORM:
+        case D3DX_PIXEL_FORMAT_U8V8_SNORM_L8X8_UNORM:
+        case D3DX_PIXEL_FORMAT_U10V10W10_SNORM_A2_UNORM:
+        case D3DX_PIXEL_FORMAT_UYVY:
+        case D3DX_PIXEL_FORMAT_YUY2:
+            return DXGI_FORMAT_UNKNOWN;
+
         default:
-            return D3D11_RESOURCE_DIMENSION_UNKNOWN;
+            FIXME("Unknown d3dx_pixel_format_id %#x.\n", format);
+            return DXGI_FORMAT_UNKNOWN;
     }
 }
 
-static const DXGI_FORMAT to_be_converted_format[] =
+static DXGI_FORMAT dxgi_format_from_d3dx_pixel_format_id(enum d3dx_pixel_format_id format)
 {
-    DXGI_FORMAT_UNKNOWN,
-    DXGI_FORMAT_R8_UNORM,
-    DXGI_FORMAT_R8G8_UNORM,
-    DXGI_FORMAT_B5G6R5_UNORM,
-    DXGI_FORMAT_B4G4R4A4_UNORM,
-    DXGI_FORMAT_B5G5R5A1_UNORM,
-    DXGI_FORMAT_B8G8R8X8_UNORM,
-    DXGI_FORMAT_B8G8R8A8_UNORM
-};
-
-static DXGI_FORMAT get_d3dx11_dds_format(DXGI_FORMAT format)
-{
-    unsigned int i;
-
-    for (i = 0; i < ARRAY_SIZE(to_be_converted_format); ++i)
+    switch (format)
     {
-        if (format == to_be_converted_format[i])
-            return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_R8G8B8A8_UNORM:          return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B8G8R8A8_UNORM:          return DXGI_FORMAT_B8G8R8A8_UNORM;
+        case D3DX_PIXEL_FORMAT_B8G8R8X8_UNORM:          return DXGI_FORMAT_B8G8R8X8_UNORM;
+        case D3DX_PIXEL_FORMAT_R10G10B10A2_UNORM:       return DXGI_FORMAT_R10G10B10A2_UNORM;
+        case D3DX_PIXEL_FORMAT_R16G16B16A16_UNORM:      return DXGI_FORMAT_R16G16B16A16_UNORM;
+        case D3DX_PIXEL_FORMAT_R8_UNORM:                return DXGI_FORMAT_R8_UNORM;
+        case D3DX_PIXEL_FORMAT_R8G8_UNORM:              return DXGI_FORMAT_R8G8_UNORM;
+        case D3DX_PIXEL_FORMAT_R16_UNORM:               return DXGI_FORMAT_R16_UNORM;
+        case D3DX_PIXEL_FORMAT_R16G16_UNORM:            return DXGI_FORMAT_R16G16_UNORM;
+        case D3DX_PIXEL_FORMAT_A8_UNORM:                return DXGI_FORMAT_A8_UNORM;
+        case D3DX_PIXEL_FORMAT_R16_FLOAT:               return DXGI_FORMAT_R16_FLOAT;
+        case D3DX_PIXEL_FORMAT_R16G16_FLOAT:            return DXGI_FORMAT_R16G16_FLOAT;
+        case D3DX_PIXEL_FORMAT_R16G16B16A16_FLOAT:      return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case D3DX_PIXEL_FORMAT_R32_FLOAT:               return DXGI_FORMAT_R32_FLOAT;
+        case D3DX_PIXEL_FORMAT_R32G32_FLOAT:            return DXGI_FORMAT_R32G32_FLOAT;
+        case D3DX_PIXEL_FORMAT_R32G32B32_FLOAT:         return DXGI_FORMAT_R32G32B32_FLOAT;
+        case D3DX_PIXEL_FORMAT_R32G32B32A32_FLOAT:      return DXGI_FORMAT_R32G32B32A32_FLOAT;
+        case D3DX_PIXEL_FORMAT_G8R8_G8B8_UNORM:         return DXGI_FORMAT_G8R8_G8B8_UNORM;
+        case D3DX_PIXEL_FORMAT_R8G8_B8G8_UNORM:         return DXGI_FORMAT_R8G8_B8G8_UNORM;
+        case D3DX_PIXEL_FORMAT_BC1_UNORM:               return DXGI_FORMAT_BC1_UNORM;
+        case D3DX_PIXEL_FORMAT_BC2_UNORM:               return DXGI_FORMAT_BC2_UNORM;
+        case D3DX_PIXEL_FORMAT_BC3_UNORM:               return DXGI_FORMAT_BC3_UNORM;
+        case D3DX_PIXEL_FORMAT_BC4_UNORM:               return DXGI_FORMAT_BC4_UNORM;
+        case D3DX_PIXEL_FORMAT_BC4_SNORM:               return DXGI_FORMAT_BC4_SNORM;
+        case D3DX_PIXEL_FORMAT_BC5_UNORM:               return DXGI_FORMAT_BC5_UNORM;
+        case D3DX_PIXEL_FORMAT_BC5_SNORM:               return DXGI_FORMAT_BC5_SNORM;
+        case D3DX_PIXEL_FORMAT_R16G16B16A16_SNORM:      return DXGI_FORMAT_R16G16B16A16_SNORM;
+        case D3DX_PIXEL_FORMAT_R8G8B8A8_SNORM:          return DXGI_FORMAT_R8G8B8A8_SNORM;
+        case D3DX_PIXEL_FORMAT_R8G8_SNORM:              return DXGI_FORMAT_R8G8_SNORM;
+        case D3DX_PIXEL_FORMAT_R16G16_SNORM:            return DXGI_FORMAT_R16G16_SNORM;
+
+        /*
+         * These have DXGI_FORMAT equivalents, but are explicitly unsupported on
+         * d3dx10+.
+         */
+        case D3DX_PIXEL_FORMAT_B5G6R5_UNORM:
+        case D3DX_PIXEL_FORMAT_B5G5R5A1_UNORM:
+        case D3DX_PIXEL_FORMAT_B4G4R4A4_UNORM:
+            return DXGI_FORMAT_UNKNOWN;
+
+        default:
+            FIXME("Unhandled d3dx_pixel_format_id %#x.\n", format);
+            return DXGI_FORMAT_UNKNOWN;
     }
-    return format;
+}
+
+static D3DX11_IMAGE_FILE_FORMAT d3dx11_image_file_format_from_d3dx_image_file_format(enum d3dx_image_file_format iff)
+{
+    switch (iff)
+    {
+        case D3DX_IMAGE_FILE_FORMAT_BMP: return D3DX11_IFF_BMP;
+        case D3DX_IMAGE_FILE_FORMAT_JPG: return D3DX11_IFF_JPG;
+        case D3DX_IMAGE_FILE_FORMAT_PNG: return D3DX11_IFF_PNG;
+        case D3DX_IMAGE_FILE_FORMAT_DDS: return D3DX11_IFF_DDS;
+        case D3DX_IMAGE_FILE_FORMAT_TIFF: return D3DX11_IFF_TIFF;
+        case D3DX_IMAGE_FILE_FORMAT_GIF: return D3DX11_IFF_GIF;
+        case D3DX_IMAGE_FILE_FORMAT_WMP: return D3DX11_IFF_WMP;
+        case D3DX_IMAGE_FILE_FORMAT_DDS_DXT10: return D3DX11_IFF_DDS;
+        default:
+            FIXME("No D3DX11_IMAGE_FILE_FORMAT for d3dx_image_file_format %d.\n", iff);
+            return D3DX11_IFF_FORCE_DWORD;
+    }
+}
+
+static HRESULT d3dx11_image_info_from_d3dx_image(D3DX11_IMAGE_INFO *info, struct d3dx_image *image)
+{
+    D3DX11_IMAGE_FILE_FORMAT iff = d3dx11_image_file_format_from_d3dx_image_file_format(image->image_file_format);
+    DXGI_FORMAT format;
+
+    memset(info, 0, sizeof(*info));
+    switch (image->image_file_format)
+    {
+        case D3DX_IMAGE_FILE_FORMAT_DDS_DXT10:
+            format = dxgi_format_from_d3dx_pixel_format_id(image->format);
+            break;
+
+        case D3DX_IMAGE_FILE_FORMAT_DDS:
+            format = dxgi_format_from_legacy_dds_d3dx_pixel_format_id(image->format);
+            break;
+
+        default:
+            if (iff == D3DX11_IFF_FORCE_DWORD)
+                return E_FAIL;
+
+            /* All other image file formats use the default format. */
+            format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            break;
+    }
+
+    if (format == DXGI_FORMAT_UNKNOWN)
+    {
+        WARN("Tried to load file with unsupported pixel format %#x.\n", image->format);
+        return E_FAIL;
+    }
+
+    switch (image->resource_type)
+    {
+        case D3DX_RESOURCE_TYPE_TEXTURE_2D:
+            info->ResourceDimension = D3D11_RESOURCE_DIMENSION_TEXTURE2D;
+            break;
+
+        case D3DX_RESOURCE_TYPE_CUBE_TEXTURE:
+            info->ResourceDimension = D3D11_RESOURCE_DIMENSION_TEXTURE2D;
+            info->MiscFlags |= D3D11_RESOURCE_MISC_TEXTURECUBE;
+            break;
+
+        case D3DX_RESOURCE_TYPE_TEXTURE_3D:
+            info->ResourceDimension = D3D11_RESOURCE_DIMENSION_TEXTURE3D;
+            break;
+
+        default:
+            ERR("Unhandled resource type %d.\n", image->resource_type);
+            return E_FAIL;
+    }
+
+    info->ImageFileFormat = iff;
+    info->Width = image->size.width;
+    info->Height = image->size.height;
+    info->Depth = image->size.depth;
+    info->ArraySize = image->layer_count;
+    info->MipLevels = image->mip_levels;
+    info->Format = format;
+    return S_OK;
+}
+
+HRESULT get_image_info(const void *data, SIZE_T size, D3DX11_IMAGE_INFO *img_info)
+{
+    struct d3dx_image image;
+    HRESULT hr;
+
+    if (!data || !size)
+        return E_FAIL;
+
+    hr = d3dx_image_init(data, size, &image, 0, D3DX_IMAGE_INFO_ONLY | D3DX_IMAGE_SUPPORT_DXT10);
+    if (SUCCEEDED(hr))
+        hr = d3dx11_image_info_from_d3dx_image(img_info, &image);
+
+    if (hr != S_OK)
+    {
+        WARN("Invalid or unsupported image file.\n");
+        return E_FAIL;
+    }
+    return S_OK;
+}
+
+HRESULT WINAPI D3DX11CreateShaderResourceViewFromMemory(ID3D11Device *device, const void *data,
+        SIZE_T data_size, D3DX11_IMAGE_LOAD_INFO *load_info, ID3DX11ThreadPump *pump,
+        ID3D11ShaderResourceView **view, HRESULT *hresult)
+{
+    FIXME("device %p, data %p, data_size %Iu, load_info %p, pump %p, view %p, hresult %p stub!\n",
+            device, data, data_size, load_info, pump, view, hresult);
+
+    return E_NOTIMPL;
+}
+
+HRESULT WINAPI D3DX11CreateTextureFromFileA(ID3D11Device *device, const char *filename,
+        D3DX11_IMAGE_LOAD_INFO *load_info, ID3DX11ThreadPump *pump, ID3D11Resource **texture,
+        HRESULT *hresult)
+{
+    FIXME("device %p, filename %s, load_info %p, pump %p, texture %p, hresult %p stub.\n",
+            device, debugstr_a(filename), load_info, pump, texture, hresult);
+
+    return E_NOTIMPL;
+}
+
+HRESULT WINAPI D3DX11CreateTextureFromFileW(ID3D11Device *device, const WCHAR *filename,
+        D3DX11_IMAGE_LOAD_INFO *load_info, ID3DX11ThreadPump *pump, ID3D11Resource **texture,
+        HRESULT *hresult)
+{
+    FIXME("device %p, filename %s, load_info %p, pump %p, texture %p, hresult %p stub.\n",
+            device, debugstr_w(filename), load_info, pump, texture, hresult);
+
+    return E_NOTIMPL;
 }
 
 static const DXGI_FORMAT block_compressed_formats[] =
@@ -279,6 +436,33 @@ static unsigned int get_bpp_from_format(DXGI_FORMAT format)
     }
 }
 
+static const struct
+{
+    const GUID *wic_guid;
+    DXGI_FORMAT dxgi_format;
+}
+wic_pixel_formats[] =
+{
+    { &GUID_WICPixelFormatBlackWhite,         DXGI_FORMAT_R1_UNORM },
+    { &GUID_WICPixelFormat8bppAlpha,          DXGI_FORMAT_A8_UNORM },
+    { &GUID_WICPixelFormat8bppGray,           DXGI_FORMAT_R8_UNORM },
+    { &GUID_WICPixelFormat16bppGray,          DXGI_FORMAT_R16_UNORM },
+    { &GUID_WICPixelFormat16bppGrayHalf,      DXGI_FORMAT_R16_FLOAT },
+    { &GUID_WICPixelFormat32bppGrayFloat,     DXGI_FORMAT_R32_FLOAT },
+    { &GUID_WICPixelFormat16bppBGR565,        DXGI_FORMAT_B5G6R5_UNORM },
+    { &GUID_WICPixelFormat16bppBGRA5551,      DXGI_FORMAT_B5G5R5A1_UNORM },
+    { &GUID_WICPixelFormat32bppBGR,           DXGI_FORMAT_B8G8R8X8_UNORM },
+    { &GUID_WICPixelFormat32bppBGRA,          DXGI_FORMAT_B8G8R8A8_UNORM },
+    { &GUID_WICPixelFormat32bppRGBA,          DXGI_FORMAT_R8G8B8A8_UNORM },
+    { &GUID_WICPixelFormat32bppRGBA,          DXGI_FORMAT_R8G8B8A8_UNORM_SRGB },
+    { &GUID_WICPixelFormat32bppRGBA1010102,   DXGI_FORMAT_R10G10B10A2_UNORM },
+    { &GUID_WICPixelFormat32bppRGBA1010102XR, DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM },
+    { &GUID_WICPixelFormat64bppRGBA,          DXGI_FORMAT_R16G16B16A16_UNORM },
+    { &GUID_WICPixelFormat64bppRGBAHalf,      DXGI_FORMAT_R16G16B16A16_FLOAT },
+    { &GUID_WICPixelFormat96bppRGBFloat,      DXGI_FORMAT_R32G32B32_FLOAT },
+    { &GUID_WICPixelFormat128bppRGBAFloat,    DXGI_FORMAT_R32G32B32A32_FLOAT }
+};
+
 static const GUID *dxgi_format_to_wic_guid(DXGI_FORMAT format)
 {
     unsigned int i;
@@ -292,147 +476,12 @@ static const GUID *dxgi_format_to_wic_guid(DXGI_FORMAT format)
     return NULL;
 }
 
-HRESULT WINAPI D3DX11GetImageInfoFromMemory(const void *src_data, SIZE_T src_data_size, ID3DX11ThreadPump *pump,
-        D3DX11_IMAGE_INFO *img_info, HRESULT *hresult)
-{
-    IWICBitmapFrameDecode *frame = NULL;
-    IWICImagingFactory *factory = NULL;
-    IWICDdsDecoder *dds_decoder = NULL;
-    IWICBitmapDecoder *decoder = NULL;
-    WICDdsParameters dds_params;
-    IWICStream *stream = NULL;
-    GUID container_format;
-    HRESULT hr;
-
-    TRACE("src_data %p, src_data_size %Iu, pump %p, img_info %p, hresult %p.\n",
-            src_data, src_data_size, pump, img_info, hresult);
-
-    if (!src_data || !src_data_size || !img_info)
-        return E_FAIL;
-    if (pump)
-        FIXME("Thread pump is not supported yet.\n");
-
-    WICCreateImagingFactory_Proxy(WINCODEC_SDK_VERSION, &factory);
-    IWICImagingFactory_CreateStream(factory, &stream);
-    hr = IWICStream_InitializeFromMemory(stream, (BYTE *)src_data, src_data_size);
-    if (FAILED(hr))
-    {
-        WARN("Failed to initialize stream.\n");
-        goto end;
-    }
-    hr = IWICImagingFactory_CreateDecoderFromStream(factory, (IStream *)stream, NULL, 0, &decoder);
-    if (FAILED(hr))
-        goto end;
-
-    hr = IWICBitmapDecoder_GetContainerFormat(decoder, &container_format);
-    if (FAILED(hr))
-        goto end;
-    img_info->ImageFileFormat = wic_container_guid_to_file_format(&container_format);
-    if (img_info->ImageFileFormat == D3DX11_IFF_FORCE_DWORD)
-    {
-        hr = E_FAIL;
-        WARN("Unsupported image file format %s.\n", debugstr_guid(&container_format));
-        goto end;
-    }
-
-    if (img_info->ImageFileFormat == D3DX11_IFF_DDS)
-    {
-        hr = IWICBitmapDecoder_QueryInterface(decoder, &IID_IWICDdsDecoder, (void **)&dds_decoder);
-        if (FAILED(hr))
-            goto end;
-        hr = IWICDdsDecoder_GetParameters(dds_decoder, &dds_params);
-        if (FAILED(hr))
-            goto end;
-        img_info->Width = dds_params.Width;
-        img_info->Height = dds_params.Height;
-        img_info->ArraySize = dds_params.ArraySize;
-        img_info->Depth = dds_params.Depth;
-        img_info->MipLevels = dds_params.MipLevels;
-        img_info->ResourceDimension = wic_dimension_to_d3dx11_dimension(dds_params.Dimension);
-        img_info->Format = get_d3dx11_dds_format(dds_params.DxgiFormat);
-        img_info->MiscFlags = 0;
-        if (dds_params.Dimension == WICDdsTextureCube)
-        {
-            img_info->MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE;
-            img_info->ArraySize *= 6;
-        }
-    }
-    else
-    {
-        unsigned int frame_count;
-
-        hr = IWICBitmapDecoder_GetFrameCount(decoder, &frame_count);
-        if (FAILED(hr) || !frame_count)
-            goto end;
-        hr = IWICBitmapDecoder_GetFrame(decoder, 0, &frame);
-        if (FAILED(hr))
-            goto end;
-        hr = IWICBitmapFrameDecode_GetSize(frame, &img_info->Width, &img_info->Height);
-        if (FAILED(hr))
-            goto end;
-
-        img_info->ArraySize = 1;
-        img_info->Depth = 1;
-        img_info->MipLevels = 1;
-        img_info->ResourceDimension = D3D11_RESOURCE_DIMENSION_TEXTURE2D;
-        img_info->Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        img_info->MiscFlags = 0;
-    }
-
-end:
-    if (dds_decoder)
-        IWICDdsDecoder_Release(dds_decoder);
-    if (frame)
-        IWICBitmapFrameDecode_Release(frame);
-    if (decoder)
-        IWICBitmapDecoder_Release(decoder);
-    if (stream)
-        IWICStream_Release(stream);
-    if (factory)
-        IWICImagingFactory_Release(factory);
-
-    if (hr != S_OK)
-    {
-        WARN("Invalid or unsupported image file.\n");
-        return E_FAIL;
-    }
-    return S_OK;
-}
-
-HRESULT WINAPI D3DX11CreateShaderResourceViewFromMemory(ID3D11Device *device, const void *data,
-        SIZE_T data_size, D3DX11_IMAGE_LOAD_INFO *load_info, ID3DX11ThreadPump *pump,
-        ID3D11ShaderResourceView **view, HRESULT *hresult)
-{
-    FIXME("device %p, data %p, data_size %Iu, load_info %p, pump %p, view %p, hresult %p stub!\n",
-            device, data, data_size, load_info, pump, view, hresult);
-
-    return E_NOTIMPL;
-}
-
-HRESULT WINAPI D3DX11CreateTextureFromFileA(ID3D11Device *device, const char *filename,
-        D3DX11_IMAGE_LOAD_INFO *load_info, ID3DX11ThreadPump *pump, ID3D11Resource **texture,
-        HRESULT *hresult)
-{
-    FIXME("device %p, filename %s, load_info %p, pump %p, texture %p, hresult %p stub.\n",
-            device, debugstr_a(filename), load_info, pump, texture, hresult);
-
-    return E_NOTIMPL;
-}
-
-HRESULT WINAPI D3DX11CreateTextureFromFileW(ID3D11Device *device, const WCHAR *filename,
-        D3DX11_IMAGE_LOAD_INFO *load_info, ID3DX11ThreadPump *pump, ID3D11Resource **texture,
-        HRESULT *hresult)
-{
-    FIXME("device %p, filename %s, load_info %p, pump %p, texture %p, hresult %p stub.\n",
-            device, debugstr_w(filename), load_info, pump, texture, hresult);
-
-    return E_NOTIMPL;
-}
+HRESULT WINAPI WICCreateImagingFactory_Proxy(UINT sdk_version, IWICImagingFactory **imaging_factory);
 
 HRESULT WINAPI D3DX11CreateTextureFromMemory(ID3D11Device *device, const void *src_data,
         SIZE_T src_data_size, D3DX11_IMAGE_LOAD_INFO *load_info, ID3DX11ThreadPump *pump,
-        ID3D11Resource **texture, HRESULT *hresult)
-{
+         ID3D11Resource **texture, HRESULT *hresult)
+ {
     unsigned int frame_count, width, height, stride, frame_size;
     IWICFormatConverter *converter = NULL;
     IWICDdsFrameDecode *dds_frame = NULL;
@@ -589,7 +638,7 @@ end:
         IWICImagingFactory_Release(factory);
 
     return hr;
-}
+ }
 
 HRESULT WINAPI D3DX11SaveTextureToFileW(ID3D11DeviceContext *context, ID3D11Resource *texture,
         D3DX11_IMAGE_FILE_FORMAT format, const WCHAR *filename)
@@ -625,4 +674,23 @@ HRESULT WINAPI D3DX11LoadTextureFromTexture(ID3D11DeviceContext *context, ID3D11
             context, src_texture, info, dst_texture);
 
     return E_NOTIMPL;
+}
+
+HRESULT WINAPI D3DX11GetImageInfoFromMemory(const void *src_data, SIZE_T src_data_size, ID3DX11ThreadPump *pump,
+        D3DX11_IMAGE_INFO *img_info, HRESULT *hresult)
+{
+    HRESULT hr;
+
+    TRACE("src_data %p, src_data_size %Iu, pump %p, img_info %p, hresult %p.\n", src_data, src_data_size, pump,
+            img_info, hresult);
+
+    if (!src_data)
+        return E_FAIL;
+    if (pump)
+        FIXME("D3DX11 thread pump is currently unimplemented.\n");
+
+    hr = get_image_info(src_data, src_data_size, img_info);
+    if (hresult)
+        *hresult = hr;
+    return hr;
 }

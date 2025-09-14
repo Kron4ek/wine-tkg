@@ -29,18 +29,6 @@
 
 extern const struct vulkan_funcs *vk_funcs;
 
-struct wine_cmd_buffer
-{
-    VULKAN_OBJECT_HEADER( VkCommandBuffer, command_buffer );
-    struct vulkan_device *device;
-};
-
-static inline struct wine_cmd_buffer *wine_cmd_buffer_from_handle(VkCommandBuffer handle)
-{
-    struct vulkan_client_object *client = (struct vulkan_client_object *)handle;
-    return (struct wine_cmd_buffer *)(UINT_PTR)client->unix_handle;
-}
-
 struct wine_queue
 {
     struct vulkan_queue obj;
@@ -70,18 +58,6 @@ struct wine_debug_report_callback
     UINT64 user_data; /* client pointer */
 };
 
-struct wine_phys_dev
-{
-    struct vulkan_physical_device obj;
-
-    VkPhysicalDeviceMemoryProperties memory_properties;
-    VkExtensionProperties *extensions;
-    uint32_t extension_count;
-
-    uint32_t external_memory_align;
-    uint32_t map_placed_align;
-};
-
 struct wine_debug_report_callback;
 
 struct wine_instance
@@ -99,13 +75,7 @@ struct wine_instance
 
     struct rb_tree objects;
     pthread_rwlock_t objects_lock;
-
-    /* We cache devices as we need to wrap them as they are dispatchable objects. */
-    uint32_t phys_dev_count;
-    struct wine_phys_dev phys_devs[];
 };
-
-C_ASSERT(sizeof(struct wine_instance) == offsetof(struct wine_instance, phys_devs[0]));
 
 struct wine_cmd_pool
 {
@@ -116,18 +86,6 @@ static inline struct wine_cmd_pool *wine_cmd_pool_from_handle(VkCommandPool hand
 {
     struct vulkan_client_object *client = &command_pool_from_handle(handle)->obj;
     return (struct wine_cmd_pool *)(UINT_PTR)client->unix_handle;
-}
-
-struct wine_device_memory
-{
-    VULKAN_OBJECT_HEADER( VkDeviceMemory, device_memory );
-    VkDeviceSize size;
-    void *vm_map;
-};
-
-static inline struct wine_device_memory *wine_device_memory_from_handle(VkDeviceMemory handle)
-{
-    return (struct wine_device_memory *)(uintptr_t)handle;
 }
 
 struct wine_debug_utils_messenger

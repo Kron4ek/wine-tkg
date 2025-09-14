@@ -72,6 +72,10 @@ IPHLPAPI_DLL_LINKAGE ULONG WINAPI GetPerTcpConnectionEStats(MIB_TCPROW *row, TCP
                                                             ULONG rw_size, UCHAR *ro_static, ULONG ro_static_version,
                                                             ULONG ro_static_size, UCHAR *ro_dynamic, ULONG ro_dynamic_version,
                                                             ULONG ro_dynamic_size);
+IPHLPAPI_DLL_LINKAGE ULONG WINAPI GetPerTcp6ConnectionEStats(MIB_TCP6ROW *row, TCP_ESTATS_TYPE stats, UCHAR *rw, ULONG rw_version,
+                                                             ULONG rw_size, UCHAR *ro_static, ULONG ro_static_version,
+                                                             ULONG ro_static_size, UCHAR *ro_dynamic, ULONG ro_dynamic_version,
+                                                             ULONG ro_dynamic_size);
 IPHLPAPI_DLL_LINKAGE DWORD WINAPI GetUdpStatistics(PMIB_UDPSTATS pStats);
 IPHLPAPI_DLL_LINKAGE DWORD WINAPI GetUdpStatisticsEx(PMIB_UDPSTATS pStats, DWORD dwFamily);
 IPHLPAPI_DLL_LINKAGE DWORD WINAPI SetIfEntry(PMIB_IFROW pIfRow);
@@ -79,6 +83,7 @@ IPHLPAPI_DLL_LINKAGE DWORD WINAPI CreateIpForwardEntry(PMIB_IPFORWARDROW pRoute)
 IPHLPAPI_DLL_LINKAGE DWORD WINAPI SetIpForwardEntry(PMIB_IPFORWARDROW pRoute);
 IPHLPAPI_DLL_LINKAGE DWORD WINAPI DeleteIpForwardEntry(PMIB_IPFORWARDROW pRoute);
 IPHLPAPI_DLL_LINKAGE DWORD WINAPI SetIpStatistics(PMIB_IPSTATS pIpStats);
+IPHLPAPI_DLL_LINKAGE DWORD WINAPI SetPerTcp6ConnectionEStats(MIB_TCP6ROW *row, TCP_ESTATS_TYPE state, BYTE *rw, ULONG version, ULONG size, ULONG offset);
 IPHLPAPI_DLL_LINKAGE DWORD WINAPI SetPerTcpConnectionEStats(MIB_TCPROW *row, TCP_ESTATS_TYPE state, BYTE *rw, ULONG version, ULONG size, ULONG offset);
 IPHLPAPI_DLL_LINKAGE DWORD WINAPI SetIpTTL(UINT nTTL);
 IPHLPAPI_DLL_LINKAGE DWORD WINAPI CreateIpNetEntry(PMIB_IPNETROW pArpEntry);

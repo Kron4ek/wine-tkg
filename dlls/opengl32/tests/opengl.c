@@ -36,6 +36,28 @@
 
 #define MAX_FORMATS 256
 
+static const char *debugstr_ok( const char *cond )
+{
+    int c, n = 0;
+    /* skip possible casts */
+    while ((c = *cond++))
+    {
+        if (c == '(') n++;
+        if (!n) break;
+        if (c == ')') n--;
+    }
+    if (!strchr( cond - 1, '(' )) return wine_dbg_sprintf( "got %s", cond - 1 );
+    return wine_dbg_sprintf( "%.*s returned", (int)strcspn( cond - 1, "( " ), cond - 1 );
+}
+
+#define ok_ex( r, op, e, t, f, ... )                                                               \
+    do                                                                                             \
+    {                                                                                              \
+        t v = (r);                                                                                 \
+        ok( v op (e), "%s " f "\n", debugstr_ok( #r ), v, ##__VA_ARGS__ );                         \
+    } while (0)
+#define ok_ret( e, r )      ok_ex( r, ==, e, UINT, "%#x" )
+
 static NTSTATUS (WINAPI *pD3DKMTCreateDCFromMemory)( D3DKMT_CREATEDCFROMMEMORY *desc );
 static NTSTATUS (WINAPI *pD3DKMTDestroyDCFromMemory)( const D3DKMT_DESTROYDCFROMMEMORY *desc );
 
@@ -77,6 +99,25 @@ static void (WINAPI *pglDebugMessageInsertARB)(GLenum, GLenum, GLuint, GLenum, G
 /* GL_ARB_framebuffer_object */
 static void (WINAPI *pglBindFramebuffer)(GLenum target, GLuint framebuffer);
 static GLenum (WINAPI *pglCheckFramebufferStatus)(GLenum target);
+
+static PFN_glBindBuffer pglBindBuffer;
+static PFN_glBufferData pglBufferData;
+static PFN_glBufferStorage pglBufferStorage;
+static PFN_glCopyBufferSubData pglCopyBufferSubData;
+static PFN_glCopyNamedBufferSubData pglCopyNamedBufferSubData;
+static PFN_glCreateBuffers pglCreateBuffers;
+static PFN_glDeleteBuffers pglDeleteBuffers;
+static PFN_glFlushMappedBufferRange pglFlushMappedBufferRange;
+static PFN_glFlushMappedNamedBufferRange pglFlushMappedNamedBufferRange;
+static PFN_glGenBuffers pglGenBuffers;
+static PFN_glMapBuffer pglMapBuffer;
+static PFN_glMapBufferRange pglMapBufferRange;
+static PFN_glMapNamedBuffer pglMapNamedBuffer;
+static PFN_glMapNamedBufferRange pglMapNamedBufferRange;
+static PFN_glNamedBufferData pglNamedBufferData;
+static PFN_glNamedBufferStorage pglNamedBufferStorage;
+static PFN_glUnmapBuffer pglUnmapBuffer;
+static PFN_glUnmapNamedBuffer pglUnmapNamedBuffer;
 
 static const char* wgl_extensions = NULL;
 
@@ -142,6 +183,25 @@ static void init_functions(void)
     /* GL_ARB_framebuffer_object */
     GET_PROC(glBindFramebuffer)
     GET_PROC(glCheckFramebufferStatus)
+
+    GET_PROC(glBindBuffer)
+    GET_PROC(glBufferData)
+    GET_PROC(glBufferStorage)
+    GET_PROC(glCopyBufferSubData)
+    GET_PROC(glCopyNamedBufferSubData)
+    GET_PROC(glCreateBuffers)
+    GET_PROC(glDeleteBuffers)
+    GET_PROC(glFlushMappedBufferRange)
+    GET_PROC(glFlushMappedNamedBufferRange)
+    GET_PROC(glGenBuffers)
+    GET_PROC(glMapBuffer)
+    GET_PROC(glMapBufferRange)
+    GET_PROC(glMapNamedBuffer)
+    GET_PROC(glMapNamedBufferRange)
+    GET_PROC(glNamedBufferData)
+    GET_PROC(glNamedBufferStorage)
+    GET_PROC(glUnmapBuffer)
+    GET_PROC(glUnmapNamedBuffer)
 
 #undef GET_PROC
 }
@@ -1778,6 +1838,146 @@ static void test_bitmap_rendering( BOOL use_dib )
     winetest_pop_context();
 }
 
+static void test_16bit_bitmap_rendering(void)
+{
+    PIXELFORMATDESCRIPTOR pfd;
+    INT pixel_format, success;
+    HGDIOBJ old_gdi_obj;
+    USHORT *pixels;
+    HBITMAP bitmap;
+    HGLRC gl;
+    HDC hdc;
+
+    PIXELFORMATDESCRIPTOR pixel_format_args = {
+        .nSize = sizeof(PIXELFORMATDESCRIPTOR),
+        .nVersion = 1,
+        .dwFlags = PFD_DRAW_TO_BITMAP | PFD_SUPPORT_OPENGL | PFD_DEPTH_DONTCARE,
+        .iPixelType = PFD_TYPE_RGBA,
+        .iLayerType = PFD_MAIN_PLANE,
+        .cColorBits = 16,
+        .cAlphaBits = 0
+    };
+    BITMAPINFO bitmap_args = {
+        .bmiHeader = {
+            .biSize = sizeof(BITMAPINFOHEADER),
+            .biPlanes = 1,
+            .biCompression = BI_RGB,
+            .biWidth = 4,
+            .biHeight = -4,  /* Four pixels tall with the origin in the top-left corner. */
+            .biBitCount = 16
+        }
+    };
+
+    hdc = CreateCompatibleDC(NULL);
+    ok(hdc != NULL, "Failed to get a device context\n");
+
+    /* Create a bitmap. */
+    bitmap = CreateDIBSection(NULL, &bitmap_args, DIB_RGB_COLORS, (void**)&pixels, NULL, 0);
+    old_gdi_obj = SelectObject(hdc, bitmap);
+    ok(old_gdi_obj != NULL, "Failed to SetObject\n");
+
+    /* Choose a pixel format. */
+    pixel_format = ChoosePixelFormat(hdc, &pixel_format_args);
+    todo_wine ok(pixel_format != 0, "Failed to get a 16 bit pixel format with the DRAW_TO_BITMAP flag.\n");
+
+    if (pixel_format == 0)
+    {
+        skip("Skipping 16-bit rendering test"
+                " (no 16 bit pixel format with the DRAW_TO_BITMAP flag was available)\n");
+        SelectObject(hdc, old_gdi_obj);
+        DeleteObject(bitmap);
+        DeleteDC(hdc);
+        return;
+    }
+
+    /* When asking for a 16-bit DRAW_TO_BITMAP pixel format, Windows will give you r5g5b5a1 by
+     * default, even if you didn't ask for an alpha bit.
+     *
+     * It's important to note that all of the color bits have to match exactly, because the renders
+     * are sent back to the CPU and will have to match any other software rendering operations that
+     * the program does (DRAW_TO_BITMAP is normally used in combination with blitting). */
+    success = DescribePixelFormat(hdc, pixel_format, sizeof(pfd), &pfd);
+    ok(success != 0, "Failed to DescribePixelFormat (error: %lu)\n", GetLastError());
+    /* Likely MSDN inaccuracy: According to the PIXELFORMATDESCRIPTOR docs, alpha bits are excluded
+     * from cColorBits. It doesn't seem like that's true. */
+    ok(pfd.cColorBits == 16, "Wrong amount of color bits (got %d, expected 16)\n", pfd.cColorBits);
+    todo_wine ok(pfd.cRedBits == 5, "Wrong amount of red bits (got %d, expected 5)\n", pfd.cRedBits);
+    todo_wine ok(pfd.cGreenBits == 5, "Wrong amount of green bits (got %d, expected 5)\n", pfd.cGreenBits);
+    todo_wine ok(pfd.cBlueBits == 5, "Wrong amount of blue bits (got %d, expected 5)\n", pfd.cBlueBits);
+    /* Quirky: It seems that there's an alpha bit, but it somehow doesn't count as one for
+     * DescribePixelFormat. On Windows cAlphaBits is zero.
+     * ok(pfd.cAlphaBits == 1, "Wrong amount of alpha bits (got %d, expected 1)\n", pfd.cAlphaBits); */
+    todo_wine ok(pfd.cRedShift == 10, "Wrong red shift (got %d, expected 10)\n", pfd.cRedShift);
+    todo_wine ok(pfd.cGreenShift == 5, "Wrong green shift (got %d, expected 5)\n", pfd.cGreenShift);
+    /* This next test might fail, depending on your drivers. */
+    ok(pfd.cBlueShift == 0, "Wrong blue shift (got %d, expected 0)\n", pfd.cBlueShift);
+
+    success = SetPixelFormat(hdc, pixel_format, &pixel_format_args);
+    ok(success, "Failed to SetPixelFormat (error: %lu)\n", GetLastError());
+
+    /* Create an OpenGL context. */
+    gl = wglCreateContext(hdc);
+    ok(gl != NULL, "Failed to wglCreateContext (error: %lu)\n", GetLastError());
+    success = wglMakeCurrent(hdc, gl);
+    ok(success, "Failed to wglMakeCurrent (error: %lu)\n", GetLastError());
+
+    /* Try setting the bitmap to white. */
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glFinish();
+    todo_wine ok(pixels[0] == 0x7fff, "Wrong color after glClear at (0, 0): %#x\n", pixels[0]);
+    todo_wine ok(pixels[1] == 0x7fff, "Wrong color after glClear at (1, 0): %#x\n", pixels[1]);
+
+    /* Try setting the bitmap to black with a white line. */
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0f, 4.0f, 4.0f, 0.0f, -1.0f, 1.0f);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glLineWidth(1.0f);
+    glBegin(GL_LINES);
+    glVertex2i(1, 1);
+    glVertex2i(1, 3);
+    glEnd();
+
+    glFinish();
+
+    {
+        /* Note that the line stops at (1,2) on Windows despite the second vertex being (1,3).
+         * I'm not sure if that's an implementation quirk or expected OpenGL behaviour. */
+        USHORT X = 0x7fff, _ = 0x0;
+        USHORT expected[16] = {
+            _,_,_,_,
+            _,X,_,_,
+            _,X,_,_,
+            _,_,_,_
+        };
+
+        for (int i = 0; i < 16; i++)
+        {
+            BOOL matches = (pixels[i] == expected[i]);
+            int x = i % 4;
+            int y = i / 4;
+            /* I'm using a loop so that I can put the expected image in an easy-to-understand array.
+             * Unfortunately this way of working doesn't work great with `todo_wine` since only half
+             * of the elements are a mismatch. I'm using `todo_wine_if` as a workaround. */
+            todo_wine_if(!matches) ok(matches, "Wrong color at (%d,%d). Got %#x, expected %#x\n",
+                    x, y, pixels[i], expected[i]);
+        }
+    }
+
+    /* Clean up. */
+    wglDeleteContext(gl);
+    SelectObject(hdc, old_gdi_obj);
+    DeleteObject(bitmap);
+    DeleteDC(hdc);
+}
+
 static void test_d3dkmt_rendering(void)
 {
     static const RECT expect_rect = {0, 0, 4, 4};
@@ -2326,6 +2526,59 @@ static void test_framebuffer(void)
     DestroyWindow(window);
 }
 
+static DWORD CALLBACK test_window_dc_thread( void *arg )
+{
+    PIXELFORMATDESCRIPTOR pfd =
+    {
+        .nSize = sizeof(pfd),
+        .nVersion = 1,
+        .dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
+        .iPixelType = PFD_TYPE_RGBA,
+        .cColorBits = 24,
+        .cDepthBits = 32,
+    };
+    HWND hwnd = arg;
+    UINT ret, pixel;
+    HGLRC ctx;
+    int format;
+    HDC hdc;
+
+    hdc = GetWindowDC( hwnd );
+    ok( hdc != NULL, "got %p\n", hdc );
+    format = ChoosePixelFormat( hdc, &pfd );
+    ok( format != 0, "got %d\n", format );
+    ret = SetPixelFormat( hdc, format, &pfd );
+    ok( ret != 0, "got %u\n", ret );
+
+    ctx = wglCreateContext( hdc );
+    ok( ctx != NULL, "got %p\n", ctx );
+    ok_ret( TRUE, wglMakeCurrent( hdc, ctx ) );
+    ok_ret( GL_NO_ERROR, glGetError() );
+    glReadBuffer( GL_BACK );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    todo_wine ok( pixel == 0xff0000ff, "got %#x\n", pixel );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    glClearColor( 0.0, 1.0, 0.0, 1.0 );
+    ok_ret( GL_NO_ERROR, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok( pixel == 0xff00ff00, "got %#x\n", pixel );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    ok_ret( TRUE, wglMakeCurrent( NULL, NULL ) );
+    ok_ret( TRUE, wglDeleteContext( ctx ) );
+
+    ReleaseDC( hwnd, hdc );
+    return 0;
+}
+
 static void test_window_dc(void)
 {
     PIXELFORMATDESCRIPTOR pf_desc =
@@ -2350,9 +2603,11 @@ static void test_window_dc(void)
     int pixel_format;
     HWND window;
     RECT vp, r;
-    HGLRC ctx;
+    HGLRC ctx, ctx1;
     BOOL ret;
-    HDC dc;
+    HDC dc, dc1;
+    UINT pixel;
+    HANDLE thread;
 
     window = CreateWindowA("static", "opengl32_test",
             WS_OVERLAPPEDWINDOW, 0, 0, 640, 480, 0, 0, 0, 0);
@@ -2391,7 +2646,112 @@ static void test_window_dc(void)
     ret = wglDeleteContext(ctx);
     ok(ret, "Failed to delete GL context, last error %#lx.\n", GetLastError());
 
-    ReleaseDC(window, dc);
+    ReleaseDC( window, dc );
+
+
+    dc = GetWindowDC( window );
+    ctx = wglCreateContext( dc );
+    ok( ctx != NULL, "got %p\n", ctx );
+    ok_ret( TRUE, wglMakeCurrent( dc, ctx ) );
+    glReadBuffer( GL_BACK );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    glClearColor( 1.0, 0.0, 0.0, 1.0 );
+    ok_ret( GL_NO_ERROR, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok( pixel == 0xff0000ff, "got %#x\n", pixel );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    ReleaseDC( window, dc );
+
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok( pixel == 0xff0000ff, "got %#x\n", pixel );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    glFlush();
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok( pixel == 0xff0000ff, "got %#x\n", pixel );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+
+    dc = GetWindowDC( window );
+    ok( dc != NULL, "got %p\n", dc );
+    ok_ret( TRUE, wglMakeCurrent( dc, ctx ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok( pixel == 0xff0000ff, "got %#x\n", pixel );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    thread = CreateThread( NULL, 0, test_window_dc_thread, window, 0, NULL );
+    ok( thread != NULL, "got %p\n", thread );
+    ret = WaitForSingleObject( thread, 5000 );
+    ok( ret == 0, "got %#x\n", ret );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    todo_wine ok( pixel == 0xff00ff00, "got %#x\n", pixel );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+
+    dc1 = GetWindowDC( window );
+    ok( dc1 != NULL, "got %p\n", dc1 );
+    ok_ret( TRUE, wglMakeCurrent( dc1, ctx ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    todo_wine ok( pixel == 0xff00ff00, "got %#x\n", pixel );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+
+    ctx1 = wglCreateContext( dc1 );
+    ok( ctx1 != NULL, "got %p\n", ctx1 );
+    ok_ret( TRUE, wglMakeCurrent( dc1, ctx1 ) );
+    ok_ret( GL_NO_ERROR, glGetError() );
+    glReadBuffer( GL_BACK );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok( pixel == 0xff00ff00, "got %#x\n", pixel );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    ok_ret( TRUE, wglMakeCurrent( NULL, NULL ) );
+    ok_ret( TRUE, wglDeleteContext( ctx1 ) );
+    ReleaseDC( window, dc1 );
+
+    ok_ret( TRUE, wglDeleteContext( ctx ) );
+    ReleaseDC( window, dc );
+
+
+    dc = GetWindowDC( window );
+    ok( dc != NULL, "got %p\n", dc );
+    ctx = wglCreateContext( dc );
+    ok( ctx != NULL, "got %p\n", ctx );
+    ok_ret( TRUE, wglMakeCurrent( dc, ctx ) );
+    ok_ret( GL_NO_ERROR, glGetError() );
+    glReadBuffer( GL_BACK );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok( pixel == 0xff00ff00, "got %#x\n", pixel );
+    ok_ret( GL_NO_ERROR, glGetError() );
+
+    ok_ret( TRUE, wglMakeCurrent( NULL, NULL ) );
+    ok_ret( TRUE, wglDeleteContext( ctx ) );
+    ok_ret( TRUE, SwapBuffers( dc ) );
+    ReleaseDC( window, dc );
+
     DestroyWindow(window);
 }
 
@@ -3124,6 +3484,229 @@ static void test_child_window(HWND hwnd, PIXELFORMATDESCRIPTOR *pfd)
     DestroyWindow(child);
 }
 
+#define check_gl_error(exp) check_gl_error_(__LINE__, exp)
+static void check_gl_error_( unsigned int line, GLenum exp )
+{
+    GLenum err = glGetError();
+    ok_(__FILE__,line)( err == exp, "glGetError returned %x, expected %x\n", err, exp );
+}
+
+static void test_memory_map( HDC hdc)
+{
+    unsigned int i, major = 0, minor = 0;
+    BOOL have_persistent_storage = TRUE;
+    const char *dst_ptr, *version;
+    char *src_ptr, *ptr;
+    HGLRC rc, old_rc;
+    GLuint src, dst;
+    char data[0x1000];
+    BOOL ret;
+
+    old_rc = wglGetCurrentContext();
+
+    rc = wglCreateContext( hdc );
+    ok( !!rc, "got %p\n", rc );
+    ret = wglMakeCurrent( hdc, rc );
+    ok( ret, "got %u\n", ret );
+
+    version = (const char *)glGetString( GL_VERSION );
+    sscanf( version, "%d.%d", &major, &minor );
+    if (major < 4 || (major == 4 && minor < 4))
+    {
+        const char *extensions = (const char *)glGetString( GL_EXTENSIONS );
+        if (!extensions || !strstr( extensions, "GL_ARB_buffer_storage" ))
+        {
+            skip( "persistent map not supported\n" );
+            have_persistent_storage = FALSE;
+        }
+    }
+
+    pglGenBuffers( 1, &src );
+    pglGenBuffers( 1, &dst );
+
+    pglBindBuffer( GL_ARRAY_BUFFER, src );
+    pglBufferData( GL_ARRAY_BUFFER, sizeof(data), NULL, GL_STATIC_DRAW );
+
+    src_ptr = pglMapBuffer( GL_ARRAY_BUFFER, GL_WRITE_ONLY );
+    check_gl_error( GL_NO_ERROR );
+    ok( !((UINT_PTR)src_ptr & 0xf), "pointer not aligned\n" );
+    for (i = 0; i < sizeof(data); i++) src_ptr[i] = 'a' + i;
+
+    ptr = pglMapBuffer( GL_ARRAY_BUFFER, GL_WRITE_ONLY );
+    check_gl_error( GL_INVALID_OPERATION );
+    ok( !ptr, "repeated glMapBuffer returned %p\n", ptr );
+
+    pglUnmapBuffer( GL_ARRAY_BUFFER );
+    check_gl_error( GL_NO_ERROR );
+
+    pglUnmapBuffer( GL_ARRAY_BUFFER );
+    check_gl_error( GL_INVALID_OPERATION );
+
+    pglBindBuffer( GL_ARRAY_BUFFER, dst );
+    pglBufferData( GL_ARRAY_BUFFER, sizeof(data), NULL, GL_STATIC_DRAW );
+
+    pglBindBuffer( GL_COPY_READ_BUFFER, src );
+    pglBindBuffer( GL_COPY_WRITE_BUFFER, dst );
+    pglCopyBufferSubData( GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, sizeof(data) );
+
+    dst_ptr = pglMapBuffer( GL_COPY_WRITE_BUFFER, GL_READ_ONLY );
+    check_gl_error( GL_NO_ERROR );
+    ok( !((UINT_PTR)dst_ptr & 0xf), "pointer not aligned\n" );
+    ok( !memcmp( dst_ptr, "abcdef", 6 ), "unexpected src data %s\n", debugstr_an(src_ptr, 6) );
+    pglUnmapBuffer( GL_COPY_WRITE_BUFFER );
+
+    if (pglMapBufferRange)
+    {
+        pglBindBuffer( GL_ARRAY_BUFFER, src );
+        src_ptr = pglMapBufferRange( GL_ARRAY_BUFFER, 3, 4, GL_MAP_READ_BIT | GL_MAP_WRITE_BIT );
+        check_gl_error( GL_NO_ERROR );
+        ok( ((UINT_PTR)src_ptr & 0xf) == 3, "pointer not aligned\n" );
+
+        ok( !memcmp( src_ptr, "defg", 4 ), "unexpected src data %s\n", debugstr_an(src_ptr, 4) );
+        for (i = 0; i < 4; i++) src_ptr[i] += 'A' - 'a';
+
+        pglUnmapBuffer( GL_ARRAY_BUFFER );
+
+        src_ptr = pglMapBufferRange( GL_ARRAY_BUFFER, 2, 10, GL_MAP_READ_BIT );
+        ok( ((UINT_PTR)src_ptr & 0xf) == 2, "pointer not aligned\n" );
+
+        ok( !memcmp( src_ptr, "cDEFGhijkl", 10 ), "unexpected src data %s\n", debugstr_an(src_ptr, 10) );
+
+        pglUnmapBuffer( GL_ARRAY_BUFFER );
+
+        pglCopyBufferSubData( GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, sizeof(data) );
+
+        pglBindBuffer( GL_ARRAY_BUFFER, dst );
+        dst_ptr = pglMapBufferRange( GL_ARRAY_BUFFER, 2, 10, GL_MAP_READ_BIT );
+        ok( ((UINT_PTR)dst_ptr & 0xf) == 2, "pointer not aligned\n" );
+
+        ok( !memcmp( dst_ptr, "cDEFGhijkl", 10 ), "unexpected src data %s\n", debugstr_an(dst_ptr, 10) );
+
+        pglUnmapBuffer( GL_ARRAY_BUFFER );
+        check_gl_error( GL_NO_ERROR );
+    }
+    else skip( "glMapBufferRange not available\n" );
+
+    if (have_persistent_storage)
+    {
+        for (i = 0; i < sizeof(data); i++) data[i] = '0' + i;
+        pglBufferStorage( GL_COPY_READ_BUFFER, sizeof(data), data,
+                          GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT );
+
+        pglBufferStorage( GL_COPY_WRITE_BUFFER, sizeof(data), NULL,
+                          GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT );
+
+        src_ptr = pglMapBufferRange( GL_COPY_READ_BUFFER, 2, sizeof(data) - 2,
+                                     GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT | GL_MAP_PERSISTENT_BIT );
+        ok( ((UINT_PTR)src_ptr & 0xf) == 2, "pointer not aligned\n" );
+
+        dst_ptr = pglMapBufferRange( GL_COPY_WRITE_BUFFER, 0, sizeof(data),
+                                     GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT );
+        ok( ((UINT_PTR)dst_ptr & 0xf) == 0, "pointer not aligned\n" );
+
+        ok( src_ptr[0] == '2', "src_ptr[0] = %x (%c)\n", src_ptr[0], src_ptr[0] );
+        src_ptr[0] += 'a' - '0';
+        pglFlushMappedBufferRange( GL_COPY_READ_BUFFER, 0, 16 );
+
+        pglCopyBufferSubData( GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, sizeof(data) );
+        glFinish();
+        ok( !memcmp( dst_ptr, "01c3456789", 8 ), "unexpected dst data %s\n", debugstr_an(dst_ptr, 10) );
+
+        src_ptr[1] += 'A' - '0';
+        pglCopyBufferSubData( GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, sizeof(data) );
+        glFinish();
+        ok( !memcmp( dst_ptr, "01cD456789", 8 ), "unexpected dst data %s\n", debugstr_an(dst_ptr, 10) );
+
+        pglUnmapBuffer( GL_COPY_WRITE_BUFFER );
+        pglUnmapBuffer( GL_COPY_READ_BUFFER );
+        check_gl_error( GL_NO_ERROR );
+    }
+
+    pglDeleteBuffers( 1, &src );
+    pglDeleteBuffers( 1, &dst );
+
+    if (major > 4 || (major == 4 && minor >= 5))
+    {
+        pglCreateBuffers( 1, &src );
+        pglCreateBuffers( 1, &dst );
+        check_gl_error( GL_NO_ERROR );
+
+        pglNamedBufferData( src, 0x1000, NULL, GL_STATIC_DRAW );
+        check_gl_error( GL_NO_ERROR );
+
+        src_ptr = pglMapNamedBuffer( src, GL_WRITE_ONLY );
+        check_gl_error( GL_NO_ERROR );
+        ok( !((UINT_PTR)src_ptr & 0xf), "pointer not aligned\n" );
+        for (i = 0; i < 0x1000; i++) src_ptr[i] = 'a' + i;
+
+        ptr = pglMapNamedBuffer( src, GL_WRITE_ONLY );
+        check_gl_error( GL_INVALID_OPERATION );
+        ok( !ptr, "repeated glMapBuffer returned %p\n", ptr );
+
+        pglUnmapNamedBuffer( src );
+        check_gl_error( GL_NO_ERROR );
+
+        pglUnmapNamedBuffer( src );
+        check_gl_error( GL_INVALID_OPERATION );
+
+        pglNamedBufferData( dst, 0x1000, NULL, GL_STATIC_DRAW );
+
+        pglCopyNamedBufferSubData( src, dst, 0, 0, 0x1000 );
+
+        dst_ptr = pglMapNamedBuffer( dst, GL_READ_ONLY );
+        check_gl_error( GL_NO_ERROR );
+        ok( !((UINT_PTR)dst_ptr & 0xf), "pointer not aligned\n" );
+        ok( !memcmp( dst_ptr, "abcdef", 6 ), "unexpected src data %s\n", debugstr_an(src_ptr, 6) );
+        pglUnmapNamedBuffer( dst );
+
+        pglDeleteBuffers( 1, &src );
+        pglDeleteBuffers( 1, &dst );
+
+        pglCreateBuffers( 1, &src );
+        pglCreateBuffers( 1, &dst );
+
+        for (i = 0; i < sizeof(data); i++) data[i] = '0' + i;
+        pglNamedBufferStorage( src, sizeof(data), data,
+                               GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT );
+
+        pglNamedBufferStorage( dst, sizeof(data), NULL,
+                               GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT );
+
+        src_ptr = pglMapNamedBufferRange( src, 2, sizeof(data) - 2,
+                                          GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_FLUSH_EXPLICIT_BIT | GL_MAP_PERSISTENT_BIT );
+        ok( ((UINT_PTR)src_ptr & 0xf) == 2, "pointer not aligned\n" );
+
+        dst_ptr = pglMapNamedBufferRange( dst, 0, sizeof(data),
+                                          GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT );
+        check_gl_error( GL_NO_ERROR );
+        ok( ((UINT_PTR)dst_ptr & 0xf) == 0, "pointer not aligned\n" );
+
+        ok( src_ptr[0] == '2', "src_ptr[0] = %x (%c)\n", src_ptr[0], src_ptr[0] );
+        src_ptr[0] += 'a' - '0';
+        pglFlushMappedNamedBufferRange( src, 0, 16 );
+        check_gl_error( GL_NO_ERROR );
+
+        pglCopyNamedBufferSubData( src, dst, 0, 0, sizeof(data) );
+        glFinish();
+        ok( !memcmp( dst_ptr, "01c3456789", 8 ), "unexpected dst data %s\n", debugstr_an(dst_ptr, 10) );
+
+        src_ptr[1] += 'A' - '0';
+        pglCopyNamedBufferSubData( src, dst, 0, 0, sizeof(data) );
+        glFinish();
+        ok( !memcmp( dst_ptr, "01cD456789", 8 ), "unexpected dst data %s\n", debugstr_an(dst_ptr, 10) );
+
+        pglUnmapNamedBuffer( src );
+        pglUnmapNamedBuffer( dst );
+
+        pglDeleteBuffers( 1, &src );
+        pglDeleteBuffers( 1, &dst );
+        check_gl_error( GL_NO_ERROR );
+    }
+    else skip( "Named buffers not supported by OpenGL %s\n", version );
+
+    wglMakeCurrent( hdc, old_rc );
+}
+
 START_TEST(opengl)
 {
     HWND hwnd;
@@ -3185,6 +3768,7 @@ START_TEST(opengl)
 
         test_bitmap_rendering( TRUE );
         test_bitmap_rendering( FALSE );
+        test_16bit_bitmap_rendering();
         test_d3dkmt_rendering();
         test_minimized();
         test_window_dc();
@@ -3239,6 +3823,7 @@ START_TEST(opengl)
         test_gdi_dbuf(hdc);
         test_acceleration(hdc);
         test_framebuffer();
+        test_memory_map(hdc);
 
         wgl_extensions = pwglGetExtensionsStringARB(hdc);
         if(wgl_extensions == NULL) skip("Skipping opengl32 tests because this OpenGL implementation doesn't support WGL extensions!\n");

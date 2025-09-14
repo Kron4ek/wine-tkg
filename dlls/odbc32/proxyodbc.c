@@ -325,6 +325,19 @@ static CRITICAL_SECTION_DEBUG loader_cs_debug =
 };
 static CRITICAL_SECTION loader_cs = { &loader_cs_debug, -1, 0, 0, 0, 0 };
 
+static SQLRETURN get_info_win32_w( struct connection *con, SQLUSMALLINT type, SQLPOINTER value, SQLSMALLINT buflen,
+                                   SQLSMALLINT *retlen );
+
+static struct object *find_object_type(SQLSMALLINT type, struct object *object)
+{
+    while (object && object->type != type)
+    {
+        object = object->parent;
+    }
+
+    return object;
+}
+
 static struct
 {
     UINT32 count;
@@ -1313,9 +1326,6 @@ static SQLRETURN set_env_attr( struct environment *env, SQLINTEGER attr, SQLPOIN
     }
     else if (env->hdr.win32_handle)
     {
-        if (env->hdr.win32_funcs->SQLGetEnvAttr)
-           ret = env->hdr.win32_funcs->SQLGetEnvAttr( env->hdr.win32_handle, SQL_ATTR_ODBC_VERSION, &env->driver_ver, 0, NULL );
-
         if (env->hdr.win32_funcs->SQLSetEnvAttr)
             ret = env->hdr.win32_funcs->SQLSetEnvAttr( env->hdr.win32_handle, attr, value, len );
     }
@@ -1394,6 +1404,20 @@ static void prepare_con( struct connection *con )
         WARN( "failed to set connection timeout\n" );
     if (set_con_attr( con, SQL_ATTR_LOGIN_TIMEOUT, INT_PTR(con->attr_login_timeout), 0 ))
         WARN( "failed to set login timeout\n" );
+
+    if (con->hdr.win32_handle)
+    {
+        WCHAR ver[16];
+        SQLRETURN ret = SQL_ERROR;
+
+        ret = get_info_win32_w( con, SQL_DRIVER_ODBC_VER, &ver, sizeof(ver), NULL);
+        if (SUCCESS( ret ))
+        {
+            struct environment *env = (struct environment *)find_object_type(SQL_HANDLE_ENV, con->hdr.parent);
+            long nMajor = _wtol( ver );
+            env->driver_ver = nMajor == 2 ? SQL_OV_ODBC2 : SQL_OV_ODBC3;
+        }
+    }
 }
 
 static SQLRETURN create_con( struct connection *con )
@@ -2563,16 +2587,6 @@ static SQLRETURN get_data_unix( struct statement *stmt, SQLUSMALLINT column, SQL
 
     if (SUCCESS((ret = ODBC_CALL( SQLGetData, &params ))) && retlen) *retlen = len;
     return ret;
-}
-
-static struct object *find_object_type(SQLSMALLINT type, struct object *object)
-{
-    while (object && object->type != type)
-    {
-        object = object->parent;
-    }
-
-    return object;
 }
 
 static SQLRETURN get_data_win32( struct statement *stmt, SQLUSMALLINT column, SQLSMALLINT type, SQLPOINTER value,

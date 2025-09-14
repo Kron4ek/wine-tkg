@@ -175,12 +175,29 @@ static unsigned int hlsl_type_get_packed_size(const struct hlsl_type *type)
     }
 }
 
+static unsigned int struct_field_get_packed_offset(const struct hlsl_type *record, unsigned int field_idx)
+{
+    unsigned int offset = 0;
+
+    VKD3D_ASSERT(record->class == HLSL_CLASS_STRUCT);
+    VKD3D_ASSERT(field_idx < record->e.record.field_count);
+
+    for (unsigned int i = 0; i < field_idx; ++i)
+    {
+        struct hlsl_struct_field *field = &record->e.record.fields[i];
+        offset = align(offset, hlsl_type_get_packed_alignment(field->type)) + hlsl_type_get_packed_size(field->type);
+    }
+
+    return align(offset, hlsl_type_get_packed_alignment(record->e.record.fields[field_idx].type));
+}
+
+
 static struct hlsl_ir_node *hlsl_block_add_packed_index_offset_append(struct hlsl_ctx *ctx,
         struct hlsl_block *block, struct hlsl_ir_node *prev_offset, struct hlsl_ir_node *idx,
         struct hlsl_type *type, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_node *idx_offset = NULL, *c;
-    unsigned int field_idx, offset, size, i;
+    unsigned int field_idx, offset, size;
 
     switch (type->class)
     {
@@ -203,15 +220,7 @@ static struct hlsl_ir_node *hlsl_block_add_packed_index_offset_append(struct hls
 
         case HLSL_CLASS_STRUCT:
             field_idx = hlsl_ir_constant(idx)->value.u[0].u;
-            for (i = 0, offset = 0; i < field_idx; ++i)
-            {
-                struct hlsl_struct_field *field = &type->e.record.fields[i];
-
-                offset = align(offset, hlsl_type_get_packed_alignment(field->type))
-                        + hlsl_type_get_packed_size(field->type);
-            }
-
-            offset = align(offset, hlsl_type_get_packed_alignment(type->e.record.fields[field_idx].type));
+            offset = struct_field_get_packed_offset(type, field_idx);
             idx_offset = hlsl_block_add_uint_constant(ctx, block, offset, loc);
             break;
 
@@ -5905,11 +5914,13 @@ static void mark_vars_usage(struct hlsl_ctx *ctx)
 
 struct register_allocator
 {
+    /* Type of registers we are allocating (not counting indexable temps). */
+    enum vkd3d_shader_register_type type;
+
     struct allocation
     {
         uint32_t reg;
         unsigned int writemask;
-        unsigned int first_write, last_read;
 
         /* Two allocations with different mode can't share the same register. */
         int mode;
@@ -5919,11 +5930,7 @@ struct register_allocator
     } *allocations;
     size_t count, capacity;
 
-    /* Indexable temps are allocated separately and always keep their index regardless of their
-     * lifetime. */
-    uint32_t indexable_count;
-
-    /* Total number of registers allocated so far. Used to declare sm4 temp count. */
+    /* Total number of registers allocated so far. */
     uint32_t reg_count;
 
     /* Special flag so allocations that can share registers prioritize those
@@ -5935,7 +5942,7 @@ struct register_allocator
 };
 
 static unsigned int get_available_writemask(const struct register_allocator *allocator,
-        unsigned int first_write, unsigned int last_read, uint32_t reg_idx, int mode, bool vip)
+        uint32_t reg_idx, int mode, bool vip)
 {
     unsigned int writemask = VKD3DSP_WRITEMASK_ALL;
     size_t i;
@@ -5944,12 +5951,7 @@ static unsigned int get_available_writemask(const struct register_allocator *all
     {
         const struct allocation *allocation = &allocator->allocations[i];
 
-        /* We do not overlap if first write == last read:
-         * this is the case where we are allocating the result of that
-         * expression, e.g. "add r0, r0, r1". */
-
-        if (allocation->reg == reg_idx
-                && first_write < allocation->last_read && last_read > allocation->first_write)
+        if (allocation->reg == reg_idx)
         {
             writemask &= ~allocation->writemask;
             if (allocation->mode != mode)
@@ -5966,7 +5968,7 @@ static unsigned int get_available_writemask(const struct register_allocator *all
 }
 
 static void record_allocation(struct hlsl_ctx *ctx, struct register_allocator *allocator, uint32_t reg_idx,
-        unsigned int writemask, unsigned int first_write, unsigned int last_read, int mode, bool vip)
+        unsigned int writemask, int mode, bool vip)
 {
     struct allocation *allocation;
 
@@ -5977,8 +5979,6 @@ static void record_allocation(struct hlsl_ctx *ctx, struct register_allocator *a
     allocation = &allocator->allocations[allocator->count++];
     allocation->reg = reg_idx;
     allocation->writemask = writemask;
-    allocation->first_write = first_write;
-    allocation->last_read = last_read;
     allocation->mode = mode;
     allocation->vip = vip;
 
@@ -5997,8 +5997,7 @@ static void record_allocation(struct hlsl_ctx *ctx, struct register_allocator *a
  * 'vip' can be used so that no new allocations can be made in the given register
  *      unless they are 'vip' as well. */
 static struct hlsl_reg allocate_register(struct hlsl_ctx *ctx, struct register_allocator *allocator,
-        unsigned int first_write, unsigned int last_read, unsigned int reg_size,
-        unsigned int component_count, int mode, bool force_align, bool vip)
+        unsigned int reg_size, unsigned int component_count, int mode, bool force_align, bool vip)
 {
     struct hlsl_reg ret = {.allocation_size = 1, .allocated = true};
     unsigned int required_size = force_align ? 4 : reg_size;
@@ -6011,62 +6010,34 @@ static struct hlsl_reg allocate_register(struct hlsl_ctx *ctx, struct register_a
     {
         for (uint32_t reg_idx = 0; reg_idx < allocator->reg_count; ++reg_idx)
         {
-            unsigned int available_writemask = get_available_writemask(allocator,
-                    first_write, last_read, reg_idx, mode, vip);
+            unsigned int available_writemask = get_available_writemask(allocator, reg_idx, mode, vip);
 
             if (vkd3d_popcount(available_writemask) >= pref)
             {
                 unsigned int writemask = hlsl_combine_writemasks(available_writemask,
                         vkd3d_write_mask_from_component_count(reg_size));
 
-                ret.type = VKD3DSPR_TEMP;
+                ret.type = allocator->type;
                 ret.id = reg_idx;
                 ret.writemask = hlsl_combine_writemasks(writemask,
                         vkd3d_write_mask_from_component_count(component_count));
 
-                record_allocation(ctx, allocator, reg_idx, writemask, first_write, last_read, mode, vip);
+                record_allocation(ctx, allocator, reg_idx, writemask, mode, vip);
                 return ret;
             }
         }
     }
 
-    ret.type = VKD3DSPR_TEMP;
+    ret.type = allocator->type;
     ret.id = allocator->reg_count;
     ret.writemask = vkd3d_write_mask_from_component_count(component_count);
     record_allocation(ctx, allocator, allocator->reg_count,
-            vkd3d_write_mask_from_component_count(reg_size), first_write, last_read, mode, vip);
+            vkd3d_write_mask_from_component_count(reg_size), mode, vip);
     return ret;
 }
 
-/* Allocate a register with writemask, while reserving reg_writemask. */
-static struct hlsl_reg allocate_register_with_masks(struct hlsl_ctx *ctx,
-        struct register_allocator *allocator, unsigned int first_write, unsigned int last_read,
-        uint32_t reg_writemask, uint32_t writemask, int mode, bool vip)
-{
-    struct hlsl_reg ret = {0};
-    uint32_t reg_idx;
-
-    VKD3D_ASSERT((reg_writemask & writemask) == writemask);
-
-    for (reg_idx = 0;; ++reg_idx)
-    {
-        if ((get_available_writemask(allocator, first_write, last_read,
-                reg_idx, mode, vip) & reg_writemask) == reg_writemask)
-            break;
-    }
-
-    record_allocation(ctx, allocator, reg_idx, reg_writemask, first_write, last_read, mode, vip);
-
-    ret.type = VKD3DSPR_TEMP;
-    ret.id = reg_idx;
-    ret.allocation_size = 1;
-    ret.writemask = writemask;
-    ret.allocated = true;
-    return ret;
-}
-
-static bool is_range_available(const struct register_allocator *allocator, unsigned int first_write,
-        unsigned int last_read, uint32_t reg_idx, unsigned int reg_size, int mode, bool vip)
+static bool is_range_available(const struct register_allocator *allocator,
+        uint32_t reg_idx, unsigned int reg_size, int mode, bool vip)
 {
     unsigned int last_reg_mask = (1u << (reg_size % 4)) - 1;
     unsigned int writemask;
@@ -6074,18 +6045,18 @@ static bool is_range_available(const struct register_allocator *allocator, unsig
 
     for (i = 0; i < (reg_size / 4); ++i)
     {
-        writemask = get_available_writemask(allocator, first_write, last_read, reg_idx + i, mode, vip);
+        writemask = get_available_writemask(allocator, reg_idx + i, mode, vip);
         if (writemask != VKD3DSP_WRITEMASK_ALL)
             return false;
     }
-    writemask = get_available_writemask(allocator, first_write, last_read, reg_idx + (reg_size / 4), mode, vip);
+    writemask = get_available_writemask(allocator, reg_idx + (reg_size / 4), mode, vip);
     if ((writemask & last_reg_mask) != last_reg_mask)
         return false;
     return true;
 }
 
-static struct hlsl_reg allocate_range(struct hlsl_ctx *ctx, struct register_allocator *allocator,
-        unsigned int first_write, unsigned int last_read, unsigned int reg_size, int mode, bool vip)
+static struct hlsl_reg allocate_range(struct hlsl_ctx *ctx,
+        struct register_allocator *allocator, unsigned int reg_size, int mode, bool vip)
 {
     struct hlsl_reg ret = {0};
     uint32_t reg_idx;
@@ -6093,35 +6064,33 @@ static struct hlsl_reg allocate_range(struct hlsl_ctx *ctx, struct register_allo
 
     for (reg_idx = 0;; ++reg_idx)
     {
-        if (is_range_available(allocator, first_write, last_read, reg_idx, reg_size, mode, vip))
+        if (is_range_available(allocator, reg_idx, reg_size, mode, vip))
             break;
     }
 
     for (i = 0; i < reg_size / 4; ++i)
-        record_allocation(ctx, allocator, reg_idx + i, VKD3DSP_WRITEMASK_ALL, first_write, last_read, mode, vip);
+        record_allocation(ctx, allocator, reg_idx + i, VKD3DSP_WRITEMASK_ALL, mode, vip);
     if (reg_size % 4)
-        record_allocation(ctx, allocator, reg_idx + (reg_size / 4),
-                (1u << (reg_size % 4)) - 1, first_write, last_read, mode, vip);
+        record_allocation(ctx, allocator, reg_idx + (reg_size / 4), (1u << (reg_size % 4)) - 1, mode, vip);
 
-    ret.type = VKD3DSPR_TEMP;
+    ret.type = allocator->type;
     ret.id = reg_idx;
     ret.allocation_size = align(reg_size, 4) / 4;
     ret.allocated = true;
     return ret;
 }
 
-static struct hlsl_reg allocate_numeric_registers_for_type(struct hlsl_ctx *ctx, struct register_allocator *allocator,
-        unsigned int first_write, unsigned int last_read, const struct hlsl_type *type)
+static struct hlsl_reg allocate_numeric_registers_for_type(struct hlsl_ctx *ctx,
+        struct register_allocator *allocator, const struct hlsl_type *type)
 {
     unsigned int reg_size = type->reg_size[HLSL_REGSET_NUMERIC];
 
     /* FIXME: We could potentially pack structs or arrays more efficiently... */
 
     if (type->class <= HLSL_CLASS_VECTOR)
-        return allocate_register(ctx, allocator, first_write, last_read,
-                type->e.numeric.dimx, type->e.numeric.dimx, 0, false, false);
+        return allocate_register(ctx, allocator, type->e.numeric.dimx, type->e.numeric.dimx, 0, false, false);
     else
-        return allocate_range(ctx, allocator, first_write, last_read, reg_size, 0, false);
+        return allocate_range(ctx, allocator, reg_size, 0, false);
 }
 
 static const char *debug_register(struct hlsl_reg reg, const struct hlsl_type *type)
@@ -6286,10 +6255,9 @@ static void calculate_resource_register_counts(struct hlsl_ctx *ctx)
     }
 }
 
-static void allocate_instr_temp_register(struct hlsl_ctx *ctx,
-        struct hlsl_ir_node *instr, struct register_allocator *allocator)
+static void allocate_instr_temp_register(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr)
 {
-    unsigned int reg_writemask = 0, dst_writemask = 0;
+    unsigned int dst_writemask = 0;
     bool is_per_component = false;
 
     if (instr->reg.allocated || !instr->last_read)
@@ -6301,12 +6269,10 @@ static void allocate_instr_temp_register(struct hlsl_ctx *ctx,
         {
             case HLSL_OP1_COS_REDUCED:
                 dst_writemask = VKD3DSP_WRITEMASK_0;
-                reg_writemask = ctx->profile->major_version < 3 ? (1 << 3) - 1 : VKD3DSP_WRITEMASK_0;
                 break;
 
             case HLSL_OP1_SIN_REDUCED:
                 dst_writemask = VKD3DSP_WRITEMASK_1;
-                reg_writemask = ctx->profile->major_version < 3 ? (1 << 3) - 1 : VKD3DSP_WRITEMASK_1;
                 break;
 
             case HLSL_OP1_EXP2:
@@ -6328,12 +6294,22 @@ static void allocate_instr_temp_register(struct hlsl_ctx *ctx,
 
     VKD3D_ASSERT(instr->data_type->class <= HLSL_CLASS_VECTOR);
 
-    if (reg_writemask)
-        instr->reg = allocate_register_with_masks(ctx, allocator,
-                instr->index, instr->last_read, reg_writemask, dst_writemask, 0, false);
+    if (dst_writemask)
+    {
+        instr->reg.writemask = dst_writemask;
+        instr->reg.allocation_size = 1;
+        instr->reg.allocated = true;
+        instr->reg.type = VKD3DSPR_TEMP;
+        instr->reg.id = ctx->temp_count++;
+    }
     else if (is_per_component)
-        instr->reg = allocate_numeric_registers_for_type(ctx, allocator,
-                instr->index, instr->last_read, instr->data_type);
+    {
+        instr->reg.writemask = vkd3d_write_mask_from_component_count(instr->data_type->e.numeric.dimx);
+        instr->reg.allocation_size = 1;
+        instr->reg.allocated = true;
+        instr->reg.type = VKD3DSPR_TEMP;
+        instr->reg.id = ctx->temp_count++;
+    }
     else
     {
         instr->reg.writemask = vkd3d_write_mask_from_component_count(instr->data_type->e.numeric.dimx);
@@ -6343,40 +6319,46 @@ static void allocate_instr_temp_register(struct hlsl_ctx *ctx,
         instr->reg.id = ctx->ssa_count++;
     }
 
-    TRACE("Allocated anonymous expression @%u to %s (liveness %u-%u).\n", instr->index,
-            debug_register(instr->reg, instr->data_type), instr->index, instr->last_read);
+    TRACE("Allocated anonymous expression @%u to %s.\n", instr->index,
+            debug_register(instr->reg, instr->data_type));
 }
 
-static void allocate_variable_temp_register(struct hlsl_ctx *ctx,
-        struct hlsl_ir_var *var, struct register_allocator *allocator)
+static void allocate_variable_temp_register(struct hlsl_ctx *ctx, struct hlsl_ir_var *var)
 {
+    struct hlsl_reg *reg = &var->regs[HLSL_REGSET_NUMERIC];
+
     if (var->is_input_semantic || var->is_output_semantic || var->is_uniform)
         return;
 
-    if (!var->regs[HLSL_REGSET_NUMERIC].allocated && var->last_read)
+    if (!reg->allocated && var->last_read)
     {
         if (var->indexable)
         {
-            var->regs[HLSL_REGSET_NUMERIC].id = allocator->indexable_count++;
-            var->regs[HLSL_REGSET_NUMERIC].allocation_size = 1;
-            var->regs[HLSL_REGSET_NUMERIC].writemask = 0;
-            var->regs[HLSL_REGSET_NUMERIC].allocated = true;
+            reg->id = ctx->indexable_temp_count++;
+            reg->allocation_size = 1;
+            reg->writemask = 0;
+            reg->allocated = true;
 
-            TRACE("Allocated %s to x%u[].\n", var->name, var->regs[HLSL_REGSET_NUMERIC].id);
+            TRACE("Allocated %s to x%u[].\n", var->name, reg->id);
         }
         else
         {
-            var->regs[HLSL_REGSET_NUMERIC] = allocate_numeric_registers_for_type(ctx, allocator,
-                    var->first_write, var->last_read, var->data_type);
+            reg->type = VKD3DSPR_TEMP;
+            reg->id = ctx->temp_count;
+            reg->allocation_size = align(var->data_type->reg_size[HLSL_REGSET_NUMERIC], 4) / 4;
+            if (var->data_type->class <= HLSL_CLASS_VECTOR)
+                reg->writemask = vkd3d_write_mask_from_component_count(var->data_type->e.numeric.dimx);
+            reg->allocated = true;
 
-            TRACE("Allocated %s to %s (liveness %u-%u).\n", var->name,
-                    debug_register(var->regs[HLSL_REGSET_NUMERIC], var->data_type), var->first_write, var->last_read);
+            ctx->temp_count += reg->allocation_size;
+
+            TRACE("Allocated %s to %s.\n", var->name,
+                    debug_register(var->regs[HLSL_REGSET_NUMERIC], var->data_type));
         }
     }
 }
 
-static void allocate_temp_registers_recurse(struct hlsl_ctx *ctx,
-        struct hlsl_block *block, struct register_allocator *allocator)
+static void allocate_temp_registers_recurse(struct hlsl_ctx *ctx, struct hlsl_block *block)
 {
     struct hlsl_ir_node *instr;
 
@@ -6386,15 +6368,15 @@ static void allocate_temp_registers_recurse(struct hlsl_ctx *ctx,
         if (ctx->profile->major_version >= 4 && instr->type == HLSL_IR_CONSTANT)
             continue;
 
-        allocate_instr_temp_register(ctx, instr, allocator);
+        allocate_instr_temp_register(ctx, instr);
 
         switch (instr->type)
         {
             case HLSL_IR_IF:
             {
                 struct hlsl_ir_if *iff = hlsl_ir_if(instr);
-                allocate_temp_registers_recurse(ctx, &iff->then_block, allocator);
-                allocate_temp_registers_recurse(ctx, &iff->else_block, allocator);
+                allocate_temp_registers_recurse(ctx, &iff->then_block);
+                allocate_temp_registers_recurse(ctx, &iff->else_block);
                 break;
             }
 
@@ -6403,21 +6385,21 @@ static void allocate_temp_registers_recurse(struct hlsl_ctx *ctx,
                 struct hlsl_ir_load *load = hlsl_ir_load(instr);
                 /* We need to at least allocate a variable for undefs.
                  * FIXME: We should probably find a way to remove them instead. */
-                allocate_variable_temp_register(ctx, load->src.var, allocator);
+                allocate_variable_temp_register(ctx, load->src.var);
                 break;
             }
 
             case HLSL_IR_LOOP:
             {
                 struct hlsl_ir_loop *loop = hlsl_ir_loop(instr);
-                allocate_temp_registers_recurse(ctx, &loop->body, allocator);
+                allocate_temp_registers_recurse(ctx, &loop->body);
                 break;
             }
 
             case HLSL_IR_STORE:
             {
                 struct hlsl_ir_store *store = hlsl_ir_store(instr);
-                allocate_variable_temp_register(ctx, store->lhs.var, allocator);
+                allocate_variable_temp_register(ctx, store->lhs.var);
                 break;
             }
 
@@ -6428,7 +6410,7 @@ static void allocate_temp_registers_recurse(struct hlsl_ctx *ctx,
 
                 LIST_FOR_EACH_ENTRY(c, &s->cases, struct hlsl_ir_switch_case, entry)
                 {
-                    allocate_temp_registers_recurse(ctx, &c->body, allocator);
+                    allocate_temp_registers_recurse(ctx, &c->body);
                 }
                 break;
             }
@@ -6552,8 +6534,7 @@ static void allocate_const_registers_recurse(struct hlsl_ctx *ctx,
                     break;
                 }
 
-                constant->reg = allocate_numeric_registers_for_type(ctx, allocator, 1, UINT_MAX, type);
-                constant->reg.type = VKD3DSPR_CONST;
+                constant->reg = allocate_numeric_registers_for_type(ctx, allocator, type);
                 TRACE("Allocated constant @%u to %s.\n", instr->index, debug_register(constant->reg, type));
 
                 for (unsigned int x = 0, i = 0; x < 4; ++x)
@@ -6650,16 +6631,14 @@ static void allocate_sincos_const_registers(struct hlsl_ctx *ctx, struct hlsl_bl
         {
             type = hlsl_get_vector_type(ctx, HLSL_TYPE_FLOAT, 4);
 
-            ctx->d3dsincosconst1 = allocate_numeric_registers_for_type(ctx, allocator, 1, UINT_MAX, type);
-            ctx->d3dsincosconst1.type = VKD3DSPR_CONST;
+            ctx->d3dsincosconst1 = allocate_numeric_registers_for_type(ctx, allocator, type);
             TRACE("Allocated D3DSINCOSCONST1 to %s.\n", debug_register(ctx->d3dsincosconst1, type));
             record_constant(ctx, ctx->d3dsincosconst1.id * 4 + 0, -1.55009923e-06f, &instr->loc);
             record_constant(ctx, ctx->d3dsincosconst1.id * 4 + 1, -2.17013894e-05f, &instr->loc);
             record_constant(ctx, ctx->d3dsincosconst1.id * 4 + 2,  2.60416674e-03f, &instr->loc);
             record_constant(ctx, ctx->d3dsincosconst1.id * 4 + 3,  2.60416680e-04f, &instr->loc);
 
-            ctx->d3dsincosconst2 = allocate_numeric_registers_for_type(ctx, allocator, 1, UINT_MAX, type);
-            ctx->d3dsincosconst2.type = VKD3DSPR_CONST;
+            ctx->d3dsincosconst2 = allocate_numeric_registers_for_type(ctx, allocator, type);
             TRACE("Allocated D3DSINCOSCONST2 to %s.\n", debug_register(ctx->d3dsincosconst2, type));
             record_constant(ctx, ctx->d3dsincosconst2.id * 4 + 0, -2.08333340e-02f, &instr->loc);
             record_constant(ctx, ctx->d3dsincosconst2.id * 4 + 1, -1.25000000e-01f, &instr->loc);
@@ -6673,8 +6652,7 @@ static void allocate_sincos_const_registers(struct hlsl_ctx *ctx, struct hlsl_bl
 
 static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_block *body)
 {
-    struct register_allocator allocator_used = {0};
-    struct register_allocator allocator = {0};
+    struct register_allocator allocator = {.type = VKD3DSPR_CONST}, allocator_used = {.type = VKD3DSPR_CONST};
     struct hlsl_ir_var *var;
 
     sort_uniforms_by_bind_count(ctx, HLSL_REGSET_NUMERIC);
@@ -6697,15 +6675,14 @@ static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_block *bo
             {
                 if (i < bind_count)
                 {
-                    if (get_available_writemask(&allocator_used, 1, UINT_MAX,
-                            reg_idx + i, 0, false) != VKD3DSP_WRITEMASK_ALL)
+                    if (get_available_writemask(&allocator_used, reg_idx + i, 0, false) != VKD3DSP_WRITEMASK_ALL)
                     {
                         hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
                                 "Overlapping register() reservations on 'c%u'.", reg_idx + i);
                     }
-                    record_allocation(ctx, &allocator_used, reg_idx + i, VKD3DSP_WRITEMASK_ALL, 1, UINT_MAX, 0, false);
+                    record_allocation(ctx, &allocator_used, reg_idx + i, VKD3DSP_WRITEMASK_ALL, 0, false);
                 }
-                record_allocation(ctx, &allocator, reg_idx + i, VKD3DSP_WRITEMASK_ALL, 1, UINT_MAX, 0, false);
+                record_allocation(ctx, &allocator, reg_idx + i, VKD3DSP_WRITEMASK_ALL, 0, false);
             }
 
             var->regs[HLSL_REGSET_NUMERIC].type = VKD3DSPR_CONST;
@@ -6729,8 +6706,7 @@ static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_block *bo
 
         if (!var->regs[HLSL_REGSET_NUMERIC].allocated)
         {
-            var->regs[HLSL_REGSET_NUMERIC] = allocate_range(ctx, &allocator, 1, UINT_MAX, alloc_size, 0, false);
-            var->regs[HLSL_REGSET_NUMERIC].type = VKD3DSPR_CONST;
+            var->regs[HLSL_REGSET_NUMERIC] = allocate_range(ctx, &allocator, alloc_size, 0, false);
             TRACE("Allocated %s to %s.\n", var->name,
                     debug_register(var->regs[HLSL_REGSET_NUMERIC], var->data_type));
         }
@@ -6747,11 +6723,12 @@ static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_block *bo
  * index to all (simultaneously live) variables or intermediate values. Agnostic
  * as to how many registers are actually available for the current backend, and
  * does not handle constants. */
-static uint32_t allocate_temp_registers(struct hlsl_ctx *ctx, struct hlsl_block *body, struct list *semantic_vars)
+static void allocate_temp_registers(struct hlsl_ctx *ctx, struct hlsl_block *body, struct list *semantic_vars)
 {
-    struct register_allocator allocator = {0};
     struct hlsl_scope *scope;
     struct hlsl_ir_var *var;
+
+    ctx->indexable_temp_count = 0;
 
     /* Reset variable temp register allocations. */
     LIST_FOR_EACH_ENTRY(scope, &ctx->scopes, struct hlsl_scope, entry)
@@ -6770,25 +6747,13 @@ static uint32_t allocate_temp_registers(struct hlsl_ctx *ctx, struct hlsl_block 
         {
             if (var->is_output_semantic)
             {
-                record_allocation(ctx, &allocator, 0, VKD3DSP_WRITEMASK_ALL,
-                        var->first_write, UINT_MAX, 0, false);
+                ctx->temp_count = 1;
                 break;
             }
         }
     }
 
-    allocate_temp_registers_recurse(ctx, body, &allocator);
-    vkd3d_free(allocator.allocations);
-
-    if (allocator.indexable_count)
-        TRACE("Declaration of %s function required %u temp registers, and %u indexable temps.\n",
-                ctx->is_patch_constant_func ? "patch constant" : "main",
-                allocator.reg_count, allocator.indexable_count);
-    else
-        TRACE("Declaration of %s function required %u temp registers.\n",
-                ctx->is_patch_constant_func ? "patch constant" : "main", allocator.reg_count);
-
-    return allocator.reg_count;
+    allocate_temp_registers_recurse(ctx, body);
 }
 
 static enum vkd3d_shader_interpolation_mode sm4_get_interpolation_mode(struct hlsl_type *type,
@@ -6927,9 +6892,8 @@ static void allocate_semantic_register(struct hlsl_ctx *ctx, struct hlsl_ir_var 
         if (special_interpolation)
             mode = VKD3DSIM_NONE;
 
-        var->regs[HLSL_REGSET_NUMERIC] = allocate_register(ctx, allocator, 1, UINT_MAX,
+        var->regs[HLSL_REGSET_NUMERIC] = allocate_register(ctx, allocator,
                 reg_size, component_count, mode, var->force_align, vip_allocation);
-        var->regs[HLSL_REGSET_NUMERIC].type = output ? VKD3DSPR_OUTPUT : VKD3DSPR_INPUT;
 
         TRACE("Allocated %s to %s (mode %d).\n", var->name,
                 debug_register(var->regs[HLSL_REGSET_NUMERIC], var->data_type), mode);
@@ -6944,11 +6908,17 @@ static void allocate_semantic_registers(struct hlsl_ctx *ctx, struct list *seman
     bool is_pixel_shader = ctx->profile->type == VKD3D_SHADER_TYPE_PIXEL;
     struct hlsl_ir_var *var;
 
+    in_prim_allocator.type = VKD3DSPR_INPUT;
     in_prim_allocator.prioritize_smaller_writemasks = true;
+    patch_constant_out_patch_allocator.type = VKD3DSPR_INPUT;
     patch_constant_out_patch_allocator.prioritize_smaller_writemasks = true;
+    input_allocator.type = VKD3DSPR_INPUT;
     input_allocator.prioritize_smaller_writemasks = true;
     for (unsigned int i = 0; i < ARRAY_SIZE(output_allocators); ++i)
+    {
+        output_allocators[i].type = VKD3DSPR_OUTPUT;
         output_allocators[i].prioritize_smaller_writemasks = true;
+    }
 
     LIST_FOR_EACH_ENTRY(var, semantic_vars, struct hlsl_ir_var, extern_entry)
     {
@@ -8847,9 +8817,8 @@ static enum vsir_data_type vsir_data_type_from_hlsl_type(struct hlsl_ctx *ctx, c
             case HLSL_TYPE_DOUBLE:
                 return VSIR_DATA_F64;
             case HLSL_TYPE_FLOAT:
-                return VSIR_DATA_F32;
             case HLSL_TYPE_HALF:
-                return VSIR_DATA_F16;
+                return VSIR_DATA_F32;
             case HLSL_TYPE_INT:
                 return VSIR_DATA_I32;
             case HLSL_TYPE_UINT:
@@ -9744,8 +9713,6 @@ static bool sm1_generate_vsir_instr_expr(struct hlsl_ctx *ctx, struct vsir_progr
             break;
 
         case HLSL_OP3_CMP:
-            if (!hlsl_type_is_floating_point(type))
-                goto err;
             generate_vsir_instr_expr_single_instr_op(ctx, program, expr, VSIR_OP_CMP, 0, 0, true);
             break;
 
@@ -10210,7 +10177,8 @@ static void sm1_generate_vsir(struct hlsl_ctx *ctx, const struct vkd3d_shader_co
     struct hlsl_block block;
 
     program->ssa_count = 0;
-    program->temp_count = allocate_temp_registers(ctx, body, semantic_vars);
+    program->temp_count = 0;
+    allocate_temp_registers(ctx, body, semantic_vars);
     if (ctx->result)
         return;
 
@@ -10222,6 +10190,7 @@ static void sm1_generate_vsir(struct hlsl_ctx *ctx, const struct vkd3d_shader_co
     sm1_generate_vsir_block(ctx, body, program);
 
     program->ssa_count = ctx->ssa_count;
+    program->temp_count = ctx->temp_count;
 
     if (ctx->result)
         return;
@@ -11714,6 +11683,7 @@ static bool sm4_generate_vsir_instr_ld(struct hlsl_ctx *ctx,
     const struct vkd3d_shader_version *version = &program->shader_version;
     const struct hlsl_ir_node *sample_index = load->sample_index.node;
     const struct hlsl_ir_node *texel_offset = load->texel_offset.node;
+    const struct hlsl_ir_node *byte_offset = load->byte_offset.node;
     const struct hlsl_ir_node *coords = load->coords.node;
     unsigned int coords_writemask = VKD3DSP_WRITEMASK_ALL;
     const struct hlsl_deref *resource = &load->resource;
@@ -11721,20 +11691,15 @@ static bool sm4_generate_vsir_instr_ld(struct hlsl_ctx *ctx,
     enum hlsl_sampler_dim dim = load->sampling_dim;
     bool tgsm = load->resource.var->is_tgsm;
     struct vkd3d_shader_instruction *ins;
+    bool multisampled, raw, structured;
     enum vkd3d_shader_opcode opcode;
-    bool multisampled, raw;
 
     VKD3D_ASSERT(load->load_type == HLSL_RESOURCE_LOAD);
-
-    if (resource_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
-    {
-        hlsl_fixme(ctx, &load->node.loc, "Structured buffer loads.");
-        return false;
-    }
 
     multisampled = resource_type->class == HLSL_CLASS_TEXTURE
             && (resource_type->sampler_dim == HLSL_SAMPLER_DIM_2DMS
             || resource_type->sampler_dim == HLSL_SAMPLER_DIM_2DMSARRAY);
+    structured = resource_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER;
 
     if (!tgsm)
     {
@@ -11745,15 +11710,19 @@ static bool sm4_generate_vsir_instr_ld(struct hlsl_ctx *ctx,
         hlsl_fixme(ctx, &load->node.loc, "Load from structured TGSM.");
         return false;
     }
+    VKD3D_ASSERT(!(structured && multisampled));
 
-    if (uav)
+    if (structured)
+        opcode = VSIR_OP_LD_STRUCTURED;
+    else if (uav)
         opcode = VSIR_OP_LD_UAV_TYPED;
     else if (raw)
         opcode = VSIR_OP_LD_RAW;
     else
         opcode = multisampled ? VSIR_OP_LD2DMS : VSIR_OP_LD;
 
-    if (!(ins = generate_vsir_add_program_instruction(ctx, program, &instr->loc, opcode, 1, 2 + multisampled)))
+    if (!(ins = generate_vsir_add_program_instruction(ctx, program,
+            &instr->loc, opcode, 1, 2 + multisampled + structured)))
         return false;
 
     if (texel_offset && !sm4_generate_vsir_validate_texel_offset_aoffimmi(texel_offset))
@@ -11781,10 +11750,15 @@ static bool sm4_generate_vsir_instr_ld(struct hlsl_ctx *ctx,
     vsir_src_from_hlsl_node(&ins->src[0], ctx, coords, coords_writemask);
 
     if (!sm4_generate_vsir_init_src_param_from_deref(ctx, program,
-            &ins->src[1], resource, ins->dst[0].write_mask, &instr->loc))
+            &ins->src[structured ? 2 : 1], resource, ins->dst[0].write_mask, &instr->loc))
         return false;
 
-    if (multisampled)
+    if (structured)
+    {
+        VKD3D_ASSERT(byte_offset);
+        vsir_src_from_hlsl_node(&ins->src[1], ctx, byte_offset, VKD3DSP_WRITEMASK_ALL);
+    }
+    else if (multisampled)
     {
         if (sample_index->type == HLSL_IR_CONSTANT)
             vsir_src_from_hlsl_constant_value(&ins->src[2], ctx,
@@ -12370,16 +12344,15 @@ static void sm4_generate_vsir_add_function(struct hlsl_ctx *ctx, struct list *se
     struct hlsl_block block = {0};
     struct hlsl_scope *scope;
     struct hlsl_ir_var *var;
-    uint32_t temp_count;
 
     ctx->is_patch_constant_func = func == ctx->patch_constant_func;
 
     compute_liveness(ctx, body);
     mark_indexable_vars(ctx, body);
-    temp_count = allocate_temp_registers(ctx, body, semantic_vars);
+    allocate_temp_registers(ctx, body, semantic_vars);
     if (ctx->result)
         return;
-    program->temp_count = max(program->temp_count, temp_count);
+    program->temp_count = max(program->temp_count, ctx->temp_count);
 
     hlsl_block_init(&block);
 
@@ -12390,8 +12363,8 @@ static void sm4_generate_vsir_add_function(struct hlsl_ctx *ctx, struct list *se
             sm4_generate_vsir_instr_dcl_semantic(ctx, program, var, &block, &var->loc);
     }
 
-    if (temp_count)
-        sm4_generate_vsir_instr_dcl_temps(ctx, program, temp_count, &block, &func->loc);
+    if (ctx->temp_count)
+        sm4_generate_vsir_instr_dcl_temps(ctx, program, ctx->temp_count, &block, &func->loc);
 
     LIST_FOR_EACH_ENTRY(scope, &ctx->scopes, struct hlsl_scope, entry)
     {
@@ -12869,6 +12842,9 @@ static void sm4_generate_vsir_add_dcl_texture(struct hlsl_ctx *ctx,
         {
             switch (component_type->sampler_dim)
             {
+                case HLSL_SAMPLER_DIM_STRUCTURED_BUFFER:
+                    opcode = VSIR_OP_DCL_RESOURCE_STRUCTURED;
+                    break;
                 case HLSL_SAMPLER_DIM_RAW_BUFFER:
                     opcode = VSIR_OP_DCL_RESOURCE_RAW;
                     break;
@@ -12924,7 +12900,7 @@ static void sm4_generate_vsir_add_dcl_texture(struct hlsl_ctx *ctx,
         else if (component_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
         {
             ins->structured = true;
-            ins->resource_stride = 4 * component_type->e.resource.format->reg_size[HLSL_REGSET_NUMERIC];
+            ins->resource_stride = hlsl_type_get_packed_size(component_type->e.resource.format);
             ins->declaration.structured_resource.byte_stride = ins->resource_stride;
         }
         else
@@ -13061,6 +13037,7 @@ static void sm4_generate_vsir(struct hlsl_ctx *ctx,
     }
 
     program->ssa_count = 0;
+    program->temp_count = 0;
 
     if (version->type == VKD3D_SHADER_TYPE_HULL)
         generate_vsir_add_program_instruction(ctx, program,
@@ -13078,6 +13055,7 @@ static void sm4_generate_vsir(struct hlsl_ctx *ctx,
     generate_vsir_scan_global_flags(ctx, program, semantic_vars, func);
 
     program->ssa_count = ctx->ssa_count;
+    program->temp_count = ctx->temp_count;
 }
 
 /* For some reason, for matrices, values from default value initializers end
@@ -13192,14 +13170,16 @@ static enum D3D_RESOURCE_RETURN_TYPE sm4_data_type(const struct hlsl_type *type)
 
 static D3D_SHADER_INPUT_TYPE sm4_resource_type(const struct hlsl_type *type)
 {
+    bool structured = type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER;
+
     switch (type->class)
     {
         case HLSL_CLASS_SAMPLER:
             return D3D_SIT_SAMPLER;
         case HLSL_CLASS_TEXTURE:
-            return D3D_SIT_TEXTURE;
+            return structured ? D3D_SIT_STRUCTURED : D3D_SIT_TEXTURE;
         case HLSL_CLASS_UAV:
-            return D3D_SIT_UAV_RWTYPED;
+            return structured ? D3D_SIT_UAV_RWSTRUCTURED : D3D_SIT_UAV_RWTYPED;
         default:
             break;
     }
@@ -13275,7 +13255,8 @@ static D3D_SHADER_VARIABLE_TYPE sm4_base_type(const struct hlsl_type *type)
     vkd3d_unreachable();
 }
 
-static void write_sm4_type(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer, struct hlsl_type *type)
+static void write_sm4_type(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *buffer,
+        struct hlsl_type *type, bool structured)
 {
     const struct hlsl_type *array_type = hlsl_get_multiarray_element_type(type);
     const char *name = array_type->name ? array_type->name : "<unnamed>";
@@ -13284,7 +13265,10 @@ static void write_sm4_type(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
     size_t name_offset = 0;
     size_t i;
 
-    if (type->bytecode_offset)
+    if (!structured && type->bytecode_offset)
+        return;
+
+    if (structured && type->packed_bytecode_offset)
         return;
 
     if (profile->major_version >= 5)
@@ -13306,7 +13290,7 @@ static void write_sm4_type(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
                 continue;
 
             field->name_bytecode_offset = put_string(buffer, field->name);
-            write_sm4_type(ctx, buffer, field->type);
+            write_sm4_type(ctx, buffer, field->type, structured);
             ++field_count;
         }
 
@@ -13315,15 +13299,29 @@ static void write_sm4_type(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
         for (i = 0; i < array_type->e.record.field_count; ++i)
         {
             struct hlsl_struct_field *field = &array_type->e.record.fields[i];
+            unsigned int field_type_offset, offset;
 
             if (!field->type->reg_size[HLSL_REGSET_NUMERIC])
                 continue;
 
             put_u32(buffer, field->name_bytecode_offset);
-            put_u32(buffer, field->type->bytecode_offset);
-            put_u32(buffer, field->reg_offset[HLSL_REGSET_NUMERIC] * sizeof(float));
+
+            if (!structured)
+                field_type_offset = field->type->bytecode_offset;
+            else
+                field_type_offset = field->type->packed_bytecode_offset;
+            put_u32(buffer, field_type_offset);
+
+            if (!structured)
+                offset = field->reg_offset[HLSL_REGSET_NUMERIC] * sizeof(float);
+            else
+                offset = struct_field_get_packed_offset(array_type, i);
+            put_u32(buffer, offset);
         }
-        type->bytecode_offset = put_u32(buffer, vkd3d_make_u32(D3D_SVC_STRUCT, D3D_SVT_VOID));
+        if (!structured)
+            type->bytecode_offset = put_u32(buffer, vkd3d_make_u32(D3D_SVC_STRUCT, D3D_SVT_VOID));
+        else
+            type->packed_bytecode_offset = put_u32(buffer, vkd3d_make_u32(D3D_SVC_STRUCT, D3D_SVT_VOID));
         put_u32(buffer, vkd3d_make_u32(1, hlsl_type_component_count(array_type)));
         put_u32(buffer, vkd3d_make_u32(array_size, field_count));
         put_u32(buffer, fields_offset);
@@ -13331,7 +13329,11 @@ static void write_sm4_type(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
     else
     {
         VKD3D_ASSERT(array_type->class <= HLSL_CLASS_LAST_NUMERIC);
-        type->bytecode_offset = put_u32(buffer, vkd3d_make_u32(sm4_class(array_type), sm4_base_type(array_type)));
+        if (!structured)
+            type->bytecode_offset = put_u32(buffer, vkd3d_make_u32(sm4_class(array_type), sm4_base_type(array_type)));
+        else
+            type->packed_bytecode_offset = put_u32(buffer,
+                    vkd3d_make_u32(sm4_class(array_type), sm4_base_type(array_type)));
         put_u32(buffer, vkd3d_make_u32(array_type->e.numeric.dimy, array_type->e.numeric.dimx));
         put_u32(buffer, vkd3d_make_u32(array_size, 0));
         put_u32(buffer, 1);
@@ -13350,9 +13352,9 @@ static void write_sm4_type(struct hlsl_ctx *ctx, struct vkd3d_bytecode_buffer *b
 static void sm4_generate_rdef(struct hlsl_ctx *ctx, struct vkd3d_shader_code *rdef)
 {
     uint32_t binding_desc_size = (hlsl_version_ge(ctx, 5, 1) ? 10 : 8) * sizeof(uint32_t);
-    size_t cbuffers_offset, resources_offset, creator_offset, string_offset;
-    unsigned int cbuffer_count = 0, extern_resources_count, i, j;
+    size_t buffers_offset, resources_offset, creator_offset, string_offset;
     size_t cbuffer_position, resource_position, creator_position;
+    unsigned int buffer_count = 0, extern_resources_count, i, j;
     const struct hlsl_profile_info *profile = ctx->profile;
     struct vkd3d_bytecode_buffer buffer = {0};
     struct extern_resource *extern_resources;
@@ -13374,10 +13376,20 @@ static void sm4_generate_rdef(struct hlsl_ctx *ctx, struct vkd3d_shader_code *rd
     LIST_FOR_EACH_ENTRY(cbuffer, &ctx->buffers, struct hlsl_buffer, entry)
     {
         if (cbuffer->reg.allocated)
-            ++cbuffer_count;
+            ++buffer_count;
     }
 
-    put_u32(&buffer, cbuffer_count);
+    for (i = 0; i < extern_resources_count; ++i)
+    {
+        const struct extern_resource *resource = &extern_resources[i];
+
+        if (resource->buffer || resource->component_type->sampler_dim != HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
+            continue;
+
+        ++buffer_count;
+    }
+
+    put_u32(&buffer, buffer_count);
     cbuffer_position = put_u32(&buffer, 0);
     put_u32(&buffer, extern_resources_count);
     resource_position = put_u32(&buffer, 0);
@@ -13418,12 +13430,19 @@ static void sm4_generate_rdef(struct hlsl_ctx *ctx, struct vkd3d_shader_code *rd
             put_u32(&buffer, sm4_resource_type(resource->component_type));
         if (resource->regset == HLSL_REGSET_TEXTURES || resource->regset == HLSL_REGSET_UAVS)
         {
+            bool structured = resource->component_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER;
             unsigned int dimx = resource->component_type->e.resource.format->e.numeric.dimx;
 
             put_u32(&buffer, sm4_data_type(resource->component_type));
             put_u32(&buffer, sm4_rdef_resource_dimension(resource->component_type));
-            put_u32(&buffer, ~0u); /* FIXME: multisample count */
-            flags |= (dimx - 1) << VKD3D_SM4_SIF_TEXTURE_COMPONENTS_SHIFT;
+
+            if (structured)
+                put_u32(&buffer, hlsl_type_get_packed_size(resource->component_type->e.resource.format));
+            else
+                put_u32(&buffer, ~0u); /* FIXME: multisample count */
+
+            if (!structured)
+                flags |= (dimx - 1) << VKD3D_SM4_SIF_TEXTURE_COMPONENTS_SHIFT;
         }
         else
         {
@@ -13452,8 +13471,8 @@ static void sm4_generate_rdef(struct hlsl_ctx *ctx, struct vkd3d_shader_code *rd
 
     /* Buffers. */
 
-    cbuffers_offset = bytecode_align(&buffer);
-    set_u32(&buffer, cbuffer_position, cbuffers_offset);
+    buffers_offset = bytecode_align(&buffer);
+    set_u32(&buffer, cbuffer_position, buffers_offset);
     LIST_FOR_EACH_ENTRY(cbuffer, &ctx->buffers, struct hlsl_buffer, entry)
     {
         unsigned int var_count = 0;
@@ -13475,6 +13494,24 @@ static void sm4_generate_rdef(struct hlsl_ctx *ctx, struct vkd3d_shader_code *rd
         put_u32(&buffer, cbuffer->type == HLSL_BUFFER_CONSTANT ? D3D_CT_CBUFFER : D3D_CT_TBUFFER);
     }
 
+    for (i = 0; i < extern_resources_count; ++i)
+    {
+        const struct extern_resource *resource = &extern_resources[i];
+        struct hlsl_type *resource_type;
+
+        if (resource->buffer || resource->component_type->sampler_dim != HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
+            continue;
+
+        resource_type = resource->component_type->e.resource.format;
+
+        put_u32(&buffer, 0); /* name */
+        put_u32(&buffer, 1); /* var count */
+        put_u32(&buffer, 0); /* variable offset */
+        put_u32(&buffer, hlsl_type_get_packed_size(resource_type)); /* size */
+        put_u32(&buffer, 0); /* FIXME: flags */
+        put_u32(&buffer, D3D_CT_RESOURCE_BIND_INFO);
+    }
+
     i = 0;
     LIST_FOR_EACH_ENTRY(cbuffer, &ctx->buffers, struct hlsl_buffer, entry)
     {
@@ -13482,7 +13519,18 @@ static void sm4_generate_rdef(struct hlsl_ctx *ctx, struct vkd3d_shader_code *rd
             continue;
 
         string_offset = put_string(&buffer, cbuffer->name);
-        set_u32(&buffer, cbuffers_offset + i++ * 6 * sizeof(uint32_t), string_offset);
+        set_u32(&buffer, buffers_offset + i++ * 6 * sizeof(uint32_t), string_offset);
+    }
+
+    for (j = 0; j < extern_resources_count; ++j)
+    {
+        const struct extern_resource *resource = &extern_resources[j];
+
+        if (resource->buffer || resource->component_type->sampler_dim != HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
+            continue;
+
+        string_offset = put_string(&buffer, resource->name);
+        set_u32(&buffer, buffers_offset + i++ * 6 * sizeof(uint32_t), string_offset);
     }
 
     i = 0;
@@ -13493,7 +13541,7 @@ static void sm4_generate_rdef(struct hlsl_ctx *ctx, struct vkd3d_shader_code *rd
         if (!cbuffer->reg.allocated)
             continue;
 
-        set_u32(&buffer, cbuffers_offset + (i++ * 6 + 2) * sizeof(uint32_t), vars_start);
+        set_u32(&buffer, buffers_offset + (i++ * 6 + 2) * sizeof(uint32_t), vars_start);
 
         LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
         {
@@ -13532,7 +13580,7 @@ static void sm4_generate_rdef(struct hlsl_ctx *ctx, struct vkd3d_shader_code *rd
 
             string_offset = put_string(&buffer, var->name);
             set_u32(&buffer, var_offset, string_offset);
-            write_sm4_type(ctx, &buffer, var->data_type);
+            write_sm4_type(ctx, &buffer, var->data_type, false);
             set_u32(&buffer, var_offset + 4 * sizeof(uint32_t), var->data_type->bytecode_offset);
 
             if (var->default_values)
@@ -13573,6 +13621,42 @@ static void sm4_generate_rdef(struct hlsl_ctx *ctx, struct vkd3d_shader_code *rd
 
             ++j;
         }
+    }
+
+    for (j = 0; j < extern_resources_count; ++j)
+    {
+        const struct extern_resource *resource = &extern_resources[j];
+        struct hlsl_type *resource_type;
+        size_t vars_start;
+
+        if (resource->buffer || resource->component_type->sampler_dim != HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
+            continue;
+
+        resource_type = resource->component_type->e.resource.format;
+
+        vars_start = bytecode_align(&buffer);
+
+        set_u32(&buffer, buffers_offset + (i++ * 6 + 2) * sizeof(uint32_t), vars_start);
+
+        put_u32(&buffer, 0); /* name */
+        put_u32(&buffer, 0); /* offset */
+        put_u32(&buffer, hlsl_type_get_packed_size(resource_type));
+        put_u32(&buffer, D3D_SVF_USED);
+        put_u32(&buffer, 0); /* type */
+        put_u32(&buffer, 0); /* default value */
+
+        if (profile->major_version >= 5)
+        {
+            put_u32(&buffer, ~0u); /* texture start */
+            put_u32(&buffer, 0); /* texture count */
+            put_u32(&buffer, ~0u); /* sampler start */
+            put_u32(&buffer, 0); /* sampler count */
+        }
+
+        string_offset = put_string(&buffer, "$Element");
+        set_u32(&buffer, vars_start, string_offset);
+        write_sm4_type(ctx, &buffer, resource_type, true);
+        set_u32(&buffer, vars_start + 4 * sizeof(uint32_t), resource_type->packed_bytecode_offset);
     }
 
     creator_offset = put_string(&buffer, vkd3d_shader_get_version(NULL, NULL));

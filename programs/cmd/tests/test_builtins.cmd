@@ -72,6 +72,7 @@ echo@tab@word@tab@@space@
 echo @tab@word
 echo  @tab@word
 echo@tab@@tab@word
+echo(3
 
 echo ------------ Testing mixed echo modes ------------
 echo @echo on> mixedEchoModes.cmd
@@ -128,6 +129,13 @@ type foo.txt | cmd.exe > NUL
 @echo echo^>foo.tmp>>foo.txt
 type foo.txt | cmd.exe > NUL
 @call :showEchoMode foo.tmp
+
+rem labels are not echoed (while all the other commands are)
+echo echo on > callme.cmd
+echo rem itsme >> callme.cmd
+echo :itsmeagain >> callme.cmd
+echo @echo off >> callme.cmd
+call callme.cmd
 
 rem cleanup
 del foo.txt
@@ -664,6 +672,7 @@ call :setError 666 & (erase &&echo SUCCESS !errorlevel!||echo FAILURE !errorleve
 call :setError 666 & (erase fileE &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
 call :setError 666 & (erase i\dont\exist\at\all.txt &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
 call :setError 666 & (erase file* i\dont\exist\at\all.txt &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & (erase *.idontexistatall &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
 cd .. && rd /q /s foo
 
 echo --- success/failure for change drive command
@@ -1581,6 +1590,11 @@ echo )>> blockclosing.cmd
 echo echo outside of block without closing bracket>> blockclosing.cmd
 cmd.exe /Q /C blockclosing.cmd
 echo %ERRORLEVEL% nested
+::
+call :setError 666
+echo ^)> blockclosing.cmd
+cmd.exe /Q /C blockclosing.cmd
+echo %ERRORLEVEL% unmatched
 ::
 del blockclosing.cmd
 echo --- case sensitivity with and without /i option

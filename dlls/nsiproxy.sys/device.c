@@ -196,6 +196,8 @@ static inline icmp_handle irp_set_icmp_handle( IRP *irp, icmp_handle handle )
                                                    ULongToPtr( handle ) ) );
 }
 
+DECLARE_CRITICAL_SECTION( icmp_echo_completion_cs );
+
 static void WINAPI icmp_echo_cancel( DEVICE_OBJECT *device, IRP *irp )
 {
     struct icmp_cancel_listen_params params;
@@ -203,8 +205,7 @@ static void WINAPI icmp_echo_cancel( DEVICE_OBJECT *device, IRP *irp )
     TRACE( "device %p, irp %p.\n", device, irp );
 
     IoReleaseCancelSpinLock( irp->CancelIrql );
-
-    EnterCriticalSection( &nsiproxy_cs );
+    EnterCriticalSection( &icmp_echo_completion_cs );
 
     /* If the handle is not set, either the irp is still
        in the request queue, in which case the request thread will
@@ -213,8 +214,7 @@ static void WINAPI icmp_echo_cancel( DEVICE_OBJECT *device, IRP *irp )
        will be completed elsewhere. */
     params.handle = irp_get_icmp_handle( irp );
     if (params.handle) nsiproxy_call( icmp_cancel_listen, &params );
-
-    LeaveCriticalSection( &nsiproxy_cs );
+    LeaveCriticalSection( &icmp_echo_completion_cs );
 }
 
 static int icmp_echo_reply_struct_len( ULONG family, ULONG bits )
@@ -247,8 +247,7 @@ static DWORD WINAPI listen_thread_proc( void *arg )
     status = nsiproxy_call( icmp_listen, &params );
     TRACE( "icmp_listen rets %08lx\n", status );
 
-    EnterCriticalSection( &nsiproxy_cs );
-
+    EnterCriticalSection( &icmp_echo_completion_cs );
     close_params.handle = irp_set_icmp_handle( irp, 0 );
     nsiproxy_call( icmp_close, &close_params );
 
@@ -257,10 +256,8 @@ static DWORD WINAPI listen_thread_proc( void *arg )
         irp->IoStatus.Information = params.reply_len;
     else
         irp->IoStatus.Information = 0;
+    LeaveCriticalSection( &icmp_echo_completion_cs );
     IoCompleteRequest( irp, IO_NO_INCREMENT );
-
-    LeaveCriticalSection( &nsiproxy_cs );
-
     return 0;
 }
 
@@ -294,7 +291,7 @@ static NTSTATUS handle_send_echo( IRP *irp )
         return status;
     }
     IoSetCancelRoutine( irp, icmp_echo_cancel );
-    if (irp->Cancel && !IoSetCancelRoutine( irp, NULL ))
+    if (irp->Cancel && IoSetCancelRoutine( irp, NULL ))
     {
         /* IRP was canceled before we set cancel routine */
         return STATUS_CANCELLED;
@@ -369,7 +366,7 @@ static NTSTATUS nsiproxy_change_notification( IRP *irp )
 
     EnterCriticalSection( &nsiproxy_cs );
     IoSetCancelRoutine( irp, change_notification_cancel );
-    if (irp->Cancel && !IoSetCancelRoutine( irp, NULL ))
+    if (irp->Cancel && IoSetCancelRoutine( irp, NULL ))
     {
         /* IRP was canceled before we set cancel routine */
         InitializeListHead( &irp->Tail.Overlay.ListEntry );

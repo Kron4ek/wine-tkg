@@ -390,27 +390,10 @@ static void shader_print_resource_type(struct vkd3d_d3d_asm_compiler *compiler, 
 
 static void shader_print_data_type(struct vkd3d_d3d_asm_compiler *compiler, enum vsir_data_type type)
 {
-    static const char *const data_type_names[] =
-    {
-        [VSIR_DATA_BOOL     ] = "bool",
-        [VSIR_DATA_F16      ] = "half",
-        [VSIR_DATA_F32      ] = "float",
-        [VSIR_DATA_F64      ] = "double",
-        [VSIR_DATA_I32      ] = "int",
-        [VSIR_DATA_U8       ] = "uint8",
-        [VSIR_DATA_U16      ] = "uint16",
-        [VSIR_DATA_U32      ] = "uint",
-        [VSIR_DATA_U64      ] = "uint64",
-        [VSIR_DATA_SNORM    ] = "snorm",
-        [VSIR_DATA_UNORM    ] = "unorm",
-        [VSIR_DATA_OPAQUE   ] = "opaque",
-        [VSIR_DATA_MIXED    ] = "mixed",
-        [VSIR_DATA_CONTINUED] = "<continued>",
-        [VSIR_DATA_UNUSED   ] = "<unused>",
-    };
+    const char *name;
 
-    if (type < ARRAY_SIZE(data_type_names))
-        vkd3d_string_buffer_printf(&compiler->buffer, "%s", data_type_names[type]);
+    if ((name = vsir_data_type_get_name(type, NULL)))
+        vkd3d_string_buffer_printf(&compiler->buffer, "%s", name);
     else
         vkd3d_string_buffer_printf(&compiler->buffer, "%s<unhandled data type %#x>%s",
                 compiler->colours.error, type, compiler->colours.reset);
@@ -851,7 +834,7 @@ static void shader_print_register(struct vkd3d_d3d_asm_compiler *compiler, const
             && reg->type != VKD3DSPR_NULL
             && reg->type != VKD3DSPR_DEPTHOUT)
     {
-        if (offset != ~0u)
+        if (reg->idx_count)
         {
             bool is_sm_5_1 = vkd3d_shader_ver_ge(&compiler->shader_version, 5, 1);
 
@@ -879,10 +862,10 @@ static void shader_print_register(struct vkd3d_d3d_asm_compiler *compiler, const
                 /* For descriptors in sm < 5.1 we move the reg->idx values up one slot
                  * to normalise with 5.1.
                  * Here we should ignore it if it's a descriptor in sm < 5.1. */
-                if (reg->idx[1].offset != ~0u && (!is_descriptor || is_sm_5_1))
+                if (reg->idx_count > 1 && (!is_descriptor || is_sm_5_1))
                     shader_print_subscript(compiler, reg->idx[1].offset, reg->idx[1].rel_addr);
 
-                if (reg->idx[2].offset != ~0u)
+                if (reg->idx_count > 2)
                     shader_print_subscript(compiler, reg->idx[2].offset, reg->idx[2].rel_addr);
             }
         }
@@ -972,6 +955,22 @@ static void shader_print_reg_type(struct vkd3d_d3d_asm_compiler *compiler,
     vkd3d_string_buffer_printf(buffer, "%s <%s", prefix, dimension);
     shader_print_data_type(compiler, reg->data_type);
     vkd3d_string_buffer_printf(buffer, ">%s", suffix);
+}
+
+static void shader_print_indexable_temp_data_type(struct vkd3d_d3d_asm_compiler *compiler,
+        const struct vkd3d_shader_indexable_temp *t)
+{
+    struct vkd3d_string_buffer *buffer = &compiler->buffer;
+
+    if (!(compiler->flags & VSIR_ASM_FLAG_DUMP_TYPES))
+        return;
+
+    if (t->component_count > 1)
+        vkd3d_string_buffer_printf(buffer, " <v%u:", t->component_count);
+    else
+        vkd3d_string_buffer_printf(buffer, " <s:");
+    shader_print_data_type(compiler, t->data_type);
+    vkd3d_string_buffer_printf(buffer, ">");
 }
 
 static void shader_print_write_mask(struct vkd3d_d3d_asm_compiler *compiler,
@@ -1528,6 +1527,7 @@ static void shader_dump_instruction(struct vkd3d_d3d_asm_compiler *compiler,
             vkd3d_string_buffer_printf(buffer, " %sx%u%s", compiler->colours.reg,
                     ins->declaration.indexable_temp.register_idx, compiler->colours.reset);
             shader_print_subscript(compiler, ins->declaration.indexable_temp.register_size, NULL);
+            shader_print_indexable_temp_data_type(compiler, &ins->declaration.indexable_temp);
             shader_print_uint_literal(compiler, ", ", ins->declaration.indexable_temp.component_count, "");
             if (ins->declaration.indexable_temp.alignment)
                 shader_print_uint_literal(compiler, ", align ", ins->declaration.indexable_temp.alignment, "");
