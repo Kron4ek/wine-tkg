@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-ntsync-git configuration - Sun Aug 31 09:57:26 AM UTC 2025 :
+# Last wine-tkg-staging-ntsync-git configuration - Sun Sep 14 09:02:52 AM UTC 2025 :
 
 Local cfg files used
 
-Wine (plain) version: 10.14.r0.g1d1e5fb3e51
-Using wine-staging patchset (version 10.14.r0.ge004127f)
+Wine (plain) version: 10.15.r0.g72dc2afb1a7
+Using wine-staging patchset (version 10.15.r0.g978b387c)
 
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
@@ -29,7 +29,6 @@ Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix a608ef1.mypatch
 Applied hotfix nostale_mouse_fix.mypatch
 Applied hotfix opencl-fixup.mypatch
-Applied hotfix 0001-wine-staging-Fix-build.mypatch
 Applied your own patch disable-hidraw-and-evdev.mypatch
 Applied your own patch hags.mypatch
 Applied your own patch win32u-hdr.mypatch

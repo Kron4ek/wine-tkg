@@ -24,6 +24,7 @@
 #include "winbase.h"
 #include "winuser.h"
 #include "ole2.h"
+#include "mshtmdid.h"
 
 #include "wine/debug.h"
 
@@ -138,10 +139,6 @@ static HRESULT WINAPI HTMLDOMImplementation2_createHTMLDocument(IHTMLDOMImplemen
     nsIDOMDocument_Release(doc);
     if(FAILED(hres))
         return hres;
-
-    /* make sure dispex info is initialized for the prototype */
-    if(compat_mode >= COMPAT_MODE_IE9)
-        dispex_compat_mode(&new_document_node->node.event_target.dispex);
 
     *new_document = &new_document_node->IHTMLDocument7_iface;
     return S_OK;
@@ -267,6 +264,191 @@ void detach_dom_implementation(IHTMLDOMImplementation *iface)
 {
     HTMLDOMImplementation *dom_implementation = impl_from_IHTMLDOMImplementation(iface);
     dom_implementation->doc = NULL;
+}
+
+struct dom_parser {
+    DispatchEx dispex;
+    IDOMParser IDOMParser_iface;
+};
+
+static inline struct dom_parser *impl_from_IDOMParser(IDOMParser *iface)
+{
+    return CONTAINING_RECORD(iface, struct dom_parser, IDOMParser_iface);
+}
+
+DISPEX_IDISPATCH_IMPL(dom_parser, IDOMParser, impl_from_IDOMParser(iface)->dispex)
+
+static HRESULT WINAPI dom_parser_parseFromString(IDOMParser *iface, BSTR string, BSTR mimeType, IHTMLDocument2 **ppNode)
+{
+    struct dom_parser *This = impl_from_IDOMParser(iface);
+    HTMLInnerWindow *script_global;
+    nsAString errns, errtag;
+    HTMLDocumentNode *doc;
+    nsIDOMDocument *nsdoc;
+    nsIDOMNodeList *nodes;
+    nsIDOMParser *parser;
+    char *content_type;
+    nsresult nsres;
+    HRESULT hres;
+    BOOL is_html;
+
+    TRACE("(%p)->(%s %s %p)\n", This, debugstr_w(string), debugstr_w(mimeType), ppNode);
+
+    if(!string || !mimeType)
+        return E_INVALIDARG;
+
+    if(!(content_type = strdupWtoA(mimeType)))
+        return E_OUTOFMEMORY;
+    _strlwr(content_type);
+
+    script_global = get_script_global(&This->dispex);
+
+    if(!(parser = create_nsdomparser(script_global->dom_window))) {
+        free(content_type);
+        hres = E_FAIL;
+        goto ret;
+    }
+    nsres = nsIDOMParser_ParseFromString(parser, string ? string : L"", content_type, &nsdoc);
+    is_html = !strcmp(content_type, "text/html");
+    nsIDOMParser_Release(parser);
+    free(content_type);
+    if(NS_FAILED(nsres)) {
+        hres = (nsres == NS_ERROR_NOT_IMPLEMENTED) ? E_INVALIDARG : map_nsresult(nsres);
+        goto ret;
+    }
+
+    if(!is_html) {
+        nsAString_InitDepend(&errns, L"http://www.mozilla.org/newlayout/xml/parsererror.xml");
+        nsAString_InitDepend(&errtag, L"parsererror");
+        nsres = nsIDOMDocument_GetElementsByTagNameNS(nsdoc, &errns, &errtag, &nodes);
+        nsAString_Finish(&errtag);
+        nsAString_Finish(&errns);
+        if(NS_SUCCEEDED(nsres)) {
+            UINT32 length;
+            nsres = nsIDOMNodeList_GetLength(nodes, &length);
+            nsIDOMNodeList_Release(nodes);
+            if(NS_SUCCEEDED(nsres) && length) {
+                WARN("Failed to parse input XML\n");
+                nsIDOMDocument_Release(nsdoc);
+                hres = MSHTML_E_SYNTAX;
+                goto ret;
+            }
+        }
+    }
+
+    hres = create_document_node(nsdoc, script_global->doc->browser, NULL, script_global, script_global->doc->document_mode, &doc);
+    nsIDOMDocument_Release(nsdoc);
+    if(FAILED(hres))
+        goto ret;
+
+    *ppNode = &doc->IHTMLDocument2_iface;
+ret:
+    IHTMLWindow2_Release(&script_global->base.IHTMLWindow2_iface);
+    return hres;
+}
+
+static const IDOMParserVtbl dom_parser_vtbl = {
+    dom_parser_QueryInterface,
+    dom_parser_AddRef,
+    dom_parser_Release,
+    dom_parser_GetTypeInfoCount,
+    dom_parser_GetTypeInfo,
+    dom_parser_GetIDsOfNames,
+    dom_parser_Invoke,
+    dom_parser_parseFromString
+};
+
+static inline struct dom_parser *dom_parser_from_DispatchEx(DispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, struct dom_parser, dispex);
+}
+
+static void *dom_parser_query_interface(DispatchEx *dispex, REFIID riid)
+{
+    struct dom_parser *This = dom_parser_from_DispatchEx(dispex);
+
+    if(IsEqualGUID(&IID_IDOMParser, riid))
+        return &This->IDOMParser_iface;
+
+    return NULL;
+}
+
+static void dom_parser_destructor(DispatchEx *dispex)
+{
+    struct dom_parser *This = dom_parser_from_DispatchEx(dispex);
+    free(This);
+}
+
+static HRESULT init_dom_parser_ctor(struct constructor*);
+
+static const dispex_static_data_vtbl_t dom_parser_dispex_vtbl = {
+    .query_interface  = dom_parser_query_interface,
+    .destructor       = dom_parser_destructor,
+};
+
+static const tid_t dom_parser_iface_tids[] = {
+    IDOMParser_tid,
+    0
+};
+
+dispex_static_data_t DOMParser_dispex = {
+    .id               = OBJID_DOMParser,
+    .init_constructor = &init_dom_parser_ctor,
+    .vtbl             = &dom_parser_dispex_vtbl,
+    .disp_tid         = DispDOMParser_tid,
+    .iface_tids       = dom_parser_iface_tids,
+};
+
+static HRESULT dom_parser_ctor_value(DispatchEx *dispex, LCID lcid, WORD flags, DISPPARAMS *params,
+        VARIANT *res, EXCEPINFO *ei, IServiceProvider *caller)
+{
+    struct constructor *This = constructor_from_DispatchEx(dispex);
+    struct dom_parser *ret;
+
+    TRACE("\n");
+
+    switch(flags) {
+    case DISPATCH_METHOD|DISPATCH_PROPERTYGET:
+        if(!res)
+            return E_INVALIDARG;
+        /* fall through */
+    case DISPATCH_METHOD:
+    case DISPATCH_CONSTRUCT:
+        break;
+    default:
+        FIXME("flags %x not supported\n", flags);
+        return E_NOTIMPL;
+    }
+
+    if(!(ret = calloc(1, sizeof(*ret))))
+        return E_OUTOFMEMORY;
+
+    ret->IDOMParser_iface.lpVtbl = &dom_parser_vtbl;
+    init_dispatch(&ret->dispex, &DOMParser_dispex, This->window, dispex_compat_mode(&This->dispex));
+
+    V_VT(res) = VT_DISPATCH;
+    V_DISPATCH(res) = (IDispatch*)&ret->IDOMParser_iface;
+    return S_OK;
+}
+
+static const dispex_static_data_vtbl_t dom_parser_ctor_dispex_vtbl = {
+    .destructor     = constructor_destructor,
+    .traverse       = constructor_traverse,
+    .unlink         = constructor_unlink,
+    .value          = dom_parser_ctor_value,
+};
+
+static dispex_static_data_t dom_parser_ctor_dispex = {
+    .name           = "DOMParser",
+    .constructor_id = OBJID_DOMParser,
+    .vtbl           = &dom_parser_ctor_dispex_vtbl,
+};
+
+static HRESULT init_dom_parser_ctor(struct constructor *constr)
+{
+    init_dispatch(&constr->dispex, &dom_parser_ctor_dispex, constr->window,
+                  dispex_compat_mode(&constr->window->event_target.dispex));
+    return S_OK;
 }
 
 typedef struct {
@@ -1445,8 +1627,10 @@ static HRESULT WINAPI HTMLPerformanceTiming_toString(IHTMLPerformanceTiming *ifa
 static HRESULT WINAPI HTMLPerformanceTiming_toJSON(IHTMLPerformanceTiming *iface, VARIANT *p)
 {
     HTMLPerformanceTiming *This = impl_from_IHTMLPerformanceTiming(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    return dispex_builtin_props_to_json(&This->dispex, This->window, p);
 }
 
 static const IHTMLPerformanceTimingVtbl HTMLPerformanceTimingVtbl = {
@@ -1527,15 +1711,24 @@ static const dispex_static_data_vtbl_t HTMLPerformanceTiming_dispex_vtbl = {
     .unlink           = HTMLPerformanceTiming_unlink
 };
 
-static const tid_t PerformanceTiming_iface_tids[] = {
-    IHTMLPerformanceTiming_tid,
-    0
-};
+static void PerformanceTiming_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+{
+    static const dispex_hook_t hooks[] = {
+        {DISPID_IHTMLPERFORMANCETIMING_TOJSON},
+        {DISPID_UNKNOWN}
+    };
+    static const dispex_hook_t ie9_hooks[] = {
+        {DISPID_IHTMLPERFORMANCETIMING_TOSTRING},
+        {DISPID_UNKNOWN}
+    };
+    dispex_info_add_interface(info, IHTMLPerformanceTiming_tid, mode < COMPAT_MODE_IE9 ? hooks : ie9_hooks);
+}
+
 dispex_static_data_t PerformanceTiming_dispex = {
     .id         = OBJID_PerformanceTiming,
     .vtbl       = &HTMLPerformanceTiming_dispex_vtbl,
     .disp_tid   = IHTMLPerformanceTiming_tid,
-    .iface_tids = PerformanceTiming_iface_tids,
+    .init_info  = PerformanceTiming_init_dispex_info,
 };
 
 typedef struct {
@@ -1585,8 +1778,10 @@ static HRESULT WINAPI HTMLPerformanceNavigation_toString(IHTMLPerformanceNavigat
 static HRESULT WINAPI HTMLPerformanceNavigation_toJSON(IHTMLPerformanceNavigation *iface, VARIANT *p)
 {
     HTMLPerformanceNavigation *This = impl_from_IHTMLPerformanceNavigation(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    return dispex_builtin_props_to_json(&This->dispex, This->window, p);
 }
 
 static const IHTMLPerformanceNavigationVtbl HTMLPerformanceNavigationVtbl = {
@@ -1648,15 +1843,24 @@ static const dispex_static_data_vtbl_t HTMLPerformanceNavigation_dispex_vtbl = {
     .unlink           = HTMLPerformanceNavigation_unlink
 };
 
-static const tid_t PerformanceNavigation_iface_tids[] = {
-    IHTMLPerformanceNavigation_tid,
-    0
-};
+static void PerformanceNavigation_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+{
+    static const dispex_hook_t hooks[] = {
+        {DISPID_IHTMLPERFORMANCENAVIGATION_TOJSON},
+        {DISPID_UNKNOWN}
+    };
+    static const dispex_hook_t ie9_hooks[] = {
+        {DISPID_IHTMLPERFORMANCENAVIGATION_TOSTRING},
+        {DISPID_UNKNOWN}
+    };
+    dispex_info_add_interface(info, IHTMLPerformanceNavigation_tid, mode < COMPAT_MODE_IE9 ? hooks : ie9_hooks);
+}
+
 dispex_static_data_t PerformanceNavigation_dispex = {
     .id         = OBJID_PerformanceNavigation,
     .vtbl       = &HTMLPerformanceNavigation_dispex_vtbl,
     .disp_tid   = IHTMLPerformanceNavigation_tid,
-    .iface_tids = PerformanceNavigation_iface_tids,
+    .init_info  = PerformanceNavigation_init_dispex_info,
 };
 
 typedef struct {
@@ -1742,8 +1946,42 @@ static HRESULT WINAPI HTMLPerformance_toString(IHTMLPerformance *iface, BSTR *st
 static HRESULT WINAPI HTMLPerformance_toJSON(IHTMLPerformance *iface, VARIANT *var)
 {
     HTMLPerformance *This = impl_from_IHTMLPerformance(iface);
-    FIXME("(%p)->(%p)\n", This, var);
-    return E_NOTIMPL;
+    IWineJSDispatch *json;
+    HRESULT hres;
+    VARIANT v;
+
+    TRACE("(%p)->(%p)\n", This, var);
+
+    if(!This->window->jscript)
+        return E_UNEXPECTED;
+
+    if(!var)
+        return S_OK;
+
+    hres = IWineJScript_CreateObject(This->window->jscript, &json);
+    if(FAILED(hres))
+        return hres;
+
+    hres = IHTMLPerformanceNavigation_toJSON(This->navigation, &v);
+    if(SUCCEEDED(hres)) {
+        hres = IWineJSDispatch_DefineProperty(json, L"navigation", PROPF_WRITABLE | PROPF_ENUMERABLE | PROPF_CONFIGURABLE, &v);
+        VariantClear(&v);
+        if(SUCCEEDED(hres)) {
+            hres = IHTMLPerformanceTiming_toJSON(This->timing, &v);
+            if(SUCCEEDED(hres)) {
+                hres = IWineJSDispatch_DefineProperty(json, L"timing", PROPF_WRITABLE | PROPF_ENUMERABLE | PROPF_CONFIGURABLE, &v);
+                VariantClear(&v);
+            }
+        }
+    }
+    if(FAILED(hres)) {
+        IWineJSDispatch_Release(json);
+        return hres;
+    }
+
+    V_VT(var) = VT_DISPATCH;
+    V_DISPATCH(var) = (IDispatch*)json;
+    return hres;
 }
 
 static const IHTMLPerformanceVtbl HTMLPerformanceVtbl = {
@@ -1811,15 +2049,24 @@ static const dispex_static_data_vtbl_t HTMLPerformance_dispex_vtbl = {
     .unlink           = HTMLPerformance_unlink
 };
 
-static const tid_t Performance_iface_tids[] = {
-    IHTMLPerformance_tid,
-    0
-};
+static void Performance_init_dispex_info(dispex_data_t *info, compat_mode_t mode)
+{
+    static const dispex_hook_t hooks[] = {
+        {DISPID_IHTMLPERFORMANCE_TOJSON},
+        {DISPID_UNKNOWN}
+    };
+    static const dispex_hook_t ie9_hooks[] = {
+        {DISPID_IHTMLPERFORMANCE_TOSTRING},
+        {DISPID_UNKNOWN}
+    };
+    dispex_info_add_interface(info, IHTMLPerformance_tid, mode < COMPAT_MODE_IE9 ? hooks : ie9_hooks);
+}
+
 dispex_static_data_t Performance_dispex = {
     .id         = OBJID_Performance,
     .vtbl       = &HTMLPerformance_dispex_vtbl,
     .disp_tid   = IHTMLPerformance_tid,
-    .iface_tids = Performance_iface_tids,
+    .init_info  = Performance_init_dispex_info,
 };
 
 HRESULT create_performance(HTMLInnerWindow *window, IHTMLPerformance **ret)

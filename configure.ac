@@ -2588,6 +2588,7 @@ WINE_CONFIG_MAKEFILE(dlls/d3dim700)
 WINE_CONFIG_MAKEFILE(dlls/d3drm)
 WINE_CONFIG_MAKEFILE(dlls/d3drm/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_33)
+WINE_CONFIG_MAKEFILE(dlls/d3dx10_33/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_34)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_34/tests)
 WINE_CONFIG_MAKEFILE(dlls/d3dx10_35)
@@ -3308,6 +3309,10 @@ WINE_CONFIG_MAKEFILE(dlls/windows.media.devices)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.devices/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.mediacontrol)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.mediacontrol/tests)
+WINE_CONFIG_MAKEFILE(dlls/windows.media.playback.backgroundmediaplayer)
+WINE_CONFIG_MAKEFILE(dlls/windows.media.playback.backgroundmediaplayer/tests)
+WINE_CONFIG_MAKEFILE(dlls/windows.media.playback.mediaplayer)
+WINE_CONFIG_MAKEFILE(dlls/windows.media.playback.mediaplayer/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.speech)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.speech/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.media)
@@ -3751,7 +3756,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-10.14.r0.ge004127f\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-10.15.r0.g978b387c\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 dlls/wineandroid.drv/wine-debug.apk: dlls/wineandroid.drv/build.gradle ${wine_srcdir}dlls/wineandroid.drv/AndroidManifest.xml ${wine_srcdir}dlls/wineandroid.drv/WineActivity.java ${wine_srcdir}dlls/wineandroid.drv/wine.svg

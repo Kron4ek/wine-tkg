@@ -128,7 +128,7 @@
 #@ stub GetOwnerModuleFromUdp6Entry
 #@ stub GetOwnerModuleFromUdpEntry
 @ stdcall GetPerAdapterInfo( long ptr ptr )
-#@ stub GetPerTcp6ConnectionEStats
+@ stdcall GetPerTcp6ConnectionEStats( ptr long ptr long long ptr long long ptr long long )
 #@ stub GetPerTcp6ConnectionStats
 @ stdcall GetPerTcpConnectionEStats( ptr long ptr long long ptr long long ptr long long )
 #@ stub GetPerTcpConnectionStats
@@ -285,7 +285,7 @@
 @ stub SetIpStatsToStack
 @ stdcall SetIpTTL( long )
 #@ stub SetNetworkInformation
-#@ stub SetPerTcp6ConnectionEStats
+@ stdcall SetPerTcp6ConnectionEStats( ptr long ptr long long long )
 #@ stub SetPerTcp6ConnectionStats
 @ stdcall SetPerTcpConnectionEStats( ptr long ptr long long long )
 #@ stub SetPerTcpConnectionStats

@@ -2080,10 +2080,15 @@ DWORD WINAPI AllocateAndGetIpAddrTableFromStack( MIB_IPADDRTABLE **table, BOOL s
 static int ipforward_row_cmp( const void *a, const void *b )
 {
     const MIB_IPFORWARDROW *rowA = a, *rowB = b;
-    return DWORD_cmp(RtlUlongByteSwap( rowA->dwForwardDest ), RtlUlongByteSwap( rowB->dwForwardDest )) ||
-           DWORD_cmp(rowA->dwForwardProto, rowB->dwForwardProto) ||
-           DWORD_cmp(rowA->dwForwardPolicy, rowB->dwForwardPolicy) ||
-           DWORD_cmp(RtlUlongByteSwap( rowA->dwForwardNextHop ), RtlUlongByteSwap( rowB->dwForwardNextHop ));
+    int ret;
+
+    if ((ret = DWORD_cmp(RtlUlongByteSwap( rowA->dwForwardDest ), RtlUlongByteSwap( rowB->dwForwardDest ))))
+        return ret;
+    if ((ret = DWORD_cmp(rowA->dwForwardProto, rowB->dwForwardProto)))
+        return ret;
+    if ((ret = DWORD_cmp(rowA->dwForwardPolicy, rowB->dwForwardPolicy)))
+        return ret;
+    return DWORD_cmp(RtlUlongByteSwap( rowA->dwForwardNextHop ), RtlUlongByteSwap( rowB->dwForwardNextHop ));
 }
 
 /******************************************************************
@@ -3547,9 +3552,12 @@ static void udp_row_fill( void *table, DWORD num, ULONG family, ULONG table_clas
 static int udp_row_cmp( const void *a, const void *b )
 {
     const MIB_UDPROW *rowA = a, *rowB = b;
+    int ret;
 
-    return DWORD_cmp(RtlUlongByteSwap( rowA->dwLocalAddr), RtlUlongByteSwap( rowB->dwLocalAddr )) ||
-           RtlUshortByteSwap( rowA->dwLocalPort ) - RtlUshortByteSwap( rowB->dwLocalPort );
+    if ((ret = DWORD_cmp(RtlUlongByteSwap( rowA->dwLocalAddr), RtlUlongByteSwap( rowB->dwLocalAddr ))))
+        return ret;
+
+    return RtlUshortByteSwap( rowA->dwLocalPort ) - RtlUshortByteSwap( rowB->dwLocalPort );
 }
 
 static int udp6_row_cmp( const void *a, const void *b )
@@ -4132,6 +4140,19 @@ ULONG WINAPI GetPerTcpConnectionEStats(MIB_TCPROW *row, TCP_ESTATS_TYPE stats, U
     return ERROR_CALL_NOT_IMPLEMENTED;
 }
 
+/***********************************************************************
+ *    GetPerTcp6ConnectionEStats (IPHLPAPI.@)
+ */
+ULONG WINAPI GetPerTcp6ConnectionEStats(MIB_TCP6ROW *row, TCP_ESTATS_TYPE stats, UCHAR *rw, ULONG rw_version,
+                                        ULONG rw_size, UCHAR *ro_static, ULONG ro_static_version,
+                                        ULONG ro_static_size, UCHAR *ro_dynamic, ULONG ro_dynamic_version,
+                                        ULONG ro_dynamic_size)
+{
+    FIXME( "(%p, %d, %p, %ld, %ld, %p, %ld, %ld, %p, %ld, %ld): stub\n", row, stats, rw, rw_version, rw_size,
+           ro_static, ro_static_version, ro_static_size, ro_dynamic, ro_dynamic_version, ro_dynamic_size );
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
 /******************************************************************
  *    SetPerTcpConnectionEStats (IPHLPAPI.@)
  */
@@ -4143,6 +4164,16 @@ DWORD WINAPI SetPerTcpConnectionEStats(PMIB_TCPROW row, TCP_ESTATS_TYPE state, P
   return ERROR_NOT_SUPPORTED;
 }
 
+/******************************************************************
+ *    SetPerTcp6ConnectionEStats (IPHLPAPI.@)
+ */
+DWORD WINAPI SetPerTcp6ConnectionEStats(MIB_TCP6ROW *row, TCP_ESTATS_TYPE state, BYTE *rw,
+                                        ULONG version, ULONG size, ULONG offset)
+{
+    FIXME("(row %p, state %d, rw %p, version %lu, size %lu, offset %lu): stub\n",
+          row, state, rw, version, size, offset);
+    return ERROR_NOT_SUPPORTED;
+}
 
 /******************************************************************
  *    UnenableRouter (IPHLPAPI.@)
@@ -4653,7 +4684,6 @@ DWORD WINAPI GetIpInterfaceEntry( MIB_IPINTERFACE_ROW *row )
     return ERROR_SUCCESS;
 }
 
-
 /******************************************************************
  *    GetBestRoute2 (IPHLPAPI.@)
  */
@@ -4774,6 +4804,43 @@ struct icmp_handle_data
     HANDLE nsi_device;
 };
 
+struct icmp_apc_ctxt
+{
+    HANDLE event;
+    HANDLE thread;
+    void *apc_ctxt;
+    PIO_APC_ROUTINE apc_routine;
+    IO_STATUS_BLOCK iosb;
+};
+
+static void CALLBACK icmp_apc_routine( ULONG_PTR context )
+{
+    struct icmp_apc_ctxt *ctx = (struct icmp_apc_ctxt *)context;
+
+    ctx->apc_routine( ctx->apc_ctxt, &ctx->iosb, 0 );
+    heap_free( ctx );
+}
+
+static void CALLBACK icmp_iocp_callback( DWORD error, DWORD count, OVERLAPPED *ovr )
+{
+    struct icmp_apc_ctxt *ctx = (struct icmp_apc_ctxt *)ovr;
+    HANDLE thread;
+    BOOL ret;
+
+    if (!ctx) return;
+    if (ctx->event) SetEvent( ctx->event );
+    else if (ctx->apc_routine)
+    {
+        /* Don't access ctx after successful APC queue, it will be freed there. */
+        thread = ctx->thread;
+        ctx->thread = NULL;
+        ret = QueueUserAPC( icmp_apc_routine, thread, (ULONG_PTR)ctx );
+        CloseHandle( thread );
+        if (ret) return;
+    }
+    heap_free( ctx );
+}
+
 /***********************************************************************
  *    IcmpCloseHandle (IPHLPAPI.@)
  */
@@ -4811,7 +4878,13 @@ HANDLE WINAPI IcmpCreateFile( void )
         heap_free( data );
         return INVALID_HANDLE_VALUE;
     }
-
+    if (!BindIoCompletionCallback( data->nsi_device, icmp_iocp_callback, 0 ))
+    {
+        ERR( "BindIoCompletionCallback failed.\n" );
+        CloseHandle( data->nsi_device );
+        heap_free( data );
+        return INVALID_HANDLE_VALUE;
+    }
     return (HANDLE)data;
 }
 
@@ -4850,33 +4923,17 @@ DWORD WINAPI IcmpSendEcho2( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc_rou
                             opts, reply, reply_size, timeout );
 }
 
-struct icmp_apc_ctxt
-{
-    void *apc_ctxt;
-    PIO_APC_ROUTINE apc_routine;
-    IO_STATUS_BLOCK iosb;
-};
-
-void WINAPI icmp_apc_routine( void *context, IO_STATUS_BLOCK *iosb, ULONG reserved )
-{
-    struct icmp_apc_ctxt *ctxt = context;
-
-    ctxt->apc_routine( ctxt->apc_ctxt, iosb, reserved );
-    heap_free( ctxt );
-}
-
 static NTSTATUS icmp_send_echo( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc_routine, void *apc_ctxt,
                                 SOCKADDR_INET *src_addr, SOCKADDR_INET *dst_addr, void *request,
                                 WORD request_size, IP_OPTION_INFORMATION *opts, void *reply, DWORD reply_size,
                                 DWORD timeout )
 {
-    static IO_STATUS_BLOCK iosb_placeholder;
     struct icmp_handle_data *data = (struct icmp_handle_data *)handle;
     struct icmp_apc_ctxt *ctxt = NULL;
-    IO_STATUS_BLOCK *iosb;
+    IO_STATUS_BLOCK *iosb, iosb_local;
     DWORD opt_size, in_size;
     struct nsiproxy_icmp_echo *in;
-    HANDLE request_event;
+    HANDLE request_event = NULL;
     NTSTATUS status;
 
     if (handle == INVALID_HANDLE_VALUE || !reply) return STATUS_INVALID_PARAMETER;
@@ -4905,12 +4962,7 @@ static NTSTATUS icmp_send_echo( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc
     in->timeout = timeout;
     memcpy( in->data + opt_size, request, request_size );
 
-    if (event)
-    {
-        /* Async completion without calling APC routine, IOSB is not delivered anywhere. */
-        iosb = &iosb_placeholder;
-    }
-    else
+    if (event || apc_routine)
     {
         if (!(ctxt = heap_alloc( sizeof(*ctxt) )))
         {
@@ -4920,22 +4972,37 @@ static NTSTATUS icmp_send_echo( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc
         iosb = &ctxt->iosb;
         ctxt->apc_routine = apc_routine;
         ctxt->apc_ctxt = apc_ctxt;
+        ctxt->event = event;
+        ctxt->thread = NULL;
+        if (!event)
+        {
+            if (!DuplicateHandle( GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(),
+                             &ctxt->thread, 0, FALSE, DUPLICATE_SAME_ACCESS ))
+            {
+                heap_free( ctxt );
+                heap_free( in );
+                return STATUS_NO_MEMORY;
+            }
+        }
     }
-
-    request_event = event ? event : (apc_routine ? NULL : CreateEventW( NULL, 0, 0, NULL ));
-
-    status = NtDeviceIoControlFile( data->nsi_device, request_event, apc_routine && !event ? icmp_apc_routine : NULL,
-                                    ctxt, iosb, IOCTL_NSIPROXY_WINE_ICMP_ECHO,
-                                    in, in_size, reply, reply_size );
-
-    if (status == STATUS_PENDING)
+    else
     {
-        if (!event && !apc_routine && !WaitForSingleObject( request_event, INFINITE ))
-            status = iosb->Status;
+        iosb = &iosb_local;
+        request_event = CreateEventW( NULL, 0, 0, NULL );
     }
 
-    if (!event && request_event) CloseHandle( request_event );
-    if ((!apc_routine && !event) || status != STATUS_PENDING) heap_free( ctxt );
+    status = NtDeviceIoControlFile( data->nsi_device, request_event, NULL, ctxt,
+                                    iosb, IOCTL_NSIPROXY_WINE_ICMP_ECHO,
+                                    in, in_size, reply, reply_size );
+    if (!ctxt && status == STATUS_PENDING && !WaitForSingleObject( request_event, INFINITE ))
+        status = iosb->Status;
+
+    if (request_event) CloseHandle( request_event );
+    if (ctxt && status != STATUS_PENDING)
+    {
+        if (ctxt->thread) CloseHandle( ctxt->thread );
+        heap_free( ctxt );
+    }
     heap_free( in );
     return status;
 }

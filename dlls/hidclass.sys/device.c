@@ -122,7 +122,7 @@ void hid_queue_remove_pending_irps( struct hid_queue *queue )
 
     while ((irp = hid_queue_pop_irp( queue )))
     {
-        irp->IoStatus.Status = STATUS_DELETE_PENDING;
+        irp->IoStatus.Status = STATUS_DEVICE_NOT_CONNECTED;
         IoCompleteRequest( irp, IO_NO_INCREMENT );
     }
 }
@@ -163,7 +163,7 @@ static NTSTATUS hid_queue_push_irp( struct hid_queue *queue, IRP *irp )
     KeAcquireSpinLock( &queue->lock, &irql );
 
     IoSetCancelRoutine( irp, read_cancel_routine );
-    if (irp->Cancel && !IoSetCancelRoutine( irp, NULL ))
+    if (irp->Cancel && IoSetCancelRoutine( irp, NULL ))
     {
         /* IRP was canceled before we set cancel routine */
         InitializeListHead( &irp->Tail.Overlay.ListEntry );

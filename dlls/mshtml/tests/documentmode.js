@@ -333,6 +333,10 @@ sync_test("builtin_toString", function() {
     if(v >= 9) {
         test("computedStyle", window.getComputedStyle(e), "CSSStyleDeclaration");
         test("doctype", document.doctype, "DocumentType");
+        test("domParser", new DOMParser(), "DOMParser");
+        test("svgDocument", new DOMParser().parseFromString("<tag>foobar</tag>", "image/svg+xml"), v < 11 ? "Document" : "XMLDocument");
+        test("xhtmlDocument", new DOMParser().parseFromString("<tag>foobar</tag>", "application/xhtml+xml"), v < 11 ? "Document" : "XMLDocument");
+        test("xmlDocument", new DOMParser().parseFromString("<tag>foobar</tag>", "text/xml"), v < 11 ? "Document" : "XMLDocument");
 
         test("Event", document.createEvent("Event"), "Event");
         test("CustomEvent", document.createEvent("CustomEvent"), "CustomEvent");
@@ -980,6 +984,8 @@ sync_test("window_props", function() {
     test_exposed("matchMedia", v >= 10);
     test_exposed("Document", v >= 9);
     test_exposed("HTMLDocument", v === 8 || v >= 11, v === 8);
+    test_exposed("XMLDocument", v >= 11);
+    test_exposed("DOMParser", v >= 9);
     test_exposed("MutationObserver", v >= 11);
     test_exposed("PageTransitionEvent", v >= 11);
     test_exposed("ProgressEvent", v >= 10);
@@ -1000,6 +1006,56 @@ sync_test("domimpl_props", function() {
     test_exposed("createDocument", v >= 9);
     test_exposed("createDocumentType", v >= 9);
     test_exposed("createHTMLDocument", v >= 9);
+});
+
+sync_test("perf_props", function() {
+    var obj = window.performance, name = "Performance";
+    var v = document.documentMode;
+
+    function test_exposed(prop, expect) {
+        if(expect)
+            ok(prop in obj, prop + " not found in " + name + ".");
+        else
+            ok(!(prop in obj), prop + " found in " + name + ".");
+    }
+
+    test_exposed("navigation", true);
+    test_exposed("timing", true);
+    test_exposed("toJSON", v >= 9);
+    test_exposed("toString", true);
+
+    obj = window.performance.navigation, name = "PerformanceNavigation";
+
+    test_exposed("redirectCount", true);
+    test_exposed("type", true);
+    test_exposed("toJSON", v >= 9);
+    test_exposed("toString", true);
+
+    obj = window.performance.timing, name = "PerformanceTiming";
+
+    test_exposed("connectEnd", true);
+    test_exposed("connectStart", true);
+    test_exposed("domComplete", true);
+    test_exposed("domContentLoadedEventEnd", true);
+    test_exposed("domContentLoadedEventStart", true);
+    test_exposed("domInteractive", true);
+    test_exposed("domLoading", true);
+    test_exposed("domainLookupEnd", true);
+    test_exposed("domainLookupStart", true);
+    test_exposed("fetchStart", true);
+    test_exposed("loadEventEnd", true);
+    test_exposed("loadEventStart", true);
+    test_exposed("msFirstPaint", true);
+    test_exposed("navigationStart", true);
+    test_exposed("redirectEnd", true);
+    test_exposed("redirectStart", true);
+    test_exposed("requestStart", true);
+    test_exposed("responseEnd", true);
+    test_exposed("responseStart", true);
+    test_exposed("unloadEventEnd", true);
+    test_exposed("unloadEventStart", true);
+    test_exposed("toJSON", v >= 9);
+    test_exposed("toString", true);
 });
 
 sync_test("xhr_props", function() {
@@ -1202,6 +1258,7 @@ sync_test("constructor props", function() {
     test_exposed(Image, "create", v < 9);
     test_exposed(Option, "create", v < 9);
     test_exposed(XMLHttpRequest, "create", true);
+    if(v >= 9)  test_exposed(DOMParser, "create", false);
     if(v >= 11) test_exposed(MutationObserver, "create", false);
 });
 
@@ -3854,6 +3911,7 @@ sync_test("prototypes", function() {
     check(window.navigator, Navigator.prototype, "navigator");
     check(Navigator.prototype, Object.prototype, "navigator prototype");
     check(document.body, HTMLBodyElement.prototype, "body element");
+    check(new DOMParser().parseFromString("<tag>foobar</tag>", "text/xml").getElementsByTagName("tag")[0], Element.prototype, "xml element");
     check(HTMLBodyElement.prototype, HTMLElement.prototype, "body prototype");
     check(HTMLElement.prototype, Element.prototype, "html element prototype");
     check(Element.prototype, Node.prototype, "element prototype");
@@ -3865,6 +3923,7 @@ sync_test("prototypes", function() {
     else {
         check(document, HTMLDocument.prototype, "html document");
         check(HTMLDocument.prototype, Document.prototype, "html document prototype");
+        check(XMLDocument.prototype, Document.prototype, "xml document prototype");
     }
     check(Document.prototype, Node.prototype, "document prototype");
     check(window, Window.prototype, "window");
@@ -3878,6 +3937,9 @@ sync_test("prototypes", function() {
     check(document.createElement("option"), HTMLOptionElement.prototype, "option elem");
     check(HTMLOptionElement.prototype, HTMLElement.prototype, "option elem prototype");
     check(Option, Function.prototype, "Option constructor");
+    check(new DOMParser(), DOMParser.prototype, "dom parser");
+    check(DOMParser.prototype, Object.prototype, "dom parser prototype");
+    check(DOMParser, Function.prototype, "dom parser constructor");
     if(v >= 11) {
         check(new MutationObserver(function() {}), MutationObserver.prototype, "mutation observer");
         check(MutationObserver.prototype, Object.prototype, "mutation observer prototype");
@@ -4181,6 +4243,7 @@ sync_test("prototype props", function() {
     ]);
     check(DocumentFragment, [ ["attachEvent",9,10], ["detachEvent",9,10], "querySelector", "querySelectorAll", "removeNode", "replaceNode", "swapNode" ]);
     check(DocumentType, [ "entities", "internalSubset", "name", "notations", "publicId", "systemId" ]);
+    check(DOMParser, [ "parseFromString" ]);
     check(Element, [
         "childElementCount", "clientHeight", "clientLeft", "clientTop", "clientWidth", ["fireEvent",9,10], "firstElementChild",
         "getAttribute", "getAttributeNS", "getAttributeNode", "getAttributeNodeNS", "getBoundingClientRect", "getClientRects",
@@ -4399,12 +4462,27 @@ sync_test("prototype props", function() {
     ]);
     if(v >= 11)
         check(PageTransitionEvent, [ "persisted" ]);
+    check(Performance, [
+        "clearMarks", "clearMeasures", "clearResourceTimings", "getEntries", "getEntriesByName", "getEntriesByType", "getMarks",
+        "getMeasures", "mark", "measure", "navigation", ["now",10], "setResourceTimingBufferSize", "timing", "toJSON"
+    ], [
+        "clearMarks", "clearMeasures", "clearResourceTimings", "getEntries", "getEntriesByName", "getEntriesByType", "getMarks",
+        "getMeasures", "mark", "measure", ["now",10], "setResourceTimingBufferSize"
+    ]);
+    check(PerformanceNavigation, [ "TYPE_BACK_FORWARD", "TYPE_NAVIGATE", "TYPE_RELOAD", "TYPE_RESERVED", "redirectCount", "toJSON", "type" ], [ "TYPE_BACK_FORWARD", "TYPE_NAVIGATE", "TYPE_RELOAD", "TYPE_RESERVED" ]);
+    check(PerformanceTiming, [
+        "connectEnd", "connectStart", "domComplete", "domContentLoadedEventEnd", "domContentLoadedEventStart", "domInteractive", "domLoading",
+        "domainLookupEnd", "domainLookupStart", "fetchStart", "loadEventEnd", "loadEventStart", "msFirstPaint", "navigationStart", "redirectEnd",
+        "redirectStart", "requestStart", "responseEnd", "responseStart", "toJSON", "unloadEventEnd", "unloadEventStart"
+    ]);
     if(v >= 10)
         check(ProgressEvent, [ "initProgressEvent", "lengthComputable", "loaded", "total" ]);
     check(StorageEvent, [ "initStorageEvent", "key", "newValue", "oldValue", "storageArea", "url" ]);
     check(StyleSheet, [ "disabled", "href", "media", "ownerNode", "parentStyleSheet", "title", "type" ]);
     check(Text, [ "removeNode", "replaceNode", "replaceWholeText", "splitText", "swapNode", "wholeText" ], [ "replaceWholeText", "wholeText" ]);
     check(UIEvent, [ "detail", "initUIEvent", "view" ], null, [ "deviceSessionId" ]);
+    if(v >= 11)
+        check(XMLDocument, []);
 });
 
 sync_test("constructors", function() {
@@ -4412,7 +4490,7 @@ sync_test("constructors", function() {
     if(v < 9)
         return;
 
-    var ctors = [ "Image", "Option", "XMLHttpRequest" ];
+    var ctors = [ "DOMParser", "Image", "Option", "XMLHttpRequest" ];
     if (v >= 11)
         ctors.push("MutationObserver");
     for(i = 0; i < ctors.length; i++) {
@@ -4544,7 +4622,7 @@ async_test("window own props", function() {
             "BeforeUnloadEvent", ["Blob",10], "BookmarkCollection", "CanvasGradient", "CanvasPattern", "CanvasPixelArray", "CanvasRenderingContext2D", "CDATASection", ["CloseEvent",10],
             "CompositionEvent", "ControlRangeCollection", "Coordinates", ["Crypto",11], ["CryptoOperation",11], "CSSFontFaceRule", "CSSImportRule", ["CSSKeyframeRule",10], ["CSSKeyframesRule",10],
             "CSSMediaRule", "CSSNamespaceRule", "CSSPageRule", "CSSRuleList", "DataTransfer", ["DataView",9,9], "Debug", ["DeviceAcceleration",11], ["DeviceMotionEvent",11],
-            ["DeviceOrientationEvent",11], ["DeviceRotationRate",11], ["DOMError",10], "DOMException", "DOMParser", ["DOMSettableTokenList",10], ["DOMStringList",10], ["DOMStringMap",11],
+            ["DeviceOrientationEvent",11], ["DeviceRotationRate",11], ["DOMError",10], "DOMException", ["DOMSettableTokenList",10], ["DOMStringList",10], ["DOMStringMap",11],
             "DragEvent", ["ErrorEvent",10], "EventException", ["EXT_texture_filter_anisotropic",11], ["File",10], ["FileList",10], ["FileReader",10], ["Float32Array",10], ["Float64Array",10],
             "FocusEvent", ["FormData",10], "Geolocation", "GetObject", ["HTMLAllCollection",11], "HTMLAppletElement", "HTMLAreasCollection", "HTMLAudioElement", "HTMLBaseElement",
             "HTMLBaseFontElement", "HTMLBGSoundElement", "HTMLBlockElement", "HTMLBRElement", "HTMLCanvasElement", ["HTMLDataListElement",10], "HTMLDDElement", "HTMLDirectoryElement",
@@ -4580,7 +4658,7 @@ async_test("window own props", function() {
             ["Uint8Array",10], ["Uint8ClampedArray",11], ["URL",10], ["ValidityState",10], ["VideoPlaybackQuality",11], ["WebGLActiveInfo",11], ["WebGLBuffer",11], ["WebGLContextEvent",11],
             ["WebGLFramebuffer",11], ["WebGLObject",11], ["WebGLProgram",11], ["WebGLRenderbuffer",11], ["WebGLRenderingContext",11], ["WebGLShader",11], ["WebGLShaderPrecisionFormat",11],
             ["WebGLTexture",11], ["WebGLUniformLocation",11], ["WEBGL_compressed_texture_s3tc",11], ["WEBGL_debug_renderer_info",11], ["WebSocket",10], "WheelEvent", ["Worker",10],
-            ["XDomainRequest",9,10], ["XMLDocument",11], ["XMLHttpRequestEventTarget",10], "XMLSerializer"
+            ["XDomainRequest",9,10], ["XMLHttpRequestEventTarget",10], "XMLSerializer"
         ]);
         next_test();
     }

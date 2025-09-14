@@ -613,21 +613,19 @@ static HRESULT WINAPI HTMLDocument_get_anchors(IHTMLDocument2 *iface, IHTMLEleme
         return E_UNEXPECTED;
     }
 
-    if(!This->html_document) {
-        FIXME("Not implemented for XML document\n");
-        return E_NOTIMPL;
+    if(This->html_document) {
+        nsres = nsIDOMHTMLDocument_GetAnchors(This->html_document, &nscoll);
+        if(NS_FAILED(nsres)) {
+            ERR("GetAnchors failed: %08lx\n", nsres);
+            return E_FAIL;
+        }
+    }else {
+        FIXME("Not implemented for XML document, returning empty list\n");
     }
 
-    nsres = nsIDOMHTMLDocument_GetAnchors(This->html_document, &nscoll);
-    if(NS_FAILED(nsres)) {
-        ERR("GetAnchors failed: %08lx\n", nsres);
-        return E_FAIL;
-    }
-
-    if(nscoll) {
-        *p = create_collection_from_htmlcol(nscoll, &This->node.event_target.dispex);
+    *p = create_collection_from_htmlcol(nscoll, &This->node.event_target.dispex);
+    if(nscoll)
         nsIDOMHTMLCollection_Release(nscoll);
-    }
 
     return S_OK;
 }
@@ -1269,6 +1267,7 @@ static HRESULT WINAPI HTMLDocument_get_mimeType(IHTMLDocument2 *iface, BSTR *p)
     nsAString nsstr;
     nsresult nsres;
     HRESULT hres;
+    size_t len;
 
     TRACE("(%p)->(%p)\n", This, p);
 
@@ -1283,6 +1282,12 @@ static HRESULT WINAPI HTMLDocument_get_mimeType(IHTMLDocument2 *iface, BSTR *p)
         return map_nsresult(nsres);
 
     nsAString_GetData(&nsstr, &content_type);
+
+    /* Unknown content types with +xml are reported as XML */
+    if((len = wcslen(content_type)) >= 4 && !memcmp(content_type + len - 4, L"+xml", 4 * sizeof(WCHAR)) &&
+       wcscmp(content_type, L"application/xhtml+xml") && wcscmp(content_type, L"image/svg+xml"))
+        content_type = L"text/xml";
+
     hres = get_mime_type_display_name(content_type, p);
     nsAString_Finish(&nsstr);
     return hres;
@@ -5634,7 +5639,7 @@ static HTMLInnerWindow *HTMLDocumentNode_get_script_global(DispatchEx *dispex, d
     if(This->node.vtbl != &HTMLDocumentNodeImplVtbl)
         *dispex_data = &DocumentFragment_dispex;
     else
-        *dispex_data = This->document_mode < COMPAT_MODE_IE11 ? &Document_dispex : &HTMLDocument_dispex;
+        *dispex_data = This->document_mode < COMPAT_MODE_IE11 ? &Document_dispex : This->html_document ? &HTMLDocument_dispex : &XMLDocument_dispex;
     return This->script_global;
 }
 
@@ -5870,6 +5875,17 @@ dispex_static_data_t HTMLDocument_dispex = {
     .min_compat_mode = COMPAT_MODE_IE11,
 };
 
+dispex_static_data_t XMLDocument_dispex = {
+    .id           = OBJID_XMLDocument,
+    .prototype_id = OBJID_Document,
+    .vtbl         = &HTMLDocument_event_target_vtbl.dispex_vtbl,
+    .disp_tid     = DispHTMLDocument_tid,
+    .iface_tids   = HTMLDocumentNode_iface_tids,
+    .init_info    = HTMLDocumentNode_init_dispex_info,
+    .js_flags     = HOSTOBJ_VOLATILE_FILL,
+    .min_compat_mode = COMPAT_MODE_IE11,
+};
+
 static HTMLDocumentNode *alloc_doc_node(HTMLDocumentObj *doc_obj, HTMLInnerWindow *window, HTMLInnerWindow *script_global)
 {
     HTMLDocumentNode *doc;
@@ -5921,6 +5937,7 @@ static HTMLDocumentNode *alloc_doc_node(HTMLDocumentObj *doc_obj, HTMLInnerWindo
 HRESULT create_document_node(nsIDOMDocument *nsdoc, GeckoBrowser *browser, HTMLInnerWindow *window,
                              HTMLInnerWindow *script_global, compat_mode_t parent_mode, HTMLDocumentNode **ret)
 {
+    dispex_static_data_t *dispex = &XMLDocument_dispex;
     HTMLDocumentObj *doc_obj = browser->doc;
     HTMLDocumentNode *doc;
 
@@ -5941,12 +5958,13 @@ HRESULT create_document_node(nsIDOMDocument *nsdoc, GeckoBrowser *browser, HTMLI
     if(NS_SUCCEEDED(nsIDOMDocument_QueryInterface(nsdoc, &IID_nsIDOMHTMLDocument, (void**)&doc->html_document))) {
         doc->dom_document = (nsIDOMDocument*)doc->html_document;
         nsIDOMHTMLDocument_Release(doc->html_document);
+        dispex = &HTMLDocument_dispex;
     }else {
         doc->dom_document = nsdoc;
         doc->html_document = NULL;
     }
 
-    HTMLDOMNode_Init(doc, &doc->node, (nsIDOMNode*)doc->dom_document, &HTMLDocument_dispex);
+    HTMLDOMNode_Init(doc, &doc->node, (nsIDOMNode*)doc->dom_document, dispex);
 
     init_document_mutation(doc);
     doc_init_events(doc);
@@ -5966,6 +5984,10 @@ HRESULT create_document_node(nsIDOMDocument *nsdoc, GeckoBrowser *browser, HTMLI
         if(NS_FAILED(nsres))
             ERR("SetDesignMode failed: %08lx\n", nsres);
     }
+
+    /* make sure dispex info is initialized for the prototype */
+    if(parent_mode >= COMPAT_MODE_IE9 && !window)
+        dispex_compat_mode(&doc->node.event_target.dispex);
 
     *ret = doc;
     return S_OK;

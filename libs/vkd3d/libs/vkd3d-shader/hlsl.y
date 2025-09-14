@@ -4748,7 +4748,8 @@ static bool intrinsic_tex(struct hlsl_ctx *ctx, const struct parse_initializer *
     }
 
     if (!strcmp(name, "tex2Dbias")
-            || !strcmp(name, "tex2Dlod"))
+            || !strcmp(name, "tex2Dlod")
+            || !strcmp(name, "texCUBEbias"))
     {
         struct hlsl_ir_node *lod, *c;
 
@@ -4898,6 +4899,12 @@ static bool intrinsic_texCUBE(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
     return intrinsic_tex(ctx, params, loc, "texCUBE", HLSL_SAMPLER_DIM_CUBE);
+}
+
+static bool intrinsic_texCUBEbias(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    return intrinsic_tex(ctx, params, loc, "texCUBEbias", HLSL_SAMPLER_DIM_CUBE);
 }
 
 static bool intrinsic_texCUBEgrad(struct hlsl_ctx *ctx,
@@ -5375,6 +5382,7 @@ intrinsic_functions[] =
     {"tex3Dgrad",                           4, false, intrinsic_tex3Dgrad},
     {"tex3Dproj",                           2, false, intrinsic_tex3Dproj},
     {"texCUBE",                            -1, false, intrinsic_texCUBE},
+    {"texCUBEbias",                         2, false, intrinsic_texCUBEbias},
     {"texCUBEgrad",                         4, false, intrinsic_texCUBEgrad},
     {"texCUBEproj",                         2, false, intrinsic_texCUBEproj},
     {"transpose",                           1, true,  intrinsic_transpose},
@@ -8107,7 +8115,7 @@ resource_format:
         {
             uint32_t modifiers = $1;
 
-            if (!($$ = apply_type_modifiers(ctx, $2, &modifiers, false, &@1)))
+            if (!($$ = apply_type_modifiers(ctx, $2, &modifiers, true, &@1)))
                 YYABORT;
         }
 

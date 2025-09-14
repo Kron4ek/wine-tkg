@@ -173,17 +173,6 @@ my %manual_win_thunks =
     (
      "glGetString" => 1,
      "glGetStringi" => 1,
-     "glMapBuffer" => 1,
-     "glMapBufferARB" => 1,
-     "glMapBufferRange" => 1,
-     "glMapNamedBuffer" => 1,
-     "glMapNamedBufferEXT" => 1,
-     "glMapNamedBufferRange" => 1,
-     "glMapNamedBufferRangeEXT" => 1,
-     "glUnmapBuffer" => 1,
-     "glUnmapBufferARB" => 1,
-     "glUnmapNamedBuffer" => 1,
-     "glUnmapNamedBufferEXT" => 1,
      "wglChoosePixelFormatARB" => 1,
      "wglGetExtensionsStringARB" => 1,
      "wglGetExtensionsStringEXT" => 1,
@@ -289,6 +278,7 @@ my %map_default_fbo_thunks =
 my %manual_wow64_wrappers =
     (
      "glClientWaitSync" => 0,
+     "glDeleteBuffers" => 0,
      "glDeleteSync" => 0,
      "glFenceSync" => 0,
      "glGetBufferPointerv" => 0,
@@ -297,18 +287,34 @@ my %manual_wow64_wrappers =
      "glGetNamedBufferPointervEXT" => 0,
      "glGetSynciv" => 0,
      "glIsSync" => 0,
-     "glMapBuffer" => 1,
-     "glMapBufferARB" => 1,
-     "glMapBufferRange" => 1,
-     "glMapNamedBuffer" => 1,
-     "glMapNamedBufferEXT" => 1,
-     "glMapNamedBufferRange" => 1,
-     "glMapNamedBufferRangeEXT" => 1,
-     "glUnmapBuffer" => 1,
-     "glUnmapBufferARB" => 1,
-     "glUnmapNamedBuffer" => 1,
-     "glUnmapNamedBufferEXT" => 1,
+     "glMapBuffer" => 0,
+     "glMapBufferARB" => 0,
+     "glMapBufferRange" => 0,
+     "glMapNamedBuffer" => 0,
+     "glMapNamedBufferEXT" => 0,
+     "glMapNamedBufferRange" => 0,
+     "glMapNamedBufferRangeEXT" => 0,
+     "glUnmapBuffer" => 0,
+     "glUnmapBufferARB" => 0,
+     "glUnmapNamedBuffer" => 0,
+     "glUnmapNamedBufferEXT" => 0,
      "glWaitSync" => 0,
+    );
+my %wow64_invalidate_buffer =
+    (
+     "glBufferAttachMemoryNV" => 1,
+     "glBufferData" => 1,
+     "glBufferDataARB" => 1,
+     "glBufferStorage" => 1,
+     "glBufferStorageExternalEXT" => 1,
+     "glBufferStorageMemEXT" => 1,
+     "glNamedBufferAttachMemoryNV" => 1,
+     "glNamedBufferData" => 1,
+     "glNamedBufferDataEXT" => 1,
+     "glNamedBufferStorage" => 1,
+     "glNamedBufferStorageEXT" => 1,
+     "glNamedBufferStorageExternalEXT" => 1,
+     "glNamedBufferStorageMemEXT" => 1,
     );
 my %pointer_array_count =
     (
@@ -431,6 +437,7 @@ sub generate_unix_thunk($$$$)
     my $need_lock = $func_ret =~ /HGLRC|HPBUFFERARB/;
     my $teb = $is_wow64 ? "teb" : "params->teb";
     my $ret_stat = "return STATUS_SUCCESS;";
+    my $invalidation = "";
     my $input_conv = "";
     my $output_conv = "";
     my $call_args = "";
@@ -518,11 +525,6 @@ sub generate_unix_thunk($$$$)
                 $need_manual_thunk = 1 if $ret_type =~ /(GLsync|PROC|GLintptr|\*)/;
             }
         }
-        if ($manual_wow64_wrappers{$name})
-        {
-            $ret .= "        PTR32 client_ptr;\n";
-            $call_args .= " &params->client_ptr,";
-        }
         $ret .= "    } *params = args;\n";
         if (!$need_wrap && $need_manual_thunk)
         {
@@ -530,6 +532,13 @@ sub generate_unix_thunk($$$$)
             $ret .= "    return STATUS_NOT_IMPLEMENTED;\n";
             $ret .= "}\n\n";
             return $ret;
+        }
+        if (defined $wow64_invalidate_buffer{$name})
+        {
+            $need_lock = 1;
+            $invalidation .= $name =~ /NamedBuffer/
+                ? "    invalidate_buffer_name( $teb, params->buffer );\n"
+                : "    invalidate_buffer_target( $teb, params->target );\n";
         }
         $ret .= "    TEB *teb = get_teb64( params->teb );\n" if $need_wrap || !$use_dc;
     }
@@ -571,7 +580,7 @@ sub generate_unix_thunk($$$$)
     }
     $ret .= "    resolve_default_fbo( $teb, TRUE );\n" if defined $resolve_default_fbo_thunks{$name};
     $ret .= "    push_default_fbo( $teb );\n" if defined $hide_default_fbo_thunks{$name};
-    $ret .= "    pthread_mutex_lock( &wgl_lock );\n" if $need_lock;
+    $ret .= "    pthread_mutex_lock( &wgl_lock );\n$invalidation" if $need_lock;
     $ret .= "    $ret_expr";
     $call_args =~ s/,$/ /;
     if ($manual_wow64_wrapper)
@@ -635,7 +644,6 @@ sub generate_wrapper_declaration($$$)
         }
         $ret .= " " . $arg->textContent() . ",";
     }
-    $ret .= " PTR32 *client_ptr," if $manual_wow64_wrappers{$name};
     $ret =~ s/,$/ /;
     $ret .= ");\n";
     return $ret;
@@ -740,7 +748,6 @@ sub generate_func_params($$)
         $ret .= sprintf "    %s;\n", $arg->textContent();
     }
     $ret .= sprintf "    %sret;\n", $func->[0]->textContent() unless is_void_func($func);
-    $ret .= "#ifndef _WIN64\n    void *client_ptr;\n#endif\n" if $manual_wow64_wrappers{$name};
     $ret .= "};\n\n";
     return $ret;
 }
@@ -1392,6 +1399,8 @@ close OUT;
 open OUT, ">unix_thunks.h" or die "cannot create unix_thunks.h";
 print OUT "/* Automatically generated from http://www.opengl.org/registry files; DO NOT EDIT! */\n\n";
 
+print OUT "typedef ULONG PTR32;\n\n";
+
 foreach (sort keys %wgl_functions)
 {
     next if !needs_wrapper( $_, $wgl_functions{$_} );
@@ -1410,7 +1419,6 @@ foreach (sort keys %ext_functions)
 }
 
 print OUT "\n#ifdef _WIN64\n";
-print OUT "typedef ULONG PTR32;\n";
 
 foreach (sort keys %wgl_functions)
 {

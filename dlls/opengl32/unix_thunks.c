@@ -37327,7 +37327,10 @@ static NTSTATUS wow64_ext_glBufferAttachMemoryNV( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_target( teb, params->target );
     funcs->p_glBufferAttachMemoryNV( params->target, params->memory, params->offset );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -37344,7 +37347,10 @@ static NTSTATUS wow64_ext_glBufferData( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_target( teb, params->target );
     funcs->p_glBufferData( params->target, (GLsizeiptr)ULongToPtr(params->size), ULongToPtr(params->data), params->usage );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -37361,7 +37367,10 @@ static NTSTATUS wow64_ext_glBufferDataARB( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_target( teb, params->target );
     funcs->p_glBufferDataARB( params->target, (GLsizeiptrARB)ULongToPtr(params->size), ULongToPtr(params->data), params->usage );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -37425,7 +37434,10 @@ static NTSTATUS wow64_ext_glBufferStorage( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_target( teb, params->target );
     funcs->p_glBufferStorage( params->target, (GLsizeiptr)ULongToPtr(params->size), ULongToPtr(params->data), params->flags );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -37443,7 +37455,10 @@ static NTSTATUS wow64_ext_glBufferStorageExternalEXT( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_target( teb, params->target );
     funcs->p_glBufferStorageExternalEXT( params->target, (GLintptr)ULongToPtr(params->offset), (GLsizeiptr)ULongToPtr(params->size), ULongToPtr(params->clientBuffer), params->flags );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -37460,7 +37475,10 @@ static NTSTATUS wow64_ext_glBufferStorageMemEXT( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_target( teb, params->target );
     funcs->p_glBufferStorageMemEXT( params->target, (GLsizeiptr)ULongToPtr(params->size), params->memory, params->offset );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -41248,8 +41266,7 @@ static NTSTATUS wow64_ext_glDeleteBuffers( void *args )
         PTR32 buffers;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    const struct opengl_funcs *funcs = teb->glTable;
-    funcs->p_glDeleteBuffers( params->n, ULongToPtr(params->buffers) );
+    wow64_glDeleteBuffers( teb, params->n, ULongToPtr(params->buffers) );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -53883,10 +53900,9 @@ static NTSTATUS wow64_ext_glMapBuffer( void *args )
         GLenum target;
         GLenum access;
         PTR32 ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glMapBuffer( teb, params->target, params->access, &params->client_ptr );
+    params->ret = wow64_glMapBuffer( teb, params->target, params->access );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -53899,10 +53915,9 @@ static NTSTATUS wow64_ext_glMapBufferARB( void *args )
         GLenum target;
         GLenum access;
         PTR32 ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glMapBufferARB( teb, params->target, params->access, &params->client_ptr );
+    params->ret = wow64_glMapBufferARB( teb, params->target, params->access );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -53917,10 +53932,9 @@ static NTSTATUS wow64_ext_glMapBufferRange( void *args )
         PTR32 length;
         GLbitfield access;
         PTR32 ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glMapBufferRange( teb, params->target, (GLintptr)ULongToPtr(params->offset), (GLsizeiptr)ULongToPtr(params->length), params->access, &params->client_ptr );
+    params->ret = wow64_glMapBufferRange( teb, params->target, (GLintptr)ULongToPtr(params->offset), (GLsizeiptr)ULongToPtr(params->length), params->access );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -53989,10 +54003,9 @@ static NTSTATUS wow64_ext_glMapNamedBuffer( void *args )
         GLuint buffer;
         GLenum access;
         PTR32 ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glMapNamedBuffer( teb, params->buffer, params->access, &params->client_ptr );
+    params->ret = wow64_glMapNamedBuffer( teb, params->buffer, params->access );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -54005,10 +54018,9 @@ static NTSTATUS wow64_ext_glMapNamedBufferEXT( void *args )
         GLuint buffer;
         GLenum access;
         PTR32 ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glMapNamedBufferEXT( teb, params->buffer, params->access, &params->client_ptr );
+    params->ret = wow64_glMapNamedBufferEXT( teb, params->buffer, params->access );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -54023,10 +54035,9 @@ static NTSTATUS wow64_ext_glMapNamedBufferRange( void *args )
         PTR32 length;
         GLbitfield access;
         PTR32 ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glMapNamedBufferRange( teb, params->buffer, (GLintptr)ULongToPtr(params->offset), (GLsizeiptr)ULongToPtr(params->length), params->access, &params->client_ptr );
+    params->ret = wow64_glMapNamedBufferRange( teb, params->buffer, (GLintptr)ULongToPtr(params->offset), (GLsizeiptr)ULongToPtr(params->length), params->access );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -54041,10 +54052,9 @@ static NTSTATUS wow64_ext_glMapNamedBufferRangeEXT( void *args )
         PTR32 length;
         GLbitfield access;
         PTR32 ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glMapNamedBufferRangeEXT( teb, params->buffer, (GLintptr)ULongToPtr(params->offset), (GLsizeiptr)ULongToPtr(params->length), params->access, &params->client_ptr );
+    params->ret = wow64_glMapNamedBufferRangeEXT( teb, params->buffer, (GLintptr)ULongToPtr(params->offset), (GLsizeiptr)ULongToPtr(params->length), params->access );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -58106,7 +58116,10 @@ static NTSTATUS wow64_ext_glNamedBufferAttachMemoryNV( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_name( teb, params->buffer );
     funcs->p_glNamedBufferAttachMemoryNV( params->buffer, params->memory, params->offset );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -58123,7 +58136,10 @@ static NTSTATUS wow64_ext_glNamedBufferData( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_name( teb, params->buffer );
     funcs->p_glNamedBufferData( params->buffer, (GLsizeiptr)ULongToPtr(params->size), ULongToPtr(params->data), params->usage );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -58140,7 +58156,10 @@ static NTSTATUS wow64_ext_glNamedBufferDataEXT( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_name( teb, params->buffer );
     funcs->p_glNamedBufferDataEXT( params->buffer, (GLsizeiptr)ULongToPtr(params->size), ULongToPtr(params->data), params->usage );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -58191,7 +58210,10 @@ static NTSTATUS wow64_ext_glNamedBufferStorage( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_name( teb, params->buffer );
     funcs->p_glNamedBufferStorage( params->buffer, (GLsizeiptr)ULongToPtr(params->size), ULongToPtr(params->data), params->flags );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -58208,7 +58230,10 @@ static NTSTATUS wow64_ext_glNamedBufferStorageEXT( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_name( teb, params->buffer );
     funcs->p_glNamedBufferStorageEXT( params->buffer, (GLsizeiptr)ULongToPtr(params->size), ULongToPtr(params->data), params->flags );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -58226,7 +58251,10 @@ static NTSTATUS wow64_ext_glNamedBufferStorageExternalEXT( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_name( teb, params->buffer );
     funcs->p_glNamedBufferStorageExternalEXT( params->buffer, (GLintptr)ULongToPtr(params->offset), (GLsizeiptr)ULongToPtr(params->size), ULongToPtr(params->clientBuffer), params->flags );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -58243,7 +58271,10 @@ static NTSTATUS wow64_ext_glNamedBufferStorageMemEXT( void *args )
     } *params = args;
     TEB *teb = get_teb64( params->teb );
     const struct opengl_funcs *funcs = teb->glTable;
+    pthread_mutex_lock( &wgl_lock );
+    invalidate_buffer_name( teb, params->buffer );
     funcs->p_glNamedBufferStorageMemEXT( params->buffer, (GLsizeiptr)ULongToPtr(params->size), params->memory, params->offset );
+    pthread_mutex_unlock( &wgl_lock );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -71770,10 +71801,9 @@ static NTSTATUS wow64_ext_glUnmapBuffer( void *args )
         PTR32 teb;
         GLenum target;
         GLboolean ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glUnmapBuffer( teb, params->target, &params->client_ptr );
+    params->ret = wow64_glUnmapBuffer( teb, params->target );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -71785,10 +71815,9 @@ static NTSTATUS wow64_ext_glUnmapBufferARB( void *args )
         PTR32 teb;
         GLenum target;
         GLboolean ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glUnmapBufferARB( teb, params->target, &params->client_ptr );
+    params->ret = wow64_glUnmapBufferARB( teb, params->target );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -71800,10 +71829,9 @@ static NTSTATUS wow64_ext_glUnmapNamedBuffer( void *args )
         PTR32 teb;
         GLuint buffer;
         GLboolean ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glUnmapNamedBuffer( teb, params->buffer, &params->client_ptr );
+    params->ret = wow64_glUnmapNamedBuffer( teb, params->buffer );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -71815,10 +71843,9 @@ static NTSTATUS wow64_ext_glUnmapNamedBufferEXT( void *args )
         PTR32 teb;
         GLuint buffer;
         GLboolean ret;
-        PTR32 client_ptr;
     } *params = args;
     TEB *teb = get_teb64( params->teb );
-    params->ret = wow64_glUnmapNamedBufferEXT( teb, params->buffer, &params->client_ptr );
+    params->ret = wow64_glUnmapNamedBufferEXT( teb, params->buffer );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
