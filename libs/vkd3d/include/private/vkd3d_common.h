@@ -343,6 +343,24 @@ static inline unsigned int vkd3d_log2i(unsigned int x)
 #endif
 }
 
+static inline unsigned int vkd3d_ctz(uint32_t v)
+{
+#ifdef HAVE_BUILTIN_CTZ
+    return __builtin_ctz(v);
+#else
+    unsigned int c = 31;
+
+    v &= -v;
+    c = (v & 0x0000ffff) ? c - 16 : c;
+    c = (v & 0x00ff00ff) ? c - 8 : c;
+    c = (v & 0x0f0f0f0f) ? c - 4 : c;
+    c = (v & 0x33333333) ? c - 2 : c;
+    c = (v & 0x55555555) ? c - 1 : c;
+
+    return c;
+#endif
+}
+
 static inline void *vkd3d_memmem( const void *haystack, size_t haystack_len, const void *needle, size_t needle_len)
 {
     const char *str = haystack;

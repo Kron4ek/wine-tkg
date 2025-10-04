@@ -851,7 +851,7 @@ static void shader_sm4_read_shader_data(struct vkd3d_shader_instruction *ins, ui
     icb->element_count = icb_size / VKD3D_VEC4_SIZE;
     icb->is_null = false;
     memcpy(icb->data, tokens, sizeof(*tokens) * icb_size);
-    shader_instruction_array_add_icb(&priv->program->instructions, icb);
+    vsir_program_add_icb(priv->program, icb);
     ins->declaration.icb = icb;
 }
 
@@ -3483,7 +3483,9 @@ static uint32_t sm4_encode_register(const struct tpf_compiler *tpf, const struct
         switch (sm4_swizzle_type)
         {
             case VKD3D_SM4_SWIZZLE_NONE:
-                VKD3D_ASSERT(sm4_swizzle || register_is_constant(reg));
+                if (register_is_constant(reg))
+                    break;
+                VKD3D_ASSERT(sm4_swizzle);
                 token |= (sm4_swizzle << VKD3D_SM4_WRITEMASK_SHIFT) & VKD3D_SM4_WRITEMASK_MASK;
                 break;
 
@@ -3695,7 +3697,7 @@ static void write_sm4_instruction(const struct tpf_compiler *tpf, const struct s
 static void tpf_dcl_constant_buffer(const struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
 {
     const struct vkd3d_shader_constant_buffer *cb = &ins->declaration.cb;
-    size_t size = (cb->size + 3) / 4;
+    size_t size = cb->size / VKD3D_VEC4_SIZE / sizeof(float);
 
     struct sm4_instruction instr =
     {
@@ -4246,6 +4248,7 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
         case VSIR_OP_BREAK:
         case VSIR_OP_CASE:
         case VSIR_OP_CONTINUE:
+        case VSIR_OP_COUNTBITS:
         case VSIR_OP_CUT:
         case VSIR_OP_CUT_STREAM:
         case VSIR_OP_DCL_STREAM:
@@ -4271,6 +4274,9 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
         case VSIR_OP_EXP:
         case VSIR_OP_F16TOF32:
         case VSIR_OP_F32TOF16:
+        case VSIR_OP_FIRSTBIT_HI:
+        case VSIR_OP_FIRSTBIT_LO:
+        case VSIR_OP_FIRSTBIT_SHI:
         case VSIR_OP_FRC:
         case VSIR_OP_FTOI:
         case VSIR_OP_FTOU:

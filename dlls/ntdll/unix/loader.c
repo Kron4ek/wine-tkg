@@ -90,8 +90,6 @@
 #include "winioctl.h"
 #include "winternl.h"
 #include "unix_private.h"
-#include "esync.h"
-#include "fsync.h"
 #include "wine/list.h"
 #include "ntsyscalls.h"
 #include "wine/debug.h"
@@ -214,39 +212,16 @@ static void set_max_limit( int limit )
     if (!getrlimit( limit, &rlimit ))
     {
         rlimit.rlim_cur = rlimit.rlim_max;
-
-        if (!setrlimit( limit, &rlimit ))
-            return;
-
-#if defined(__APPLE__) && defined(RLIMIT_NOFILE) && defined(OPEN_MAX)
+        if (!setrlimit( limit, &rlimit )) return;
+#ifdef __APPLE__
         if (limit == RLIMIT_NOFILE)
         {
+            /* macOS before Big Sur fails if rlim_max is larger than maxfilesperproc */
             unsigned int nlimit = 0;
-            size_t size;
-
-            /* On Leopard, setrlimit(RLIMIT_NOFILE, ...) fails on attempts to set
-             * rlim_cur above OPEN_MAX (even if rlim_max > OPEN_MAX).
-             *
-             * In later versions it can be set to kern.maxfilesperproc (from
-             * sysctl). In Big Sur and later it can be set to rlim_max. */
-            size = sizeof(nlimit);
-            if (sysctlbyname("kern.maxfilesperproc", &nlimit, &size, NULL, 0) != 0 || nlimit < OPEN_MAX)
-                rlimit.rlim_cur = OPEN_MAX;
-            else
-                rlimit.rlim_cur = nlimit;
-
-            if (!setrlimit( limit, &rlimit ))
-            {
-                TRACE("Fallback 1: RLIMIT_NOFILE to kern.maxfilesperproc\n");
-                return;
-            }
-
-            rlimit.rlim_cur = OPEN_MAX;
-            if (!setrlimit( limit, &rlimit ))
-            {
-                TRACE("Fallback 2: RLIMIT_NOFILE to OPEN_MAX(%d)\n", OPEN_MAX);
-                return;
-            }
+            size_t size = sizeof(nlimit);
+            sysctlbyname("kern.maxfilesperproc", &nlimit, &size, NULL, 0);
+            rlimit.rlim_cur = max( nlimit, OPEN_MAX );
+            if (!setrlimit( RLIMIT_NOFILE, &rlimit )) return;
         }
 #endif
         WARN("Failed to raise limit %d\n", limit);
@@ -1239,34 +1214,6 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
 
 #endif  /* _WIN64 */
 
-BOOL ac_odyssey;
-BOOL fsync_simulate_sched_quantum;
-
-static void hacks_init(void)
-{
-    static const char upc_exe[] = "Ubisoft Game Launcher\\upc.exe";
-    static const char ac_odyssey_exe[] = "ACOdyssey.exe";
-    const char *env_str;
-
-    if (main_argc > 1 && strstr(main_argv[1], ac_odyssey_exe))
-    {
-        ERR("HACK: AC Odyssey sync tweak on.\n");
-        ac_odyssey = TRUE;
-        return;
-    }
-    env_str = getenv("WINE_FSYNC_SIMULATE_SCHED_QUANTUM");
-    if (env_str)
-        fsync_simulate_sched_quantum = !!atoi(env_str);
-    else if (main_argc > 1)
-        fsync_simulate_sched_quantum = !!strstr(main_argv[1], upc_exe);
-    if (fsync_simulate_sched_quantum)
-        ERR("HACK: Simulating sched quantum in fsync.\n");
-
-    env_str = getenv("SteamGameId");
-    if (env_str && !strcmp(env_str, "50130"))
-        setenv("WINESTEAMNOEXEC", "1", 0);
-}
-
 
 static inline char *prepend( char *buffer, const char *str, size_t len )
 {
@@ -2004,12 +1951,8 @@ static void start_main_thread(void)
     TEB *teb = virtual_alloc_first_teb();
 
     signal_init_threading();
-    signal_alloc_thread( teb );
     dbg_init();
     startup_info_size = server_init_process();
-    hacks_init();
-    fsync_init();
-    esync_init();
     virtual_map_user_shared_data();
     init_cpu_info();
     init_files();

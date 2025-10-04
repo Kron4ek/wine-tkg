@@ -85,23 +85,24 @@ struct incl_file
     struct strarray    importlibdeps; /* importlib dependencies */
 };
 
-#define FLAG_GENERATED      0x000001  /* generated file */
-#define FLAG_INSTALL        0x000002  /* file to install */
-#define FLAG_TESTDLL        0x000004  /* file is part of a TESTDLL resource */
-#define FLAG_IDL_PROXY      0x000100  /* generates a proxy (_p.c) file */
-#define FLAG_IDL_CLIENT     0x000200  /* generates a client (_c.c) file */
-#define FLAG_IDL_SERVER     0x000400  /* generates a server (_s.c) file */
-#define FLAG_IDL_IDENT      0x000800  /* generates an ident (_i.c) file */
-#define FLAG_IDL_REGISTER   0x001000  /* generates a registration (_r.res) file */
-#define FLAG_IDL_TYPELIB    0x002000  /* generates a typelib (_l.res) file */
-#define FLAG_IDL_REGTYPELIB 0x004000  /* generates a registered typelib (_t.res) file */
-#define FLAG_IDL_HEADER     0x008000  /* generates a header (.h) file */
-#define FLAG_RC_PO          0x010000  /* rc file contains translations */
-#define FLAG_RC_HEADER      0x020000  /* rc file is a header */
-#define FLAG_C_IMPLIB       0x040000  /* file is part of an import library */
-#define FLAG_C_UNIX         0x080000  /* file is part of a Unix library */
-#define FLAG_SFD_FONTS      0x100000  /* sfd file generated bitmap fonts */
-#define FLAG_ARM64EC_X64    0x200000  /* use x86_64 object on ARM64EC */
+#define FLAG_GENERATED      0x00000001  /* generated file */
+#define FLAG_INSTALL        0x00000002  /* file to install */
+#define FLAG_TESTDLL        0x00000004  /* file is part of a TESTDLL resource */
+#define FLAG_IDL_PROXY      0x00000100  /* generates a proxy (_p.c) file */
+#define FLAG_IDL_CLIENT     0x00000200  /* generates a client (_c.c) file */
+#define FLAG_IDL_SERVER     0x00000400  /* generates a server (_s.c) file */
+#define FLAG_IDL_IDENT      0x00000800  /* generates an ident (_i.c) file */
+#define FLAG_IDL_REGISTER   0x00001000  /* generates a registration (_r.res) file */
+#define FLAG_IDL_TYPELIB    0x00002000  /* generates a typelib (_l.res) file */
+#define FLAG_IDL_REGTYPELIB 0x00004000  /* generates a registered typelib (_t.res) file */
+#define FLAG_IDL_HEADER     0x00008000  /* generates a header (.h) file */
+#define FLAG_IDL_WINMD      0x00010000  /* generates a metadata (.winmd) file */
+#define FLAG_RC_PO          0x00100000  /* rc file contains translations */
+#define FLAG_RC_HEADER      0x00200000  /* rc file is a header */
+#define FLAG_SFD_FONTS      0x00400000  /* sfd file generated bitmap fonts */
+#define FLAG_C_IMPLIB       0x01000000  /* file is part of an import library */
+#define FLAG_C_UNIX         0x02000000  /* file is part of a Unix library */
+#define FLAG_ARM64EC_X64    0x04000000  /* use x86_64 object on ARM64EC */
 
 static const struct
 {
@@ -1014,6 +1015,7 @@ static void parse_pragma_directive( struct file *source, char *str )
             else if (!strcmp( flag, "typelib" )) source->flags |= FLAG_IDL_TYPELIB;
             else if (!strcmp( flag, "register" )) source->flags |= FLAG_IDL_REGISTER;
             else if (!strcmp( flag, "regtypelib" )) source->flags |= FLAG_IDL_REGTYPELIB;
+            else if (!strcmp( flag, "winmd" )) source->flags |= FLAG_IDL_WINMD;
         }
         else if (strendswith( source->name, ".rc" ))
         {
@@ -1959,6 +1961,11 @@ static void add_generated_sources( struct makefile *make )
         {
             add_generated_source( make, replace_extension( source->name, ".idl", ".h" ), NULL, 0 );
         }
+        if (source->file->flags & FLAG_IDL_WINMD)
+        {
+            file = add_generated_source( make, replace_extension( source->name, ".idl", ".winmd" ), NULL, 0 );
+            file->file->flags |= source->file->flags & FLAG_INSTALL;
+        }
         if (!source->file->flags && strendswith( source->name, ".idl" ))
         {
             if (!strncmp( source->name, "wine/", 5 )) continue;
@@ -2394,8 +2401,8 @@ static struct strarray add_import_libs( const struct makefile *make, struct stra
 /*******************************************************************
  *         add_install_rule
  */
-static void add_install_rule( struct makefile *make, const char *target, unsigned int arch,
-                              const char *file, const char *dest )
+static void add_install_rule( struct makefile *make, const char *target, char cmd, unsigned int arch,
+                              const char *file, const char *dir, const char *dst )
 {
     unsigned int i;
 
@@ -2407,8 +2414,9 @@ static void add_install_rule( struct makefile *make, const char *target, unsigne
             strarray_exists( top_install[i], make->obj_dir ) ||
             strarray_exists( top_install[i], obj_dir_path( make, target )))
         {
+            if (!dst) dst = get_basename( file );
             strarray_add( &make->install_rules[i], file );
-            strarray_add( &make->install_rules[i], dest );
+            strarray_add( &make->install_rules[i], strmake( "%c%s/%s", cmd, dir, dst ));
             break;
         }
     }
@@ -2416,15 +2424,82 @@ static void add_install_rule( struct makefile *make, const char *target, unsigne
 
 
 /*******************************************************************
- *         get_include_install_path
- *
- * Determine the installation path for a given include file.
+ *         install_data_file
  */
-static const char *get_include_install_path( const char *name )
+static void install_data_file( struct makefile *make, const char *target,
+                               const char *obj, const char *dir, const char *dst )
 {
-    if (!strncmp( name, "wine/", 5 )) return name + 5;
-    if (!strncmp( name, "msvcrt/", 7 )) return name;
-    return strmake( "windows/%s", name );
+    add_install_rule( make, target, 'd', 0, obj, dir, dst );
+}
+
+
+/*******************************************************************
+ *         install_data_file_src
+ */
+static void install_data_file_src( struct makefile *make, const char *target,
+                                   const char *src, const char *dir )
+{
+    add_install_rule( make, target, 'D', 0, src, dir, NULL );
+}
+
+
+/*******************************************************************
+ *         install_header
+ */
+static void install_header( struct makefile *make, const char *target, const char *obj )
+{
+    const char *dir, *end;
+    bool is_obj = !!obj;
+
+    if (!obj) obj = target;
+    if (!strncmp( obj, "wine/", 5 )) dir = "$(includedir)";
+    else if (!strncmp( obj, "msvcrt/", 7 )) dir = "$(includedir)/wine";
+    else dir = "$(includedir)/wine/windows";
+    if ((end = strrchr( obj, '/' ))) dir = strmake( "%s/%.*s", dir, (int)(end - obj), obj );
+
+    if (is_obj)
+        install_data_file( make, target, obj, dir, NULL );
+    else
+        install_data_file_src( make, target, obj, dir );
+}
+
+
+/*******************************************************************
+ *         install_program
+ */
+static void install_program( struct makefile *make, const char *target,
+                             unsigned int arch, const char *obj, const char *dir )
+{
+    add_install_rule( make, target, '0' + arch, 0, obj, dir, NULL );
+}
+
+
+/*******************************************************************
+ *         install_script
+ */
+static void install_script( struct makefile *make, const char *src )
+{
+    add_install_rule( make, src, 'S', 0, src, "$(bindir)", NULL );
+}
+
+
+/*******************************************************************
+ *         install_tool
+ */
+static void install_tool( struct makefile *make, const char *target,
+                          const char *obj, const char *dir, const char *dst )
+{
+    add_install_rule( make, target, 't', 0, obj, dir, dst );
+}
+
+
+/*******************************************************************
+ *         install_symlink
+ */
+static void install_symlink( struct makefile *make, const char *target,
+                             const char *obj, const char *dir, const char *dst )
+{
+    add_install_rule( make, target, 'y', 0, obj, dir, dst );
 }
 
 
@@ -2809,8 +2884,7 @@ static void output_source_h( struct makefile *make, struct incl_file *source, co
     if (source->file->flags & FLAG_GENERATED)
         strarray_add( &make->all_targets[0], source->name );
     else if ((source->file->flags & FLAG_INSTALL) || strncmp( source->name, "wine/", 5 ))
-        add_install_rule( make, source->name, 0, source->name,
-                          strmake( "D$(includedir)/wine/%s", get_include_install_path( source->name ) ));
+        install_header( make, source->name, NULL );
 }
 
 
@@ -2918,17 +2992,21 @@ static void output_source_idl( struct makefile *make, struct incl_file *source, 
     if (source->file->flags & FLAG_IDL_PROXY) strarray_add( &make->dlldata_files, source->name );
     if (source->file->flags & FLAG_INSTALL)
     {
-        add_install_rule( make, source->name, 0, xstrdup( source->name ),
-                          strmake( "D$(includedir)/wine/%s.idl", get_include_install_path( obj ) ));
+        install_header( make, source->name, NULL );
         if (source->file->flags & FLAG_IDL_HEADER)
-            add_install_rule( make, source->name, 0, strmake( "%s.h", obj ),
-                              strmake( "d$(includedir)/wine/%s.h", get_include_install_path( obj ) ));
+            install_header( make, source->name, strmake( "%s.h", obj ));
     }
     if (source->file->flags & FLAG_IDL_HEADER)
     {
         dest = strmake( "%s.h", obj );
         strarray_add( &headers, dest );
         if (!find_src_file( make, dest )) strarray_add( &make->clean_files, dest );
+    }
+    if (source->file->flags & FLAG_IDL_WINMD)
+    {
+        dest = strmake( "%s.winmd", obj );
+        strarray_add( &headers, dest );
+        strarray_add( &make->clean_files, dest );
     }
 
     for (i = 0; i < ARRAY_SIZE(idl_outputs); i++)
@@ -2987,7 +3065,7 @@ static void output_source_idl( struct makefile *make, struct incl_file *source, 
             {
                 int native_arch = native_archs[arch] ? native_archs[arch] : arch;
                 struct makefile *submake = find_importlib_module( source->importlibdeps.str[i] );
-                const char *module = strmake( "%s%s", arch_pe_dirs[native_arch], submake->module );
+                const char *module = strmake( "%s/%s", arch_pe_dirs[native_arch], submake->module );
                 output_filename( obj_dir_path( submake, module ));
             }
             output( "\n" );
@@ -3005,10 +3083,8 @@ static void output_source_x( struct makefile *make, struct incl_file *source, co
     output( "\t%s%s -H -o $@ %s\n", cmd_prefix( "GEN" ), make_xftmpl, source->filename );
     if (source->file->flags & FLAG_INSTALL)
     {
-        add_install_rule( make, source->name, 0, source->name,
-                          strmake( "D$(includedir)/wine/%s", get_include_install_path( source->name ) ));
-        add_install_rule( make, source->name, 0, strmake( "%s.h", obj ),
-                          strmake( "d$(includedir)/wine/%s.h", get_include_install_path( obj ) ));
+        install_header( make, source->name, NULL );
+        install_header( make, source->name, strmake( "%s.h", obj ));
     }
 }
 
@@ -3032,7 +3108,7 @@ static void output_source_sfd( struct makefile *make, struct incl_file *source, 
     }
     if (source->file->flags & FLAG_INSTALL)
     {
-        add_install_rule( make, source->name, 0, ttf_obj, strmake( "D$(datadir)/wine/fonts/%s", ttf_obj ));
+        install_data_file_src( make, source->name, ttf_obj, "$(datadir)/wine/fonts" );
         output_srcdir_symlink( make, ttf_obj );
     }
 
@@ -3048,7 +3124,7 @@ static void output_source_sfd( struct makefile *make, struct incl_file *source, 
             strarray_add( &make->all_targets[0], xstrdup( font ));
             output( "%s: %s %s\n", obj_dir_path( make, font ), sfnt2fon, ttf_file );
             output( "\t%s%s -q -o $@ %s %s\n", cmd_prefix( "GEN" ), sfnt2fon, ttf_file, args );
-            add_install_rule( make, source->name, 0, xstrdup(font), strmake( "d$(datadir)/wine/fonts/%s", font ));
+            install_data_file( make, source->name, font, "$(datadir)/wine/fonts", NULL );
         }
     }
 }
@@ -3083,8 +3159,7 @@ static void output_source_svg( struct makefile *make, struct incl_file *source, 
  */
 static void output_source_nls( struct makefile *make, struct incl_file *source, const char *obj )
 {
-    add_install_rule( make, source->name, 0, source->name,
-                      strmake( "D$(datadir)/wine/nls/%s", source->name ));
+    install_data_file_src( make, source->name, source->name, "$(datadir)/wine/nls" );
     output_srcdir_symlink( make, strmake( "%s.nls", obj ));
 }
 
@@ -3094,8 +3169,7 @@ static void output_source_nls( struct makefile *make, struct incl_file *source, 
  */
 static void output_source_desktop( struct makefile *make, struct incl_file *source, const char *obj )
 {
-    add_install_rule( make, source->name, 0, source->name,
-                      strmake( "D$(datadir)/applications/%s", source->name ));
+    install_data_file_src( make, source->name, source->name, "$(datadir)/applications" );
 }
 
 
@@ -3130,13 +3204,11 @@ static void output_source_in( struct makefile *make, struct incl_file *source, c
             dir = strmake( "$(mandir)/%s/man%s", lang, section );
         }
         else dir = strmake( "$(mandir)/man%s", section );
-        add_install_rule( make, dest, 0, obj, strmake( "d%s/%s.%s", dir, dest, section ));
+        install_data_file( make, dest, obj, dir, strmake( "%s.%s", dest, section ));
         symlinks = get_expanded_file_local_var( make, dest, "SYMLINKS" );
         for (i = 0; i < symlinks.count; i++)
-            add_install_rule( make, symlinks.str[i], 0, strmake( "%s.%s", dest, section ),
-                              strmake( "y%s/%s.%s", dir, symlinks.str[i], section ));
-        free( dest );
-        free( dir );
+            install_symlink( make, symlinks.str[i], strmake( "%s.%s", dest, section ), dir,
+                              strmake( "%s.%s", symlinks.str[i], section ));
     }
     strarray_add( &make->in_files, obj );
     strarray_add( &make->all_targets[0], obj );
@@ -3145,7 +3217,7 @@ static void output_source_in( struct makefile *make, struct incl_file *source, c
     output( "%s:", obj_dir_path( make, obj ));
     output_filenames( source->dependencies );
     output( "\n" );
-    add_install_rule( make, obj, 0, obj, strmake( "d$(datadir)/wine/%s", obj ));
+    install_data_file( make, obj, obj, "$(datadir)/wine", NULL );
 }
 
 
@@ -3244,6 +3316,17 @@ static void output_source_xml( struct makefile *make, struct incl_file *source, 
         output( "%s-client-protocol.h: %s\n", obj_dir_path( make, obj ), source->filename );
         output( "\t%s%s client-header %s $@\n", cmd_prefix( "GEN" ), wayland_scanner, source->filename );
     }
+}
+
+
+/*******************************************************************
+ *         output_source_winmd
+ */
+static void output_source_winmd( struct makefile *make, struct incl_file *source, const char *obj )
+{
+    if (source->file->flags & FLAG_GENERATED) strarray_add( &make->all_targets[0], source->name );
+    if (source->file->flags & FLAG_INSTALL) install_data_file( make, source->name, source->name,
+                                                               "$(datadir)/wine/winmd", NULL );
 }
 
 
@@ -3458,6 +3541,7 @@ static const struct
     { "x", output_source_x },
     { "spec", output_source_spec },
     { "xml", output_source_xml },
+    { "winmd", output_source_winmd },
     { NULL, output_source_default }
 };
 
@@ -3468,12 +3552,12 @@ static const struct
 static void output_fake_module( struct makefile *make, const char *spec_file )
 {
     unsigned int arch = 0;  /* fake modules are always native */
-    const char *name = strmake( "%s%s", arch_pe_dirs[arch], make->module );
+    const char *name = strmake( "%s/%s", arch_pe_dirs[arch], make->module );
 
     if (make->disabled[arch]) return;
 
     strarray_add( &make->all_targets[arch], name );
-    add_install_rule( make, make->module, arch, name, strmake( "d$(libdir)/wine/%s", name ));
+    install_data_file( make, make->module, name, strmake( "$(libdir)/wine/%s", arch_pe_dirs[arch] ), NULL );
 
     output( "%s:", obj_dir_path( make, name ));
     if (spec_file) output_filename( spec_file );
@@ -3537,6 +3621,8 @@ static void output_module( struct makefile *make, unsigned int arch )
                 if (import) strarray_add( &all_libs, strmake( "%s%s", delay_load_flags[arch], import->module ));
             }
         }
+        if (!make->disabled[link_arch]) install_program( make, make->module, arch,
+                                                         module_name, arch_install_dirs[arch] );
     }
     else
     {
@@ -3544,18 +3630,12 @@ static void output_module( struct makefile *make, unsigned int arch )
         if (make->disabled[arch]) return;
         link_arch = arch;
 
-        module_name = strmake( "%s%s", arch_pe_dirs[arch], make->module );
+        module_name = strmake( "%s/%s", arch_pe_dirs[arch], make->module );
+        install_data_file( make, make->module, module_name,
+                           strmake( "$(libdir)/wine/%s", arch_pe_dirs[arch] ), NULL );
     }
 
     strarray_add( &make->all_targets[link_arch], module_name );
-    if (make->data_only)
-        add_install_rule( make, make->module, link_arch, module_name,
-                          strmake( "d$(libdir)/wine/%s%s", arch_pe_dirs[arch], make->module ));
-    else
-        add_install_rule( make, make->module, link_arch, module_name,
-                          strmake( "%c%s%s%s", '0' + arch, arch_install_dirs[arch], make->module,
-                                   dll_ext[arch] ));
-
     output( "%s:", obj_dir_path( make, module_name ));
     if (spec_file) output_filename( spec_file );
     output_filenames_obj_dir( make, make->object_files[arch] );
@@ -3616,8 +3696,8 @@ static void output_import_lib( struct makefile *make, unsigned int arch )
     if (hybrid_arch) output_filenames_obj_dir( make, make->implib_files[hybrid_arch] );
     output( "\n" );
 
-    add_install_rule( make, make->importlib, arch, name,
-                      strmake( "d%slib%s.a", arch_install_dirs[arch], make->importlib ));
+    if (make->disabled[arch]) return;
+    install_data_file( make, make->importlib, name, arch_install_dirs[arch], NULL );
 }
 
 
@@ -3633,8 +3713,7 @@ static void output_unix_lib( struct makefile *make )
     if (make->disabled[arch]) return;
 
     strarray_add( &make->all_targets[arch], make->unixlib );
-    add_install_rule( make, make->module, arch, make->unixlib,
-                      strmake( "p%s%s", arch_install_dirs[arch], make->unixlib ));
+    install_program( make, make->module, arch, make->unixlib, arch_install_dirs[arch] );
     output( "%s:", obj_dir_path( make, make->unixlib ));
     output_filenames_obj_dir( make, make->unixobj_files );
     output_filenames( unix_deps );
@@ -3672,8 +3751,7 @@ static void output_static_lib( struct makefile *make, unsigned int arch )
     if (hybrid_arch) output_filenames_obj_dir( make, make->object_files[hybrid_arch] );
     if (!arch) output_filenames_obj_dir( make, make->unixobj_files );
     output( "\n" );
-    add_install_rule( make, make->staticlib, arch, name,
-                      strmake( "d%s%s", arch_install_dirs[arch], make->staticlib ));
+    install_data_file( make, make->staticlib, name, arch_install_dirs[arch], NULL );
 }
 
 
@@ -3803,11 +3881,11 @@ static void output_programs( struct makefile *make )
         }
         strarray_addall( &make->all_targets[arch], symlinks );
 
-        install_dir = !strcmp( make->obj_dir, "loader" ) ? arch_install_dirs[arch] : "$(bindir)/";
-        add_install_rule( make, make->programs.str[i], arch, program, strmake( "p%s%s", install_dir, program ));
+        install_dir = !strcmp( make->obj_dir, "loader" ) ? arch_install_dirs[arch] : "$(bindir)";
+        install_program( make, make->programs.str[i], arch, program, install_dir );
         for (j = 0; j < symlinks.count; j++)
-            add_install_rule( make, symlinks.str[j], arch, program,
-                              strmake( "y$(bindir)/%s%s", symlinks.str[j], exe_ext ));
+            install_symlink( make, symlinks.str[j], program, "$(bindir)",
+                             strmake( "%s%s", symlinks.str[j], exe_ext ));
     }
 }
 
@@ -4024,8 +4102,10 @@ static void output_sources( struct makefile *make )
         if (make->is_exe && !make->is_win16 && unix_lib_supported && strendswith( make->module, ".exe" ))
         {
             char *binary = replace_extension( make->module, ".exe", "" );
-            add_install_rule( make, binary, 0, "wine",
-                              strmake( "%c$(bindir)/%s", strcmp( ln_s, "ln -s" ) ? 't' : 'y', binary ));
+            if (!strcmp( ln_s, "ln -s" ))
+                install_symlink( make, binary, "wine", "$(bindir)", binary );
+            else
+                install_tool( make, binary, "wine", "$(bindir)", binary );
         }
     }
     else if (make->testdll)
@@ -4036,8 +4116,7 @@ static void output_sources( struct makefile *make )
     else if (make->programs.count) output_programs( make );
 
     for (i = 0; i < make->scripts.count; i++)
-        add_install_rule( make, make->scripts.str[i], 0, make->scripts.str[i],
-                          strmake( "S$(bindir)/%s", make->scripts.str[i] ));
+        install_script( make, make->scripts.str[i] );
 
     for (i = 0; i < make->extra_targets.count; i++)
         if (strarray_exists( make->dependencies, obj_dir_path( make, make->extra_targets.str[i] )))
@@ -4750,8 +4829,7 @@ int main( int argc, char *argv[] )
     }
 
     arch_dirs[0] = "";
-    arch_pe_dirs[0] = strmake( "%s-windows/", archs.str[0] );
-    arch_install_dirs[0] = unix_lib_supported ? strmake( "$(libdir)/wine/%s-unix/", archs.str[0] ) : "$(libdir)/wine/";
+    arch_install_dirs[0] = unix_lib_supported ? strmake( "$(libdir)/wine/%s-unix", archs.str[0] ) : "$(libdir)/wine";
     strip_progs[0] = "\"$(STRIP)\"";
 
     for (arch = 1; arch < archs.count; arch++)
@@ -4760,14 +4838,14 @@ int main( int argc, char *argv[] )
         strarray_add( &target_flags[arch], "-b" );
         strarray_add( &target_flags[arch], target );
         arch_dirs[arch] = strmake( "%s-windows/", archs.str[arch] );
-        arch_pe_dirs[arch] = arch_dirs[arch];
-        arch_install_dirs[arch] = strmake( "$(libdir)/wine/%s", arch_dirs[arch] );
+        arch_install_dirs[arch] = strmake( "$(libdir)/wine/%s-windows", archs.str[arch] );
         strip_progs[arch] = get_expanded_arch_var( top_makefile, "STRIP", arch );
         dll_ext[arch] = "";
     }
 
     for (arch = 0; arch < archs.count; arch++)
     {
+        arch_pe_dirs[arch] = strmake( "%s-windows", archs.str[arch] );
         extra_cflags[arch] = get_expanded_arch_var_array( top_makefile, "EXTRACFLAGS", arch );
         extra_cflags_extlib[arch] = remove_warning_flags( extra_cflags[arch] );
         disabled_dirs[arch] = get_expanded_arch_var_array( top_makefile, "DISABLED_SUBDIRS", arch );

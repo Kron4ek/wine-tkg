@@ -59,11 +59,13 @@ WCHAR quals[MAXSTRING], param1[MAXSTRING], param2[MAXSTRING];
 FOR_CONTEXT *forloopcontext; /* The 'for' loop context */
 BOOL delayedsubst = FALSE; /* The current delayed substitution setting */
 
-BOOL echo_mode = TRUE;
-
 WCHAR anykey[100], version_string[100];
 
 static BOOL unicodeOutput = FALSE;
+
+/* input handling */
+static HANDLE console_input;
+BOOL echo_mode = TRUE;
 
 /* Variables pertaining to paging */
 static BOOL paged_mode;
@@ -74,7 +76,6 @@ static int max_height;
 static HANDLE control_c_event;
 
 #define MAX_WRITECONSOLE_SIZE 65535
-
 
 static BOOL is_directory_operation(WCHAR *inputBuffer)
 {
@@ -477,79 +478,35 @@ static char *get_file_buffer(void)
 }
 
 /*******************************************************************
- * WCMD_output_asis_len - send output to current standard output
+ * WCMD_output_unbuffered - send output to a given handle
  *
- * Output a formatted unicode string. Ideally this will go to the console
- *  and hence required WriteConsoleW to output it, however if file i/o is
- *  redirected, it needs to be WriteFile'd using OEM (not ANSI) format
  */
-static void WCMD_output_asis_len(const WCHAR *message, DWORD len, HANDLE device)
+static void WCMD_output_unbuffered(const WCHAR *message, DWORD len, HANDLE handle)
 {
-    DWORD   nOut= 0;
-    DWORD   res = 0;
+    BOOL usedDefaultChar = FALSE;
+    DWORD convertedChars;
+    char *buffer;
+    DWORD nOut;
 
     /* If nothing to write, return (MORE does this sometimes) */
+    if ((int)len == -1) len = wcslen(message);
     if (!len) return;
 
     /* Try to write as unicode assuming it is to a console */
-    res = WriteConsoleW(device, message, len, &nOut, NULL);
-
-    /* If writing to console fails, assume it's file
-       i/o so convert to OEM codepage and output                  */
-    if (!res) {
-      BOOL usedDefaultChar = FALSE;
-      DWORD convertedChars;
-      char *buffer;
-
-      if (!unicodeOutput) {
-        UINT code_page;
-
+    if (WriteConsoleW(handle, message, len, &nOut, NULL)) return;
+    if (!unicodeOutput)
+    {
         if (!(buffer = get_file_buffer()))
             return;
 
-        /* On Wine, GetConsoleOutputCP function fails
-           if Shell-no-window console is used */
-        code_page = GetConsoleOutputCP();
-        if (!code_page)
-            code_page = GetOEMCP();
-
         /* Convert to OEM, then output */
-        convertedChars = WideCharToMultiByte(code_page, 0, message,
-                            len, buffer, MAX_WRITECONSOLE_SIZE,
-                            "?", &usedDefaultChar);
-        WriteFile(device, buffer, convertedChars,
-                  &nOut, FALSE);
-      } else {
-        WriteFile(device, message, len*sizeof(WCHAR),
-                  &nOut, FALSE);
-      }
+        convertedChars = WideCharToMultiByte(GetOEMCP(), 0, message,
+                                             len, buffer, MAX_WRITECONSOLE_SIZE,
+                                             "?", &usedDefaultChar);
+        WriteFile(handle, buffer, convertedChars, &nOut, FALSE);
     }
-    return;
-}
-
-/*******************************************************************
- * WCMD_output - send output to current standard output device.
- *
- */
-
-void WINAPIV WCMD_output (const WCHAR *format, ...) {
-
-  va_list ap;
-  WCHAR* string;
-  DWORD len;
-
-  va_start(ap,format);
-  string = NULL;
-  len = FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ALLOCATE_BUFFER,
-                       format, 0, 0, (LPWSTR)&string, 0, &ap);
-  va_end(ap);
-  if (len == 0 && GetLastError() != ERROR_NO_WORK_DONE)
-    WINE_FIXME("Could not format string: le=%lu, fmt=%s\n", GetLastError(), wine_dbgstr_w(format));
-  else
-  {
-    WCMD_output_asis_len(string, len, GetStdHandle(STD_OUTPUT_HANDLE));
-    LocalFree(string);
-  }
+    else
+        WriteFile(handle, message, len * sizeof(WCHAR), &nOut, FALSE);
 }
 
 /*******************************************************************
@@ -557,24 +514,24 @@ void WINAPIV WCMD_output (const WCHAR *format, ...) {
  *
  */
 
-void WINAPIV WCMD_output_stderr (const WCHAR *format, ...) {
+void WINAPIV WCMD_output_stderr(const WCHAR *format, ...)
+{
+    va_list ap;
+    WCHAR* string;
+    DWORD len;
 
-  va_list ap;
-  WCHAR* string;
-  DWORD len;
-
-  va_start(ap,format);
-  string = NULL;
-  len = FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ALLOCATE_BUFFER,
-                       format, 0, 0, (LPWSTR)&string, 0, &ap);
-  va_end(ap);
-  if (len == 0 && GetLastError() != ERROR_NO_WORK_DONE)
-    WINE_FIXME("Could not format string: le=%lu, fmt=%s\n", GetLastError(), wine_dbgstr_w(format));
-  else
-  {
-    WCMD_output_asis_len(string, len, GetStdHandle(STD_ERROR_HANDLE));
-    LocalFree(string);
-  }
+    va_start(ap,format);
+    string = NULL;
+    len = FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ALLOCATE_BUFFER,
+                         format, 0, 0, (LPWSTR)&string, 0, &ap);
+    va_end(ap);
+    if (len == 0 && GetLastError() != ERROR_NO_WORK_DONE)
+        WINE_FIXME("Could not format string: le=%lu, fmt=%s\n", GetLastError(), wine_dbgstr_w(format));
+    else
+    {
+        WCMD_output_unbuffered(string, len, GetStdHandle(STD_ERROR_HANDLE));
+        LocalFree(string);
+    }
 }
 
 /*******************************************************************
@@ -602,17 +559,14 @@ WCHAR* WINAPIV WCMD_format_string (const WCHAR *format, ...)
 
 void WCMD_enter_paged_mode(const WCHAR *msg)
 {
-  CONSOLE_SCREEN_BUFFER_INFO consoleInfo;
+    CONSOLE_SCREEN_BUFFER_INFO consoleInfo;
 
-  if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &consoleInfo)) {
     /* Use console window dimensions, not screen buffer dimensions. */
-    max_height = consoleInfo.srWindow.Bottom - consoleInfo.srWindow.Top + 1;
-  } else {
-    max_height = 25;
-  }
-  paged_mode = TRUE;
-  line_count = 0;
-  pagedMessage = (msg==NULL)? anykey : msg;
+    max_height = GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &consoleInfo) ?
+        consoleInfo.srWindow.Bottom - consoleInfo.srWindow.Top + 1 : 65535;
+    paged_mode = TRUE;
+    line_count = 0;
+    pagedMessage = msg ? msg : anykey;
 }
 
 void WCMD_leave_paged_mode(void)
@@ -647,26 +601,25 @@ static BOOL has_pending_char_events(HANDLE h)
  */
 RETURN_CODE WCMD_wait_for_input(HANDLE hIn)
 {
+    HANDLE h[2] = {hIn, control_c_event};
     RETURN_CODE return_code;
     DWORD oldmode;
     DWORD count;
-    WCHAR key;
+    char key;
 
-    return_code = ERROR_INVALID_FUNCTION;
+    return_code = ERROR_SIGNAL_PENDING; /* some never returned value */
     if (GetConsoleMode(hIn, &oldmode))
     {
-        HANDLE h[2] = {hIn, control_c_event};
-
         SetConsoleMode(hIn, oldmode & ~ENABLE_LINE_INPUT);
         FlushConsoleInputBuffer(hIn);
-        while (return_code == ERROR_INVALID_FUNCTION)
+        while (return_code == ERROR_SIGNAL_PENDING)
         {
             switch (WaitForMultipleObjects(2, h, FALSE, INFINITE))
             {
             case WAIT_OBJECT_0:
                 if (has_pending_char_events(hIn))
                     return_code = NO_ERROR;
-                /* will make both hIn no long signaled, and also process the pending input record */
+                /* will make both hIn no longer signaled, and also process the pending input record */
                 FlushConsoleInputBuffer(hIn);
                 break;
             case WAIT_OBJECT_0 + 1:
@@ -677,78 +630,87 @@ RETURN_CODE WCMD_wait_for_input(HANDLE hIn)
         }
         SetConsoleMode(hIn, oldmode);
     }
-    else if (WCMD_ReadFile(hIn, &key, 1, &count) && count)
-        return_code = NO_ERROR;
     else
-        return_code = ERROR_INVALID_FUNCTION;
-    return return_code;
-}
-
-/***************************************************************************
- * WCMD_ReadFile
- *
- *	Read characters in from a console/file, returning result in Unicode
- */
-BOOL WCMD_ReadFile(const HANDLE hIn, WCHAR *intoBuf, const DWORD maxChars, LPDWORD charsRead)
-{
-    DWORD numRead;
-    char *buffer;
-
-    /* Try to read from console as Unicode */
-    if (VerifyConsoleIoHandle(hIn) && ReadConsoleW(hIn, intoBuf, maxChars, charsRead, NULL)) return TRUE;
-
-    /* We assume it's a file handle and read then convert from assumed OEM codepage */
-    if (!(buffer = get_file_buffer()))
-        return FALSE;
-
-    if (!ReadFile(hIn, buffer, maxChars, &numRead, NULL))
-        return FALSE;
-
-    *charsRead = MultiByteToWideChar(GetConsoleCP(), 0, buffer, numRead, intoBuf, maxChars);
-
-    return TRUE;
-}
-
-/*******************************************************************
- * WCMD_output_asis_handle
- *
- * Send output to specified handle without formatting e.g. when message contains '%'
- */
-static RETURN_CODE WCMD_output_asis_handle(DWORD std_handle, const WCHAR *message)
-{
-    RETURN_CODE return_code = NO_ERROR;
-    const WCHAR* ptr;
-    HANDLE handle = GetStdHandle(std_handle);
-
-    if (paged_mode)
     {
-        do
+        while (return_code == ERROR_SIGNAL_PENDING)
         {
-            for (ptr = message; *ptr && *ptr != L'\n'; ptr++) {}
-            if (*ptr == L'\n') ptr++;
-            WCMD_output_asis_len(message, ptr - message, handle);
-            if (++line_count >= max_height - 1)
+            switch (WaitForMultipleObjects(2, h, FALSE, INFINITE))
             {
-                line_count = 0;
-                WCMD_output_asis_len(pagedMessage, lstrlenW(pagedMessage), handle);
-                return_code = WCMD_wait_for_input(GetStdHandle(STD_INPUT_HANDLE));
-                WCMD_output_asis_len(L"\r\n", 2, handle);
+            case WAIT_OBJECT_0:
+                if (ReadFile(hIn, &key, 1, &count, NULL) && count)
+                    return_code = NO_ERROR;
+                else
+                    return_code = ERROR_INVALID_FUNCTION;
+                break;
+            case WAIT_OBJECT_0 + 1:
+                return_code = STATUS_CONTROL_C_EXIT;
+                break;
+            default: break;
             }
-        } while (*(message = ptr) && !return_code);
-    } else
-        WCMD_output_asis_len(message, lstrlenW(message), handle);
+        }
+    }
 
     return return_code;
+}
+
+RETURN_CODE WCMD_wait_for_console_input(void)
+{
+    return WCMD_wait_for_input(console_input);
 }
 
 /*******************************************************************
  * WCMD_output_asis
  *
- * Send output to current standard output device, without formatting
- * e.g. when message contains '%'
+ * Send output to OUTPUT, buffering the content.
  */
-RETURN_CODE WCMD_output_asis (const WCHAR *message) {
-    return WCMD_output_asis_handle(STD_OUTPUT_HANDLE, message);
+RETURN_CODE WCMD_output_asis(const WCHAR *message)
+{
+    static WCHAR out_buffer[MAXSTRING];
+    RETURN_CODE return_code = NO_ERROR;
+    const WCHAR* ptr;
+    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD dummy;
+    BOOL is_output_console = GetConsoleMode(handle, &dummy);
+
+    if (!message) /* Hack for flushing */
+    {
+        WCMD_output_unbuffered(out_buffer, -1, handle);
+        out_buffer[0] = L'\0';
+    }
+    for (ptr = message; ptr && return_code == NO_ERROR; )
+    {
+        WCHAR *next = wcschr(ptr, L'\n');
+        if (next)
+        {
+            next++;
+            WCMD_output_unbuffered(out_buffer, -1, handle);
+            out_buffer[0] = L'\0';
+            WCMD_output_unbuffered(ptr, next - ptr, handle);
+            if (paged_mode && ++line_count >= max_height - 1)
+            {
+                line_count = 0;
+                if (is_output_console)
+                    WCMD_output_unbuffered(pagedMessage, -1, handle);
+                return_code = WCMD_wait_for_input(console_input);
+                if (is_output_console)
+                    WCMD_output_unbuffered(L"\r", 1, handle);
+            }
+        }
+        else
+        {
+            size_t fblen = wcslen(out_buffer), len = wcslen(ptr);
+            if (len && (fblen + len + 1) < ARRAY_SIZE(out_buffer))
+                memcpy(out_buffer + fblen, ptr, (len + 1) * sizeof(WCHAR));
+        }
+        ptr = next;
+    }
+
+    return return_code;
+}
+
+RETURN_CODE WCMD_output_flush(void)
+{
+    return WCMD_output_asis(NULL);
 }
 
 /*******************************************************************
@@ -757,8 +719,34 @@ RETURN_CODE WCMD_output_asis (const WCHAR *message) {
  * Send output to current standard error device, without formatting
  * e.g. when message contains '%'
  */
-RETURN_CODE WCMD_output_asis_stderr (const WCHAR *message) {
-    return WCMD_output_asis_handle(STD_ERROR_HANDLE, message);
+RETURN_CODE WCMD_output_asis_stderr(const WCHAR *message)
+{
+    WCMD_output_unbuffered(message, -1, GetStdHandle(STD_ERROR_HANDLE));
+    return NO_ERROR;
+}
+
+/*******************************************************************
+ * WCMD_output - send formated output to current standard output device.
+ *
+ */
+void WINAPIV WCMD_output(const WCHAR *format, ...)
+{
+    va_list ap;
+    WCHAR* string;
+    DWORD len;
+
+    va_start(ap,format);
+    string = NULL;
+    len = FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ALLOCATE_BUFFER,
+                         format, 0, 0, (LPWSTR)&string, 0, &ap);
+    va_end(ap);
+    if (len == 0 && GetLastError() != ERROR_NO_WORK_DONE)
+        WINE_FIXME("Could not format string: le=%lu, fmt=%s\n", GetLastError(), wine_dbgstr_w(format));
+    else
+    {
+        WCMD_output_asis(string);
+        LocalFree(string);
+    }
 }
 
 /****************************************************************************
@@ -766,26 +754,25 @@ RETURN_CODE WCMD_output_asis_stderr (const WCHAR *message) {
  *
  * Print the message for GetLastError
  */
+void WCMD_print_error(void)
+{
+    LPVOID lpMsgBuf;
+    DWORD error_code;
+    int status;
 
-void WCMD_print_error (void) {
-  LPVOID lpMsgBuf;
-  DWORD error_code;
-  int status;
+    error_code = GetLastError();
+    status = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+                            NULL, error_code, 0, (LPWSTR) &lpMsgBuf, 0, NULL);
+    if (!status)
+    {
+        WINE_FIXME("Cannot display message for error %ld, status %ld\n",
+                   error_code, GetLastError());
+        return;
+    }
 
-  error_code = GetLastError ();
-  status = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
-			  NULL, error_code, 0, (LPWSTR) &lpMsgBuf, 0, NULL);
-  if (!status) {
-    WINE_FIXME ("Cannot display message for error %ld, status %ld\n",
-			error_code, GetLastError());
-    return;
-  }
-
-  WCMD_output_asis_len(lpMsgBuf, lstrlenW(lpMsgBuf),
-                       GetStdHandle(STD_ERROR_HANDLE));
-  LocalFree (lpMsgBuf);
-  WCMD_output_asis_len(L"\r\n", lstrlenW(L"\r\n"), GetStdHandle(STD_ERROR_HANDLE));
-  return;
+    WCMD_output_unbuffered(lpMsgBuf, -1, GetStdHandle(STD_ERROR_HANDLE));
+    LocalFree(lpMsgBuf);
+    WCMD_output_unbuffered(L"\r\n", 2, GetStdHandle(STD_ERROR_HANDLE));
 }
 
 /******************************************************************************
@@ -890,6 +877,7 @@ static void WCMD_show_prompt(void)
     }
   }
   WCMD_output_asis (out_string);
+  WCMD_output_flush();
 }
 
 void *xrealloc(void *ptr, size_t size)
@@ -2091,13 +2079,34 @@ static RETURN_CODE search_command(WCHAR *command, struct search_command *sc, BOO
     return RETURN_CODE_CANT_LAUNCH;
 }
 
-static BOOL set_std_redirections(CMD_REDIRECTION *redir)
+static DWORD std_index[3] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+
+static void pop_std_redirections(HANDLE saved[3])
 {
-    static DWORD std_index[3] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    unsigned int i;
+
+    /* Restore old handles */
+    for (i = 0; i < 3; i++)
+    {
+        if (saved[i] != GetStdHandle(std_index[i]))
+        {
+            if (std_index[i] == STD_OUTPUT_HANDLE)
+                WCMD_output_flush();
+            CloseHandle(GetStdHandle(std_index[i]));
+            SetStdHandle(std_index[i], saved[i]);
+        }
+    }
+}
+
+static BOOL push_std_redirections(CMD_REDIRECTION *redir, HANDLE saved[3])
+{
     static SECURITY_ATTRIBUTES sa = {.nLength = sizeof(sa), .lpSecurityDescriptor = NULL, .bInheritHandle = TRUE};
     WCHAR expanded_filename[MAXSTRING];
     HANDLE h;
+    unsigned int i;
 
+    for (i = 0; i < ARRAY_SIZE(std_index); i++)
+        saved[i] = GetStdHandle(std_index[i]);
     for (; redir; redir = redir->next)
     {
         CMD_REDIRECTION *next;
@@ -2158,7 +2167,10 @@ static BOOL set_std_redirections(CMD_REDIRECTION *redir)
         if (redir->fd > 2)
             CloseHandle(h);
         else
+        {
+            if (std_index[redir->fd] == STD_OUTPUT_HANDLE) WCMD_output_flush();
             SetStdHandle(std_index[redir->fd], h);
+        }
     }
     return TRUE;
 }
@@ -4119,16 +4131,12 @@ static RETURN_CODE for_control_execute(CMD_FOR_CONTROL *for_ctrl, CMD_NODE *node
 
 RETURN_CODE node_execute(CMD_NODE *node)
 {
-    HANDLE old_stdhandles[3] = {GetStdHandle (STD_INPUT_HANDLE),
-                                GetStdHandle (STD_OUTPUT_HANDLE),
-                                GetStdHandle (STD_ERROR_HANDLE)};
-    static DWORD idx_stdhandles[3] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
-
+    HANDLE saved[3];
     RETURN_CODE return_code;
-    int i, test;
+    int test;
 
     if (!node) return NO_ERROR;
-    if (!set_std_redirections(node->redirects))
+    if (!push_std_redirections(node->redirects, saved))
     {
         WCMD_print_error();
         return_code = ERROR_INVALID_FUNCTION;
@@ -4165,7 +4173,7 @@ RETURN_CODE node_execute(CMD_NODE *node)
             WCHAR temp_path[MAX_PATH];
             WCHAR filename[MAX_PATH];
             CMD_REDIRECTION *output;
-            HANDLE saved_output;
+            HANDLE saved[3];
             struct batch_context *saved_context = context;
 
             /* pipe LHS & RHS are run outside of any batch context */
@@ -4183,14 +4191,12 @@ RETURN_CODE node_execute(CMD_NODE *node)
             GetTempFileNameW(temp_path, L"CMD", 0, filename);
             TRACE("Using temporary file of %ls\n", filename);
 
-            saved_output = GetStdHandle(STD_OUTPUT_HANDLE);
             /* set output for left hand side command */
             output = redirection_create_file(REDIR_WRITE_TO, 1, filename);
-            if (set_std_redirections(output))
+            if (push_std_redirections(output, saved))
             {
                 RETURN_CODE return_code_left = node_execute(node->left);
-                CloseHandle(GetStdHandle(STD_OUTPUT_HANDLE));
-                SetStdHandle(STD_OUTPUT_HANDLE, saved_output);
+                pop_std_redirections(saved);
 
                 if (errorlevel == RETURN_CODE_CANT_LAUNCH && saved_context)
                     ExitProcess(255);
@@ -4229,15 +4235,8 @@ RETURN_CODE node_execute(CMD_NODE *node)
         FIXME("Unexpected operator %u\n", node->op);
         return_code = ERROR_INVALID_FUNCTION;
     }
-    /* Restore old handles */
-    for (i = 0; i < 3; i++)
-    {
-        if (old_stdhandles[i] != GetStdHandle(idx_stdhandles[i]))
-        {
-            CloseHandle(GetStdHandle(idx_stdhandles[i]));
-            SetStdHandle(idx_stdhandles[i], old_stdhandles[i]);
-        }
-    }
+    pop_std_redirections(saved);
+
     return return_code;
 }
 
@@ -4307,10 +4306,12 @@ static void set_console_default_color(unsigned color)
             query_default_color_key(HKEY_LOCAL_MACHINE, &value))
             color = value;
     }
-    if (color >= 0x100 || ((color >> 4) == (color & 0xf)))
-        color = 7;
-    swprintf(param1, ARRAY_SIZE(param1), L"%x", color);
-    WCMD_color();
+    if (color < 0x100 && ((color >> 4) != (color & 0xf)))
+    {
+        swprintf(param1, ARRAY_SIZE(param1), L"%x", color);
+        WCMD_color();
+    }
+    else color = 7;
 }
 
 struct cmd_parameters
@@ -4459,11 +4460,11 @@ static void WCMD_setup(void)
     /* initialize some env variables */
     if (!GetEnvironmentVariableW(L"COMSPEC", string, ARRAY_SIZE(string)))
     {
-        GetSystemDirectoryW(string, ARRAY_SIZE(string) - ARRAY_SIZE(L"\\cmd.exe"));
-        lstrcatW(string, L"\\cmd.exe");
+        GetModuleFileNameW(NULL, string, ARRAY_SIZE(string));
         SetEnvironmentVariableW(L"COMSPEC", string);
     }
-    SetEnvironmentVariableW(L"PROMPT", L"$P$G");
+    if (!GetEnvironmentVariableW(L"PROMPT", string, ARRAY_SIZE(string)))
+        SetEnvironmentVariableW(L"PROMPT", L"$P$G");
 
     /* Save cwd into appropriate env var (Must be before the /c processing */
     GetCurrentDirectoryW(ARRAY_SIZE(string), string);
@@ -4509,6 +4510,8 @@ int __cdecl wmain(int argc, WCHAR *argvW[])
 
     control_c_event = CreateEventW(NULL, TRUE, FALSE, NULL);
     SetConsoleCtrlHandler(my_event_handler, TRUE);
+    console_input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL, 0);
 
     if (parameters.opt_c)
     {

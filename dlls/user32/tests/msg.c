@@ -111,6 +111,7 @@ typedef struct
 static BOOL test_DestroyWindow_flag;
 static BOOL test_context_menu;
 static BOOL ignore_mouse_messages = TRUE;
+static BOOL ignore_WM_NCHITTEST = TRUE;
 static HWINEVENTHOOK hEvent_hook;
 static HHOOK hKBD_hook;
 static HHOOK hCBT_hook;
@@ -10968,7 +10969,9 @@ static LRESULT MsgCheckProc (BOOL unicode, HWND hwnd, UINT message,
 
 	/* test_accelerators() depends on this */
 	case WM_NCHITTEST:
-	    return HTCLIENT;
+		if (ignore_WM_NCHITTEST)
+			return HTCLIENT;
+		break;
 
 	case WM_USER+10:
 	{
@@ -15071,6 +15074,22 @@ static void pump_msg_loop_timeout(DWORD timeout, BOOL inject_mouse_move)
     } while (start_ticks + timeout >= end_ticks);
 }
 
+static DWORD WINAPI track_mouse_event_query_thread( void *context )
+{
+    TRACKMOUSEEVENT tme;
+    BOOL ret;
+
+    memset( &tme, 0xcc, sizeof(tme) );
+    tme.cbSize = sizeof(tme);
+    tme.dwFlags = TME_QUERY;
+    ret = pTrackMouseEvent( &tme );
+    ok( ret, "TrackMouseEvent(TME_QUERY) error %ld\n", GetLastError() );
+    ok( !tme.hwndTrack, "got %p.\n", tme.hwndTrack );
+    ok( !tme.dwHoverTime, "got %lu.\n", tme.dwHoverTime );
+    ok( !tme.dwFlags, "got %#lx.\n", tme.dwFlags );
+    return 0;
+}
+
 static void test_TrackMouseEvent(void)
 {
     TRACKMOUSEEVENT tme;
@@ -15079,6 +15098,7 @@ static void test_TrackMouseEvent(void)
     RECT rc_parent, rc_child;
     UINT default_hover_time, hover_width = 0, hover_height = 0;
     POINT old_pt;
+    HANDLE thread;
 
 #define track_hover(track_hwnd, track_hover_time) \
     tme.cbSize = sizeof(tme); \
@@ -15103,7 +15123,10 @@ static void test_TrackMouseEvent(void)
     ok(tme.hwndTrack == (expected_track_hwnd), \
        "wrong tme.hwndTrack %p, expected %p\n", tme.hwndTrack, (expected_track_hwnd)); \
     ok(tme.dwHoverTime == (expected_hover_time), \
-       "wrong tme.dwHoverTime %lu, expected %u\n", tme.dwHoverTime, (expected_hover_time))
+       "wrong tme.dwHoverTime %lu, expected %u\n", tme.dwHoverTime, (expected_hover_time)); \
+    thread = CreateThread( NULL, 0, track_mouse_event_query_thread, &tme, 0, NULL ); \
+    WaitForSingleObject( thread, INFINITE ); \
+    CloseHandle( thread )
 
 #define track_hover_cancel(track_hwnd) \
     tme.cbSize = sizeof(tme); \
@@ -15250,6 +15273,31 @@ static void test_TrackMouseEvent(void)
     track_hover_cancel(hwnd);
 
     DestroyWindow(hwnd);
+
+    /* Test that TrackMouseEvent() tracking doesn't produce WM_NCHITTEST */
+    hwnd2 = CreateWindowA("TestWindowClass", NULL, WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, 640, 480,
+                          0, NULL, NULL, 0);
+    ok(!!hwnd2, "Failed to create window, error %lu.\n", GetLastError());
+
+    GetCursorPos(&old_pt);
+    SetCursorPos(150, 150);
+
+    flush_events();
+    flush_sequence();
+
+    tme.cbSize = sizeof(tme);
+    tme.dwFlags = TME_LEAVE;
+    tme.hwndTrack = hwnd2;
+    tme.dwHoverTime = HOVER_DEFAULT;
+    SetLastError(0xdeadbeef);
+    ignore_WM_NCHITTEST = FALSE;
+    ret = pTrackMouseEvent(&tme);
+    ok(ret, "TrackMouseEvent(TME_LEAVE) failed, error %ld\n", GetLastError());
+    flush_events();
+    ignore_WM_NCHITTEST = TRUE;
+    ok_sequence(WmEmptySeq, "TrackMouseEventCallSeq", FALSE);
+    SetCursorPos(old_pt.x, old_pt.y);
+    DestroyWindow(hwnd2);
 
     /* Test that tracking a new window with TME_LEAVE and when the cursor is not in the new window,
      * WM_MOUSELEAVE is immediately posted to the window */

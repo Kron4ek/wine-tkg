@@ -1341,3 +1341,34 @@ HRESULT WINAPI PropVariantGetStringElem(const PROPVARIANT *propvar, ULONG idx, W
     wcscpy(*ret, wstr);
     return S_OK;
 }
+
+HRESULT WINAPI PropVariantToFileTime(REFPROPVARIANT propvar, PSTIME_FLAGS flags, FILETIME *timestamp)
+{
+    TRACE("%p, %#x, %p\n", propvar, flags, timestamp);
+
+    switch (propvar->vt)
+    {
+    case VT_EMPTY:
+        return E_INVALIDARG;
+    default:
+        FIXME("Unimplemented for type %d.\n", propvar->vt);
+        return E_NOTIMPL;
+    }
+}
+
+HRESULT WINAPI PropVariantToUInt32Vector(REFPROPVARIANT propvar, ULONG *buffer, ULONG size, ULONG *count)
+{
+    TRACE("%p, %p, %lu, %p.\n", propvar, buffer, size, count);
+
+    *count = 0;
+
+    switch (propvar->vt)
+    {
+    case VT_EMPTY:
+        return E_INVALIDARG;
+    default:
+        FIXME("Unimplemented for type %d.\n", propvar->vt);
+        return E_NOTIMPL;
+    }
+    return E_NOTIMPL;
+}

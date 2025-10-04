@@ -34,6 +34,7 @@
 
 typedef unsigned int obj_handle_t;
 typedef unsigned int user_handle_t;
+typedef unsigned int d3dkmt_handle_t;
 typedef unsigned int atom_t;
 typedef unsigned int process_id_t;
 typedef unsigned int thread_id_t;
@@ -968,8 +969,29 @@ union udp_endpoint
     } ipv6;
 };
 
+enum d3dkmt_type
+{
+    D3DKMT_ADAPTER      = 1,
+    D3DKMT_DEVICE       = 2,
+    D3DKMT_SOURCE       = 3,
+    D3DKMT_MUTEX        = 4,
+    D3DKMT_SYNC         = 5,
+    D3DKMT_RESOURCE     = 6,
+    D3DKMT_ALLOCATION   = 7,
+};
+
 /****************************************************************/
 /* shared session mapping structures */
+
+struct obj_locator
+{
+    object_id_t          id;               /* object unique id, object data is valid if != 0 */
+    mem_size_t           offset;           /* offset of the object in session shared memory */
+};
+
+#define MAX_ATOM_LEN     255
+#define WH_WINEVENT      (WH_MAXHOOK + 1)
+#define NB_HOOKS         (WH_WINEVENT - WH_MINHOOK + 1)
 
 struct shared_cursor
 {
@@ -990,11 +1012,13 @@ typedef volatile struct
 
 typedef volatile struct
 {
-    int                  hooks_count[WH_MAX - WH_MIN + 2]; /* active hooks count */
+    timeout_t            access_time;      /* last time the queue was accessed */
     unsigned int         wake_mask;        /* wakeup mask */
     unsigned int         wake_bits;        /* wakeup bits */
     unsigned int         changed_mask;     /* changed wakeup mask */
     unsigned int         changed_bits;     /* changed wakeup bits */
+    unsigned int         internal_bits;    /* internal queue bits */
+    int                  hooks_count[NB_HOOKS];  /* active hooks count */
 } queue_shm_t;
 
 typedef volatile struct
@@ -1016,6 +1040,14 @@ typedef volatile struct
 
 typedef volatile struct
 {
+    data_size_t          name_offset;        /* offset in WCHAR of the unversioned class name, constant */
+    data_size_t          name_len;           /* len in bytes of the class name, constant */
+    WCHAR                name[MAX_ATOM_LEN]; /* class name, constant */
+} class_shm_t;
+
+typedef volatile struct
+{
+    struct obj_locator   class;            /* object locator for the window class shared object */
     unsigned int         dpi_context;      /* DPI awareness context */
 } window_shm_t;
 
@@ -1024,6 +1056,7 @@ typedef volatile union
     desktop_shm_t        desktop;
     queue_shm_t          queue;
     input_shm_t          input;
+    class_shm_t          class;
     window_shm_t         window;
 } object_shm_t;
 
@@ -1038,12 +1071,6 @@ typedef volatile struct
 {
     struct user_entry user_entries[MAX_USER_HANDLES];
 } session_shm_t;
-
-struct obj_locator
-{
-    object_id_t          id;               /* object unique id, object data is valid if != 0 */
-    mem_size_t           offset;           /* offset of the object in session shared memory */
-};
 
 /****************************************************************/
 /* Request declarations */
@@ -1108,7 +1135,6 @@ struct obj_locator
 @REQ(init_process_done)
     client_ptr_t teb;          /* TEB of new thread (in process address space) */
     client_ptr_t peb;          /* PEB of new process (in process address space) */
-    client_ptr_t ldt_copy;     /* address of LDT copy (in process address space) */
 @REPLY
     int          suspend;      /* is process suspended? */
 @END
@@ -1126,6 +1152,7 @@ struct obj_locator
     thread_id_t  tid;          /* thread id of the new thread */
     timeout_t    server_start; /* server start time */
     unsigned int session_id;   /* process session id */
+    obj_handle_t inproc_device;/* inproc device fd in flight with this handle */
     data_size_t  info_size;    /* total size of startup info */
     VARARG(machines,ushorts);  /* array of supported machines */
 @END
@@ -2222,17 +2249,6 @@ enum prefix_type
 @END
 
 
-/* Fetch a selector entry for a thread */
-@REQ(get_selector_entry)
-    obj_handle_t  handle;      /* thread handle */
-    int           entry;       /* LDT entry */
-@REPLY
-    unsigned int  base;        /* selector base */
-    unsigned int  limit;       /* selector limit */
-    unsigned char flags;       /* selector flags */
-@END
-
-
 /* Add an atom */
 @REQ(add_atom)
     VARARG(name,unicode_str);  /* atom name */
@@ -2307,7 +2323,7 @@ enum prefix_type
 @REQ(set_queue_mask)
     unsigned int wake_mask;    /* wakeup bits mask */
     unsigned int changed_mask; /* changed bits mask */
-    int          skip_wait;    /* will we skip waiting if signaled? */
+    int          poll_events;  /* whether to poll queue fd */
 @REPLY
     unsigned int wake_bits;    /* current wake bits */
     unsigned int changed_bits; /* current changed bits */
@@ -3258,7 +3274,8 @@ enum caret_state
     data_size_t    name_offset;    /* base class name offset for specified atom */
     VARARG(name,unicode_str);      /* class name */
 @REPLY
-    atom_t         atom;           /* resulting class atom */
+    struct obj_locator locator;    /* locator for the shared class object */
+    atom_t             atom;       /* resulting class atom */
 @END
 
 
@@ -4111,7 +4128,7 @@ struct handle_info
     obj_handle_t handle;       /* process handle */
 @END
 
-/* Itererate processes using global process list */
+/* Iterate processes using global process list */
 @REQ(get_next_process)
     obj_handle_t last;         /* process handle to start with */
     unsigned int access;       /* desired access for returned handle */
@@ -4132,53 +4149,6 @@ struct handle_info
     obj_handle_t handle;       /* next thread handle */
 @END
 
-enum esync_type
-{
-    ESYNC_SEMAPHORE = 1,
-    ESYNC_AUTO_EVENT,
-    ESYNC_MANUAL_EVENT,
-    ESYNC_MUTEX,
-    ESYNC_AUTO_SERVER,
-    ESYNC_MANUAL_SERVER,
-    ESYNC_QUEUE,
-};
-
-/* Create a new eventfd-based synchronization object */
-@REQ(create_esync)
-    unsigned int access;        /* wanted access rights */
-    int          initval;       /* initial value */
-    int          type;          /* type of esync object */
-    int          max;           /* maximum count on a semaphore */
-    VARARG(objattr,object_attributes); /* object attributes */
-@REPLY
-    obj_handle_t handle;        /* handle to the object */
-    int          type;          /* actual type (may be different for events) */
-    unsigned int shm_idx;
-@END
-
-@REQ(open_esync)
-    unsigned int access;        /* wanted access rights */
-    unsigned int attributes;    /* object attributes */
-    obj_handle_t rootdir;       /* root directory */
-    int          type;          /* type of esync object (above) */
-    VARARG(name,unicode_str);   /* object name */
-@REPLY
-    obj_handle_t handle;        /* handle to the event */
-    int          type;          /* type of esync object (above) */
-    unsigned int shm_idx;       /* this object's index into the shm section */
-@END
-
-/* Retrieve the esync fd for an object. */
-@REQ(get_esync_fd)
-    obj_handle_t handle;        /* handle to the object */
-@REPLY
-    int          type;
-    unsigned int shm_idx;
-@END
-
-@REQ(esync_msgwait)
-    int          in_msgwait;    /* are we in a message wait? */
-@END
 
 /* Setup keyboard auto-repeat */
 @REQ(set_keyboard_repeat)
@@ -4189,60 +4159,84 @@ enum esync_type
     int enable;                /* previous state of auto-repeat enable */
 @END
 
-/* Retrieve the fd to wait on for user APCs. */
-@REQ(get_esync_apc_fd)
-@END
 
-enum fsync_type
+enum inproc_sync_type
 {
-    FSYNC_SEMAPHORE = 1,
-    FSYNC_AUTO_EVENT,
-    FSYNC_MANUAL_EVENT,
-    FSYNC_MUTEX,
-    FSYNC_AUTO_SERVER,
-    FSYNC_MANUAL_SERVER,
-    FSYNC_QUEUE,
+    INPROC_SYNC_UNKNOWN   = 0,
+    INPROC_SYNC_INTERNAL  = 1,
+    INPROC_SYNC_EVENT     = 2,
+    INPROC_SYNC_MUTEX     = 3,
+    INPROC_SYNC_SEMAPHORE = 4,
 };
 
-/* Create a new futex-based synchronization object */
-@REQ(create_fsync)
-    unsigned int access;        /* wanted access rights */
-    int low;                    /* initial value of low word */
-    int high;                   /* initial value of high word */
-    int type;                   /* type of fsync object */
-    VARARG(objattr,object_attributes); /* object attributes */
-@REPLY
-    obj_handle_t handle;        /* handle to the object */
-    int type;                   /* type of fsync object */
-    unsigned int shm_idx;       /* this object's index into the shm section */
-@END
-
-/* Open an fsync object */
-@REQ(open_fsync)
-    unsigned int access;        /* wanted access rights */
-    unsigned int attributes;    /* object attributes */
-    obj_handle_t rootdir;       /* root directory */
-    int          type;          /* type of fsync object */
-    VARARG(name,unicode_str);   /* object name */
-@REPLY
-    obj_handle_t handle;        /* handle to the event */
-    int          type;          /* type of fsync object */
-    unsigned int shm_idx;       /* this object's index into the shm section */
-@END
-
-/* Retrieve the shm index for an object. */
-@REQ(get_fsync_idx)
+/* Get the in-process synchronization fd associated with the waitable handle */
+@REQ(get_inproc_sync_fd)
     obj_handle_t handle;        /* handle to the object */
 @REPLY
-    int          type;
-    unsigned int shm_idx;
+    int           type;         /* inproc sync type */
+    unsigned int access;        /* handle access rights */
 @END
 
-@REQ(fsync_msgwait)
-    int          in_msgwait;    /* are we in a message wait? */
-@END
 
-@REQ(get_fsync_apc_idx)
+/* Get the in-process synchronization fd for the current thread user APC alerts */
+@REQ(get_inproc_alert_fd)
 @REPLY
-    unsigned int shm_idx;
+    obj_handle_t handle;        /* alert fd is in flight with this handle */
+@END
+
+
+/* Create a global d3dkmt object */
+@REQ(d3dkmt_object_create)
+    unsigned int        type;           /* d3dkmt object type */
+    VARARG(runtime,bytes);              /* client runtime data */
+@REPLY
+    d3dkmt_handle_t     global;         /* global d3dkmt handle */
+    obj_handle_t        handle;         /* internal handle of the server object */
+@END
+
+
+/* Query a global/shared d3dkmt object */
+@REQ(d3dkmt_object_query)
+    unsigned int        type;           /* d3dkmt object type */
+    d3dkmt_handle_t     global;         /* global d3dkmt handle */
+    obj_handle_t        handle;         /* shared object handle */
+@REPLY
+    data_size_t         runtime_size;   /* size of client runtime data */
+@END
+
+
+/* Open a global/shared d3dkmt object */
+@REQ(d3dkmt_object_open)
+    unsigned int        type;           /* d3dkmt object type */
+    d3dkmt_handle_t     global;         /* global d3dkmt handle */
+    obj_handle_t        handle;         /* shared object handle */
+@REPLY
+    d3dkmt_handle_t     global;         /* global d3dkmt handle */
+    obj_handle_t        handle;         /* internal handle of the server object */
+    data_size_t         runtime_size;   /* size of client runtime data */
+    VARARG(runtime,bytes);              /* client runtime data */
+@END
+
+
+/* Share d3dkmt objects together */
+@REQ(d3dkmt_share_objects)
+    d3dkmt_handle_t     resource;       /* resource global handle */
+    d3dkmt_handle_t     mutex;          /* mutex global handle */
+    d3dkmt_handle_t     sync;           /* sync global handle */
+    unsigned int        access;         /* wanted access rights */
+    VARARG(objattr,object_attributes);  /* object attributes */
+@REPLY
+    obj_handle_t        handle;         /* shared object handle */
+@END
+
+
+/* Open a shared d3dkmt object from a name */
+@REQ(d3dkmt_object_open_name)
+    unsigned int        type;           /* d3dkmt object type */
+    unsigned int        access;         /* wanted access rights */
+    unsigned int        attributes;     /* object attributes */
+    obj_handle_t        rootdir;        /* root directory */
+    VARARG(name,unicode_str);           /* object name */
+@REPLY
+    obj_handle_t        handle;         /* shared object handle */
 @END

@@ -716,6 +716,7 @@ enum vsir_data_type
     VSIR_DATA_F32,
     VSIR_DATA_F64,
 
+    VSIR_DATA_I8,
     VSIR_DATA_I16,
     VSIR_DATA_I32,
     VSIR_DATA_I64,
@@ -740,8 +741,13 @@ const char *vsir_data_type_get_name(enum vsir_data_type t, const char *error);
 
 static inline bool data_type_is_integer(enum vsir_data_type data_type)
 {
-    return data_type == VSIR_DATA_I16 || data_type == VSIR_DATA_I32 || data_type == VSIR_DATA_I64
-            || data_type == VSIR_DATA_U8 || data_type == VSIR_DATA_U16 || data_type == VSIR_DATA_U32
+    return data_type == VSIR_DATA_I8
+            || data_type == VSIR_DATA_I16
+            || data_type == VSIR_DATA_I32
+            || data_type == VSIR_DATA_I64
+            || data_type == VSIR_DATA_U8
+            || data_type == VSIR_DATA_U16
+            || data_type == VSIR_DATA_U32
             || data_type == VSIR_DATA_U64;
 }
 
@@ -1415,40 +1421,16 @@ struct vkd3d_shader_param_allocator
 
 void *shader_param_allocator_get(struct vkd3d_shader_param_allocator *allocator, size_t count);
 
-static inline struct vkd3d_shader_src_param *shader_src_param_allocator_get(
-        struct vkd3d_shader_param_allocator *allocator, size_t count)
-{
-    VKD3D_ASSERT(allocator->stride == sizeof(struct vkd3d_shader_src_param));
-    return shader_param_allocator_get(allocator, count);
-}
-
-static inline struct vkd3d_shader_dst_param *shader_dst_param_allocator_get(
-        struct vkd3d_shader_param_allocator *allocator, size_t count)
-{
-    VKD3D_ASSERT(allocator->stride == sizeof(struct vkd3d_shader_dst_param));
-    return shader_param_allocator_get(allocator, count);
-}
-
 struct vkd3d_shader_instruction_array
 {
     struct vkd3d_shader_instruction *elements;
     size_t capacity;
     size_t count;
-
-    struct vkd3d_shader_param_allocator src_params;
-    struct vkd3d_shader_param_allocator dst_params;
-    struct vkd3d_shader_immediate_constant_buffer **icbs;
-    size_t icb_capacity;
-    size_t icb_count;
-
-    struct vkd3d_shader_src_param *outpointid_param;
 };
 
+struct vkd3d_shader_instruction *shader_instruction_array_append(struct vkd3d_shader_instruction_array *array);
+bool shader_instruction_array_insert_at(struct vkd3d_shader_instruction_array *instructions, size_t idx, size_t count);
 bool shader_instruction_array_reserve(struct vkd3d_shader_instruction_array *instructions, size_t reserve);
-bool shader_instruction_array_insert_at(struct vkd3d_shader_instruction_array *instructions,
-        size_t idx, size_t count);
-bool shader_instruction_array_add_icb(struct vkd3d_shader_instruction_array *instructions,
-        struct vkd3d_shader_immediate_constant_buffer *icb);
 
 struct vsir_program_iterator
 {
@@ -1504,8 +1486,9 @@ static inline struct vkd3d_shader_instruction *vsir_program_iterator_prev(
 }
 
 /* When insertion takes place, argument `it' is updated to point to the same
- * instruction as before the insertion, but all other iterators and pointers
- * to the same container are invalidated and cannot be used any more. */
+ * instruction as before the insertion, but all existing pointers to the same
+ * container, as well as any iterators pointing to instructions after the
+ * insertion point should be considered invalid. */
 static inline bool vsir_program_iterator_insert_after(struct vsir_program_iterator *it, size_t count)
 {
     return shader_instruction_array_insert_at(it->array, it->idx + 1, count);
@@ -1632,12 +1615,21 @@ struct vsir_program
     struct vkd3d_shader_source_list source_files;
     const char **block_names;
     size_t block_name_count;
+
+    struct vkd3d_shader_immediate_constant_buffer **icbs;
+    size_t icb_capacity;
+    size_t icb_count;
+
+    struct vkd3d_shader_param_allocator src_params;
+    struct vkd3d_shader_param_allocator dst_params;
 };
 
 enum vkd3d_result vsir_allocate_temp_registers(struct vsir_program *program,
         struct vkd3d_shader_message_context *message_context);
 enum vkd3d_result vsir_update_dcl_temps(struct vsir_program *program,
         struct vkd3d_shader_message_context *message_context);
+
+bool vsir_program_add_icb(struct vsir_program *program, struct vkd3d_shader_immediate_constant_buffer *icb);
 void vsir_program_cleanup(struct vsir_program *program);
 const struct vkd3d_shader_parameter1 *vsir_program_get_parameter(
         const struct vsir_program *program, enum vkd3d_shader_parameter_name name);
@@ -1660,24 +1652,27 @@ bool vsir_instruction_init_with_params(struct vsir_program *program,
 
 static inline struct vkd3d_shader_instruction *vsir_program_append(struct vsir_program *program)
 {
-    struct vkd3d_shader_instruction_array *array = &program->instructions;
-
-    if (!shader_instruction_array_insert_at(array, array->count, 1))
-        return NULL;
-
-    return &array->elements[array->count - 1];
+    return shader_instruction_array_append(&program->instructions);
 }
 
 static inline struct vkd3d_shader_dst_param *vsir_program_get_dst_params(
         struct vsir_program *program, unsigned int count)
 {
-    return shader_dst_param_allocator_get(&program->instructions.dst_params, count);
+    struct vkd3d_shader_param_allocator *allocator = &program->dst_params;
+
+    VKD3D_ASSERT(allocator->stride == sizeof(struct vkd3d_shader_dst_param));
+
+    return shader_param_allocator_get(allocator, count);
 }
 
 static inline struct vkd3d_shader_src_param *vsir_program_get_src_params(
         struct vsir_program *program, unsigned int count)
 {
-    return shader_src_param_allocator_get(&program->instructions.src_params, count);
+    struct vkd3d_shader_param_allocator *allocator = &program->src_params;
+
+    VKD3D_ASSERT(allocator->stride == sizeof(struct vkd3d_shader_src_param));
+
+    return shader_param_allocator_get(allocator, count);
 }
 
 struct vkd3d_shader_parser

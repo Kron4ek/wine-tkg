@@ -2770,18 +2770,6 @@ static void test_parse_errors(void)
             "    throwInt &h87001234&\n"
             "end if\n",
             2, 1
-        },
-        {
-            /* redim of sub on windows fails with
-               compilation error: Name redefined
-               TODO how can we validate that this code throws a "compilation error: Name redefined"?
-               TODO this code fails even without the compile.c redim collision check???
-                 but somehow the commented part in lang.vbs would not fail???
-            */
-            "sub redimSub\n"
-            "end sub\n"
-            L"redim redimSub(3)\n",
-             2, 0
         }
     };
     HRESULT hres;

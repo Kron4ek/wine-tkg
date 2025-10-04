@@ -42,7 +42,6 @@
 #define MIN_HASH_SIZE 4
 #define MAX_HASH_SIZE 0x200
 
-#define MAX_ATOM_LEN  (255 * sizeof(WCHAR))
 #define MIN_STR_ATOM  0xc000
 #define MAX_ATOMS     0x4000
 
@@ -78,11 +77,10 @@ static const struct object_ops atom_table_ops =
     no_add_queue,                 /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
-    NULL,                         /* get_esync_fd */
-    NULL,                         /* get_fsync_idx */
     NULL,                         /* satisfied */
     no_signal,                    /* signal */
     no_get_fd,                    /* get_fd */
+    default_get_sync,             /* get_sync */
     default_map_access,           /* map_access */
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
@@ -290,7 +288,7 @@ atom_t add_atom( struct atom_table *table, const struct unicode_str *str )
         set_error( STATUS_OBJECT_NAME_INVALID );
         return 0;
     }
-    if (str->len > MAX_ATOM_LEN)
+    if (str->len > MAX_ATOM_LEN * sizeof(WCHAR))
     {
         set_error( STATUS_INVALID_PARAMETER );
         return 0;
@@ -353,7 +351,7 @@ atom_t find_atom( struct atom_table *table, const struct unicode_str *str )
         set_error( STATUS_OBJECT_NAME_INVALID );
         return 0;
     }
-    if (str->len > MAX_ATOM_LEN)
+    if (str->len > MAX_ATOM_LEN * sizeof(WCHAR))
     {
         set_error( STATUS_INVALID_PARAMETER );
         return 0;

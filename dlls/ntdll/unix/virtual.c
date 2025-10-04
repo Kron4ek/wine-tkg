@@ -185,7 +185,7 @@ static const UINT_PTR host_page_mask = 0xfff;
 #endif
 
 /* Note: these are Windows limits, you cannot change them. */
-#ifdef __i386__
+#if defined(__i386__) || defined(__x86_64__)
 static void *address_space_start = (void *)0x110000; /* keep DOS area clear */
 #else
 static void *address_space_start = (void *)0x10000;
@@ -4034,12 +4034,11 @@ static TEB *init_teb( void *ptr, BOOL is_wow )
     teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
     thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
-    thread_data->esync_apc_fd = -1;
-    thread_data->fsync_apc_futex = NULL;
     thread_data->request_fd = -1;
     thread_data->reply_fd   = -1;
     thread_data->wait_fd[0] = -1;
     thread_data->wait_fd[1] = -1;
+    thread_data->alert_fd   = -1;
     list_add_head( &teb_list, &thread_data->entry );
     return teb;
 }
@@ -4118,15 +4117,13 @@ NTSTATUS virtual_alloc_teb( TEB **ret_teb )
                                  MEM_COMMIT, PAGE_READWRITE );
     }
     *ret_teb = teb = init_teb( ptr, is_wow64() );
-    server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 
     if ((status = signal_alloc_thread( teb )))
     {
-        server_enter_uninterrupted_section( &virtual_mutex, &sigset );
         *(void **)ptr = next_free_teb;
         next_free_teb = ptr;
-        server_leave_uninterrupted_section( &virtual_mutex, &sigset );
     }
+    server_leave_uninterrupted_section( &virtual_mutex, &sigset );
     return status;
 }
 
@@ -4142,7 +4139,6 @@ void virtual_free_teb( TEB *teb )
     sigset_t sigset;
     WOW_TEB *wow_teb = get_wow_teb( teb );
 
-    signal_free_thread( teb );
     if (teb->DeallocationStack)
     {
         size = 0;
@@ -4167,6 +4163,7 @@ void virtual_free_teb( TEB *teb )
     }
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+    signal_free_thread( teb );
     list_remove( &thread_data->entry );
     ptr = teb;
     if (!is_win64) ptr = (char *)ptr - teb_offset;
@@ -4174,6 +4171,132 @@ void virtual_free_teb( TEB *teb )
     next_free_teb = ptr;
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 }
+
+
+/* LDT support */
+
+#if defined(__i386__) || defined(__x86_64__)
+
+struct ldt_copy
+{
+    unsigned int    base[LDT_SIZE];
+    struct ldt_bits bits[LDT_SIZE];
+};
+C_ASSERT( sizeof(struct ldt_copy) == 8 * LDT_SIZE );
+
+static struct ldt_copy *ldt_copy;
+
+UINT ldt_bitmap[LDT_SIZE / 32] = { ~0u };
+
+/***********************************************************************
+ *           ldt_update_entry
+ */
+WORD ldt_update_entry( WORD sel, LDT_ENTRY entry )
+{
+    unsigned int index = sel >> 3;
+
+    if (!ldt_copy)
+    {
+        struct file_view *view;
+
+        if (map_view( &view, NULL, sizeof(*ldt_copy), MEM_TOP_DOWN,
+                      VPROT_COMMITTED | VPROT_READ | VPROT_WRITE,
+                      is_win64 ? limit_2g : 0, limit_4g, 0 )) return 0;
+        ldt_copy = view->base;
+        if (is_win64) wow_peb->SpareUlongs[0] = PtrToUlong( ldt_copy );
+        else peb->SpareUlongs[0] = PtrToUlong( ldt_copy );
+    }
+
+    ldt_set_entry( sel, entry );
+    ldt_copy->base[index]             = ldt_get_base( entry );
+    ldt_copy->bits[index].limit       = entry.LimitLow | (entry.HighWord.Bits.LimitHi << 16);
+    ldt_copy->bits[index].type        = entry.HighWord.Bits.Type;
+    ldt_copy->bits[index].granularity = entry.HighWord.Bits.Granularity;
+    ldt_copy->bits[index].default_big = entry.HighWord.Bits.Default_Big;
+    ldt_bitmap[index / 32] |= 1u << (index & 31);
+    return sel;
+}
+
+/***********************************************************************
+ *           ldt_get_entry
+ */
+NTSTATUS ldt_get_entry( WORD sel, CLIENT_ID client_id, LDT_ENTRY *entry )
+{
+    NTSTATUS status = STATUS_SUCCESS;
+    unsigned int base = 0;
+    struct ldt_bits bits = { 0 };
+    unsigned int idx = sel >> 3;
+
+    if (client_id.UniqueProcess == NtCurrentTeb()->ClientId.UniqueProcess)
+    {
+        if (ldt_copy)
+        {
+            base = ldt_copy->base[idx];
+            bits = ldt_copy->bits[idx];
+        }
+    }
+    else
+    {
+        HANDLE process;
+        ULONG ptr = 0;
+        PEB32 *peb32 = NULL;
+
+        if ((status = NtOpenProcess( &process, PROCESS_ALL_ACCESS, NULL, &client_id ))) return status;
+
+        if (!is_win64)
+        {
+            PROCESS_BASIC_INFORMATION pbi;
+
+            NtQueryInformationProcess( process, ProcessBasicInformation, &pbi, sizeof(pbi), NULL );
+            peb32 = (PEB32 *)pbi.PebBaseAddress;
+        }
+        else NtQueryInformationProcess( process, ProcessWow64Information, &peb32, sizeof(peb32), NULL );
+
+        if (!NtReadVirtualMemory( process, &peb32->SpareUlongs[0], &ptr, sizeof(ptr), NULL ) && ptr)
+        {
+            struct ldt_copy *ldt = ULongToPtr( ptr );
+            NtReadVirtualMemory( process, &ldt->base[idx], &base, sizeof(base), NULL );
+            NtReadVirtualMemory( process, &ldt->bits[idx], &bits, sizeof(bits), NULL );
+        }
+        NtClose( process );
+    }
+
+    if (base || bits.limit || bits.type) *entry = ldt_make_entry( base, bits );
+    else status = STATUS_UNSUCCESSFUL;
+
+    return status;
+}
+
+/******************************************************************************
+ *           NtSetLdtEntries   (NTDLL.@)
+ *           ZwSetLdtEntries   (NTDLL.@)
+ */
+NTSTATUS WINAPI NtSetLdtEntries( ULONG sel1, LDT_ENTRY entry1, ULONG sel2, LDT_ENTRY entry2 )
+{
+    sigset_t sigset;
+
+    if (is_win64 && !is_wow64()) return STATUS_NOT_IMPLEMENTED;
+    if (sel1 >> 16 || sel2 >> 16) return STATUS_INVALID_LDT_DESCRIPTOR;
+
+    server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+    if (sel1) ldt_update_entry( sel1, entry1 );
+    if (sel2) ldt_update_entry( sel2, entry2 );
+    server_leave_uninterrupted_section( &virtual_mutex, &sigset );
+    return STATUS_SUCCESS;
+}
+
+#else /* defined(__i386__) || defined(__x86_64__) */
+
+/******************************************************************************
+ *           NtSetLdtEntries   (NTDLL.@)
+ *           ZwSetLdtEntries   (NTDLL.@)
+ */
+NTSTATUS WINAPI NtSetLdtEntries( ULONG sel1, LDT_ENTRY entry1, ULONG sel2, LDT_ENTRY entry2 )
+{
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+#endif /* defined(__i386__) || defined(__x86_64__) */
 
 
 /***********************************************************************
@@ -4937,13 +5060,16 @@ void virtual_set_large_address_space(void)
 {
     if (is_win64)
     {
-        if (is_wow64())
-            user_space_wow_limit = (is_large_address_aware() ? limit_4g : limit_2g) - 1;
+        if (!is_wow64())
+        {
+            address_space_start = (void *)0x10000;
 #ifndef __APPLE__  /* don't free the zerofill section on macOS */
-        else if ((main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA) &&
-                 (main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE))
-            free_reserved_memory( 0, (char *)0x7ffe0000 );
+            if ((main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA) &&
+                (main_image_info.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE))
+                free_reserved_memory( 0, (char *)0x7ffe0000 );
 #endif
+        }
+        else user_space_wow_limit = (is_large_address_aware() ? limit_4g : limit_2g) - 1;
     }
     else
     {

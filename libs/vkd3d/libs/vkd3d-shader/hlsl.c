@@ -393,6 +393,11 @@ bool hlsl_type_is_signed_integer(const struct hlsl_type *type)
     vkd3d_unreachable();
 }
 
+bool hlsl_type_is_unsigned_integer(const struct hlsl_type *type)
+{
+    return hlsl_type_is_integer(type) && !hlsl_type_is_signed_integer(type);
+}
+
 bool hlsl_type_is_integer(const struct hlsl_type *type)
 {
     VKD3D_ASSERT(hlsl_is_numeric_type(type));
@@ -3724,8 +3729,11 @@ const char *debug_hlsl_expr_op(enum hlsl_ir_expr_op op)
         [HLSL_OP1_BIT_NOT]      = "~",
         [HLSL_OP1_CAST]         = "cast",
         [HLSL_OP1_CEIL]         = "ceil",
+        [HLSL_OP1_CLZ]          = "clz",
         [HLSL_OP1_COS]          = "cos",
         [HLSL_OP1_COS_REDUCED]  = "cos_reduced",
+        [HLSL_OP1_COUNTBITS]    = "countbits",
+        [HLSL_OP1_CTZ]          = "ctz",
         [HLSL_OP1_DSX]          = "dsx",
         [HLSL_OP1_DSX_COARSE]   = "dsx_coarse",
         [HLSL_OP1_DSX_FINE]     = "dsx_fine",
@@ -3735,6 +3743,7 @@ const char *debug_hlsl_expr_op(enum hlsl_ir_expr_op op)
         [HLSL_OP1_EXP2]         = "exp2",
         [HLSL_OP1_F16TOF32]     = "f16tof32",
         [HLSL_OP1_F32TOF16]     = "f32tof16",
+        [HLSL_OP1_FIND_MSB]     = "find_msb",
         [HLSL_OP1_FLOOR]        = "floor",
         [HLSL_OP1_FRACT]        = "fract",
         [HLSL_OP1_ISINF]        = "isinf",
@@ -3788,8 +3797,9 @@ static void dump_ir_expr(struct vkd3d_string_buffer *buffer, const struct hlsl_i
     vkd3d_string_buffer_printf(buffer, "%s (", debug_hlsl_expr_op(expr->op));
     for (i = 0; i < HLSL_MAX_OPERANDS && expr->operands[i].node; ++i)
     {
+        if (i)
+            vkd3d_string_buffer_printf(buffer, " ");
         dump_src(buffer, &expr->operands[i]);
-        vkd3d_string_buffer_printf(buffer, " ");
     }
     vkd3d_string_buffer_printf(buffer, ")");
 }

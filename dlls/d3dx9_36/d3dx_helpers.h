@@ -188,6 +188,7 @@ enum d3dx_pixel_format_id
     D3DX_PIXEL_FORMAT_R16G16B16_UNORM,
     D3DX_PIXEL_FORMAT_R16G16B16A16_UNORM,
     D3DX_PIXEL_FORMAT_R8_UNORM,
+    D3DX_PIXEL_FORMAT_R8_SNORM,
     D3DX_PIXEL_FORMAT_R8G8_UNORM,
     D3DX_PIXEL_FORMAT_R16_UNORM,
     D3DX_PIXEL_FORMAT_R16G16_UNORM,
@@ -220,6 +221,7 @@ enum d3dx_pixel_format_id
     D3DX_PIXEL_FORMAT_U8V8W8Q8_SNORM,
     D3DX_PIXEL_FORMAT_U16V16W16Q16_SNORM,
     D3DX_PIXEL_FORMAT_U8V8_SNORM,
+    D3DX_PIXEL_FORMAT_U8V8_SNORM_Cx,
     D3DX_PIXEL_FORMAT_U16V16_SNORM,
     D3DX_PIXEL_FORMAT_U8V8_SNORM_L8X8_UNORM,
     D3DX_PIXEL_FORMAT_U10V10W10_SNORM_A2_UNORM,
@@ -248,6 +250,7 @@ enum component_type
     CTYPE_FLOAT,
     CTYPE_LUMA,
     CTYPE_INDEX,
+    CTYPE_SHILO, /* Signed HILO. */
 };
 
 enum format_flag
@@ -351,6 +354,11 @@ static inline BOOL is_packed_format(const struct pixel_format_desc *format)
     return !!(format->flags & FMT_FLAG_PACKED);
 }
 
+static inline BOOL is_signed_hilo_format(const struct pixel_format_desc *format)
+{
+    return format->rgb_type == CTYPE_SHILO;
+}
+
 static inline BOOL format_types_match(const struct pixel_format_desc *src, const struct pixel_format_desc *dst)
 {
     if ((src->a_type && dst->a_type) && (src->a_type != dst->a_type))
@@ -382,7 +390,8 @@ static inline BOOL is_conversion_from_supported(const struct pixel_format_desc *
 
 static inline BOOL is_conversion_to_supported(const struct pixel_format_desc *format)
 {
-    return !is_index_format(format) && !is_packed_format(format) && !is_unknown_format(format);
+    return !is_index_format(format) && !is_packed_format(format) && !is_signed_hilo_format(format)
+        && !is_unknown_format(format);
 }
 
 const struct pixel_format_desc *get_d3dx_pixel_format_info(enum d3dx_pixel_format_id format);
@@ -391,6 +400,10 @@ void format_to_d3dx_color(const struct pixel_format_desc *format, const BYTE *sr
         struct d3dx_color *dst);
 void format_from_d3dx_color(const struct pixel_format_desc *format, const struct d3dx_color *src, BYTE *dst);
 
+enum d3dx_pixel_format_id d3dx_pixel_format_id_from_dxgi_format(uint32_t format);
+void d3dx_get_next_mip_level_size(struct volume *size);
+HRESULT d3dx_calculate_pixels_size(enum d3dx_pixel_format_id format, uint32_t width, uint32_t height,
+    uint32_t *pitch, uint32_t *size);
 uint32_t d3dx_calculate_layer_pixels_size(enum d3dx_pixel_format_id format, uint32_t width, uint32_t height,
         uint32_t depth, uint32_t mip_levels);
 HRESULT d3dx_init_dds_header(struct dds_header *header, enum d3dx_resource_type resource_type,

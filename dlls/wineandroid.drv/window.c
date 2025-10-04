@@ -54,6 +54,8 @@ struct android_win_data
     HWND           parent;         /* parent hwnd for child windows */
     struct window_rects rects;     /* window rects in monitor DPI, relative to parent client area */
     ANativeWindow *window;         /* native window wrapper that forwards calls to the desktop process */
+    ANativeWindow *client;         /* native client surface wrapper that forwards calls to the desktop process */
+    BOOL           has_surface;    /* whether the client surface has been created on the Java side */
 };
 
 #define SWP_AGG_NOPOSCHANGE (SWP_NOSIZE | SWP_NOMOVE | SWP_NOCLIENTSIZE | SWP_NOCLIENTMOVE | SWP_NOZORDER)
@@ -113,6 +115,7 @@ static void free_win_data( struct android_win_data *data )
 {
     win_data_context[context_idx( data->hwnd )] = NULL;
     pthread_mutex_unlock( &win_data_mutex );
+    if (data->client) release_ioctl_window( data->client );
     if (data->window) release_ioctl_window( data->window );
     free( data );
 }
@@ -388,13 +391,19 @@ static void pull_events(void)
 }
 
 
+static int check_fd_events( int fd, int events )
+{
+    struct pollfd pfd = {.fd = fd, .events = events};
+    if (poll( &pfd, 1, 0 ) <= 0) return 0;
+    return pfd.revents;
+}
+
 /***********************************************************************
  *           process_events
  */
 static int process_events( DWORD mask )
 {
     struct java_event *event, *next, *previous;
-    unsigned int count = 0;
 
     assert( GetCurrentThreadId() == desktop_tid );
 
@@ -502,12 +511,11 @@ static int process_events( DWORD mask )
             FIXME( "got event %u\n", event->data.type );
         }
         free( event );
-        count++;
         /* next may have been removed by a recursive call, so reset it to the beginning of the list */
         next = LIST_ENTRY( event_queue.next, struct java_event, entry );
     }
     current_event = previous;
-    return count;
+    return !check_fd_events( event_pipe[0], POLLIN );
 }
 
 
@@ -1181,7 +1189,15 @@ LRESULT ANDROID_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
     case WM_ANDROID_REFRESH:
         if (wp)  /* opengl client window */
         {
-            update_gl_drawable( hwnd );
+            struct android_win_data *data;
+
+            if ((data = get_win_data( hwnd )))
+            {
+                data->has_surface = TRUE;
+                release_win_data( data );
+            }
+
+            detach_client_surfaces( hwnd );
         }
         else
         {
@@ -1194,6 +1210,30 @@ LRESULT ANDROID_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
     }
 }
 
+ANativeWindow *get_client_window( HWND hwnd )
+{
+    struct android_win_data *data;
+    ANativeWindow *client;
+
+    if (!(data = get_win_data( hwnd ))) return NULL;
+    if (!data->client) data->client = create_ioctl_window( hwnd, TRUE, 1.0f );
+    client = grab_ioctl_window( data->client );
+    release_win_data( data );
+
+    return client;
+}
+
+BOOL has_client_surface( HWND hwnd )
+{
+    struct android_win_data *data;
+    BOOL ret;
+
+    if (!(data = get_win_data( hwnd ))) return FALSE;
+    ret = data->has_surface;
+    release_win_data( data );
+
+    return ret;
+}
 
 /***********************************************************************
  *           ANDROID_CreateDesktop

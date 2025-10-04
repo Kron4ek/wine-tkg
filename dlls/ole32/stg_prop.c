@@ -1063,7 +1063,10 @@ static HRESULT WINAPI IPropertyStorage_fnCommit(
         return STG_E_ACCESSDENIED;
     EnterCriticalSection(&This->cs);
     if (This->dirty)
+    {
         hr = PropertyStorage_WriteToStream(This);
+        if (hr == S_OK) This->dirty = FALSE;
+    }
     else
         hr = S_OK;
     LeaveCriticalSection(&This->cs);
@@ -1815,7 +1818,7 @@ static HRESULT PropertyStorage_ReadDictionary(PropertyStorage_impl *This, const 
         }
 
         TRACE("Reading entry with ID %#lx, %ld chars, name %s.\n", propid, cbEntry, This->codePage == CP_UNICODE ?
-                debugstr_wn((WCHAR *)buffer->data, cbEntry) : debugstr_an((char *)buffer->data, cbEntry));
+                debugstr_wn((WCHAR *)(buffer->data + offset), cbEntry) : debugstr_an((char *)buffer->data + offset, cbEntry));
 
         hr = PropertyStorage_StoreNameWithId(This, (char *)buffer->data + offset, This->codePage, propid);
         /* Unicode entries are padded to DWORD boundaries */
@@ -2114,9 +2117,9 @@ static BOOL PropertyStorage_DictionaryWriter(const void *key,
         c->bytesWritten += keyLen;
 
         /* Align to 4 bytes. */
-        pad_len = sizeof(DWORD) - keyLen % sizeof(DWORD);
-        if (pad_len)
+        if (keyLen & 3)
         {
+            pad_len = sizeof(DWORD) - (keyLen & 3);
             c->hr = IStream_Write(This->stm, &pad, pad_len, &count);
             if (FAILED(c->hr))
                 goto end;
@@ -3008,6 +3011,8 @@ static HRESULT WINAPI IPropertySetStorage_fnOpen(
     HRESULT r;
 
     TRACE("%p, %s, %#lx, %p.\n", This, debugstr_guid(rfmtid), grfMode, ppprstg);
+
+    grfMode &= ~STGM_TRANSACTED;
 
     /* be picky */
     if (grfMode != (STGM_READWRITE|STGM_SHARE_EXCLUSIVE) &&

@@ -40,7 +40,7 @@ struct d3dx9_skin_info
 
     DWORD fvf;
     D3DVERTEXELEMENT9 vertex_declaration[MAX_FVF_DECL_SIZE];
-    DWORD num_vertices;
+    DWORD vertex_count;
     DWORD num_bones;
     struct bone *bones;
 };
@@ -302,7 +302,7 @@ static HRESULT WINAPI d3dx9_skin_info_Clone(ID3DXSkinInfo *iface, ID3DXSkinInfo 
 
     TRACE("iface %p, skin_info %p.\n", iface, skin_info);
 
-    if (FAILED(hr = D3DXCreateSkinInfo(skin->num_vertices, skin->vertex_declaration, skin->num_bones, skin_info)))
+    if (FAILED(hr = D3DXCreateSkinInfo(skin->vertex_count, skin->vertex_declaration, skin->num_bones, skin_info)))
         return hr;
 
     for (i = 0; i < skin->num_bones; ++i)
@@ -398,84 +398,97 @@ static HRESULT WINAPI d3dx9_skin_info_UpdateSkinnedMesh(ID3DXSkinInfo *iface, co
         const D3DXMATRIX *bone_inv_transpose_transforms, const void *src_vertices, void *dst_vertices)
 {
     struct d3dx9_skin_info *skin = impl_from_ID3DXSkinInfo(iface);
-    DWORD size = D3DXGetFVFVertexSize(skin->fvf);
-    DWORD i, j;
+    DWORD vertex_size = D3DXGetDeclVertexSize(skin->vertex_declaration, 0);
 
-    TRACE("iface %p, bone_transforms %p, bone_inv_transpose_transforms %p, src_vertices %p, dst_vertices %p\n",
+    TRACE("iface %p, bone_transforms %p, bone_inv_transpose_transforms %p, src_vertices %p, dst_vertices %p.\n",
             skin, bone_transforms, bone_inv_transpose_transforms, src_vertices, dst_vertices);
 
     if (bone_inv_transpose_transforms)
-        FIXME("Skinning vertices with two position elements not supported\n");
-
-    if ((skin->fvf & D3DFVF_POSITION_MASK) != D3DFVF_XYZ) {
-        FIXME("Vertex type %#lx not supported\n", skin->fvf & D3DFVF_POSITION_MASK);
-        return E_FAIL;
+    {
+        FIXME("Using inverse transforms is not supported, returning E_NOTIMPL.\n");
+        return E_NOTIMPL;
     }
 
-    /* Reset all positions */
-    for (i = 0; i < skin->num_vertices; i++) {
-        D3DXVECTOR3 *position = (D3DXVECTOR3*)((BYTE*)dst_vertices + size * i);
-        position->x = 0.0f;
-        position->y = 0.0f;
-        position->z = 0.0f;
-    }
+    for (unsigned int i = 0; i < skin->vertex_count; ++i)
+    {
+        for (const D3DVERTEXELEMENT9 *element = skin->vertex_declaration; element->Stream != 0xff; ++element)
+        {
+            const void *src_element = (uint8_t *)src_vertices + (i * vertex_size) + element->Offset;
+            void *dst_element = (uint8_t *)dst_vertices + (i * vertex_size) + element->Offset;
+            unsigned int element_size = d3dx_decltype_size[element->Type];
 
-    /* Update positions that are influenced by bones */
-    for (i = 0; i < skin->num_bones; i++) {
-        D3DXMATRIX bone_inverse, matrix;
+            switch (element->Usage)
+            {
+                case D3DDECLUSAGE_POSITION:
+                case D3DDECLUSAGE_NORMAL:
+                    memset(dst_element, 0, element_size);
+                    break;
 
-        D3DXMatrixInverse(&bone_inverse, NULL, &skin->bones[i].transform);
-        D3DXMatrixMultiply(&matrix, &bone_transforms[i], &bone_inverse);
-        D3DXMatrixMultiply(&matrix, &matrix, &skin->bones[i].transform);
-
-        for (j = 0; j < skin->bones[i].num_influences; j++) {
-            D3DXVECTOR3 position;
-            D3DXVECTOR3 *position_src = (D3DXVECTOR3*)((BYTE*)src_vertices + size * skin->bones[i].vertices[j]);
-            D3DXVECTOR3 *position_dest = (D3DXVECTOR3*)((BYTE*)dst_vertices + size * skin->bones[i].vertices[j]);
-            FLOAT weight = skin->bones[i].weights[j];
-
-            D3DXVec3TransformCoord(&position, position_src, &matrix);
-            position_dest->x += weight * position.x;
-            position_dest->y += weight * position.y;
-            position_dest->z += weight * position.z;
-        }
-    }
-
-    if (skin->fvf & D3DFVF_NORMAL) {
-        /* Reset all normals */
-        for (i = 0; i < skin->num_vertices; i++) {
-            D3DXVECTOR3 *normal = (D3DXVECTOR3*)((BYTE*)dst_vertices + size * i + sizeof(D3DXVECTOR3));
-            normal->x = 0.0f;
-            normal->y = 0.0f;
-            normal->z = 0.0f;
-        }
-
-        /* Update normals that are influenced by bones */
-        for (i = 0; i < skin->num_bones; i++) {
-            D3DXMATRIX bone_inverse, matrix;
-
-            D3DXMatrixInverse(&bone_inverse, NULL, &skin->bones[i].transform);
-            D3DXMatrixMultiply(&matrix, &skin->bones[i].transform, &bone_transforms[i]);
-
-            for (j = 0; j < skin->bones[i].num_influences; j++) {
-                D3DXVECTOR3 normal;
-                D3DXVECTOR3 *normal_src = (D3DXVECTOR3*)((BYTE*)src_vertices + size * skin->bones[i].vertices[j] + sizeof(D3DXVECTOR3));
-                D3DXVECTOR3 *normal_dest = (D3DXVECTOR3*)((BYTE*)dst_vertices + size * skin->bones[i].vertices[j] + sizeof(D3DXVECTOR3));
-                FLOAT weight = skin->bones[i].weights[j];
-
-                D3DXVec3TransformNormal(&normal, normal_src, &bone_inverse);
-                D3DXVec3TransformNormal(&normal, &normal, &matrix);
-                normal_dest->x += weight * normal.x;
-                normal_dest->y += weight * normal.y;
-                normal_dest->z += weight * normal.z;
+                default:
+                    FIXME("Unhandled usage %#x.\n", element->Usage);
+                    /* fall through */
+                case D3DDECLUSAGE_TEXCOORD:
+                    memcpy(dst_element, src_element, element_size);
+                    break;
             }
         }
+    }
 
-        /* Normalize all normals that are influenced by bones*/
-        for (i = 0; i < skin->num_vertices; i++) {
-            D3DXVECTOR3 *normal_dest = (D3DXVECTOR3*)((BYTE*)dst_vertices + (i * size) + sizeof(D3DXVECTOR3));
-            if ((normal_dest->x != 0.0f) && (normal_dest->y != 0.0f) && (normal_dest->z != 0.0f))
-                D3DXVec3Normalize(normal_dest, normal_dest);
+    for (const D3DVERTEXELEMENT9 *element = skin->vertex_declaration; element->Stream != 0xff; ++element)
+    {
+        if (element->Usage != D3DDECLUSAGE_POSITION && element->Usage != D3DDECLUSAGE_NORMAL)
+            continue;
+
+        for (unsigned int i = 0; i < skin->num_bones; ++i)
+        {
+            const struct bone *bone = &skin->bones[i];
+
+            for (unsigned int j = 0; j < bone->num_influences; ++j)
+            {
+                unsigned int vertex_idx = bone->vertices[j];
+                float weight = bone->weights[j];
+
+                const void *src_element = (uint8_t *)src_vertices + (vertex_idx * vertex_size) + element->Offset;
+                void *dst_element = (uint8_t *)dst_vertices + (vertex_idx * vertex_size) + element->Offset;
+                D3DXVECTOR3 *dst_vec3 = dst_element;
+
+                switch (element->Usage)
+                {
+                    case D3DDECLUSAGE_POSITION:
+                        if (element->Type == D3DDECLTYPE_FLOAT3)
+                        {
+                            D3DXVECTOR3 position;
+
+                            D3DXVec3TransformCoord(&position, src_element, &bone_transforms[i]);
+                            dst_vec3->x += weight * position.x;
+                            dst_vec3->y += weight * position.y;
+                            dst_vec3->z += weight * position.z;
+                        }
+                        else
+                        {
+                            FIXME("Unhandled position type %#x.\n", element->Type);
+                            return E_NOTIMPL;
+                        }
+                        break;
+
+                    case D3DDECLUSAGE_NORMAL:
+                    {
+                        D3DXVECTOR3 normal;
+
+                        if (element->Type != D3DDECLTYPE_FLOAT3)
+                        {
+                            FIXME("Unhandled normal type %#x.\n", element->Type);
+                            return E_NOTIMPL;
+                        }
+
+                        D3DXVec3TransformNormal(&normal, src_element, &bone_transforms[i]);
+                        dst_vec3->x += weight * normal.x;
+                        dst_vec3->y += weight * normal.y;
+                        dst_vec3->z += weight * normal.z;
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -559,7 +572,7 @@ HRESULT WINAPI D3DXCreateSkinInfo(DWORD vertex_count, const D3DVERTEXELEMENT9 *d
 
     object->ID3DXSkinInfo_iface.lpVtbl = &d3dx9_skin_info_vtbl;
     object->ref = 1;
-    object->num_vertices = vertex_count;
+    object->vertex_count = vertex_count;
     object->num_bones = bone_count;
     object->vertex_declaration[0] = empty_declaration;
     object->fvf = 0;

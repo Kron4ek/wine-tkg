@@ -1104,6 +1104,7 @@ static void contexts_from_server( CONTEXT *context, struct context_data server_c
  */
 static DECLSPEC_NORETURN void pthread_exit_wrapper( int status )
 {
+    close( ntdll_get_thread_data()->alert_fd );
     close( ntdll_get_thread_data()->wait_fd[0] );
     close( ntdll_get_thread_data()->wait_fd[1] );
     close( ntdll_get_thread_data()->reply_fd );
@@ -1316,7 +1317,8 @@ NTSTATUS WINAPI NtCreateThreadEx( HANDLE *handle, ACCESS_MASK access, OBJECT_ATT
                                   SIZE_T stack_reserve, PS_ATTRIBUTE_LIST *attr_list )
 {
     static const ULONG supported_flags = THREAD_CREATE_FLAGS_CREATE_SUSPENDED | THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH |
-                                         THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER | THREAD_CREATE_FLAGS_BYPASS_PROCESS_FREEZE;
+                                         THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER | THREAD_CREATE_FLAGS_SKIP_LOADER_INIT |
+                                         THREAD_CREATE_FLAGS_BYPASS_PROCESS_FREEZE;
     sigset_t sigset;
     pthread_t pthread_id;
     pthread_attr_t pthread_attr;
@@ -1413,8 +1415,13 @@ NTSTATUS WINAPI NtCreateThreadEx( HANDLE *handle, ACCESS_MASK access, OBJECT_ATT
     set_thread_id( teb, GetCurrentProcessId(), tid );
 
     teb->SkipThreadAttach = !!(flags & THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH);
+    teb->SkipLoaderInit = !!(flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT);
     wow_teb = get_wow_teb( teb );
-    if (wow_teb) wow_teb->SkipThreadAttach = teb->SkipThreadAttach;
+    if (wow_teb)
+    {
+        wow_teb->SkipThreadAttach = teb->SkipThreadAttach;
+        wow_teb->SkipLoaderInit = teb->SkipLoaderInit;
+    }
 
     thread_data = (struct ntdll_thread_data *)&teb->GdiTebBatch;
     thread_data->request_fd  = request_pipe[1];
@@ -1837,7 +1844,14 @@ NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT ma
 
     if (ret == STATUS_PENDING)
     {
+        sigset_t sigset;
+
         NtWaitForSingleObject( context_handle, FALSE, NULL );
+
+        server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
+
+        /* remove the handle from the cache, get_thread_context will close it for us */
+        close_inproc_sync( context_handle );
 
         SERVER_START_REQ( get_thread_context )
         {
@@ -1846,10 +1860,12 @@ NTSTATUS get_thread_context( HANDLE handle, void *context, BOOL *self, USHORT ma
             req->machine = machine;
             req->native_flags = flags & get_native_context_flags( native_machine, machine );
             wine_server_set_reply( req, server_contexts, sizeof(server_contexts) );
-            ret = wine_server_call( req );
+            ret = server_call_unlocked( req );
             count = wine_server_reply_size( reply ) / sizeof(server_contexts[0]);
         }
         SERVER_END_REQ;
+
+        server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
     }
     if (!ret && count)
     {
@@ -2178,7 +2194,9 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
     }
 
     case ThreadDescriptorTableEntry:
-        return get_thread_ldt_entry( handle, data, length, ret_len );
+        status = get_thread_ldt_entry( handle, data, length );
+        if (status == STATUS_SUCCESS && ret_len) *ret_len = sizeof(LDT_ENTRY);
+        return status;
 
     case ThreadAmILastThread:
     {

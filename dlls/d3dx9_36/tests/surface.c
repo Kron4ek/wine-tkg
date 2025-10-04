@@ -194,12 +194,10 @@ static void fill_dds_header(struct dds_header *header)
     header->caps = DDSCAPS_TEXTURE;
 }
 
-#define check_dds_pixel_format(flags, fourcc, bpp, rmask, gmask, bmask, amask, format) \
-        check_dds_pixel_format_(__LINE__, flags, fourcc, bpp, rmask, gmask, bmask, amask, format)
-static void check_dds_pixel_format_(unsigned int line,
+static void check_dds_pixel_format_image_info(unsigned int line,
                                     DWORD flags, DWORD fourcc, DWORD bpp,
                                     DWORD rmask, DWORD gmask, DWORD bmask, DWORD amask,
-                                    D3DFORMAT expected_format)
+                                    HRESULT expected_hr, D3DFORMAT expected_format)
 {
     HRESULT hr;
     D3DXIMAGE_INFO info;
@@ -223,9 +221,9 @@ static void check_dds_pixel_format_(unsigned int line,
     memset(dds.data, 0, sizeof(dds.data));
 
     hr = D3DXGetImageInfoFromFileInMemory(&dds, sizeof(dds), &info);
-    ok_(__FILE__, line)(hr == D3D_OK, "D3DXGetImageInfoFromFileInMemory returned %#lx for pixel format %#x, expected %#lx\n",
-            hr, expected_format, D3D_OK);
-    if (SUCCEEDED(hr))
+    ok_(__FILE__, line)(hr == expected_hr, "D3DXGetImageInfoFromFileInMemory returned %#lx for pixel format %#x, expected %#lx\n",
+            hr, expected_format, expected_hr);
+    if (SUCCEEDED(hr) && hr == expected_hr)
     {
         ok_(__FILE__, line)(info.Format == expected_format, "D3DXGetImageInfoFromFileInMemory returned format %#x, expected %#x\n",
                 info.Format, expected_format);
@@ -233,7 +231,7 @@ static void check_dds_pixel_format_(unsigned int line,
 
     /* Test again with unused fields set. */
     if (flags & DDS_PF_FOURCC)
-        rmask = gmask = bmask = amask = bpp = ~0u;
+        rmask = gmask = bmask = amask = bpp = flags = ~0u;
     else if ((flags & (DDS_PF_INDEXED | DDS_PF_ALPHA)) == (DDS_PF_INDEXED | DDS_PF_ALPHA))
         rmask = gmask = bmask = fourcc = ~0u;
     else if (flags & DDS_PF_INDEXED)
@@ -253,6 +251,7 @@ static void check_dds_pixel_format_(unsigned int line,
     else if (flags & DDS_PF_BUMPLUMINANCE)
         fourcc = amask = ~0u;
 
+    dds.header.pixel_format.flags = flags;
     dds.header.pixel_format.fourcc = fourcc;
     dds.header.pixel_format.bpp = bpp;
     dds.header.pixel_format.rmask = rmask;
@@ -260,10 +259,17 @@ static void check_dds_pixel_format_(unsigned int line,
     dds.header.pixel_format.bmask = bmask;
     dds.header.pixel_format.amask = amask;
     hr = D3DXGetImageInfoFromFileInMemory(&dds, sizeof(dds), &info);
-    ok_(__FILE__, line)(hr == D3D_OK, "Unexpected hr %#lx.\n", hr);
-    if (SUCCEEDED(hr))
+    ok_(__FILE__, line)(hr == expected_hr, "Unexpected hr %#lx.\n", hr);
+    if (SUCCEEDED(hr) && hr == expected_hr)
         ok_(__FILE__, line)(info.Format == expected_format, "Unexpected format %#x.\n", info.Format);
 }
+
+#define check_dds_pixel_format(flags, fourcc, bpp, rmask, gmask, bmask, amask, format) \
+        check_dds_pixel_format_image_info(__LINE__, flags, fourcc, bpp, rmask, gmask, bmask, amask, D3D_OK, format)
+
+#define check_dds_pixel_format_unsupported(flags, fourcc, bpp, rmask, gmask, bmask, amask, expected_hr) \
+        check_dds_pixel_format_image_info(__LINE__, flags, fourcc, bpp, rmask, gmask, bmask, amask, expected_hr, \
+                D3DFMT_UNKNOWN)
 
 static void test_dds_header_handling(void)
 {
@@ -1001,6 +1007,7 @@ static void test_D3DXGetImageInfo(void)
     check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_R32F, 0, 0, 0, 0, 0, D3DFMT_R32F);
     check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_G32R32F, 0, 0, 0, 0, 0, D3DFMT_G32R32F);
     check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_A32B32G32R32F, 0, 0, 0, 0, 0, D3DFMT_A32B32G32R32F);
+    check_dds_pixel_format(DDS_PF_FOURCC, D3DFMT_CxV8U8, 0, 0, 0, 0, 0, D3DFMT_CxV8U8);
     check_dds_pixel_format(DDS_PF_RGB, 0, 16, 0xf800, 0x07e0, 0x001f, 0, D3DFMT_R5G6B5);
     check_dds_pixel_format(DDS_PF_RGB | DDS_PF_ALPHA, 0, 16, 0x7c00, 0x03e0, 0x001f, 0x8000, D3DFMT_A1R5G5B5);
     check_dds_pixel_format(DDS_PF_RGB | DDS_PF_ALPHA, 0, 16, 0x0f00, 0x00f0, 0x000f, 0xf000, D3DFMT_A4R4G4B4);
@@ -1030,6 +1037,13 @@ static void test_D3DXGetImageInfo(void)
     todo_wine check_dds_pixel_format(DDS_PF_BUMPLUMINANCE, 0, 16, 0x001f, 0x03e0, 0xfc00, 0, D3DFMT_L6V5U5);
     check_dds_pixel_format(DDS_PF_INDEXED, 0, 8, 0, 0, 0, 0, D3DFMT_P8);
     check_dds_pixel_format(DDS_PF_INDEXED | DDS_PF_ALPHA, 0, 16, 0, 0, 0, 0xff00, D3DFMT_A8P8);
+
+    /*
+     * ATI{1,2} are unsupported, but some games (Secret World Legends) attempt
+     * to use them on d3dx9.
+     */
+    check_dds_pixel_format_unsupported(DDS_PF_FOURCC, MAKEFOURCC('A','T','I','1'), 0, 0, 0, 0, 0, D3DXERR_INVALIDDATA);
+    check_dds_pixel_format_unsupported(DDS_PF_FOURCC, MAKEFOURCC('A','T','I','2'), 0, 0, 0, 0, 0, D3DXERR_INVALIDDATA);
 
     test_dds_header_handling();
     test_tga_header_handling();
@@ -2518,6 +2532,7 @@ static void test_D3DXLoadSurface(IDirect3DDevice9 *device)
     static const uint32_t pixdata_q8w8v8u8[] = { 0x30201000, 0x7f605040, 0xb0a08180, 0xffe0d0c0 };
     static const float pixdata_a32b32g32r32f[] = {  0.0f,  0.1f,  NAN,  INFINITY,  1.0f,  1.1f,  1.2f,  1.3f,
                                                    -0.1f, -0.2f, -NAN, -INFINITY, -1.0f, -1.1f, -1.2f, -1.3f };
+    static const uint16_t pixdata_cxv8u8[] = { 0x7f7f, 0x8181, 0x0000, 0x006d };
     static const uint16_t pixdata_v8u8[] = { 0x3000, 0x7f40, 0x8180, 0xffc0 };
     BYTE buffer[4 * 8 * 4];
     D3DXIMAGE_INFO info;
@@ -2950,6 +2965,19 @@ static void test_D3DXLoadSurface(IDirect3DDevice9 *device)
         check_pixel_4bpp(&lockrect, 1, 0, 0xffc0d0e0);
         check_pixel_4bpp(&lockrect, 0, 1, 0x2f00001f);
         check_pixel_4bpp(&lockrect, 1, 1, 0x7e3f4f5f);
+        hr = IDirect3DSurface9_UnlockRect(surf);
+        ok(hr == D3D_OK, "Failed to unlock surface, hr %#lx.\n", hr);
+
+        /* D3DFMT_CxV8U8. */
+        hr = D3DXLoadSurfaceFromMemory(surf, NULL, NULL, pixdata_cxv8u8, D3DFMT_CxV8U8, 4, NULL, &rect,
+                D3DX_FILTER_NONE, 0);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+        hr = IDirect3DSurface9_LockRect(surf, &lockrect, NULL, D3DLOCK_READONLY);
+        ok(hr == D3D_OK, "Failed to lock surface, hr %#lx.\n", hr);
+        check_pixel_4bpp(&lockrect, 0, 0, 0xffffff80);
+        check_pixel_4bpp(&lockrect, 1, 0, 0xff000080);
+        check_pixel_4bpp(&lockrect, 0, 1, 0xff8080ff);
+        check_pixel_4bpp(&lockrect, 1, 1, 0xffed80c1);
         hr = IDirect3DSurface9_UnlockRect(surf);
         ok(hr == D3D_OK, "Failed to unlock surface, hr %#lx.\n", hr);
 
@@ -3557,6 +3585,21 @@ static void test_D3DXLoadSurface(IDirect3DDevice9 *device)
         hr = IDirect3DSurface9_UnlockRect(surf);
         ok(hr == D3D_OK, "Failed to unlock surface, hr %#lx.\n", hr);
 
+        /* D3DFMT_CxV8U8. */
+        hr = D3DXLoadSurfaceFromMemory(surf, NULL, NULL, pixdata_cxv8u8, D3DFMT_CxV8U8, 4, NULL, &rect,
+                D3DX_FILTER_NONE, 0);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+        /* The calculated Cx value goes into the blue channel. */
+        hr = IDirect3DSurface9_LockRect(surf, &lockrect, NULL, D3DLOCK_READONLY);
+        ok(hr == D3D_OK, "Failed to lock surface, hr %#lx.\n", hr);
+        check_pixel_float4(&lockrect, 0, 0,  1.0f,             1.0f, 0.0f,            1.0f, 0, FALSE);
+        check_pixel_float4(&lockrect, 1, 0, -1.0f,            -1.0f, 0.0f,            1.0f, 0, FALSE);
+        check_pixel_float4(&lockrect, 0, 1,  0.0f,             0.0f, 1.0f,            1.0f, 0, FALSE);
+        check_pixel_float4(&lockrect, 1, 1,  8.58267725e-001,  0.0f, 5.13202250e-001, 1.0f, 0, FALSE);
+        hr = IDirect3DSurface9_UnlockRect(surf);
+        ok(hr == D3D_OK, "Failed to unlock surface, hr %#lx.\n", hr);
+
         check_release((IUnknown*)surf, 0);
     }
 
@@ -3669,6 +3712,20 @@ static void test_D3DXLoadSurface(IDirect3DDevice9 *device)
         check_pixel_4bpp(&lockrect, 1, 0, 0x00ff5040);
         check_pixel_4bpp(&lockrect, 0, 1, 0x002f8282);
         check_pixel_4bpp(&lockrect, 1, 1, 0x007ed1c1);
+        hr = IDirect3DSurface9_UnlockRect(surf);
+        ok(hr == D3D_OK, "Failed to unlock surface, hr %#lx.\n", hr);
+
+        /* D3DFMT_CxV8U8. */
+        hr = D3DXLoadSurfaceFromMemory(surf, NULL, NULL, pixdata_cxv8u8, D3DFMT_CxV8U8, 4, NULL, &rect,
+                D3DX_FILTER_NONE, 0);
+        ok(hr == D3D_OK, "Got unexpected hr %#lx.\n", hr);
+
+        hr = IDirect3DSurface9_LockRect(surf, &lockrect, NULL, D3DLOCK_READONLY);
+        ok(hr == D3D_OK, "Failed to lock surface, hr %#lx.\n", hr);
+        check_pixel_4bpp(&lockrect, 0, 0, 0x00ff7f7f);
+        check_pixel_4bpp(&lockrect, 1, 0, 0x00ff8282);
+        check_pixel_4bpp(&lockrect, 0, 1, 0x00ff0000);
+        check_pixel_4bpp(&lockrect, 1, 1, 0x00ff006d);
         hr = IDirect3DSurface9_UnlockRect(surf);
         ok(hr == D3D_OK, "Failed to unlock surface, hr %#lx.\n", hr);
 
@@ -4097,6 +4154,12 @@ static void test_save_surface_to_dds(IDirect3DDevice9 *device)
         /* 40. */
         { D3DFMT_YUY2, 4, 4, NULL,
           { D3D_OK, { 32, DDS_PF_FOURCC, D3DFMT_YUY2, 0, 0, 0, 0, 0 },
+            DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT, 4, 4, 0, 0, 0, DDSCAPS_TEXTURE, 0,
+            DDS_FILE_HEADER_SIZE + (4 * 2 * 4)
+          }
+        },
+        { D3DFMT_CxV8U8, 4, 4, NULL,
+          { D3D_OK, { 32, DDS_PF_FOURCC, D3DFMT_CxV8U8, 0, 0, 0, 0, 0 },
             DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT, 4, 4, 0, 0, 0, DDSCAPS_TEXTURE, 0,
             DDS_FILE_HEADER_SIZE + (4 * 2 * 4)
           }
@@ -4769,6 +4832,17 @@ static void test_save_surface_iffs(IDirect3DDevice9 *device)
             { D3D_OK, D3DFMT_R8G8B8, .todo_hr = TRUE },
             { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
             { D3D_OK, D3DFMT_A32B32G32R32F, .todo_hr = TRUE },
+          },
+        },
+        { D3DFMT_CxV8U8, NULL, 0x00,
+          { { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
+            { D3DERR_INVALIDCALL, .todo_hr = TRUE },
           },
         },
     };

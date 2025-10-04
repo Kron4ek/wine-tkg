@@ -17,6 +17,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <assert.h>
+
 #include "wine/debug.h"
 #include "wine/rbtree.h"
 #include "winreg.h"
@@ -414,14 +416,15 @@ static HRESULT devprop_filter_eval_compare( const DEV_OBJECT *obj, const DEVPROP
                 cmp = op & DEVPROP_OPERATOR_MODIFIER_IGNORE_CASE ? wcsicmp( prop->Buffer, cmp_prop->Buffer )
                                                                  : wcscmp( prop->Buffer, cmp_prop->Buffer );
                 break;
+            case DEVPROP_TYPE_GUID:
+                /* Any other comparison operator other than DEVPROP_OPERATOR_EQUALS with GUIDs evaluates to false. */
+                if (!(op & DEVPROP_OPERATOR_EQUALS)) break;
             default:
                 cmp = memcmp( prop->Buffer, cmp_prop->Buffer, prop->BufferSize );
                 break;
             }
-            if (op == DEVPROP_OPERATOR_EQUALS)
+            if (op & DEVPROP_OPERATOR_EQUALS)
                 ret = !cmp;
-            else if (op & DEVPROP_OPERATOR_EQUALS && !cmp)
-                ret = TRUE;
             else
                 ret = (op & DEVPROP_OPERATOR_LESS_THAN) ? cmp < 0 : cmp > 0;
         }
@@ -442,72 +445,78 @@ static HRESULT devprop_filter_eval_compare( const DEV_OBJECT *obj, const DEVPROP
     return ret ? S_OK : S_FALSE;
 }
 
+static const DEVPROP_FILTER_EXPRESSION *find_closing_filter( const DEVPROP_FILTER_EXPRESSION *filter, const DEVPROP_FILTER_EXPRESSION *end )
+{
+    DWORD open = filter->Operator & DEVPROP_OPERATOR_MASK_LOGICAL, close = open + (DEVPROP_OPERATOR_AND_CLOSE - DEVPROP_OPERATOR_AND_OPEN), depth = 0;
+
+    for (const DEVPROP_FILTER_EXPRESSION *closing = filter + 1; closing < end; closing++)
+    {
+        DWORD logical = closing->Operator & DEVPROP_OPERATOR_MASK_LOGICAL;
+        if (logical == close && !depth--) return closing;
+        if (logical == open) depth++;
+    }
+
+    return NULL;
+}
+
 /* Return S_OK if the specified filter expressions match the object, S_FALSE if it doesn't. */
-static HRESULT devprop_filter_matches_object( const DEV_OBJECT *obj, ULONG filters_len,
-                                              const DEVPROP_FILTER_EXPRESSION *filters )
+static HRESULT devprop_filter_matches_object( const DEV_OBJECT *obj, DEVPROP_OPERATOR op_outer_logical, const DEVPROP_FILTER_EXPRESSION *filters,
+                                              const DEVPROP_FILTER_EXPRESSION *end )
 {
     HRESULT hr = S_OK;
-    ULONG i;
 
-    TRACE( "(%s, %lu, %p)\n", debugstr_DEV_OBJECT( obj ), filters_len, filters );
+    TRACE( "(%s, %#x, %p, %p)\n", debugstr_DEV_OBJECT( obj ), op_outer_logical, filters, end );
 
-    if (!filters_len)
-        return S_OK;
-
-    /* By default, the evaluation is performed by AND-ing all individual filter expressions. */
-    for (i = 0; i < filters_len; i++)
+    for (const DEVPROP_FILTER_EXPRESSION *filter = filters; filter < end; filter++)
     {
-        const DEVPROP_FILTER_EXPRESSION *filter = &filters[i];
         DEVPROP_OPERATOR op = filter->Operator;
 
         if (op == DEVPROP_OPERATOR_NONE)
         {
             hr = S_FALSE;
-            break;
         }
-        if (op & (DEVPROP_OPERATOR_MASK_LIST | DEVPROP_OPERATOR_MASK_ARRAY))
+        else if (op & (DEVPROP_OPERATOR_MASK_LIST | DEVPROP_OPERATOR_MASK_ARRAY))
         {
             FIXME( "Unsupported list/array operator: %s\n", debugstr_DEVPROP_OPERATOR( op ) );
-            continue;
+            hr = S_FALSE;
         }
-        if (op & DEVPROP_OPERATOR_MASK_LOGICAL)
+        else if (op & DEVPROP_OPERATOR_MASK_LOGICAL)
         {
-            FIXME( "Unsupported logical operator: %s\n", debugstr_DEVPROP_OPERATOR( op ) );
-            continue;
+            const DEVPROP_FILTER_EXPRESSION *closing = find_closing_filter( filter, end );
+            hr = devprop_filter_matches_object( obj, op & DEVPROP_OPERATOR_MASK_LOGICAL, filter + 1, closing );
+            filter = closing;
         }
-        if (op & DEVPROP_OPERATOR_MASK_EVAL)
+        else if (op & DEVPROP_OPERATOR_MASK_EVAL)
         {
             hr = devprop_filter_eval_compare( obj, filter );
-            if (FAILED( hr ) || hr == S_FALSE)
-                break;
+        }
+        if (FAILED( hr )) break;
+
+        /* See if we can short-circuit. */
+        switch (op_outer_logical)
+        {
+        /* {NOT_OPEN, ..., NOT_CLOSE} is the same as {NOT_OPEN, AND_OPEN, ..., AND_CLOSE, NOT_CLOSE}, so we can
+         * short circuit here as well. */
+        case DEVPROP_OPERATOR_NOT_OPEN:
+        case DEVPROP_OPERATOR_AND_OPEN:
+            if (hr == S_FALSE) goto done;
+            break;
+        case DEVPROP_OPERATOR_OR_OPEN:
+            if (hr == S_OK) goto done;
+            break;
+        default:
+            assert( 0 );
+            break;
         }
     }
 
-    return hr;
-}
-
-static HRESULT stack_push( DEVPROP_OPERATOR **stack, ULONG *len, DEVPROP_OPERATOR op )
-{
-    DEVPROP_OPERATOR *tmp;
-
-    if (!(tmp = realloc( *stack, (*len + 1) * sizeof( op ) )))
-        return E_OUTOFMEMORY;
-    *stack = tmp;
-    tmp[*len] = op;
-    *len += 1;
-    return S_OK;
-}
-
-static DEVPROP_OPERATOR stack_pop( DEVPROP_OPERATOR **stack, ULONG *len )
-{
-    DEVPROP_OPERATOR op = DEVPROP_OPERATOR_NONE;
-
-    if (*len)
+done:
+    if (op_outer_logical == DEVPROP_OPERATOR_NOT_OPEN)
     {
-        op = (*stack)[*len - 1];
-        *len -= 1;
+        if (hr == S_FALSE) hr = S_OK;
+        else if (hr == S_OK) hr = S_FALSE;
     }
-    return op;
+    return hr;
 }
 
 static BOOL devprop_type_validate( DEVPROPTYPE type, ULONG buf_size )
@@ -563,15 +572,14 @@ static BOOL devprop_type_validate( DEVPROPTYPE type, ULONG buf_size )
     return mod == DEVPROP_TYPEMOD_ARRAY ? buf_size >= size : buf_size == size;
 }
 
-static HRESULT devprop_filters_validate( ULONG filters_len, const DEVPROP_FILTER_EXPRESSION *filters )
+static BOOL devprop_filters_validate( const DEVPROP_FILTER_EXPRESSION *filters, const DEVPROP_FILTER_EXPRESSION *end )
 {
-    DEVPROP_OPERATOR *stack = NULL;
-    ULONG i, logical_open = 0, stack_top = 0;
-    HRESULT hr = S_OK;
+    const DEVPROP_FILTER_EXPRESSION *closing;
 
-    for (i = 0; i < filters_len; i++)
+    if (filters == end) return FALSE;
+
+    for (const DEVPROP_FILTER_EXPRESSION *filter = filters; filter < end; filter++)
     {
-        const DEVPROP_FILTER_EXPRESSION *filter = &filters[i];
         const DEVPROPERTY *prop = &filter->Property;
         DEVPROP_OPERATOR op = filter->Operator;
         DWORD compare = op & DEVPROP_OPERATOR_MASK_EVAL;
@@ -586,16 +594,12 @@ static HRESULT devprop_filters_validate( ULONG filters_len, const DEVPROP_FILTER
             || !!prop->Buffer != !!prop->BufferSize)
         {
             FIXME( "Unknown operator: %#x\n", op );
-            hr = E_INVALIDARG;
-            break;
+            return FALSE;
         }
         if (!op) continue;
         if (compare && compare != DEVPROP_OPERATOR_EXISTS
             && !devprop_type_validate( prop->Type, prop->BufferSize ))
-        {
-            hr = E_INVALIDARG;
-            break;
-        }
+            return FALSE;
 
         switch (modifier)
         {
@@ -604,8 +608,7 @@ static HRESULT devprop_filters_validate( ULONG filters_len, const DEVPROP_FILTER
         case DEVPROP_OPERATOR_MODIFIER_IGNORE_CASE:
             break;
         default:
-            hr = E_INVALIDARG;
-            break;
+            return FALSE;
         }
 
         switch (list)
@@ -617,8 +620,7 @@ static HRESULT devprop_filters_validate( ULONG filters_len, const DEVPROP_FILTER
         case DEVPROP_OPERATOR_LIST_ELEMENT_CONTAINS:
             break;
         default:
-            hr = E_INVALIDARG;
-            break;
+            return FALSE;
         }
 
         switch (logical)
@@ -628,31 +630,16 @@ static HRESULT devprop_filters_validate( ULONG filters_len, const DEVPROP_FILTER
         case DEVPROP_OPERATOR_AND_OPEN:
         case DEVPROP_OPERATOR_OR_OPEN:
         case DEVPROP_OPERATOR_NOT_OPEN:
-            hr = stack_push( &stack, &stack_top, logical );
-            logical_open = i;
+            if (!(closing = find_closing_filter( filter, end ))) return FALSE;
+            if (!devprop_filters_validate( filter + 1, closing )) return FALSE;
+            filter = closing;
             break;
-        case DEVPROP_OPERATOR_AND_CLOSE:
-        case DEVPROP_OPERATOR_OR_CLOSE:
-        case DEVPROP_OPERATOR_NOT_CLOSE:
-        {
-            DEVPROP_OPERATOR top = stack_pop( &stack, &stack_top );
-            /* The operator should be correct paired, and shouldn't be empty. */
-            if (logical - top != (DEVPROP_OPERATOR_AND_CLOSE - DEVPROP_OPERATOR_AND_OPEN) || logical_open == i - 1)
-                hr = E_INVALIDARG;
-            break;
-        }
         default:
-            hr = E_INVALIDARG;
-            break;
+            return FALSE;
         }
-
-        if (FAILED( hr )) break;
     }
 
-    if (stack_top)
-        hr = E_INVALIDARG;
-    free( stack );
-    return hr;
+    return TRUE;
 }
 
 static HRESULT dev_object_iface_get_props( DEV_OBJECT *obj, HDEVINFO set, SP_DEVICE_INTERFACE_DATA *iface_data,
@@ -781,7 +768,7 @@ static void dev_object_remove_unwanted_props( DEV_OBJECT *obj, ULONG keys_len, c
 }
 
 static HRESULT enum_dev_objects( DEV_OBJECT_TYPE type, ULONG props_len, const DEVPROPCOMPKEY *props, BOOL all_props,
-                                 ULONG filters_len, const DEVPROP_FILTER_EXPRESSION *filters,
+                                 const DEVPROP_FILTER_EXPRESSION *filters, const DEVPROP_FILTER_EXPRESSION *filters_end,
                                  enum_device_object_cb callback, void *data )
 {
     HKEY iface_key;
@@ -853,19 +840,17 @@ static HRESULT enum_dev_objects( DEV_OBJECT_TYPE type, ULONG props_len, const DE
             obj.pszObjectId = detail->DevicePath;
             /* If we're also filtering objects, get all properties for this object. Once the filters have been
              * evaluated, free properties that have not been requested, and set cPropertyCount to props_len.  */
-            if (filters_len)
+            if (filters)
                 hr = dev_object_iface_get_props( &obj, set, &iface, 0, NULL, TRUE, TRUE );
             else
                 hr = dev_object_iface_get_props( &obj, set, &iface, props_len, props, all_props, FALSE );
             if (SUCCEEDED( hr ))
             {
-                if (filters_len)
-                {
-                    hr = devprop_filter_matches_object( &obj, filters_len, filters );
-                    /* Shrink pProperties to only the desired ones, unless DevQueryFlagAllProperties is set. */
-                    if (!all_props)
-                        dev_object_remove_unwanted_props( &obj, props_len, props );
-                }
+                /* By default, the evaluation is performed by AND-ing all individual filter expressions. */
+                hr = devprop_filter_matches_object( &obj, DEVPROP_OPERATOR_AND_OPEN, filters, filters_end );
+                /* Shrink pProperties to only the desired ones, unless DevQueryFlagAllProperties is set. */
+                if (!all_props)
+                    dev_object_remove_unwanted_props( &obj, props_len, props );
                 if (hr == S_OK)
                     hr = callback( obj, data );
                 else
@@ -928,7 +913,7 @@ HRESULT WINAPI DevGetObjectsEx( DEV_OBJECT_TYPE type, ULONG flags, ULONG props_l
 
     if (!!props_len != !!props || !!filters_len != !!filters || !!params_len != !!params || (flags & ~valid_flags)
         || (props_len && (flags & DevQueryFlagAllProperties))
-        || FAILED( devprop_filters_validate( filters_len, filters ) ))
+        || (filters && !devprop_filters_validate( filters, filters + filters_len )))
         return E_INVALIDARG;
     if (params)
         FIXME( "Query parameters are not supported!\n" );
@@ -936,7 +921,7 @@ HRESULT WINAPI DevGetObjectsEx( DEV_OBJECT_TYPE type, ULONG flags, ULONG props_l
     *objs = NULL;
     *objs_len = 0;
 
-    hr = enum_dev_objects( type, props_len, props, !!(flags & DevQueryFlagAllProperties), filters_len, filters,
+    hr = enum_dev_objects( type, props_len, props, !!(flags & DevQueryFlagAllProperties), filters, filters + filters_len,
                            dev_objects_append, &objects );
     if (SUCCEEDED( hr ))
     {
@@ -1380,7 +1365,7 @@ HRESULT WINAPI DevCreateObjectQueryEx( DEV_OBJECT_TYPE type, ULONG flags, ULONG 
 
     if (!!props_len != !!props || !!filters_len != !!filters || !!params_len != !!params || (flags & ~valid_flags) || !callback
         || (props_len && (flags & DevQueryFlagAllProperties))
-        || FAILED( devprop_filters_validate( filters_len, filters ) ))
+        || (filters && !devprop_filters_validate( filters, filters + filters_len )))
         return E_INVALIDARG;
     if (filters)
         FIXME( "Query filters are not supported!\n" );

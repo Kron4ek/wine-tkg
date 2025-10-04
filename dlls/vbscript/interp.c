@@ -1316,28 +1316,13 @@ static HRESULT interp_redim(exec_ctx_t *ctx)
         return hres;
     }
 
-    switch(ref.type) {
-        case REF_DISP:
-        case REF_OBJ:
-        case REF_CONST:
-            return MAKE_VBSERROR(VBSE_ILLEGAL_ASSIGNMENT);
-
-        case REF_FUNC:
-            /* Unreachable: Compiler should have thrown a compilation error: Name redefined */
-            return E_FAIL;
-
-        case REF_NONE:
-            ref.type = REF_VAR;
-            hres = add_dynamic_var(ctx, identifier, FALSE, &ref.u.v);
-            /* Fall through to REF_VAR case */
-
-        case REF_VAR:
-            /* all ok */
-            break;
-
-        default:
-            FIXME("!!!!!!got ref.type = %d\n", ref.type);
-            return E_FAIL;
+    if(ref.type == REF_NONE) {
+        hres = add_dynamic_var(ctx, identifier, FALSE, &ref.u.v);
+        if(FAILED(hres))
+            return hres;
+    }else if(ref.type != REF_VAR) {
+        FIXME("got ref.type = %d\n", ref.type);
+        return E_FAIL;
     }
 
     v = ref.u.v;

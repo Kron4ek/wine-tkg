@@ -1701,32 +1701,10 @@ e = err.number
 on error goto 0
 ok e = 9, "e = " & e ' VBSE_OUT_OF_BOUNDS, can only change rightmost dimension
 
-' Redim without Dim should work, even in explicit mode
-redim toCreateArr(3)
-ok ubound(toCreateArr) = 3, "ubound(toCreateArr) = " & ubound(toCreateArr)
-toCreateArr(3) = 10
-ok toCreateArr(3) = 10, "toCreateArr(3) = " & toCreateArr(3)
-
-on error resume next
-const redimConst = 3
-redim redimConst(3)
-' REF_CONST -> runtime error: Type mismatch: 'redimConst'
-ok err.number = 501, "redim <const> err.number = " & err.number
-err.clear
-redim err(3)
-' REF_DISP -> runtime error: Object doesn't support this property or method
-ok err.number = 501, "redim <err> err.number = " & err.number
-err.clear
-' TODO where should we put this compilation error test?
-' Sub redimSub
-' End Sub
-' redim redimSub(3)
-' ' REF_FUNC -> compilation error: Name redefined
-' todo_wine_ok err.number = -1, "redim <sub> err.number = " & err.number
-' err.clear
-' ' TODO how do we test the REF_OBJ case?
-on error goto 0
-
+redim undeclared_array(3)
+ok ubound(undeclared_array) = 3, "ubound(undeclared_array) = " & ubound(undeclared_array)
+undeclared_array(3) = 10
+ok undeclared_array(3) = 10, "undeclared_array(3) = " & undeclared_array(3)
 
 sub TestReDimFixed
     on error resume next

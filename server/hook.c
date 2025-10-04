@@ -58,10 +58,6 @@ struct hook
     data_size_t         module_size;
 };
 
-#define WH_WINEVENT (WH_MAXHOOK+1)
-
-#define NB_HOOKS (WH_WINEVENT-WH_MINHOOK+1)
-
 struct hook_table
 {
     struct object obj;              /* object header */
@@ -80,11 +76,10 @@ static const struct object_ops hook_table_ops =
     no_add_queue,                 /* add_queue */
     NULL,                         /* remove_queue */
     NULL,                         /* signaled */
-    NULL,                         /* get_esync_fd */
-    NULL,                         /* get_fsync_idx */
     NULL,                         /* satisfied */
     no_signal,                    /* signal */
     no_get_fd,                    /* get_fd */
+    default_get_sync,             /* get_sync */
     default_map_access,           /* map_access */
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
