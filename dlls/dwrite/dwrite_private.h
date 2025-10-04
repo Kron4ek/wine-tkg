@@ -338,10 +338,9 @@ extern void    init_local_fontfile_loader(void);
 extern IDWriteFontFileLoader *get_local_fontfile_loader(void);
 extern HRESULT create_fontface(const struct fontface_desc *desc, struct list *cached_list,
         IDWriteFontFace5 **fontface);
-extern HRESULT create_font_collection(IDWriteFactory7 *factory, IDWriteFontFileEnumerator *enumerator, BOOL is_system,
-       IDWriteFontCollection3 **collection);
+extern HRESULT create_font_collection(IDWriteFactory7 *factory, IDWriteFontFileEnumerator *enumerator,
+        IDWriteFontCollection3 **collection);
 extern HRESULT create_glyphrunanalysis(const struct glyphrunanalysis_desc*,IDWriteGlyphRunAnalysis**);
-extern BOOL    is_system_collection(IDWriteFontCollection*);
 extern HRESULT get_local_refkey(const WCHAR*,const FILETIME*,void**,UINT32*);
 extern HRESULT get_filestream_from_file(IDWriteFontFile*,IDWriteFontFileStream**);
 extern BOOL    is_face_type_supported(DWRITE_FONT_FACE_TYPE);
@@ -365,6 +364,7 @@ extern void factory_detach_fontcollection(IDWriteFactory7 *factory, IDWriteFontC
 extern void factory_detach_gdiinterop(IDWriteFactory7 *factory, IDWriteGdiInterop1 *interop);
 extern struct fontfacecached *factory_cache_fontface(IDWriteFactory7 *factory, struct list *fontfaces,
         IDWriteFontFace5 *fontface);
+extern IDWriteFontFile *get_fontfile_from_font(IDWriteFont *font);
 extern void    get_logfont_from_font(IDWriteFont*,LOGFONTW*);
 extern void    get_logfont_from_fontface(IDWriteFontFace*,LOGFONTW*);
 extern HRESULT get_fontsig_from_font(IDWriteFont*,FONTSIGNATURE*);
@@ -376,12 +376,19 @@ extern void factory_unlock(IDWriteFactory7 *factory);
 extern HRESULT create_inmemory_fileloader(IDWriteInMemoryFontFileLoader **loader);
 extern HRESULT create_font_resource(IDWriteFactory7 *factory, IDWriteFontFile *file, UINT32 face_index,
         IDWriteFontResource **resource);
-extern HRESULT create_fontset_builder(IDWriteFactory7 *factory, IDWriteFontSetBuilder2 **ret);
+extern HRESULT create_fontset_builder(IDWriteFactory7 *factory, BOOL is_system, IDWriteFontSetBuilder2 **ret);
 extern HRESULT compute_glyph_origins(DWRITE_GLYPH_RUN const *run, DWRITE_MEASURING_MODE measuring_mode,
         D2D1_POINT_2F baseline_origin, DWRITE_MATRIX const *transform, D2D1_POINT_2F *origins);
 extern HRESULT create_font_collection_from_set(IDWriteFactory7 *factory, IDWriteFontSet *set,
         DWRITE_FONT_FAMILY_MODEL family_model, REFGUID riid, void **ret);
 extern HRESULT create_system_fontset(IDWriteFactory7 *factory, REFIID riid, void **obj);
+
+struct dwrite_fontset_entry;
+extern void release_fontset_entry(struct dwrite_fontset_entry *);
+extern HRESULT fontset_builder_get_entries(IDWriteFontSetBuilder2 *iface, struct dwrite_fontset_entry ***ret,
+        unsigned int *count);
+extern HRESULT fontset_create_from_set(IDWriteFactory7 *factory, struct dwrite_fontset_entry **src_entries,
+        unsigned int count, BOOL is_system, IDWriteFontSet **ret);
 
 struct dwrite_fontface;
 

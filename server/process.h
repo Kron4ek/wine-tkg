@@ -36,6 +36,7 @@ enum startup_state { STARTUP_IN_PROGRESS, STARTUP_DONE, STARTUP_ABORTED };
 struct process
 {
     struct object        obj;             /* object header */
+    struct object       *sync;            /* sync object for wait/signal */
     struct list          entry;           /* entry in system-wide process list */
     process_id_t         parent_id;       /* parent process id (at the time of creation) */
     struct list          thread_list;     /* thread list */
@@ -78,7 +79,6 @@ struct process
     struct token        *token;           /* security token associated with this process */
     struct list          views;           /* list of memory views */
     client_ptr_t         peb;             /* PEB address in client address space */
-    client_ptr_t         ldt_copy;        /* pointer to LDT copy in client addr space */
     struct dir_cache    *dir_cache;       /* map of client-side directory cache */
     unsigned int         trace_data;      /* opaque data used by the process tracing mechanism */
     struct rawinput_device *rawinput_devices;     /* list of registered rawinput devices */
@@ -88,8 +88,6 @@ struct process
     struct list          rawinput_entry;  /* entry in the rawinput process list */
     struct list          kernel_object;   /* list of kernel object pointers */
     struct pe_image_info image_info;      /* main exe image info */
-    int                  esync_fd;        /* esync file descriptor (signaled on exit) */
-    unsigned int         fsync_idx;
 };
 
 /* process functions */

@@ -250,6 +250,35 @@ static bool fold_ceil(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
     return true;
 }
 
+static bool fold_clz(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
+        const struct hlsl_type *dst_type, const struct hlsl_ir_constant *src)
+{
+    enum hlsl_base_type type = src->node.data_type->e.numeric.type;
+    unsigned int k, v;
+
+    for (k = 0; k < dst_type->e.numeric.dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_INT:
+                v = src->value.u[k].i < 0 ? ~src->value.u[k].u : src->value.u[k].u;
+                break;
+
+            case HLSL_TYPE_UINT:
+                v = src->value.u[k].u;
+                break;
+
+            default:
+                FIXME("Fold 'clz' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+
+        dst->u[k].u = v ? vkd3d_log2i(v) ^ 0x1f : ~0u;
+    }
+
+    return true;
+}
+
 static bool fold_cos(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
         const struct hlsl_type *dst_type, const struct hlsl_ir_constant *src)
 {
@@ -273,6 +302,59 @@ static bool fold_cos(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
 
             default:
                 FIXME("Fold 'cos' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+    }
+
+    return true;
+}
+
+static bool fold_countbits(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
+        const struct hlsl_type *dst_type, const struct hlsl_ir_constant *src)
+{
+    enum hlsl_base_type type = dst_type->e.numeric.type;
+    unsigned int k;
+
+    VKD3D_ASSERT(type == src->node.data_type->e.numeric.type);
+
+    for (k = 0; k < dst_type->e.numeric.dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_UINT:
+                dst->u[k].u = vkd3d_popcount(src->value.u[k].u);
+                break;
+
+            default:
+                FIXME("Fold 'countbits' for type %s.\n", debug_hlsl_type(ctx, dst_type));
+                return false;
+        }
+    }
+
+    return true;
+}
+
+static bool fold_ctz(struct hlsl_ctx *ctx, struct hlsl_constant_value *dst,
+        const struct hlsl_type *dst_type, const struct hlsl_ir_constant *src)
+{
+    enum hlsl_base_type type = dst_type->e.numeric.type;
+    unsigned int k;
+
+    VKD3D_ASSERT(type == src->node.data_type->e.numeric.type);
+
+    for (k = 0; k < dst_type->e.numeric.dimx; ++k)
+    {
+        switch (type)
+        {
+            case HLSL_TYPE_UINT:
+                if (!src->value.u[k].u)
+                    dst->u[k].u = ~0u;
+                else
+                    dst->u[k].u = vkd3d_ctz(src->value.u[k].u);
+                break;
+
+            default:
+                FIXME("Fold 'ctz' for type %s.\n", debug_hlsl_type(ctx, dst_type));
                 return false;
         }
     }
@@ -1403,8 +1485,20 @@ bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
             success = fold_ceil(ctx, &res, instr->data_type, arg1);
             break;
 
+        case HLSL_OP1_CLZ:
+            success = fold_clz(ctx, &res, instr->data_type, arg1);
+            break;
+
         case HLSL_OP1_COS:
             success = fold_cos(ctx, &res, instr->data_type, arg1);
+            break;
+
+        case HLSL_OP1_COUNTBITS:
+            success = fold_countbits(ctx, &res, instr->data_type, arg1);
+            break;
+
+        case HLSL_OP1_CTZ:
+            success = fold_ctz(ctx, &res, instr->data_type, arg1);
             break;
 
         case HLSL_OP1_EXP2:
@@ -1555,6 +1649,7 @@ bool hlsl_fold_constant_exprs(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, 
 
 bool hlsl_fold_constant_identities(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *context)
 {
+    static const struct hlsl_constant_value zero;
     struct hlsl_ir_constant *const_arg = NULL;
     struct hlsl_ir_node *mut_arg = NULL;
     struct hlsl_ir_node *res_node;
@@ -1615,6 +1710,17 @@ bool hlsl_fold_constant_identities(struct hlsl_ctx *ctx, struct hlsl_ir_node *in
                 res_node = mut_arg;
             else if (hlsl_constant_is_one(const_arg))
                 res_node = &const_arg->node;
+            break;
+
+        case HLSL_OP2_LESS:
+            /* x < 0 -> false, if x is unsigned. */
+            if (!hlsl_type_is_unsigned_integer(expr->operands[0].node->data_type)
+                    || expr->operands[1].node->type != HLSL_IR_CONSTANT
+                    || !hlsl_constant_is_zero(hlsl_ir_constant(expr->operands[1].node)))
+                break;
+            if (!(res_node = hlsl_new_constant(ctx, instr->data_type, &zero, &instr->loc)))
+                break;
+            list_add_before(&expr->node.entry, &res_node->entry);
             break;
 
         default:

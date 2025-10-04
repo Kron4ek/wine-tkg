@@ -149,6 +149,20 @@ static NTSTATUS get_shared_window( HANDLE handle, struct object_lock *lock, cons
     return STATUS_SUCCESS;
 }
 
+struct obj_locator get_window_class_locator( HWND hwnd )
+{
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const window_shm_t *window_shm = NULL;
+    struct obj_locator locator = {0};
+    NTSTATUS status;
+
+    while ((status = get_shared_window( hwnd, &lock, &window_shm )) == STATUS_PENDING)
+        locator = window_shm->class;
+    if (status) memset( &locator, 0, sizeof(locator) );
+
+    return locator;
+}
+
 /***********************************************************************
  *           get_user_handle_ptr
  */
@@ -237,7 +251,7 @@ void *free_user_handle( HANDLE handle, unsigned short type )
 static pthread_mutex_t surfaces_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct list client_surfaces = LIST_INIT( client_surfaces );
 
-static void detach_client_surfaces( HWND hwnd )
+void detach_client_surfaces( HWND hwnd )
 {
     struct list detached = LIST_INIT( detached );
     struct client_surface *surface, *next;
@@ -337,6 +351,19 @@ void client_surface_present( struct client_surface *surface )
         if (hdc) NtUserReleaseDC( hwnd, hdc );
     }
     pthread_mutex_unlock( &surfaces_lock );
+}
+
+BOOL is_client_surface_window( struct client_surface *surface, HWND hwnd )
+{
+    BOOL ret;
+
+    if (!surface) return FALSE;
+    pthread_mutex_lock( &surfaces_lock );
+    if (hwnd) ret = surface->hwnd == hwnd;
+    else ret = surface->hwnd != NULL;
+    pthread_mutex_unlock( &surfaces_lock );
+
+    return ret;
 }
 
 /*******************************************************************
@@ -2601,7 +2628,7 @@ static HWND *list_children_from_point( HWND hwnd, POINT pt, UINT dpi )
  *
  * Find the window and hittest for a given point.
  */
-HWND window_from_point( HWND hwnd, POINT pt, INT *hittest )
+HWND window_from_point( HWND hwnd, POINT pt, INT *hittest, BOOL send_nchittest )
 {
     int i, res;
     HWND ret, *list;
@@ -2628,7 +2655,7 @@ HWND window_from_point( HWND hwnd, POINT pt, INT *hittest )
             break;
         }
         /* Send WM_NCCHITTEST (if same thread) */
-        if (!is_current_thread_window( list[i] ))
+        if (!send_nchittest || !is_current_thread_window( list[i] ))
         {
             *hittest = HTCLIENT;
             break;
@@ -2655,7 +2682,7 @@ HWND WINAPI NtUserWindowFromPoint( LONG x, LONG y )
 {
     POINT pt = { .x = x, .y = y };
     INT hittest;
-    return window_from_point( 0, pt, &hittest );
+    return window_from_point( 0, pt, &hittest, TRUE );
 }
 
 /*******************************************************************
@@ -4957,7 +4984,8 @@ BOOL WINAPI NtUserFlashWindowEx( FLASHWINFO *info )
         if (!win || win == WND_OTHER_PROCESS || win == WND_DESKTOP) return FALSE;
         hwnd = win->handle;  /* make it a full handle */
 
-        wparam = (win->flags & WIN_NCACTIVATED) != 0;
+        if (info->dwFlags) wparam = !(win->flags & WIN_NCACTIVATED);
+        else wparam = (hwnd == NtUserGetForegroundWindow());
 
         release_win_ptr( win );
 
@@ -4965,7 +4993,7 @@ BOOL WINAPI NtUserFlashWindowEx( FLASHWINFO *info )
             send_message( hwnd, WM_NCACTIVATE, wparam, 0 );
 
         user_driver->pFlashWindowEx( info );
-        return (info->dwFlags & FLASHW_CAPTION) ? TRUE : wparam;
+        return wparam;
     }
 }
 

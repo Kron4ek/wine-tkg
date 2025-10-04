@@ -35,26 +35,30 @@
 #include "object.h"
 #include "process.h"
 #include "user.h"
+#include "file.h"
 #include "winuser.h"
 #include "winternl.h"
 
 struct window_class
 {
-    struct list     entry;           /* entry in process list */
-    struct process *process;         /* process owning the class */
-    int             count;           /* reference count */
-    int             local;           /* local class? */
-    atom_t          atom;            /* class atom */
-    atom_t          base_atom;       /* base class atom for versioned class */
-    mod_handle_t    instance;        /* module instance */
-    unsigned int    style;           /* class style */
-    int             win_extra;       /* number of window extra bytes */
-    client_ptr_t    client_ptr;      /* pointer to class in client address space */
-    int             nb_extra_bytes;  /* number of extra bytes */
-    char            extra_bytes[1];  /* extra bytes storage */
+    struct list         entry;           /* entry in process list */
+    struct winstation  *winstation;      /* winstation the class was created on */
+    struct process     *process;         /* process owning the class */
+    int                 count;           /* reference count */
+    int                 local;           /* local class? */
+    atom_t              atom;            /* class atom */
+    atom_t              base_atom;       /* base class atom for versioned class */
+    mod_handle_t        instance;        /* module instance */
+    unsigned int        style;           /* class style */
+    int                 win_extra;       /* number of window extra bytes */
+    client_ptr_t        client_ptr;      /* pointer to class in client address space */
+    class_shm_t        *shared;          /* class in session shared memory */
+    int                 nb_extra_bytes;  /* number of extra bytes */
+    char                extra_bytes[1];  /* extra bytes storage */
 };
 
-static struct window_class *create_class( struct process *process, int extra_bytes, int local )
+static struct window_class *create_class( struct process *process, int extra_bytes, int local,
+                                          struct unicode_str *name, unsigned int name_offset )
 {
     struct window_class *class;
 
@@ -65,12 +69,26 @@ static struct window_class *create_class( struct process *process, int extra_byt
     class->local = local;
     class->nb_extra_bytes = extra_bytes;
     memset( class->extra_bytes, 0, extra_bytes );
+
+    if (!(class->shared = alloc_shared_object())) goto failed;
+    SHARED_WRITE_BEGIN( class->shared, class_shm_t )
+    {
+        memcpy( (void *)shared->name, name->str, name->len );
+        shared->name_offset = name_offset;
+        shared->name_len = name->len;
+    }
+    SHARED_WRITE_END;
+
     /* other fields are initialized by caller */
 
     /* local classes have priority so we put them first in the list */
     if (local) list_add_head( &process->classes, &class->entry );
     else list_add_tail( &process->classes, &class->entry );
     return class;
+
+failed:
+    free( class );
+    return NULL;
 }
 
 static void destroy_class( struct window_class *class )
@@ -81,6 +99,7 @@ static void destroy_class( struct window_class *class )
     release_atom( table, class->base_atom );
     list_remove( &class->entry );
     release_object( class->process );
+    if (class->shared) free_shared_object( class->shared );
     free( class );
 }
 
@@ -110,14 +129,15 @@ static struct window_class *find_class( struct process *process, atom_t atom, mo
     return NULL;
 }
 
-struct window_class *grab_class( struct process *process, atom_t atom,
-                                 mod_handle_t instance, int *extra_bytes )
+struct window_class *grab_class( struct process *process, atom_t atom, mod_handle_t instance,
+                                 int *extra_bytes, struct obj_locator *locator )
 {
     struct window_class *class = find_class( process, atom, instance );
     if (class)
     {
         class->count++;
         *extra_bytes = class->win_extra;
+        *locator = get_shared_object_locator( class->shared );
     }
     else set_error( STATUS_INVALID_HANDLE );
     return class;
@@ -158,6 +178,17 @@ client_ptr_t get_class_client_ptr( struct window_class *class )
     return class->client_ptr;
 }
 
+static struct unicode_str integral_atom_name( WCHAR *buffer, atom_t atom )
+{
+    struct unicode_str name;
+    char tmp[16];
+    int ret = snprintf( tmp, sizeof(tmp), "#%u", atom );
+    for (int i = ret; i >= 0; i--) buffer[i] = tmp[i];
+    name.len = ret * sizeof(WCHAR);
+    name.str = buffer;
+    return name;
+}
+
 /* create a window class */
 DECL_HANDLER(create_class)
 {
@@ -165,14 +196,21 @@ DECL_HANDLER(create_class)
     struct unicode_str name = get_req_unicode_str();
     struct atom_table *table = get_user_atom_table();
     atom_t atom = req->atom, base_atom;
+    unsigned int offset = 0;
+    WCHAR buffer[16];
 
+    if (atom && !name.len) name = integral_atom_name( buffer, atom );
     if (!atom && !(atom = add_atom( table, &name ))) return;
 
     if (req->name_offset && req->name_offset < name.len / sizeof(WCHAR))
     {
-        name.str += req->name_offset;
-        name.len -= req->name_offset * sizeof(WCHAR);
-        if (!(base_atom = add_atom( table, &name )))
+        struct unicode_str base = name;
+
+        offset = req->name_offset;
+        base.str += offset;
+        base.len -= offset * sizeof(WCHAR);
+
+        if (!(base_atom = add_atom( table, &base )))
         {
             release_atom( table, atom );
             return;
@@ -200,7 +238,7 @@ DECL_HANDLER(create_class)
         return;
     }
 
-    if (!(class = create_class( current->process, req->extra, req->local )))
+    if (!(class = create_class( current->process, req->extra, req->local, &name, offset )))
     {
         release_atom( table, atom );
         release_atom( table, base_atom );
@@ -212,7 +250,8 @@ DECL_HANDLER(create_class)
     class->style      = req->style;
     class->win_extra  = req->win_extra;
     class->client_ptr = req->client_ptr;
-    reply->atom = base_atom;
+    reply->locator   = get_shared_object_locator( class->shared );
+    reply->atom      = base_atom;
 }
 
 /* destroy a window class */

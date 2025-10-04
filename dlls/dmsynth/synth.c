@@ -46,6 +46,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(dmsynth);
 
 #define CONN_TRANSFORM(src, ctrl, dst) (((src) & 0x3f) << 10) | (((ctrl) & 0x3f) << 4) | ((dst) & 0xf)
 
+#define BASE_GAIN 60.
+#define CENTER_PAN_GAIN -30.10
+
 /* from src/rvoice/fluid_rvoice.h */
 #define FLUID_LOOP_DURING_RELEASE 1
 #define FLUID_LOOP_UNTIL_RELEASE  3
@@ -340,6 +343,8 @@ struct synth
     IKsControl IKsControl_iface;
     LONG ref;
 
+    LONG volume0;
+    LONG volume1;
     DMUS_PORTCAPS caps;
     DMUS_PORTPARAMS params;
     BOOL active;
@@ -448,6 +453,12 @@ static ULONG WINAPI synth_Release(IDirectMusicSynth8 *iface)
     return ref;
 }
 
+static void update_channel_volume(struct synth *This, int chan)
+{
+    double attenuation = (This->volume0 + This->volume1) * -0.1;
+    fluid_synth_set_gen(This->fluid_synth, chan, GEN_ATTENUATION, attenuation);
+}
+
 static void synth_reset_default_values(struct synth *This)
 {
     BYTE chan;
@@ -491,6 +502,8 @@ static void synth_reset_default_values(struct synth *This)
 
         fluid_synth_cc(This->fluid_synth, chan | 0xb0 /* CONTROL_CHANGE */, 0x64 /* RPN_LSB */, 127);
         fluid_synth_cc(This->fluid_synth, chan | 0xb0 /* CONTROL_CHANGE */, 0x65 /* RPN_MSB */, 127);
+
+        update_channel_volume(This, chan);
     }
 }
 
@@ -511,6 +524,7 @@ static HRESULT WINAPI synth_Open(IDirectMusicSynth8 *iface, DMUS_PORTPARAMS *par
     };
     UINT size = sizeof(DMUS_PORTPARAMS);
     BOOL modified = FALSE;
+    double gain;
     UINT id;
 
     TRACE("(%p, %p)\n", This, params);
@@ -532,26 +546,26 @@ static HRESULT WINAPI synth_Open(IDirectMusicSynth8 *iface, DMUS_PORTPARAMS *par
 
         if (size > params->dwSize) size = params->dwSize;
 
-        if ((params->dwValidParams & DMUS_PORTPARAMS_VOICES) && params->dwVoices)
+        if (params->dwValidParams & DMUS_PORTPARAMS_VOICES)
         {
-            actual.dwVoices = min(params->dwVoices, This->caps.dwMaxVoices);
+            actual.dwVoices = min(max(params->dwVoices, 1), This->caps.dwMaxVoices);
             modified |= actual.dwVoices != params->dwVoices;
         }
 
-        if ((params->dwValidParams & DMUS_PORTPARAMS_CHANNELGROUPS) && params->dwChannelGroups)
+        if (params->dwValidParams & DMUS_PORTPARAMS_CHANNELGROUPS)
         {
-            actual.dwChannelGroups = min(params->dwChannelGroups, This->caps.dwMaxChannelGroups);
+            actual.dwChannelGroups = min(max(params->dwChannelGroups, 1), This->caps.dwMaxChannelGroups);
             modified |= actual.dwChannelGroups != params->dwChannelGroups;
         }
 
-        if ((params->dwValidParams & DMUS_PORTPARAMS_AUDIOCHANNELS) && params->dwAudioChannels)
+        if (params->dwValidParams & DMUS_PORTPARAMS_AUDIOCHANNELS)
         {
             /* FluidSynth only works with stereo */
             actual.dwAudioChannels = 2;
             modified |= actual.dwAudioChannels != params->dwAudioChannels;
         }
 
-        if ((params->dwValidParams & DMUS_PORTPARAMS_SAMPLERATE) && params->dwSampleRate)
+        if (params->dwValidParams & DMUS_PORTPARAMS_SAMPLERATE)
         {
             actual.dwSampleRate = min(max(params->dwSampleRate, 11025), 96000);
             modified |= actual.dwSampleRate != params->dwSampleRate;
@@ -559,7 +573,8 @@ static HRESULT WINAPI synth_Open(IDirectMusicSynth8 *iface, DMUS_PORTPARAMS *par
 
         if (params->dwValidParams & DMUS_PORTPARAMS_EFFECTS)
         {
-            actual.dwEffectFlags = DMUS_EFFECT_REVERB;
+            actual.dwEffectFlags = params->dwEffectFlags
+                    & (DMUS_EFFECT_REVERB | DMUS_EFFECT_CHORUS | DMUS_EFFECT_DELAY);
             modified |= actual.dwEffectFlags != params->dwEffectFlags;
         }
 
@@ -571,7 +586,7 @@ static HRESULT WINAPI synth_Open(IDirectMusicSynth8 *iface, DMUS_PORTPARAMS *par
 
         if (params->dwSize < sizeof(*params))
             actual.dwValidParams &= ~DMUS_PORTPARAMS_FEATURES;
-        else if ((params->dwValidParams & DMUS_PORTPARAMS_FEATURES) && params->dwFeatures)
+        else if (params->dwValidParams & DMUS_PORTPARAMS_FEATURES)
         {
             actual.dwFeatures = params->dwFeatures & (DMUS_PORT_FEATURE_AUDIOPATH | DMUS_PORT_FEATURE_STREAMING);
             modified |= actual.dwFeatures != params->dwFeatures;
@@ -585,6 +600,13 @@ static HRESULT WINAPI synth_Open(IDirectMusicSynth8 *iface, DMUS_PORTPARAMS *par
             !!(actual.dwEffectFlags & DMUS_EFFECT_REVERB));
     fluid_settings_setint(This->fluid_settings, "synth.chorus.active",
             !!(actual.dwEffectFlags & DMUS_EFFECT_CHORUS));
+
+    /* native limits the total voice gain to 6 dB */
+    gain = BASE_GAIN;
+    /* compensate gain added in synth_preset_noteon */
+    gain -= CENTER_PAN_GAIN;
+    fluid_settings_setnum(This->fluid_settings, "synth.gain", pow(10., gain / 200.));
+
     if (!(This->fluid_synth = new_fluid_synth(This->fluid_settings)))
     {
         LeaveCriticalSection(&This->cs);
@@ -1098,10 +1120,13 @@ static HRESULT WINAPI synth_Render(IDirectMusicSynth8 *iface, short *buffer,
 {
     struct synth *This = impl_from_IDirectMusicSynth8(iface);
     struct event *event, *next;
+    int chan;
 
     TRACE("(%p, %p, %ld, %I64d)\n", This, buffer, length, position);
 
     EnterCriticalSection(&This->cs);
+    for (chan = 0; chan < 0x10; chan++)
+        update_channel_volume(This, chan);
     LIST_FOR_EACH_ENTRY_SAFE(event, next, &This->events, struct event, entry)
     {
         BYTE status = event->midi[0] & 0xf0, chan = event->midi[0] & 0x0f;
@@ -1322,9 +1347,43 @@ static ULONG WINAPI synth_control_Release(IKsControl* iface)
 static HRESULT WINAPI synth_control_KsProperty(IKsControl* iface, PKSPROPERTY Property,
         ULONG PropertyLength, LPVOID PropertyData, ULONG DataLength, ULONG* BytesReturned)
 {
+    struct synth *This = impl_from_IKsControl(iface);
+
     TRACE("(%p, %p, %lu, %p, %lu, %p)\n", iface, Property, PropertyLength, PropertyData, DataLength, BytesReturned);
 
     TRACE("Property = %s - %lu - %lu\n", debugstr_guid(&Property->Set), Property->Id, Property->Flags);
+
+    if (Property->Flags == KSPROPERTY_TYPE_SET)
+    {
+        if (DataLength < sizeof(LONG))
+            return E_NOT_SUFFICIENT_BUFFER;
+
+        if (IsEqualGUID(&Property->Set, &GUID_DMUS_PROP_Volume))
+        {
+            LONG volume = max(DMUS_VOLUME_MIN, min(DMUS_VOLUME_MAX, *(LONG*)PropertyData));
+
+            if (Property->Id == 0)
+            {
+                EnterCriticalSection(&This->cs);
+                This->volume0 = volume;
+                LeaveCriticalSection(&This->cs);
+            }
+            else if (Property->Id == 1)
+            {
+                EnterCriticalSection(&This->cs);
+                This->volume1 = volume;
+                LeaveCriticalSection(&This->cs);
+            }
+            else
+                return DMUS_E_UNKNOWN_PROPERTY;
+        }
+        else
+        {
+            FIXME("Unknown property %s\n", debugstr_guid(&Property->Set));
+        }
+
+        return S_OK;
+    }
 
     if (Property->Flags != KSPROPERTY_TYPE_GET)
     {
@@ -1359,6 +1418,12 @@ static HRESULT WINAPI synth_control_KsProperty(IKsControl* iface, PKSPROPERTY Pr
     {
         *(DWORD*)PropertyData = FALSE;
         *BytesReturned = sizeof(DWORD);
+    }
+    else if (IsEqualGUID(&Property->Set, &GUID_DMUS_PROP_Volume))
+    {
+        if (Property->Id >= 2)
+            return DMUS_E_UNKNOWN_PROPERTY;
+        return DMUS_E_GET_UNSUPPORTED;
     }
     else
     {
@@ -1877,6 +1942,10 @@ static int synth_preset_noteon(fluid_preset_t *fluid_preset, fluid_synth_t *flui
         add_voice_connections(fluid_voice, &articulation->list, articulation->connections);
     LIST_FOR_EACH_ENTRY(articulation, &region->articulations, struct articulation, entry)
         add_voice_connections(fluid_voice, &articulation->list, articulation->connections);
+    /* Unlike FluidSynth, native applies the gain limit after the panning. At
+     * least for the center pan we can replicate this by applying a panning
+     * attenuation here. */
+    fluid_voice_gen_incr(voice->fluid_voice, GEN_ATTENUATION, -CENTER_PAN_GAIN);
     fluid_synth_start_voice(synth->fluid_synth, fluid_voice);
 
     LeaveCriticalSection(&synth->cs);
@@ -1967,6 +2036,9 @@ HRESULT synth_create(IUnknown **ret_iface)
     obj->IDirectMusicSynth8_iface.lpVtbl = &synth_vtbl;
     obj->IKsControl_iface.lpVtbl = &synth_control_vtbl;
     obj->ref = 1;
+
+    obj->volume0 = 0;
+    obj->volume1 = 600;
 
     obj->caps.dwSize = sizeof(DMUS_PORTCAPS);
     obj->caps.dwFlags = DMUS_PC_DLS | DMUS_PC_SOFTWARESYNTH | DMUS_PC_DIRECTSOUND | DMUS_PC_DLS2 | DMUS_PC_AUDIOPATH | DMUS_PC_WAVE;

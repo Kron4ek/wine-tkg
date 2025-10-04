@@ -650,19 +650,18 @@ static BOOL pe_load_msc_debug_info(const struct process* pcs, struct module* mod
     if (nth->FileHeader.Characteristics & IMAGE_FILE_DEBUG_STRIPPED)
     {
         /* Debug info is stripped to .DBG file */
-        const IMAGE_DEBUG_MISC* misc = (const IMAGE_DEBUG_MISC*)
-            ((const char*)mapping + dbg->PointerToRawData);
-
-        if (nDbg != 1 || dbg->Type != IMAGE_DEBUG_TYPE_MISC ||
-            misc->DataType != IMAGE_DEBUG_MISC_EXENAME)
+        const IMAGE_DEBUG_MISC *misc = NULL;
+        if (nDbg == 1 && dbg->Type == IMAGE_DEBUG_TYPE_MISC)
         {
+            misc = (const IMAGE_DEBUG_MISC *)((const char *)mapping + dbg->PointerToRawData);
+            if (misc->DataType == IMAGE_DEBUG_MISC_EXENAME)
+                ret = pe_load_dbg_file(pcs, module, (const char*)misc->Data, nth->FileHeader.TimeDateStamp);
+            else
+                misc = NULL;
+        }
+        if (!misc)
             WARN("-Debug info stripped, but no .DBG file in module %s\n",
                  debugstr_w(module->modulename));
-        }
-        else
-        {
-            ret = pe_load_dbg_file(pcs, module, (const char*)misc->Data, nth->FileHeader.TimeDateStamp);
-        }
     }
     else
     {
@@ -779,10 +778,16 @@ BOOL pe_load_debug_info(const struct process* pcs, struct module* module)
          * in which case we'll rely on the export's on the ELF side
          */
     }
-    /* FIXME shouldn't we check that? if (!module_get_debug(pcs, module)) */
-    if (pe_load_export_debug_info(pcs, module) && !ret)
-        ret = TRUE;
-    if (!ret) module->module.SymType = SymNone;
+    /* FIXME:
+     * - only loading export debug info in last resort when none of the available formats succeeded
+     *   (assuming export debug info is a subset of actual debug infomation).
+     */
+    if (module->module.SymType == SymDeferred)
+    {
+        ret = pe_load_export_debug_info(pcs, module) || ret;
+        if (module->module.SymType == SymDeferred)
+            module->module.SymType = SymNone;
+    }
     return ret;
 }
 

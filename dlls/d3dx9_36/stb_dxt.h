@@ -56,10 +56,8 @@ extern "C" {
 #define STB_DXT_HIGHQUAL  2   // high quality mode, does two refinement steps instead of 1. ~30-40% slower.
 
 STBDDEF void stb_compress_dxt_block(unsigned char *dest, const unsigned char *src_rgba_four_bytes_per_pixel, int alpha, int mode);
-#ifdef WINE_UNUSED  /* unused for now in Wine */
 STBDDEF void stb_compress_bc4_block(unsigned char *dest, const unsigned char *src_r_one_byte_per_pixel);
 STBDDEF void stb_compress_bc5_block(unsigned char *dest, const unsigned char *src_rg_two_byte_per_pixel);
-#endif  /* WINE_UNUSED */
 
 #define STB_COMPRESS_DXT_BLOCK
 
@@ -565,6 +563,16 @@ static void stb__CompressAlphaBlock(unsigned char *dest,unsigned char *src, int 
    dest[1] = (unsigned char)mn;
    dest += 2;
 
+   /*
+    * Wine specific tweak to more closely match native behavior: If
+    * max is equal to minimum, just set all bits to 0 (which means the value
+    * is the value of max in this case).
+    */
+   if (mx == mn) {
+      memset(dest, 0, 6);
+      return;
+   }
+
    // determine bias and emit color indices
    // given the choice of mx/mn, these indices are optimal:
    // http://fgiesen.wordpress.com/2009/12/15/dxt5-alpha-block-index-determination/
@@ -616,8 +624,6 @@ void stb_compress_dxt_block(unsigned char *dest, const unsigned char *src, int a
    stb__CompressColorBlock(dest,(unsigned char*) src,mode);
 }
 
-#ifdef WINE_UNUSED  /* unused for now in Wine */
-
 void stb_compress_bc4_block(unsigned char *dest, const unsigned char *src)
 {
    stb__CompressAlphaBlock(dest,(unsigned char*) src, 1);
@@ -628,7 +634,6 @@ void stb_compress_bc5_block(unsigned char *dest, const unsigned char *src)
    stb__CompressAlphaBlock(dest,(unsigned char*) src,2);
    stb__CompressAlphaBlock(dest + 8,(unsigned char*) src+1,2);
 }
-#endif  /* WINE_UNUSED */
 
 #endif // STB_DXT_IMPLEMENTATION
 

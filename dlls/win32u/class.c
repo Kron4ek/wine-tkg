@@ -60,9 +60,8 @@ typedef struct tagCLASS
     HCURSOR      hCursor;       /* Default cursor */
     HBRUSH       hbrBackground; /* Default background */
     ATOM         atom;          /* name of the class */
-    WCHAR        name[MAX_ATOM_LEN + 1];
-    WCHAR       *basename;      /* Base name for redirected classes, pointer within 'name'. */
     struct client_menu_name menu_name; /* Default menu name */
+    const shared_object_t *shared; /* class object in session shared memory */
 } CLASS;
 
 /* Built-in class descriptor */
@@ -390,12 +389,45 @@ static CLASS *get_class_ptr( HWND hwnd, BOOL write_access )
     return NULL;
 }
 
+static NTSTATUS get_shared_window_class( HWND hwnd, struct object_lock *lock, const class_shm_t **class_shm )
+{
+    const shared_object_t *object;
+
+    TRACE( "hwnd %p, lock %p, class_shm %p\n", hwnd, lock, class_shm );
+
+    if (lock->id) object = CONTAINING_RECORD( *class_shm, shared_object_t, shm.class );
+    else
+    {
+        struct obj_locator locator = get_window_class_locator( hwnd );
+        object = find_shared_session_object( locator.id, locator.offset );
+        if (!object) return STATUS_INVALID_HANDLE;
+    }
+
+    if (!lock->id || !shared_object_release_seqlock( object, lock->seq ))
+    {
+        shared_object_acquire_seqlock( object, &lock->seq );
+        *class_shm = &object->shm.class;
+        lock->id = object->id;
+        return STATUS_PENDING;
+    }
+
+    return STATUS_SUCCESS;
+}
+
 /***********************************************************************
  *           release_class_ptr
  */
 static void release_class_ptr( CLASS *ptr )
 {
     user_unlock();
+}
+
+static BOOL class_name_matches( CLASS *class, UNICODE_STRING *name )
+{
+    /* class name is safe to read without shared object locking as it is constant */
+    const WCHAR *class_name = (WCHAR *)class->shared->shm.class.name;
+    UINT len = class->shared->shm.class.name_len;
+    return name->Length == len && !wcsnicmp( class_name, name->Buffer, len / sizeof(WCHAR) );
 }
 
 static CLASS *find_class( HINSTANCE module, UNICODE_STRING *name )
@@ -407,8 +439,7 @@ static CLASS *find_class( HINSTANCE module, UNICODE_STRING *name )
     user_lock();
     LIST_FOR_EACH_ENTRY( class, &class_list, CLASS, entry )
     {
-        if (wcsnicmp( class->name, name->Buffer, name->Length / sizeof(WCHAR) ) ||
-            class->name[name->Length / sizeof(WCHAR)]) continue;
+        if (!class_name_matches( class, name )) continue;
         is_win16 = !(class->instance >> 16);
         if (!instance || !class->local || class->instance == instance ||
             (!is_win16 && ((class->instance & ~0xffff) == (instance & ~0xffff))))
@@ -455,6 +486,8 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
                                       DWORD flags, DWORD *wow )
 {
     const BOOL is_builtin = fnid, ansi = flags;
+    const shared_object_t *shared;
+    struct obj_locator locator;
     HINSTANCE instance;
     HICON sm_icon = 0;
     CLASS *class;
@@ -484,10 +517,6 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
 
     if (!(class = calloc( 1, sizeof(CLASS) + wc->cbClsExtra ))) return 0;
 
-    memcpy( class->name, name->Buffer, name->Length );
-    class->name[name->Length / sizeof(WCHAR)] = 0;
-    class->basename = class->name + version->Length / sizeof(WCHAR);
-
     class->style      = wc->style;
     class->local      = !is_builtin && !(wc->style & CS_GLOBALCLASS);
     class->cbWndExtra = wc->cbWndExtra;
@@ -505,11 +534,26 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
         req->atom       = wine_server_add_atom( req, name );
         req->name_offset = version->Length / sizeof(WCHAR);
         ret = !wine_server_call_err( req );
+        locator = reply->locator;
         atom = reply->atom;
     }
     SERVER_END_REQ;
     if (!ret)
     {
+        free( class );
+        return 0;
+    }
+
+    if (!(shared = find_shared_session_object( locator.id, locator.offset )))
+    {
+        ERR( "Failed to get shared session object for window class\n" );
+        SERVER_START_REQ( destroy_class )
+        {
+            req->instance = wine_server_client_ptr( instance );
+            wine_server_add_data( req, name->Buffer, name->Length );
+            wine_server_call( req );
+        }
+        SERVER_END_REQ;
         free( class );
         return 0;
     }
@@ -537,6 +581,7 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
     class->atom          = atom;
     class->winproc       = alloc_winproc( wc->lpfnWndProc, ansi );
     if (client_menu_name) class->menu_name = *client_menu_name;
+    class->shared        = shared;
     release_class_ptr( class );
     return atom;
 }
@@ -694,7 +739,11 @@ ATOM WINAPI NtUserRegisterWindowMessage( UNICODE_STRING *name )
  */
 INT WINAPI NtUserGetClassName( HWND hwnd, BOOL real, UNICODE_STRING *name )
 {
-    CLASS *class;
+    struct object_lock lock = OBJECT_LOCK_INIT;
+    const class_shm_t *class_shm;
+    WCHAR buffer[MAX_ATOM_LEN];
+    NTSTATUS status;
+    UINT len = 0;
     int ret;
 
     TRACE( "%p %x %p\n", hwnd, real, name );
@@ -705,30 +754,16 @@ INT WINAPI NtUserGetClassName( HWND hwnd, BOOL real, UNICODE_STRING *name )
         return 0;
     }
 
-    if (!(class = get_class_ptr( hwnd, FALSE ))) return 0;
-
-    if (class == OBJ_OTHER_PROCESS)
+    while ((status = get_shared_window_class( hwnd, &lock, &class_shm )) == STATUS_PENDING)
     {
-        ATOM atom = 0;
-
-        SERVER_START_REQ( get_class_info )
-        {
-            req->window = wine_server_user_handle( hwnd );
-            req->offset = GCW_ATOM;
-            req->size = sizeof(atom);
-            wine_server_call_err( req );
-            atom = reply->info;
-        }
-        SERVER_END_REQ;
-
-        return NtUserGetAtomName( atom, name );
+        len = class_shm->name_len - class_shm->name_offset * sizeof(WCHAR);
+        if (len) memcpy( buffer, (WCHAR *)class_shm->name + class_shm->name_offset, len );
     }
 
-    ret = min( name->MaximumLength / sizeof(WCHAR) - 1, lstrlenW(class->basename) );
-    if (ret) memcpy( name->Buffer, class->basename, ret * sizeof(WCHAR) );
-    name->Buffer[ret] = 0;
-    release_class_ptr( class );
-    return ret;
+    ret = min( name->MaximumLength - sizeof(WCHAR), len );
+    if (ret) memcpy( name->Buffer, buffer, ret );
+    name->Buffer[ret / sizeof(WCHAR)] = 0;
+    return ret / sizeof(WCHAR);
 }
 
 /* Set class info with the wine server. */
@@ -1008,18 +1043,6 @@ ULONG_PTR get_class_long_ptr( HWND hwnd, INT offset, BOOL ansi )
 WORD get_class_word( HWND hwnd, INT offset )
 {
     return get_class_long_size( hwnd, offset, sizeof(WORD), TRUE );
-}
-
-BOOL needs_ime_window( HWND hwnd )
-{
-    static const WCHAR imeW[] = {'I','M','E',0};
-    CLASS *class;
-    BOOL ret;
-
-    if (!(class = get_class_ptr( hwnd, FALSE ))) return FALSE;
-    ret = !(class->style & CS_IME) && wcscmp( imeW, class->name );
-    release_class_ptr( class );
-    return ret;
 }
 
 static const struct builtin_class_descr desktop_builtin_class =

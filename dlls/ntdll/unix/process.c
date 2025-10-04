@@ -1124,7 +1124,7 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
                             pbi.InheritedFromUniqueProcessId = reply->ppid;
                             if (is_old_wow64())
                             {
-                                if (reply->machine != native_machine)
+                                if (!is_machine_64bit( reply->machine ))
                                     pbi.PebBaseAddress = (PEB *)((char *)pbi.PebBaseAddress + 0x1000);
                                 else
                                     pbi.PebBaseAddress = NULL;
@@ -1545,20 +1545,6 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
             }
         }
         else ret = STATUS_INFO_LENGTH_MISMATCH;
-        break;
-
-    case ProcessWineLdtCopy:
-        if (handle == NtCurrentProcess())
-        {
-#ifdef __i386__
-            len = sizeof(struct ldt_copy *);
-            if (size == len) *(struct ldt_copy **)info = &__wine_ldt_copy;
-            else ret = STATUS_INFO_LENGTH_MISMATCH;
-#else
-            ret = STATUS_NOT_IMPLEMENTED;
-#endif
-        }
-        else ret = STATUS_INVALID_PARAMETER;
         break;
 
     case ProcessQuotaLimits:

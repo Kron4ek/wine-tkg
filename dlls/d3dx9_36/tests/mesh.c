@@ -52,6 +52,11 @@ static BOOL compare(FLOAT u, FLOAT v)
     return (fabs(u-v) < admitted_error);
 }
 
+static BOOL compare_vec2(D3DXVECTOR2 u, D3DXVECTOR2 v)
+{
+    return compare(u.x, v.x) && compare(u.y, v.y);
+}
+
 static BOOL compare_vec3(D3DXVECTOR3 u, D3DXVECTOR3 v)
 {
     return ( compare(u.x, v.x) && compare(u.y, v.y) && compare(u.z, v.z) );
@@ -5462,82 +5467,103 @@ static void test_create_skin_info(void)
 
 static void test_update_skinned_mesh(void)
 {
-    static DWORD bone0_vertices[2] = { 1, 3 };
-    static FLOAT bone0_weights[2] = { 1.0f, 0.5f };
-    static DWORD bone1_vertices[2] = { 2, 3 };
-    static FLOAT bone1_weights[2] = { 1.0f, 0.5f };
-    static D3DMATRIX bones_matrix[2] =
-    { { { {
-               1.0f,  0.0f,  0.0f,  0.0f,
-               0.0f,  1.0f,  0.0f,  0.0f,
-               0.0f,  0.0f,  1.0f,  0.0f,
-               2.0f,  2.0f,  4.0f,  1.0f
-      } } },
-      { { {
-               1.0f,  0.0f,  0.0f,  0.0f,
-               0.0f,  1.0f,  0.0f,  0.0f,
-               0.0f,  0.0f,  1.0f,  0.0f,
-              -4.0f, -4.0f,  4.0f,  1.0f
-      } } } };
-    static D3DVECTOR vertices_src[] = {{  1.0f,  1.0f,  1.0f },
-                                       {  1.0f,  0.0f,  0.0f },
-                                       {  1.0f,  1.0f, -1.0f },
-                                       {  0.0f,  1.0f,  0.0f },
-                                       { -1.0f, -1.0f,  1.0f },
-                                       {  0.0f,  0.0f,  1.0f },
-                                       { -1.0f, -1.0f, -1.0f },
-                                       { -1.0f,  0.0f,  0.0f },
-                                      };
-    static D3DVECTOR vertices_ref[] = {{  0.0f,  0.0f,  0.0f },
-                                       {  0.0f,  0.0f,  0.0f },
-                                       {  3.0f,  3.0f,  3.0f },
-                                       {  0.0f,  1.0f,  0.0f },
-                                       { -5.0f, -5.0f,  5.0f },
-                                       {  0.0f,  0.0f,  1.0f },
-                                       { -2.0f, -2.0f,  3.0f },
-                                       { -1.0f,  0.0f,  0.0f },
-                                      };
-    D3DVECTOR vertices_dest[8];
-    HRESULT hr;
-    ID3DXSkinInfo *skin_info;
-    D3DXMATRIX matrix;
-    int i;
-
-    D3DXMatrixIdentity(&matrix);
-    for (i = 0; i < 8; i++)
+    static const float bone0_weights[2] = {1.0f, 0.5f}, bone1_weights[2] = {1.0f, 0.5f};
+    static const DWORD bone0_vertices[2] = {1, 3}, bone1_vertices[2] = {2, 3};
+    static const D3DXMATRIX bone_matrices[2] =
     {
-        vertices_dest[i].x = 10000.0f;
-        vertices_dest[i].y = 10000.0f;
-        vertices_dest[i].z = 10000.0f;
-    }
+        {{{
+             2.0f,  0.0f,  0.0f,  0.0f,
+             0.0f,  1.0f,  0.0f,  0.0f,
+             0.0f,  0.0f,  1.0f,  0.0f,
+             0.1f,  0.2f,  0.3f,  1.0f,
+        }}},
+        {{{
+             1.0f,  0.0f,  0.0f,  0.0f,
+             0.0f,  2.0f,  0.0f,  0.0f,
+             0.0f,  0.0f,  1.0f,  0.0f,
+            -0.5f,  0.4f,  0.5f,  1.0f,
+        }}},
+    };
+    static const D3DXMATRIX update_matrices[2] =
+    {
+        {{{
+             1.0f,  0.0f,  0.0f,  0.0f,
+             0.0f,  1.0f,  0.0f,  0.0f,
+             0.0f,  0.0f,  1.0f,  0.0f,
+             2.0f,  2.0f,  4.0f,  1.0f,
+        }}},
+        {{{
+             2.0f,  0.0f,  0.0f,  0.0f,
+             0.0f,  1.0f,  0.0f,  0.0f,
+             0.0f,  0.0f,  1.0f,  0.0f,
+            -4.0f, -4.0f,  4.0f,  1.0f,
+        }}},
+    };
 
-    hr = D3DXCreateSkinInfoFVF(4, D3DFVF_XYZ | D3DFVF_NORMAL, 2, &skin_info);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
+    static const struct vertex
+    {
+        D3DXVECTOR3 position;
+        D3DXVECTOR3 normal;
+        D3DXVECTOR2 texcoord;
+    }
+    src_vertices[4] =
+    {
+        {{ 1.0f,  1.0f,  1.0f}, { 1.0f, 0.0f, 0.0f}, { 0.2f, 0.2f}},
+        {{ 1.0f,  1.0f, -1.0f}, { 0.0f, 1.0f, 0.0f}, { 0.2f, 0.4f}},
+        {{-1.0f, -1.0f,  1.0f}, { 0.0f, 0.0f, 1.0f}, { 0.4f, 0.2f}},
+        {{-1.0f, -1.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}, { 0.4f, 0.4f}},
+    },
+    expect_vertices[4] =
+    {
+        {{ 0.0f,  0.0f,  0.0f}, { 0.0f, 0.0f, 0.0f}, { 0.2f, 0.2f}},
+        {{ 3.0f,  3.0f,  3.0f}, { 0.0f, 1.0f, 0.0f}, { 0.2f, 0.4f}},
+        {{-6.0f, -5.0f,  5.0f}, { 0.0f, 0.0f, 1.0f}, { 0.4f, 0.2f}},
+        {{-2.5f, -2.0f,  3.0f}, {-1.5f, 0.0f, 0.0f}, { 0.4f, 0.4f}},
+    };
+
+    struct vertex dst_vertices[4];
+    ID3DXSkinInfo *skin_info;
+    HRESULT hr;
+
+    static const D3DVERTEXELEMENT9 decl_elements[] =
+    {
+        {0,  0, D3DDECLTYPE_FLOAT3, 0, D3DDECLUSAGE_POSITION, 0},
+        {0, 12, D3DDECLTYPE_FLOAT3, 0, D3DDECLUSAGE_NORMAL, 0},
+        {0, 24, D3DDECLTYPE_FLOAT2, 0, D3DDECLUSAGE_TEXCOORD, 0},
+        D3DDECL_END()
+    };
+
+    memset(dst_vertices, 0xcc, sizeof(dst_vertices));
+
+    hr = D3DXCreateSkinInfo(4, decl_elements, 2, &skin_info);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
 
     skin_info->lpVtbl->SetBoneInfluence(skin_info, 0, 2, bone0_vertices, bone0_weights);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
-    skin_info->lpVtbl->SetBoneOffsetMatrix(skin_info, 0, &matrix);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+    skin_info->lpVtbl->SetBoneOffsetMatrix(skin_info, 0, &bone_matrices[0]);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
     skin_info->lpVtbl->SetBoneInfluence(skin_info, 1, 2, bone1_vertices, bone1_weights);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
-    skin_info->lpVtbl->SetBoneOffsetMatrix(skin_info, 1, &matrix);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
-    skin_info->lpVtbl->UpdateSkinnedMesh(skin_info, bones_matrix, NULL, vertices_src, vertices_dest);
-    ok(hr == D3D_OK, "Expected D3D_OK, got %#lx\n", hr);
-    for (i = 0; i < 4; i++)
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+    skin_info->lpVtbl->SetBoneOffsetMatrix(skin_info, 1, &bone_matrices[1]);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+    skin_info->lpVtbl->UpdateSkinnedMesh(skin_info, update_matrices, NULL, src_vertices, dst_vertices);
+    ok(hr == D3D_OK, "Got hr %#lx.\n", hr);
+    for (unsigned int i = 0; i < 4; ++i)
     {
-        ok(compare(vertices_dest[i*2].x, vertices_ref[i*2].x), "Vertex[%d].position.x: got %g, expected %g\n",
-           i, vertices_dest[i*2].x, vertices_ref[i*2].x);
-        ok(compare(vertices_dest[i*2].y, vertices_ref[i*2].y), "Vertex[%d].position.y: got %g, expected %g\n",
-           i, vertices_dest[i*2].y, vertices_ref[i*2].y);
-        ok(compare(vertices_dest[i*2].z, vertices_ref[i*2].z), "Vertex[%d].position.z: got %g, expected %g\n",
-           i, vertices_dest[i*2].z, vertices_ref[i*2].z);
-        ok(compare(vertices_dest[i*2+1].x, vertices_ref[i*2+1].x), "Vertex[%d].normal.x: got %g, expected %g\n",
-           i, vertices_dest[i*2+1].x, vertices_ref[i*2+1].x);
-        ok(compare(vertices_dest[i*2+1].y, vertices_ref[i*2+1].y), "Vertex[%d].normal.y: got %g, expected %g\n",
-           i, vertices_dest[i*2+1].y, vertices_ref[i*2+1].y);
-        ok(compare(vertices_dest[i*2+1].z, vertices_ref[i*2+1].z), "Vertex[%d].normal.z: got %g, expected %g\n",
-           i, vertices_dest[i*2+1].z, vertices_ref[i*2+1].z);
+        winetest_push_context("vertex %u", i);
+        ok(compare_vec3(dst_vertices[i].position, expect_vertices[i].position),
+                "Expected position (%.8e, %.8e, %.8e), got (%.8e, %.8e, %.8e).\n",
+                expect_vertices[i].position.x, expect_vertices[i].position.y, expect_vertices[i].position.z,
+                dst_vertices[i].position.x, dst_vertices[i].position.y, dst_vertices[i].position.z);
+        ok(compare_vec3(dst_vertices[i].normal, expect_vertices[i].normal),
+                "Expected normal (%.8e, %.8e, %.8e), got (%.8e, %.8e, %.8e).\n",
+                expect_vertices[i].normal.x, expect_vertices[i].normal.y, expect_vertices[i].normal.z,
+                dst_vertices[i].normal.x, dst_vertices[i].normal.y, dst_vertices[i].normal.z);
+        ok(compare_vec2(dst_vertices[i].texcoord, expect_vertices[i].texcoord),
+                "Expected texcoord (%.8e, %.8e), got (%.8e, %.8e).\n",
+                expect_vertices[i].texcoord.x, expect_vertices[i].texcoord.y,
+                dst_vertices[i].texcoord.x, dst_vertices[i].texcoord.y);
+        winetest_pop_context();
     }
     skin_info->lpVtbl->Release(skin_info);
 }

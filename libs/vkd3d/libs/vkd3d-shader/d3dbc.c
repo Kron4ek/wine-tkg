@@ -1954,7 +1954,7 @@ static void d3dbc_write_vsir_dcl(struct d3dbc_compiler *d3dbc, const struct vkd3
 
     reg_id = semantic->resource.reg.reg.idx[0].offset;
 
-    if (semantic->resource.reg.reg.type != VKD3DSPR_SAMPLER)
+    if (semantic->resource.reg.reg.type != VKD3DSPR_COMBINED_SAMPLER)
     {
         vkd3d_shader_error(d3dbc->message_context, &ins->location, VKD3D_SHADER_ERROR_D3DBC_INVALID_REGISTER_TYPE,
                 "dcl instruction with register type %u.", semantic->resource.reg.reg.type);
@@ -2148,9 +2148,6 @@ int d3dbc_compile(struct vsir_program *program, uint64_t config_flags,
     int result;
 
     if ((result = vsir_allocate_temp_registers(program, message_context)))
-        return result;
-
-    if ((result = vsir_update_dcl_temps(program, message_context)))
         return result;
 
     d3dbc.program = program;

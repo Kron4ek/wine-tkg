@@ -8695,6 +8695,7 @@ static void generate_vsir_signature_entry(struct hlsl_ctx *ctx, struct vsir_prog
         if (!ascii_strcasecmp(var->semantic.name, "PSIZE") && output
                 && program->shader_version.type == VKD3D_SHADER_TYPE_VERTEX)
         {
+            program->has_point_size = true;
             if (var->data_type->e.numeric.dimx > 1)
                 hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SEMANTIC,
                         "PSIZE output must have only 1 component in this shader model.");
@@ -8949,7 +8950,7 @@ static void sm1_generate_vsir_sampler_dcls(struct hlsl_ctx *ctx,
                 semantic->resource_type = resource_type;
 
                 dst_param = &semantic->resource.reg;
-                vsir_register_init(&dst_param->reg, VKD3DSPR_SAMPLER, VSIR_DATA_F32, 1);
+                vsir_register_init(&dst_param->reg, VKD3DSPR_COMBINED_SAMPLER, VSIR_DATA_F32, 1);
                 dst_param->reg.dimension = VSIR_DIMENSION_NONE;
                 dst_param->reg.idx[0].offset = var->regs[HLSL_REGSET_SAMPLERS].index + i;
                 dst_param->write_mask = 0;
@@ -9030,6 +9031,7 @@ static void vsir_src_from_hlsl_constant_value(struct vkd3d_shader_src_param *src
     }
 
     src->reg.dimension = VSIR_DIMENSION_VEC4;
+    src->swizzle = VKD3D_SHADER_NO_SWIZZLE;
     for (i = 0, j = 0; i < 4; ++i)
     {
         if ((map_writemask & (1u << i)) && (j < width))
@@ -10174,7 +10176,10 @@ static void sm1_generate_vsir(struct hlsl_ctx *ctx, const struct vkd3d_shader_co
         struct hlsl_ir_function_decl *func, struct list *semantic_vars,
         struct hlsl_block *body, uint64_t config_flags, struct vsir_program *program)
 {
+    struct hlsl_ir_var *var;
     struct hlsl_block block;
+    struct hlsl_reg *reg;
+    unsigned int *count;
 
     program->ssa_count = 0;
     program->temp_count = 0;
@@ -10189,6 +10194,17 @@ static void sm1_generate_vsir(struct hlsl_ctx *ctx, const struct vkd3d_shader_co
 
     sm1_generate_vsir_block(ctx, body, program);
 
+    count = &program->flat_constant_count[VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER];
+    LIST_FOR_EACH_ENTRY(var, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+    {
+        if (!var->is_uniform)
+            continue;
+
+        if (!(reg = &var->regs[HLSL_REGSET_NUMERIC])->allocation_size)
+            continue;
+
+        *count = max(*count, reg->id + reg->allocation_size);
+    }
     program->ssa_count = ctx->ssa_count;
     program->temp_count = ctx->temp_count;
 
@@ -11041,9 +11057,30 @@ static bool sm4_generate_vsir_instr_expr(struct hlsl_ctx *ctx,
             generate_vsir_instr_expr_single_instr_op(ctx, program, expr, VSIR_OP_ROUND_PI, 0, 0, true);
             return true;
 
+        case HLSL_OP1_CLZ:
+            VKD3D_ASSERT(hlsl_type_is_integer(dst_type));
+            VKD3D_ASSERT(hlsl_version_ge(ctx, 5, 0));
+            if (hlsl_type_is_signed_integer(src_type))
+                generate_vsir_instr_expr_single_instr_op(ctx, program, expr, VSIR_OP_FIRSTBIT_SHI, 0, 0, true);
+            else
+                generate_vsir_instr_expr_single_instr_op(ctx, program, expr, VSIR_OP_FIRSTBIT_HI, 0, 0, true);
+            return true;
+
         case HLSL_OP1_COS:
             VKD3D_ASSERT(type_is_float(dst_type));
             sm4_generate_vsir_expr_with_two_destinations(ctx, program, VSIR_OP_SINCOS, expr, 1);
+            return true;
+
+        case HLSL_OP1_COUNTBITS:
+            VKD3D_ASSERT(hlsl_type_is_integer(dst_type));
+            VKD3D_ASSERT(hlsl_version_ge(ctx, 5, 0));
+            generate_vsir_instr_expr_single_instr_op(ctx, program, expr, VSIR_OP_COUNTBITS, 0, 0, true);
+            return true;
+
+        case HLSL_OP1_CTZ:
+            VKD3D_ASSERT(hlsl_type_is_integer(dst_type));
+            VKD3D_ASSERT(hlsl_version_ge(ctx, 5, 0));
+            generate_vsir_instr_expr_single_instr_op(ctx, program, expr, VSIR_OP_FIRSTBIT_LO, 0, 0, true);
             return true;
 
         case HLSL_OP1_DSX:
@@ -12677,7 +12714,7 @@ static void sm4_generate_vsir_add_dcl_constant_buffer(struct hlsl_ctx *ctx,
         return;
     }
 
-    ins->declaration.cb.size = cbuffer->size;
+    ins->declaration.cb.size = align(cbuffer->size, 4) * sizeof(float);
 
     src_param = &ins->declaration.cb.src;
     vsir_src_param_init(src_param, VKD3DSPR_CONSTBUFFER, VSIR_DATA_F32, 0);
@@ -14081,6 +14118,102 @@ static void loop_unrolling_execute(struct hlsl_ctx *ctx, struct hlsl_block *bloc
     hlsl_transform_ir(ctx, resolve_loops, block, NULL);
 }
 
+static bool lower_countbits(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, struct hlsl_block *block)
+{
+    struct hlsl_ir_function_decl *func;
+    struct hlsl_ir_node *call, *rhs;
+    struct hlsl_ir_expr *expr;
+    struct hlsl_ir_var *lhs;
+    char *body;
+
+    /* Like vkd3d_popcount(). */
+    static const char template[] =
+            "typedef uint%u uintX;\n"
+            "uintX countbits(uintX v)\n"
+            "{\n"
+            "    v -= (v >> 1) & 0x55555555;\n"
+            "    v = (v & 0x33333333) + ((v >> 2) & 0x33333333);\n"
+            "    return (((v + (v >> 4)) & 0x0f0f0f0f) * 0x01010101) >> 24;\n"
+            "}\n";
+
+    if (node->type != HLSL_IR_EXPR)
+        return false;
+
+    expr = hlsl_ir_expr(node);
+    if (expr->op != HLSL_OP1_COUNTBITS)
+        return false;
+
+    rhs = expr->operands[0].node;
+    if (!(body = hlsl_sprintf_alloc(ctx, template, hlsl_type_component_count(rhs->data_type))))
+        return false;
+    func = hlsl_compile_internal_function(ctx, "countbits", body);
+    vkd3d_free(body);
+    if (!func)
+        return false;
+
+    lhs = func->parameters.vars[0];
+    hlsl_block_add_simple_store(ctx, block, lhs, rhs);
+
+    if (!(call = hlsl_new_call(ctx, func, &node->loc)))
+        return false;
+    hlsl_block_add_instr(block, call);
+
+    hlsl_block_add_simple_load(ctx, block, func->return_var, &node->loc);
+
+    return true;
+}
+
+static bool lower_ctz(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, struct hlsl_block *block)
+{
+    struct hlsl_ir_function_decl *func;
+    struct hlsl_ir_node *call, *rhs;
+    struct hlsl_ir_expr *expr;
+    struct hlsl_ir_var *lhs;
+    char *body;
+
+    /* ctz() returns the bit number of the least significant 1-bit.
+     * Bit numbers count from the least significant bit. */
+    static const char template[] =
+            "typedef uint%u uintX;\n"
+            "uintX ctz(uintX v)\n"
+            "{\n"
+            "    uintX c = 31;\n"
+            "    v &= -v;\n"
+            "    c = (v & 0x0000ffff) ? c - 16 : c;\n"
+            "    c = (v & 0x00ff00ff) ? c - 8 : c;\n"
+            "    c = (v & 0x0f0f0f0f) ? c - 4 : c;\n"
+            "    c = (v & 0x33333333) ? c - 2 : c;\n"
+            "    c = (v & 0x55555555) ? c - 1 : c;\n"
+            "    return v ? c : -1;\n"
+            "}\n";
+
+    if (node->type != HLSL_IR_EXPR)
+        return false;
+
+    expr = hlsl_ir_expr(node);
+    if (expr->op != HLSL_OP1_CTZ)
+        return false;
+
+    rhs = expr->operands[0].node;
+    if (!(body = hlsl_sprintf_alloc(ctx, template, hlsl_type_component_count(rhs->data_type))))
+        return false;
+    func = hlsl_compile_internal_function(ctx, "ctz", body);
+    vkd3d_free(body);
+    if (!func)
+        return false;
+
+    lhs = func->parameters.vars[0];
+    hlsl_block_add_simple_store(ctx, block, lhs, rhs);
+
+    if (!(call = hlsl_new_call(ctx, func, &node->loc)))
+        return false;
+    hlsl_block_add_instr(block, call);
+
+    hlsl_block_add_simple_load(ctx, block, func->return_var, &node->loc);
+
+    return true;
+}
+
 static bool lower_f16tof32(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, struct hlsl_block *block)
 {
     struct hlsl_ir_function_decl *func;
@@ -14223,6 +14356,69 @@ static bool lower_f32tof16(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, stru
     return true;
 }
 
+static bool lower_find_msb(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, struct hlsl_block *block)
+{
+    struct hlsl_ir_function_decl *func;
+    struct hlsl_ir_node *call, *rhs;
+    struct hlsl_ir_expr *expr;
+    struct hlsl_ir_var *lhs;
+    char *body;
+
+    /* For positive numbers, find_msb() returns the bit number of the most
+     * significant 1-bit. For negative numbers, it returns the bit number of
+     * the most significant 0-bit. Bit numbers count from the least
+     * significant bit. */
+    static const char template[] =
+            "typedef %s intX;\n"
+            "uint%u find_msb(intX v)\n"
+            "{\n"
+            "    intX c, mask;\n"
+            "    v = v < 0 ? ~v : v;\n"
+            "    mask = v & 0xffff0000;\n"
+            "    v = mask ? mask : v;\n"
+            "    c = mask ? 16 : v ? 0 : -1;\n"
+            "    mask = v & 0xff00ff00;\n"
+            "    v = mask ? mask : v;\n"
+            "    c = mask ? c + 8 : c;\n"
+            "    mask = v & 0xf0f0f0f0;\n"
+            "    v = mask ? mask : v;\n"
+            "    c = mask ? c + 4 : c;\n"
+            "    mask = v & 0xcccccccc;\n"
+            "    v = mask ? mask : v;\n"
+            "    c = mask ? c + 2 : c;\n"
+            "    mask = v & 0xaaaaaaaa;\n"
+            "    v = mask ? mask : v;\n"
+            "    c = mask ? c + 1 : c;\n"
+            "    return c;\n"
+            "}\n";
+
+    if (node->type != HLSL_IR_EXPR)
+        return false;
+
+    expr = hlsl_ir_expr(node);
+    if (expr->op != HLSL_OP1_FIND_MSB)
+        return false;
+
+    rhs = expr->operands[0].node;
+    if (!(body = hlsl_sprintf_alloc(ctx, template, rhs->data_type->name, hlsl_type_component_count(rhs->data_type))))
+        return false;
+    func = hlsl_compile_internal_function(ctx, "find_msb", body);
+    vkd3d_free(body);
+    if (!func)
+        return false;
+
+    lhs = func->parameters.vars[0];
+    hlsl_block_add_simple_store(ctx, block, lhs, rhs);
+
+    if (!(call = hlsl_new_call(ctx, func, &node->loc)))
+        return false;
+    hlsl_block_add_instr(block, call);
+
+    hlsl_block_add_simple_load(ctx, block, func->return_var, &node->loc);
+
+    return true;
+}
+
 static bool lower_isinf(struct hlsl_ctx *ctx, struct hlsl_ir_node *node, struct hlsl_block *block)
 {
     struct hlsl_ir_function_decl *func;
@@ -14339,8 +14535,11 @@ static void process_entry_function(struct hlsl_ctx *ctx, struct list *semantic_v
 
     if (hlsl_version_ge(ctx, 4, 0) && hlsl_version_lt(ctx, 5, 0))
     {
+        lower_ir(ctx, lower_countbits, body);
+        lower_ir(ctx, lower_ctz, body);
         lower_ir(ctx, lower_f16tof32, body);
         lower_ir(ctx, lower_f32tof16, body);
+        lower_ir(ctx, lower_find_msb, body);
     }
 
     lower_ir(ctx, lower_isinf, body);

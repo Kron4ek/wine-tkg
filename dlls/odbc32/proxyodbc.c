@@ -1146,15 +1146,20 @@ static SQLWCHAR *strnAtoW( const SQLCHAR *str, int len )
     return ret;
 }
 
-static inline char *strdupWtoA(const WCHAR *str)
+static SQLCHAR *strnWtoA( const SQLWCHAR *str, int len )
 {
-    char *ret = NULL;
+    SQLCHAR *ret;
+    int lenA;
 
-    if(str) {
-        DWORD size = WideCharToMultiByte(CP_ACP, 0, str, -1, NULL, 0, NULL, NULL);
-        ret = malloc(size);
-        if(ret)
-            WideCharToMultiByte(CP_ACP, 0, str, -1, ret, size, NULL, NULL);
+    if (!str) return NULL;
+
+    if (len == SQL_NTS) len = -1;
+    lenA = WideCharToMultiByte( CP_ACP, 0, str, len, NULL, 0, NULL, NULL );
+
+    if ((ret = malloc( (lenA + 1) * sizeof(*ret) )))
+    {
+        WideCharToMultiByte( CP_ACP, 0, str, len, (char *)ret, lenA, NULL, NULL );
+        ret[lenA] = 0;
     }
 
     return ret;
@@ -1844,6 +1849,10 @@ static SQLRETURN error_win32_a( struct environment *env, struct connection *con,
         }
         free( msgW );
     }
+
+    if (win32_funcs->SQLGetDiagRec) FIXME("Use SQLGetDiagRec\n");
+    else if (win32_funcs->SQLGetDiagRecW) FIXME("Use SQLGetDiagRecW\n");
+
     return ret;
 }
 
@@ -6150,7 +6159,7 @@ static SQLRETURN describe_col_win32_w( struct statement *stmt, SQLUSMALLINT col_
                                                        name_len, data_type, col_size, decimal_digits, nullable );
     if (stmt->hdr.win32_funcs->SQLDescribeCol)
     {
-        SQLCHAR *name = (SQLCHAR*)strdupWtoA( (WCHAR*)col_name );
+        SQLCHAR *name = (SQLCHAR*)strdupWA( (WCHAR*)col_name );
 
         ret = stmt->hdr.win32_funcs->SQLDescribeCol( stmt->hdr.win32_handle, col_number, name, buf_len, name_len,
                                                         data_type, col_size, decimal_digits, nullable);
@@ -6204,6 +6213,7 @@ static SQLRETURN error_win32_w( struct environment *env, struct connection *con,
                                 SQLINTEGER *native_err, SQLWCHAR *msg, SQLSMALLINT buflen, SQLSMALLINT *retlen )
 {
     const struct win32_funcs *win32_funcs;
+    SQLRETURN ret;
 
     if (env) win32_funcs = env->hdr.win32_funcs;
     else if (con) win32_funcs = con->hdr.win32_funcs;
@@ -6212,7 +6222,28 @@ static SQLRETURN error_win32_w( struct environment *env, struct connection *con,
     if (win32_funcs->SQLErrorW)
         return win32_funcs->SQLErrorW( env ? env->hdr.win32_handle : NULL, con ? con->hdr.win32_handle : NULL,
                                        stmt ? stmt->hdr.win32_handle : NULL, state, native_err, msg, buflen, retlen );
-    if (win32_funcs->SQLError) FIXME( "Unicode to ANSI conversion not handled\n" );
+    if (win32_funcs->SQLError)
+    {
+        SQLCHAR stateA[6], *msgA;
+        SQLSMALLINT lenA;
+
+        if (!(msgA = malloc( buflen * sizeof(*msgA) ))) return SQL_ERROR;
+        ret = win32_funcs->SQLError( env ? env->hdr.win32_handle : NULL, con ? con->hdr.win32_handle : NULL,
+                stmt ? stmt->hdr.win32_handle : NULL, stateA, native_err, msgA, buflen, &lenA );
+        if (SUCCESS( ret ))
+        {
+            int len = MultiByteToWideChar( CP_ACP, 0, (const char *)msgA, -1, msg, buflen );
+            if (retlen) *retlen = len - 1;
+            MultiByteToWideChar( CP_ACP, 0, (const char *)stateA, -1, state, 6 );
+        }
+        free( msgA );
+
+        return ret;
+    }
+
+    if (win32_funcs->SQLGetDiagRecW) FIXME("Use SQLGetDiagRecW\n");
+    else if (win32_funcs->SQLGetDiagRec) FIXME("Use SQLGetDiagRec\n");
+
     return SQL_ERROR;
 }
 
@@ -6269,12 +6300,14 @@ static SQLRETURN exec_direct_win32_w( struct statement *stmt, SQLWCHAR *text, SQ
 
     if (stmt->hdr.win32_funcs->SQLExecDirectW)
         return stmt->hdr.win32_funcs->SQLExecDirectW( stmt->hdr.win32_handle, text, len );
+
     if (stmt->hdr.win32_funcs->SQLExecDirect)
     {
-        SQLCHAR *textA = (SQLCHAR*)strdupWtoA( text );
-        ret = stmt->hdr.win32_funcs->SQLExecDirect( stmt->hdr.win32_handle, textA, len );
+        SQLCHAR *textA = strnWtoA( text, len );
+        ret = stmt->hdr.win32_funcs->SQLExecDirect( stmt->hdr.win32_handle, textA, SQL_NTS );
         free(textA);
     }
+
     return ret;
 }
 
@@ -6363,7 +6396,7 @@ static SQLRETURN prepare_win32_w( struct statement *stmt, SQLWCHAR *statement, S
         return stmt->hdr.win32_funcs->SQLPrepareW( stmt->hdr.win32_handle, statement, len );
     if (stmt->hdr.win32_funcs->SQLPrepare)
     {
-        SQLCHAR *statementA = (SQLCHAR*)strdupWtoA( statement );
+        SQLCHAR *statementA = (SQLCHAR *)strdupWA( statement );
         ret = stmt->hdr.win32_funcs->SQLPrepare( stmt->hdr.win32_handle, statementA, len );
         free(statementA);
     }
@@ -7165,44 +7198,32 @@ SQLRETURN WINAPI SQLColumnsW(SQLHSTMT StatementHandle, SQLWCHAR *CatalogName, SQ
 }
 
 static SQLRETURN driver_connect_win32_w( struct connection *con, SQLHWND window, SQLWCHAR *in_conn_str,
-                                         SQLSMALLINT len, SQLWCHAR *out_conn_str, SQLSMALLINT buflen, SQLSMALLINT *len2,
+                                         SQLSMALLINT len1, SQLWCHAR *out_conn_str, SQLSMALLINT buflen, SQLSMALLINT *len2,
                                          SQLUSMALLINT completion )
 {
     SQLRETURN ret = SQL_ERROR;
 
     if (con->hdr.win32_funcs->SQLDriverConnectW)
-        return con->hdr.win32_funcs->SQLDriverConnectW( con->hdr.win32_handle, window, in_conn_str, len, out_conn_str,
+        return con->hdr.win32_funcs->SQLDriverConnectW( con->hdr.win32_handle, window, in_conn_str, len1, out_conn_str,
                                                         buflen, len2, completion );
     if (con->hdr.win32_funcs->SQLDriverConnect)
     {
-        SQLCHAR *in = NULL, *out = NULL;
-        SQLSMALLINT in_len = 0, out_len = 0;
+        SQLCHAR *in_conn_str_a, *out_conn_str_a;
+        SQLSMALLINT out_len;
 
-        in_len = WideCharToMultiByte(CP_ACP, 0, in_conn_str, len, NULL, 0, NULL, NULL);
-        if (!(in = malloc(in_len + 1))) return SQL_ERROR;
+        if (!(out_conn_str_a = malloc( buflen * sizeof(*out_conn_str_a) ))) return SQL_ERROR;
+        in_conn_str_a = strnWtoA( in_conn_str, len1 );
 
-        WideCharToMultiByte(CP_ACP, 0, in_conn_str, len, (char *)in, in_len, NULL, NULL);
-        in[in_len] = 0;
-
-        if (out_conn_str && buflen > 0)
+        ret = con->hdr.win32_funcs->SQLDriverConnect( con->hdr.win32_handle, window, in_conn_str_a, SQL_NTS, out_conn_str_a,
+                buflen, &out_len, completion );
+        if (SUCCESS( ret ))
         {
-            if (!(out = malloc(buflen)))
-            {
-                free(in);
-                return SQL_ERROR;
-            }
+            int len = MultiByteToWideChar( CP_ACP, 0, (const char *)out_conn_str_a, -1, out_conn_str, buflen );
+            if (len2) *len2 = len - 1;
         }
 
-        ret = con->hdr.win32_funcs->SQLDriverConnect( con->hdr.win32_handle, window, in, in_len, out, buflen, &out_len, completion );
-
-        if (SQL_SUCCEEDED(ret) && out_conn_str && out)
-        {
-            MultiByteToWideChar(CP_ACP, 0, (char *)out, out_len, out_conn_str, buflen);
-            if (len2) *len2 = out_len;
-        }
-
-        free(in);
-        free(out);
+        free(in_conn_str_a);
+        free(out_conn_str_a);
     }
 
     return ret;
@@ -7341,54 +7362,6 @@ static SQLRETURN get_info_unix_w( struct connection *con, SQLUSMALLINT type, SQL
     return ODBC_CALL( SQLGetInfoW, &params );
 }
 
-static BOOL typeinfo_is_string( SQLSMALLINT type )
-{
-    switch (type)
-    {
-    case SQL_ACCESSIBLE_PROCEDURES:
-    case SQL_ACCESSIBLE_TABLES:
-    case SQL_CATALOG_NAME:
-    case SQL_CATALOG_NAME_SEPARATOR:
-    case SQL_CATALOG_TERM:
-    case SQL_COLLATION_SEQ:
-    case SQL_COLUMN_ALIAS:
-    case SQL_DATA_SOURCE_NAME:
-    case SQL_DATA_SOURCE_READ_ONLY:
-    case SQL_DATABASE_NAME:
-    case SQL_DBMS_NAME:
-    case SQL_DBMS_VER:
-    case SQL_DESCRIBE_PARAMETER:
-    case SQL_DRIVER_NAME:
-    case SQL_DRIVER_ODBC_VER:
-    case SQL_DRIVER_VER:
-    case SQL_ODBC_VER:
-    case SQL_EXPRESSIONS_IN_ORDERBY:
-    case SQL_IDENTIFIER_QUOTE_CHAR:
-    case SQL_INTEGRITY:
-    case SQL_KEYWORDS:
-    case SQL_LIKE_ESCAPE_CLAUSE:
-    case SQL_MAX_ROW_SIZE_INCLUDES_LONG:
-    case SQL_MULT_RESULT_SETS:
-    case SQL_MULTIPLE_ACTIVE_TXN:
-    case SQL_NEED_LONG_DATA_LEN:
-    case SQL_ORDER_BY_COLUMNS_IN_SELECT:
-    case SQL_PROCEDURE_TERM:
-    case SQL_PROCEDURES:
-    case SQL_ROW_UPDATES:
-    case SQL_SCHEMA_TERM:
-    case SQL_SEARCH_PATTERN_ESCAPE:
-    case SQL_SERVER_NAME:
-    case SQL_SPECIAL_CHARACTERS:
-    case SQL_TABLE_TERM:
-    case SQL_USER_NAME:
-    case SQL_XOPEN_CLI_YEAR:
-    case SQL_OUTER_JOINS:
-        return TRUE;
-    default:
-        return FALSE;
-    }
-}
-
 static SQLRETURN get_info_win32_w( struct connection *con, SQLUSMALLINT type, SQLPOINTER value, SQLSMALLINT buflen,
                                    SQLSMALLINT *retlen )
 {
@@ -7396,25 +7369,45 @@ static SQLRETURN get_info_win32_w( struct connection *con, SQLUSMALLINT type, SQ
 
     if (con->hdr.win32_funcs->SQLGetInfoW)
         return con->hdr.win32_funcs->SQLGetInfoW( con->hdr.win32_handle, type, value, buflen, retlen );
+
     if (con->hdr.win32_funcs->SQLGetInfo)
     {
-        ret = con->hdr.win32_funcs->SQLGetInfo( con->hdr.win32_handle, type, value, buflen, retlen );
-        if (SQL_SUCCEEDED(ret) && typeinfo_is_string(type))
+        switch (type)
         {
-            if (value)
+        case SQL_ACTIVE_CONNECTIONS:
+        case SQL_ACTIVE_STATEMENTS:
+        case SQL_ODBC_API_CONFORMANCE:
+        case SQL_TXN_CAPABLE:
+            ret = con->hdr.win32_funcs->SQLGetInfo( con->hdr.win32_handle, type, value, buflen, retlen );
+            break;
+        case SQL_DRIVER_NAME:
+        case SQL_DBMS_NAME:
+        case SQL_DATA_SOURCE_READ_ONLY:
+        case SQL_IDENTIFIER_QUOTE_CHAR:
+        {
+            SQLSMALLINT lenA;
+            SQLCHAR *strA;
+
+            /* For string types sizes are in bytes. */
+
+            buflen /= sizeof(WCHAR);
+            if (!(strA = malloc(buflen))) return SQL_ERROR;
+
+            ret = con->hdr.win32_funcs->SQLGetInfo( con->hdr.win32_handle, type, strA, buflen, &lenA );
+            if (SUCCESS( ret ))
             {
-                WCHAR *p = strnAtoW(value, -1);
-                wcscpy(value, p);
-                free(p);
-
-                if (retlen)
-                    *retlen = wcslen(value) * sizeof(WCHAR);
+                int len = MultiByteToWideChar( CP_ACP, 0, (const char *)strA, -1, (WCHAR *)value, buflen );
+                if (retlen) *retlen = (len - 1) * sizeof(WCHAR);
             }
+            free( strA );
 
-            if (retlen)
-                *retlen = *retlen * sizeof(WCHAR);
+            break;
+        }
+        default:
+            FIXME( "Unicode to ANSI conversion not handled, for info type %u.\n", type );
         }
     }
+
     return ret;
 }
 
@@ -7998,7 +7991,7 @@ static SQLRETURN native_sql_win32_w( struct connection *con, SQLWCHAR *in_statem
                                                     retlen );
     if (con->hdr.win32_funcs->SQLNativeSql)
     {
-        SQLCHAR *statement = (SQLCHAR*)strdupWtoA( (WCHAR*)in_statement );
+        SQLCHAR *statement = (SQLCHAR *)strdupWA( (WCHAR *)in_statement );
         SQLCHAR *out = NULL;
         if (buflen)
             out = malloc( buflen );

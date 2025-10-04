@@ -83,8 +83,6 @@
 #include "wine/server.h"
 #include "wine/debug.h"
 #include "unix_private.h"
-#include "esync.h"
-#include "fsync.h"
 #include "ddk/wdm.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(server);
@@ -840,6 +838,21 @@ unsigned int server_wait( const union select_op *select_op, data_size_t size, UI
 }
 
 
+/* helper function to perform a server-side wait on an internal handle without
+ * using the fast synchronization path */
+unsigned int server_wait_for_object( HANDLE handle, BOOL alertable, const LARGE_INTEGER *timeout )
+{
+    union select_op select_op;
+    UINT flags = SELECT_INTERRUPTIBLE;
+
+    if (alertable) flags |= SELECT_ALERTABLE;
+
+    select_op.wait.op = SELECT_WAIT;
+    select_op.wait.handles[0] = wine_server_obj_handle( handle );
+    return server_wait( &select_op, offsetof( union select_op, wait.handles[1] ), flags, timeout );
+}
+
+
 /***********************************************************************
  *              NtContinue  (NTDLL.@)
  */
@@ -916,14 +929,23 @@ unsigned int server_queue_process_apc( HANDLE process, const union apc_call *cal
         }
         else
         {
+            sigset_t sigset;
+
             NtWaitForSingleObject( handle, FALSE, NULL );
+
+            server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
+
+            /* remove the handle from the cache, get_apc_result will close it for us */
+            close_inproc_sync( handle );
 
             SERVER_START_REQ( get_apc_result )
             {
                 req->handle = wine_server_obj_handle( handle );
-                if (!(ret = wine_server_call( req ))) *result = reply->result;
+                if (!(ret = server_call_unlocked( req ))) *result = reply->result;
             }
             SERVER_END_REQ;
+
+            server_leave_uninterrupted_section( &fd_cache_mutex, &sigset );
 
             if (!ret && result->type == APC_NONE) continue;  /* APC didn't run, try again */
         }
@@ -983,7 +1005,7 @@ void wine_server_send_fd( int fd )
  *
  * Receive a file descriptor passed from the server.
  */
-int receive_fd( obj_handle_t *handle )
+int wine_server_receive_fd( obj_handle_t *handle )
 {
     struct iovec vec;
     struct msghdr msghdr;
@@ -1178,7 +1200,7 @@ int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
                 if (type) *type = reply->type;
                 if (options) *options = reply->options;
                 access = reply->access;
-                if ((fd = receive_fd( &fd_handle )) != -1)
+                if ((fd = wine_server_receive_fd( &fd_handle )) != -1)
                 {
                     assert( wine_server_ptr_handle(fd_handle) == handle );
                     *needs_close = (!reply->cacheable ||
@@ -1615,6 +1637,7 @@ size_t server_init_process(void)
 {
     const char *arch = getenv( "WINEARCH" );
     const char *env_socket = getenv( "WINESERVERSOCKET" );
+    struct ntdll_thread_data *data = ntdll_get_thread_data();
     obj_handle_t version;
     unsigned int i;
     int ret, reply_pipe;
@@ -1654,7 +1677,7 @@ size_t server_init_process(void)
     pthread_sigmask( SIG_BLOCK, &server_block_set, NULL );
 
     /* receive the first thread request fd on the main socket */
-    ntdll_get_thread_data()->request_fd = receive_fd( &version );
+    data->request_fd = wine_server_receive_fd( &version );
 
 #ifdef SO_PASSCRED
     /* now that we hopefully received the server_pid, disable SO_PASSCRED */
@@ -1689,16 +1712,24 @@ size_t server_init_process(void)
         req->unix_pid    = getpid();
         req->unix_tid    = get_unix_tid();
         req->reply_fd    = reply_pipe;
-        req->wait_fd     = ntdll_get_thread_data()->wait_fd[1];
+        req->wait_fd     = data->wait_fd[1];
         req->debug_level = (TRACE_ON(server) != 0);
         wine_server_set_reply( req, supported_machines, sizeof(supported_machines) );
-        ret = wine_server_call( req );
-        pid               = reply->pid;
-        tid               = reply->tid;
-        peb->SessionId    = reply->session_id;
-        info_size         = reply->info_size;
-        server_start_time = reply->server_start;
-        supported_machines_count = wine_server_reply_size( reply ) / sizeof(*supported_machines);
+        if (!(ret = wine_server_call( req )))
+        {
+            obj_handle_t handle;
+            pid               = reply->pid;
+            tid               = reply->tid;
+            peb->SessionId    = reply->session_id;
+            info_size         = reply->info_size;
+            server_start_time = reply->server_start;
+            supported_machines_count = wine_server_reply_size( reply ) / sizeof(*supported_machines);
+            if (reply->inproc_device)
+            {
+                inproc_device_fd = wine_server_receive_fd( &handle );
+                assert( handle == reply->inproc_device );
+            }
+        }
     }
     SERVER_END_REQ;
     close( reply_pipe );
@@ -1769,11 +1800,8 @@ void server_init_process_done(void)
     /* Signal the parent process to continue */
     SERVER_START_REQ( init_process_done )
     {
-        req->teb      = wine_server_client_ptr( teb );
-        req->peb      = NtCurrentTeb64() ? NtCurrentTeb64()->Peb : wine_server_client_ptr( peb );
-#ifdef __i386__
-        req->ldt_copy = wine_server_client_ptr( &__wine_ldt_copy );
-#endif
+        req->teb = wine_server_client_ptr( teb );
+        req->peb = NtCurrentTeb64() ? NtCurrentTeb64()->Peb : wine_server_client_ptr( peb );
         status = wine_server_call( req );
         suspend = reply->suspend;
     }
@@ -1870,12 +1898,17 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source, HANDLE 
         return result.dup_handle.status;
     }
 
+    /* hold fd_cache_mutex to prevent the fd from being added again between the
+     * call to remove_fd_from_cache and close_handle */
     server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
 
     /* always remove the cached fd; if the server request fails we'll just
      * retrieve it again */
     if (options & DUPLICATE_CLOSE_SOURCE)
+    {
         fd = remove_fd_from_cache( source );
+        close_inproc_sync( source );
+    }
 
     SERVER_START_REQ( dup_handle )
     {
@@ -1941,17 +1974,14 @@ NTSTATUS WINAPI NtClose( HANDLE handle )
     if (HandleToLong( handle ) >= ~5 && HandleToLong( handle ) <= ~0)
         return STATUS_SUCCESS;
 
+    /* hold fd_cache_mutex to prevent the fd from being added again between the
+     * call to remove_fd_from_cache and close_handle */
     server_enter_uninterrupted_section( &fd_cache_mutex, &sigset );
 
     /* always remove the cached fd; if the server request fails we'll just
      * retrieve it again */
     fd = remove_fd_from_cache( handle );
-
-    if (do_fsync())
-        fsync_close( handle );
-
-    if (do_esync())
-        esync_close( handle );
+    close_inproc_sync( handle );
 
     SERVER_START_REQ( close_handle )
     {

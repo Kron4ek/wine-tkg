@@ -689,11 +689,11 @@ FAILURE 2
 FAILURE 1
 --- success/failure for MORE command
 SUCCESS 0
-SUCCESS 0
 foo@space@
 
 SUCCESS 0
---- success/failure for PAUSE command
+@todo_wine@SUCCESS 0
+@todo_wine@--- success/failure for PAUSE command
 FAILURE 1
 ---
 --------- success/failure when invoking cmd /c --------------
@@ -994,6 +994,10 @@ foobay
 
 
 ---7
+---8
+passed
+---9
+passed
 ------------ Testing NUL ------------
 bar
 bar
@@ -1852,6 +1856,12 @@ a2.ac
 a1.ab
 a1.ac
 a2.aa
+a1.aa
+---
+a2.ac
+a1.ab
+a2.aa
+a1.ac
 a1.aa
 ------------ Testing attrib ------------
 A@spaces@@drive@@path@foobar\foo@or_broken@A       I@spaces@@drive@@path@foobar\foo
