@@ -2791,6 +2791,7 @@ WINE_CONFIG_MAKEFILE(dlls/hvsimanagementapi)
 WINE_CONFIG_MAKEFILE(dlls/hvsimanagementapi/tests)
 WINE_CONFIG_MAKEFILE(dlls/ia2comproxy)
 WINE_CONFIG_MAKEFILE(dlls/iccvid)
+WINE_CONFIG_MAKEFILE(dlls/iccvid/tests)
 WINE_CONFIG_MAKEFILE(dlls/icmp)
 WINE_CONFIG_MAKEFILE(dlls/icmui)
 WINE_CONFIG_MAKEFILE(dlls/icmui/tests)
@@ -3776,7 +3777,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-11.0rc3.r0.g701af869\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-11.0.r0.g6cc805ea\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 dlls/wineandroid.drv/wine-debug.apk: dlls/wineandroid.drv/build.gradle ${wine_srcdir}dlls/wineandroid.drv/AndroidManifest.xml ${wine_srcdir}dlls/wineandroid.drv/WineActivity.java ${wine_srcdir}dlls/wineandroid.drv/wine.svg

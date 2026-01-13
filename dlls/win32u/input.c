@@ -1964,6 +1964,9 @@ BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus, DWORD new
     DWORD winflags, old_thread, new_thread;
     CBTACTIVATESTRUCT cbt;
 
+    TRACE( "hwnd %p, previous %p, mouse %u, focus %u, new_active_thread_id %04x\n",
+           hwnd, previous, mouse, focus, new_active_thread_id );
+
     if (previous == hwnd)
     {
         if (prev) *prev = hwnd;
@@ -2205,6 +2208,8 @@ BOOL set_foreground_window( HWND hwnd, BOOL mouse, BOOL internal )
         }
     }
     SERVER_END_REQ;
+
+    TRACE( "hwnd %p, mouse %u, internal %u -> ret %u, previous %p\n", hwnd, mouse, internal, ret, previous );
 
     if (ret && previous != hwnd)
     {

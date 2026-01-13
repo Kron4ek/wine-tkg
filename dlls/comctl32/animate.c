@@ -915,9 +915,3 @@ void ANIMATE_Register(void)
 
     RegisterClassW(&wndClass);
 }
-
-
-void ANIMATE_Unregister(void)
-{
-    UnregisterClassW(ANIMATE_CLASSW, NULL);
-}

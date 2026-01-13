@@ -84,6 +84,7 @@ struct wined3d_stateblock
 {
     LONG ref;
     struct wined3d_device *device;
+    enum wined3d_stateblock_type type;
 
     struct wined3d_saved_states changed;
 
@@ -1327,15 +1328,19 @@ void CDECL wined3d_stateblock_apply(const struct wined3d_stateblock *stateblock,
 
 void CDECL wined3d_stateblock_set_vertex_shader(struct wined3d_stateblock *stateblock, struct wined3d_shader *shader)
 {
+    struct wined3d_shader *prev = stateblock->stateblock_state.vs;
+
     TRACE("stateblock %p, shader %p.\n", stateblock, shader);
 
     if (shader)
         wined3d_shader_incref(shader);
-    if (stateblock->stateblock_state.vs)
-        wined3d_shader_decref(stateblock->stateblock_state.vs);
+    if (prev)
+        wined3d_shader_decref(prev);
     stateblock->stateblock_state.vs = shader;
     stateblock->changed.vertexShader = TRUE;
     stateblock->changed.ffp_vs_settings = 1;
+    if (!shader != !prev)
+        stateblock->changed.fog_constants = 1;
 }
 
 static void wined3d_bitmap_set_bits(uint32_t *bitmap, unsigned int start, unsigned int count)
@@ -1590,6 +1595,10 @@ void CDECL wined3d_stateblock_set_vertex_declaration(struct wined3d_stateblock *
         wined3d_vertex_declaration_decref(prev);
     stateblock->stateblock_state.vertex_declaration = declaration;
     stateblock->changed.vertexDecl = TRUE;
+
+    if (declaration == prev)
+        return;
+
     /* Texture matrices depend on the format of the TEXCOORD attributes. */
     /* FIXME: They also depend on whether the draw is pretransformed,
      * but that should go away. */
@@ -1637,6 +1646,12 @@ void CDECL wined3d_stateblock_set_render_state(struct wined3d_stateblock *stateb
     if (state > WINEHIGHEST_RENDER_STATE)
     {
         WARN("Unhandled render state %#x.\n", state);
+        return;
+    }
+
+    if (stateblock->type == WINED3D_SBT_PRIMARY && value == stateblock->stateblock_state.rs[state])
+    {
+        TRACE("Ignoring redundant call on a primary stateblock.\n");
         return;
     }
 
@@ -1709,6 +1724,8 @@ void CDECL wined3d_stateblock_set_render_state(struct wined3d_stateblock *stateb
 
         case WINED3D_RS_FOGVERTEXMODE:
             stateblock->changed.ffp_vs_settings = 1;
+            /* FIXME: Should only be VS. */
+            stateblock->changed.ffp_ps_settings = 1;
             stateblock->changed.fog_constants = 1;
             break;
 
@@ -1791,6 +1808,12 @@ void CDECL wined3d_stateblock_set_texture_stage_state(struct wined3d_stateblock 
     {
         WARN("Attempting to set stage %u which is higher than the max stage %u, ignoring.\n",
                 stage, WINED3D_MAX_FFP_TEXTURES - 1);
+        return;
+    }
+
+    if (stateblock->type == WINED3D_SBT_PRIMARY && value == stateblock->stateblock_state.texture_states[stage][state])
+    {
+        TRACE("Ignoring redundant call on a primary stateblock.\n");
         return;
     }
 
@@ -1965,6 +1988,13 @@ void CDECL wined3d_stateblock_set_viewport(struct wined3d_stateblock *stateblock
         const struct wined3d_viewport *viewport)
 {
     TRACE("stateblock %p, viewport %p.\n", stateblock, viewport);
+
+    if (stateblock->type == WINED3D_SBT_PRIMARY
+            && !memcmp(viewport, &stateblock->stateblock_state.viewport, sizeof(*viewport)))
+    {
+        TRACE("Ignoring redundant call on a primary stateblock.\n");
+        return;
+    }
 
     stateblock->stateblock_state.viewport = *viewport;
     stateblock->changed.viewport = TRUE;
@@ -2503,6 +2533,14 @@ static void wined3d_stateblock_invalidate_initial_states(struct wined3d_stateblo
     stateblock->changed.fog_constants = 1;
     wined3d_bitmap_set_bits(stateblock->changed.renderState, WINED3D_RS_POINTSIZE_MAX, 1);
     wined3d_bitmap_set_bits(stateblock->changed.renderState, WINED3D_RS_POINTSIZE_MIN, 1);
+    stateblock->changed.extra_vs_args = 1;
+    stateblock->changed.extra_ps_args = 1;
+    stateblock->changed.rasterizer_state = 1;
+    /* These force setting depth/stencil, and blend state.
+     * FIXME: These should probably be made into flags in wined3d_saved_states
+     * like the rest. */
+    wined3d_bitmap_set_bits(stateblock->changed.renderState, WINED3D_RS_BLENDOP, 1);
+    wined3d_bitmap_set_bits(stateblock->changed.renderState, WINED3D_RS_ZENABLE, 1);
 }
 
 static HRESULT stateblock_init(struct wined3d_stateblock *stateblock, const struct wined3d_stateblock *device_state,
@@ -2512,6 +2550,7 @@ static HRESULT stateblock_init(struct wined3d_stateblock *stateblock, const stru
 
     stateblock->ref = 1;
     stateblock->device = device;
+    stateblock->type = type;
     stateblock->stateblock_state.light_state = &stateblock->light_state;
     wined3d_stateblock_state_init(&stateblock->stateblock_state, device,
             type == WINED3D_SBT_PRIMARY ? WINED3D_STATE_INIT_DEFAULT : 0);
@@ -3682,6 +3721,7 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
     {
         if (wined3d_bitmap_is_set(changed->transform, WINED3D_TS_VIEW))
         {
+            changed->lights = 1;
             if (state->rs[WINED3D_RS_CLIPPING])
                 changed->clipplane |= state->rs[WINED3D_RS_CLIPPLANEENABLE];
         }
@@ -3993,7 +4033,7 @@ void CDECL wined3d_device_apply_stateblock(struct wined3d_device *device,
                 offsetof(struct wined3d_ffp_ps_constants, alpha_test_ref), sizeof(f), &f);
     }
 
-    if (changed->fog_constants || changed->ffp_vs_settings || changed->position_transformed)
+    if (changed->fog_constants || changed->position_transformed)
     {
         bool rhw = state->vertex_declaration && state->vertex_declaration->position_transformed;
         struct wined3d_ffp_fog_constants fog;
