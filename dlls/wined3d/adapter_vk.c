@@ -59,11 +59,6 @@ static const struct wined3d_state_entry_template misc_state_template_vk[] =
     {0}, /* Terminate */
 };
 
-static inline const struct wined3d_adapter_vk *wined3d_adapter_vk_const(const struct wined3d_adapter *adapter)
-{
-    return CONTAINING_RECORD(adapter, struct wined3d_adapter_vk, a);
-}
-
 static const char *debug_vk_version(uint32_t version)
 {
     return wine_dbg_sprintf("%u.%u.%u",
@@ -474,6 +469,13 @@ static void adapter_vk_destroy_device(struct wined3d_device *device)
 {
     struct wined3d_device_vk *device_vk = wined3d_device_vk(device);
     const struct wined3d_vk_info *vk_info = &device_vk->vk_info;
+    struct wined3d *wined3d = device->wined3d;
+
+    /* We need the adapter (which holds the reference to the Vulkan library)
+     * to stick around until we are done making Vulkan calls.
+     * wined3d_device_cleanup() might drop the last reference,
+     * so grab another one here. */
+    wined3d_incref(wined3d);
 
     wined3d_device_cleanup(&device_vk->d);
     wined3d_allocator_cleanup(&device_vk->allocator);
@@ -481,6 +483,7 @@ static void adapter_vk_destroy_device(struct wined3d_device *device)
     wined3d_lock_cleanup(&device_vk->allocator_cs);
 
     VK_CALL(vkDestroyDevice(device_vk->vk_device, NULL));
+    wined3d_decref(wined3d);
     free(device_vk);
 }
 
@@ -2120,7 +2123,7 @@ static VkPhysicalDevice get_vulkan_physical_device(struct wined3d_vk_info *vk_in
     if (count > 1)
     {
         /* TODO: Create wined3d_adapter for each device. */
-        FIXME("Multiple physical devices available.\n");
+        WARN("Multiple physical devices available.\n");
         count = 1;
     }
 

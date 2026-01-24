@@ -26,6 +26,7 @@
 #include <assert.h>
 #include <pthread.h>
 #include <dlfcn.h>
+#include <unistd.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -1074,6 +1075,7 @@ static void init_device_info( struct egl_platform *egl, const struct opengl_func
 {
     static const UINT versions[] = {46, 45, 44, 43, 42, 41, 40, 33, 32, 31, 30, 21, 20, 15, 14, 13, 12, 11, 10, 0};
     EGLContext core_context = EGL_NO_CONTEXT, compat_context = EGL_NO_CONTEXT, context = EGL_NO_CONTEXT;
+    BOOL has_device_persistent_id;
     int i, count, values[3] = {0};
     const char *extensions, *str;
     EGLConfig config;
@@ -1096,13 +1098,11 @@ static void init_device_info( struct egl_platform *egl, const struct opengl_func
     TRACE( "  - device_id: %#x\n", egl->device_id );
     TRACE( "  - vendor_id: %#x\n", egl->vendor_id );
 
-    if (has_extension( extensions, "EGL_EXT_device_persistent_id" ))
+    if ((has_device_persistent_id = has_extension( extensions, "EGL_EXT_device_persistent_id" )))
     {
         funcs->p_eglQueryDeviceBinaryEXT( egl->device, EGL_DEVICE_UUID_EXT, sizeof(egl->device_uuid), &egl->device_uuid, &count );
         funcs->p_eglQueryDeviceBinaryEXT( egl->device, EGL_DRIVER_UUID_EXT, sizeof(egl->driver_uuid), &egl->driver_uuid, &count );
     }
-    TRACE( "  - device_uuid: %s\n", debugstr_guid(&egl->device_uuid) );
-    TRACE( "  - driver_uuid: %s\n", debugstr_guid(&egl->driver_uuid) );
 
     funcs->p_eglBindAPI( EGL_OPENGL_API );
     funcs->p_eglGetConfigs( egl->display, &config, 1, &count );
@@ -1166,8 +1166,17 @@ static void init_device_info( struct egl_platform *egl, const struct opengl_func
         }
         TRACE( "  - video_memory: %u MiB\n", egl->video_memory );
 
+        if (!has_device_persistent_id && (has_extension( extensions, "GL_EXT_memory_object" ) || has_extension( extensions, "GL_EXT_semaphore" )))
+        {
+            funcs->p_glGetUnsignedBytevEXT( GL_DRIVER_UUID_EXT, (GLubyte *)&egl->driver_uuid );
+            funcs->p_glGetUnsignedBytei_vEXT( GL_DEVICE_UUID_EXT, 0, (GLubyte *)&egl->device_uuid );
+        }
+
         funcs->p_eglMakeCurrent( egl->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
     }
+
+    TRACE( "  - device_uuid: %s\n", debugstr_guid(&egl->device_uuid) );
+    TRACE( "  - driver_uuid: %s\n", debugstr_guid(&egl->driver_uuid) );
 
     if (compat_context) funcs->p_eglDestroyContext( egl->display, compat_context );
     if (core_context) funcs->p_eglDestroyContext( egl->display, core_context );
@@ -2382,6 +2391,27 @@ static struct egl_platform *egl_platform_from_index( GLint index )
     return NULL;
 }
 
+static BOOL win32u_query_renderer( UINT attribute, void *value )
+{
+    struct egl_platform *egl = &display_egl;
+    LUID luid;
+    UINT mask;
+
+    TRACE( "attribute %#x, value %p\n", attribute, value );
+
+    switch (attribute)
+    {
+    case GL_DEVICE_LUID_EXT:
+        return get_gpu_info_from_uuid( &egl->device_uuid, (LUID *)value, &mask, NULL );
+    case GL_DEVICE_NODE_MASK_EXT:
+        return get_gpu_info_from_uuid( &egl->device_uuid, &luid, value, NULL );
+    default:
+        FIXME( "Unsupported attribute %#x\n", attribute );
+        set_gl_error( GL_INVALID_ENUM );
+        return FALSE;
+    }
+}
+
 static BOOL query_renderer_integer( struct egl_platform *egl, GLenum attribute, GLuint *value )
 {
     switch (attribute)
@@ -2479,6 +2509,112 @@ static const char *win32u_wglQueryCurrentRendererStringWINE( GLenum attribute )
     return query_renderer_string( LIST_ENTRY( ptr, struct egl_platform, entry ), attribute );
 }
 
+static void import_memory( GLuint memory, GLuint64 size, GLenum type, void *handle )
+{
+    const struct opengl_funcs *funcs = &display_funcs;
+    D3DKMT_HANDLE local, mutex, sync;
+    GLenum err;
+    int fd;
+
+    switch (type)
+    {
+    case GL_HANDLE_TYPE_OPAQUE_WIN32_EXT:
+        local = d3dkmt_open_resource( 0, handle, &mutex, &sync );
+        break;
+    case GL_HANDLE_TYPE_OPAQUE_WIN32_KMT_EXT:
+        local = d3dkmt_open_resource( PtrToUlong( handle ), NULL, &mutex, &sync );
+        break;
+    default: return set_gl_error( GL_INVALID_ENUM );
+    }
+    if (mutex) d3dkmt_destroy_mutex( mutex );
+    if (sync) d3dkmt_destroy_sync( sync );
+    fd = d3dkmt_object_get_fd( local );
+    d3dkmt_destroy_resource( local );
+    if (fd < 0) return set_gl_error( GL_INVALID_VALUE );
+
+    set_gl_error( funcs->p_glGetError() ); /* save the error in the wrapper so we can check for success */
+    funcs->p_glImportMemoryFdEXT( memory, size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd );
+    if (!(err = funcs->p_glGetError())) return;
+
+    close( fd );
+    set_gl_error( err );
+}
+
+static void win32u_glImportMemoryWin32HandleEXT( GLuint memory, GLuint64 size, GLenum type, void *handle )
+{
+    TRACE( "memory %u size %s type %#x handle %p\n", memory, wine_dbgstr_longlong( size ), type, handle );
+
+    if (handle) import_memory( memory, size, type, handle );
+    else set_gl_error( GL_INVALID_VALUE );
+}
+
+static void win32u_glImportMemoryWin32NameEXT( GLuint memory, GLuint64 size, GLenum type, const void *name )
+{
+    HANDLE handle;
+
+    TRACE( "memory %u size %s type %#x name %s\n", memory, wine_dbgstr_longlong( size ), type, debugstr_w( name ) );
+
+    if (type != GL_HANDLE_TYPE_OPAQUE_WIN32_EXT) set_gl_error( GL_INVALID_ENUM );
+    else if (!(handle = open_shared_resource_from_name( name ))) set_gl_error( GL_INVALID_VALUE );
+    else
+    {
+        import_memory( memory, size, type, handle );
+        NtClose( handle );
+    }
+}
+
+static void import_semaphore( GLuint semaphore, GLenum type, void *handle )
+{
+    const struct opengl_funcs *funcs = &display_funcs;
+    D3DKMT_HANDLE local;
+    GLenum err;
+    int fd;
+
+    switch (type)
+    {
+    case GL_HANDLE_TYPE_OPAQUE_WIN32_EXT:
+        local = d3dkmt_open_sync( 0, handle );
+        break;
+    case GL_HANDLE_TYPE_OPAQUE_WIN32_KMT_EXT:
+        local = d3dkmt_open_sync( PtrToUlong( handle ), NULL );
+        break;
+    default: return set_gl_error( GL_INVALID_ENUM );
+    }
+    fd = d3dkmt_object_get_fd( local );
+    d3dkmt_destroy_sync( local );
+    if (fd < 0) return set_gl_error( GL_INVALID_VALUE );
+
+    set_gl_error( funcs->p_glGetError() ); /* save the error in the wrapper so we can check for success */
+    funcs->p_glImportSemaphoreFdEXT( semaphore, GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd );
+    if (!(err = funcs->p_glGetError())) return;
+
+    close( fd );
+    set_gl_error( err );
+}
+
+void win32u_glImportSemaphoreWin32HandleEXT( GLuint semaphore, GLenum type, void *handle )
+{
+    TRACE( "semaphore %u type %#x handle %p\n", semaphore, type, handle );
+
+    if (handle) import_semaphore( semaphore, type, handle );
+    else set_gl_error( GL_INVALID_VALUE );
+}
+
+void win32u_glImportSemaphoreWin32NameEXT( GLuint semaphore, GLenum type, const void *name )
+{
+    HANDLE handle;
+
+    TRACE( "semaphore %u type %#x name %s\n", semaphore, type, debugstr_w( name ) );
+
+    if (type != GL_HANDLE_TYPE_OPAQUE_WIN32_EXT) set_gl_error( GL_INVALID_ENUM );
+    else if (!(handle = open_shared_semaphore_from_name( name ))) set_gl_error( GL_INVALID_VALUE );
+    else
+    {
+        import_semaphore( semaphore, type, handle );
+        NtClose( handle );
+    }
+}
+
 static void display_funcs_init(void)
 {
     struct egl_platform *egl;
@@ -2499,12 +2635,17 @@ static void display_funcs_init(void)
         WARN( "%s not found.\n", #func );
     ALL_GL_FUNCS
     USE_GL_FUNC(glBindFramebuffer)
+    USE_GL_FUNC(glBlitFramebuffer)
     USE_GL_FUNC(glCheckNamedFramebufferStatus)
     USE_GL_FUNC(glCreateFramebuffers)
     USE_GL_FUNC(glCreateRenderbuffers)
     USE_GL_FUNC(glDeleteFramebuffers)
     USE_GL_FUNC(glDeleteRenderbuffers)
     USE_GL_FUNC(glGetNamedFramebufferAttachmentParameteriv)
+    USE_GL_FUNC(glGetUnsignedBytei_vEXT)
+    USE_GL_FUNC(glGetUnsignedBytevEXT)
+    USE_GL_FUNC(glImportMemoryFdEXT)
+    USE_GL_FUNC(glImportSemaphoreFdEXT)
     USE_GL_FUNC(glNamedFramebufferDrawBuffer)
     USE_GL_FUNC(glNamedFramebufferReadBuffer)
     USE_GL_FUNC(glNamedFramebufferRenderbuffer)
@@ -2577,9 +2718,21 @@ static void display_funcs_init(void)
     display_funcs.p_wglSwapIntervalEXT = win32u_wglSwapIntervalEXT;
     display_funcs.p_wglGetSwapIntervalEXT = win32u_wglGetSwapIntervalEXT;
 
+    if (display_funcs.p_glImportMemoryFdEXT)
+    {
+        display_funcs.p_glImportMemoryWin32HandleEXT = win32u_glImportMemoryWin32HandleEXT;
+        display_funcs.p_glImportMemoryWin32NameEXT = win32u_glImportMemoryWin32NameEXT;
+    }
+    if (display_funcs.p_glImportSemaphoreFdEXT)
+    {
+        display_funcs.p_glImportSemaphoreWin32HandleEXT = win32u_glImportSemaphoreWin32HandleEXT;
+        display_funcs.p_glImportSemaphoreWin32NameEXT = win32u_glImportSemaphoreWin32NameEXT;
+    }
+
     if (!list_empty( &devices_egl ))
     {
         register_extension( wgl_extensions, ARRAY_SIZE(wgl_extensions), "WGL_WINE_query_renderer" );
+        display_funcs.p_query_renderer = win32u_query_renderer;
         display_funcs.p_wglQueryCurrentRendererIntegerWINE = win32u_wglQueryCurrentRendererIntegerWINE;
         display_funcs.p_wglQueryCurrentRendererStringWINE = win32u_wglQueryCurrentRendererStringWINE;
         display_funcs.p_wglQueryRendererIntegerWINE = win32u_wglQueryRendererIntegerWINE;
@@ -2605,4 +2758,26 @@ const struct opengl_funcs *__wine_get_opengl_driver( UINT version )
 
     pthread_once( &init_once, display_funcs_init );
     return &display_funcs;
+}
+
+BOOL get_opengl_gpus( struct list *gpus )
+{
+    struct egl_platform *egl;
+
+    if (!__wine_get_opengl_driver( WINE_OPENGL_DRIVER_VERSION )) return FALSE;
+
+    LIST_FOR_EACH_ENTRY( egl, &devices_egl, struct egl_platform, entry )
+    {
+        struct gpu_info *gpu;
+
+        if (!(gpu = calloc( 1, sizeof(*gpu) ))) break;
+        memcpy( &gpu->uuid, &egl->device_uuid, sizeof(egl->device_uuid) );
+        gpu->name = strdup( egl->device_name );
+        gpu->pci_id.vendor = egl->vendor_id;
+        gpu->pci_id.device = egl->device_id;
+        gpu->memory = egl->video_memory;
+        list_add_tail( gpus, &gpu->entry );
+    }
+
+    return TRUE;
 }

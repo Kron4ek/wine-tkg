@@ -1271,6 +1271,7 @@ static HRESULT d3d12_fence_init(struct d3d12_fence *fence, struct d3d12_device *
     fence->timeline_semaphore = VK_NULL_HANDLE;
     fence->timeline_value = 0;
     fence->pending_timeline_value = 0;
+    fence->last_waited_value = 0;
     if (device->vk_info.KHR_timeline_semaphore && (vr = vkd3d_create_timeline_semaphore(device, 0,
             &fence->timeline_semaphore)) < 0)
     {
@@ -7334,6 +7335,7 @@ static HRESULT d3d12_command_queue_wait_binary_semaphore_locked(struct d3d12_com
 
         command_queue->last_waited_fence = fence;
         command_queue->last_waited_fence_value = value;
+        fence->last_waited_value = value;
     }
 
     vkd3d_queue_release(queue);
@@ -7660,8 +7662,14 @@ static HRESULT d3d12_command_queue_flush_ops_locked(struct d3d12_command_queue *
                     vkd3d_mutex_lock(&fence->mutex);
                     if (op->u.wait.value > fence->max_pending_value)
                     {
+                        uint64_t last_waited_value = fence->last_waited_value;
+
                         vkd3d_mutex_unlock(&fence->mutex);
                         d3d12_command_queue_delete_aux_ops(queue, i);
+                        if (op->u.wait.value <= last_waited_value)
+                            ERR("Waiting on a value already waited on by a fence (%p %"PRIx64" <= %"PRIx64").  "
+                                "This application probably requires Vulkan timeline semaphores to work correctly.\n",
+                                fence, op->u.wait.value, last_waited_value);
                         vkd3d_mutex_lock(&queue->op_mutex);
                         return d3d12_command_queue_fixup_after_flush_locked(queue);
                     }

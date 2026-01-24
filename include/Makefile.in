@@ -88,6 +88,7 @@ SOURCES = \
 	commctrl.h \
 	commctrl.rh \
 	commdlg.h \
+	common.ver \
 	commoncontrols.idl \
 	compobj.h \
 	comsvcs.idl \
@@ -500,6 +501,7 @@ SOURCES = \
 	msdasc.idl \
 	msdasql.h \
 	msdelta.h \
+	msdshape.h \
 	mshtmcid.h \
 	mshtmdid.h \
 	mshtmhst.idl \
@@ -620,6 +622,7 @@ SOURCES = \
 	ntsecpkg.h \
 	ntstatus.h \
 	ntuser.h \
+	ntverp.h.in \
 	oaidl.idl \
 	objbase.h \
 	objectarray.idl \
@@ -648,6 +651,7 @@ SOURCES = \
 	pathcch.h \
 	pdh.h \
 	pdhmsg.h \
+	peninputpanel.idl \
 	perflib.h \
 	perhist.idl \
 	physicalmonitorenumerationapi.h \

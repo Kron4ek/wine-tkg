@@ -39,7 +39,7 @@ static INT (WINAPI * pStr_GetPtrW)(LPCWSTR, LPWSTR, INT);
 static BOOL (WINAPI * pStr_SetPtrW)(LPWSTR, LPCWSTR);
 
 static HRESULT (WINAPI *pDllGetVersion)(DLLVERSIONINFO *);
-static BOOL (WINAPI *pRegisterClassNameW)(const WCHAR *class_name);
+static PREGISTERCLASSNAMEW pRegisterClassNameW;
 static BOOL (WINAPI *pSetWindowSubclass)(HWND, SUBCLASSPROC, UINT_PTR, DWORD_PTR);
 static BOOL (WINAPI *pRemoveWindowSubclass)(HWND, SUBCLASSPROC, UINT_PTR);
 static LRESULT (WINAPI *pDefSubclassProc)(HWND, UINT, WPARAM, LPARAM);
@@ -474,6 +474,7 @@ static void test_comctl32_classes(BOOL v6)
     check_class(WC_TREEVIEWA,        1, CS_DBLCLKS | CS_GLOBALCLASS, 0, FALSE, 0x10019, FALSE);
     check_class(UPDOWN_CLASSA,       1, CS_HREDRAW | CS_VREDRAW | CS_GLOBALCLASS, 0, FALSE, 0x10016, FALSE);
     check_class("SysLink", v6, CS_GLOBALCLASS, 0, FALSE, 0, FALSE);
+    check_class("flatsb_class32", 0, 0, 0, FALSE, 0, FALSE);
 }
 
 struct wm_themechanged_test
@@ -1431,7 +1432,6 @@ static void test_RegisterClassNameW(BOOL v6)
 
     /* There is no flatsb_class32 window class */
     ret = pRegisterClassNameW(L"flatsb_class32");
-    todo_wine
     ok(!ret, "RegisterClassNameW succeeded.\n");
 
     winetest_pop_context();

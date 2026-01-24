@@ -396,6 +396,7 @@ struct d3d12_fence
 
     uint64_t value;
     uint64_t max_pending_value;
+    uint64_t last_waited_value;
     struct vkd3d_mutex mutex;
 
     struct vkd3d_waiting_event

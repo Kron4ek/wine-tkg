@@ -101,7 +101,7 @@
 @ stub LdrInitShimEngineDynamic
 @ stdcall LdrInitializeThunk(ptr long long long)
 @ stub LdrLoadAlternateResourceModule
-@ stdcall LdrLoadDll(wstr long ptr ptr)
+@ stdcall LdrLoadDll(wstr ptr ptr ptr)
 @ stdcall LdrLockLoaderLock(long ptr ptr)
 @ stdcall LdrProcessRelocationBlock(ptr long ptr long)
 @ stdcall LdrQueryImageFileExecutionOptions(ptr wstr long ptr long ptr)
@@ -449,7 +449,7 @@
 @ stdcall -syscall=0x0004 NtWaitForSingleObject(long long ptr)
 # @ stub NtWaitHighEventPair
 # @ stub NtWaitLowEventPair
-@ stub -syscall=0x0001 NtWorkerFactoryWorkerReady
+@ stdcall -syscall=0x0001 NtWorkerFactoryWorkerReady(ptr)
 @ stdcall -syscall -arch=win32 NtWow64AllocateVirtualMemory64(long ptr int64 ptr long long)
 @ stdcall -syscall -arch=win32 NtWow64GetNativeSystemInformation(long ptr long ptr)
 @ stdcall -syscall -arch=win32 NtWow64IsProcessorFeaturePresent(long)
@@ -1521,7 +1521,7 @@
 @ stdcall -private ZwWaitForSingleObject(long long ptr) NtWaitForSingleObject
 # @ stub ZwWaitHighEventPair
 # @ stub ZwWaitLowEventPair
-@ stdcall -private ZwWorkerFactoryWorkerReady() NtWorkerFactoryWorkerReady
+@ stdcall -private ZwWorkerFactoryWorkerReady(ptr) NtWorkerFactoryWorkerReady
 @ stdcall -private -arch=win32 ZwWow64AllocateVirtualMemory64(long ptr int64 ptr long long) NtWow64AllocateVirtualMemory64
 @ stdcall -private -arch=win32 ZwWow64GetNativeSystemInformation(long ptr long ptr) NtWow64GetNativeSystemInformation
 @ stdcall -private -arch=win32 ZwWow64IsProcessorFeaturePresent(long) NtWow64IsProcessorFeaturePresent

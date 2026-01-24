@@ -2088,6 +2088,12 @@ enum vkd3d_result d3d_asm_compile(struct vsir_program *program, const struct vkd
             shader_get_type_prefix(shader_version->type), shader_version->major,
             shader_version->minor, compiler.colours.reset);
 
+    if (compiler.flags & VSIR_ASM_FLAG_DUMP_DENORM_MODES)
+        vkd3d_string_buffer_printf(buffer, ".denorm %s, %s, %s\n",
+                vsir_denorm_mode_get_name(program->f16_denorm_mode, "??"),
+                vsir_denorm_mode_get_name(program->f32_denorm_mode, "??"),
+                vsir_denorm_mode_get_name(program->f64_denorm_mode, "??"));
+
     if (compiler.flags & VSIR_ASM_FLAG_DUMP_SIGNATURES
             && (result = dump_dxbc_signatures(&compiler, program)) < 0)
     {
@@ -2098,7 +2104,8 @@ enum vkd3d_result d3d_asm_compile(struct vsir_program *program, const struct vkd
     if (compiler.flags & VSIR_ASM_FLAG_DUMP_DESCRIPTORS)
         shader_print_descriptors(&compiler, &program->descriptors);
 
-    if (compiler.flags & (VSIR_ASM_FLAG_DUMP_SIGNATURES | VSIR_ASM_FLAG_DUMP_DESCRIPTORS))
+    if (compiler.flags & (VSIR_ASM_FLAG_DUMP_SIGNATURES | VSIR_ASM_FLAG_DUMP_DESCRIPTORS
+                | VSIR_ASM_FLAG_DUMP_DENORM_MODES))
         vkd3d_string_buffer_printf(buffer, "%s.text%s\n", compiler.colours.opcode, compiler.colours.reset);
 
     indent = 0;
@@ -2111,6 +2118,7 @@ enum vkd3d_result d3d_asm_compile(struct vsir_program *program, const struct vkd
             case VSIR_OP_ELSE:
             case VSIR_OP_ENDIF:
             case VSIR_OP_ENDLOOP:
+            case VSIR_OP_ENDREP:
             case VSIR_OP_ENDSWITCH:
                 if (indent)
                     --indent;
@@ -2141,6 +2149,7 @@ enum vkd3d_result d3d_asm_compile(struct vsir_program *program, const struct vkd
             case VSIR_OP_IF:
             case VSIR_OP_IFC:
             case VSIR_OP_LOOP:
+            case VSIR_OP_REP:
             case VSIR_OP_SWITCH:
             case VSIR_OP_LABEL:
                 ++indent;
@@ -2299,7 +2308,8 @@ static void trace_io_declarations(const struct vsir_program *program)
 void vsir_program_trace(struct vsir_program *program)
 {
     const unsigned int flags = VSIR_ASM_FLAG_DUMP_TYPES | VSIR_ASM_FLAG_DUMP_ALL_INDICES
-            | VSIR_ASM_FLAG_DUMP_SIGNATURES | VSIR_ASM_FLAG_DUMP_DESCRIPTORS;
+            | VSIR_ASM_FLAG_DUMP_SIGNATURES | VSIR_ASM_FLAG_DUMP_DESCRIPTORS
+            | VSIR_ASM_FLAG_DUMP_DENORM_MODES;
     struct vkd3d_shader_message_context message_context;
     struct vkd3d_shader_code code;
     const char *p, *q, *end;

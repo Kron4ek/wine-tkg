@@ -726,14 +726,25 @@ static BOOL is_extension_supported( struct context *ctx, const char *extension )
                     sizeof(ctx->extension_array[0]), string_array_cmp ) != NULL;
 }
 
+static char *append_extension( char *ptr, const char *name )
+{
+    size_t size = strlen( name );
+    memcpy( ptr, name, size );
+    ptr += size;
+    *ptr++ = ' ';
+    return ptr;
+}
+
 /* build the extension string by filtering out the disabled extensions */
-static GLubyte *filter_extensions( struct context *ctx, const char *extensions )
+static GLubyte *filter_extensions( struct context *ctx, const char *extensions, const struct opengl_funcs *funcs )
 {
     const char *end, **extra;
     size_t size;
     char *p, *str;
 
     size = strlen( extensions ) + 2;
+    if (funcs->p_glImportMemoryWin32HandleEXT) size += strlen( "GL_EXT_memory_object_win32" ) + 1;
+    if (funcs->p_glImportSemaphoreWin32HandleEXT) size += strlen( "GL_EXT_semaphore_win32" ) + 1;
     for (extra = legacy_extensions; *extra; extra++) size += strlen( *extra ) + 1;
     if (!(p = str = malloc( size ))) return NULL;
 
@@ -761,13 +772,9 @@ static GLubyte *filter_extensions( struct context *ctx, const char *extensions )
         extensions = end;
     }
 
-    for (extra = legacy_extensions; *extra; extra++)
-    {
-        size = strlen( *extra );
-        memcpy( p, *extra, size );
-        p += size;
-        *p++ = ' ';
-    }
+    if (funcs->p_glImportMemoryWin32HandleEXT) p = append_extension( p, "GL_EXT_memory_object_win32" );
+    if (funcs->p_glImportSemaphoreWin32HandleEXT) p = append_extension( p, "GL_EXT_semaphore_win32" );
+    for (extra = legacy_extensions; *extra; extra++) p = append_extension( p, *extra );
 
     if (p != str) --p;
     *p = 0;
@@ -860,6 +867,7 @@ static BOOL get_default_fbo_integer( struct context *ctx, struct opengl_drawable
 
 static BOOL get_integer( TEB *teb, GLenum pname, GLint *data )
 {
+    const struct opengl_funcs *funcs = teb->glTable;
     struct opengl_drawable *draw, *read;
     struct context *ctx;
 
@@ -888,9 +896,27 @@ static BOOL get_integer( TEB *teb, GLenum pname, GLint *data )
         if (!read->read_fbo) break;
         *data = ctx->read_fbo;
         return TRUE;
+    case GL_DEVICE_NODE_MASK_EXT:
+        if (!funcs->p_query_renderer) break;
+        return funcs->p_query_renderer( pname, data );
     }
 
     return get_default_fbo_integer( ctx, draw, read, pname, data );
+}
+
+void wrap_glGetUnsignedBytevEXT( TEB *teb, GLenum pname, GLubyte *data )
+{
+    const struct opengl_funcs *funcs = teb->glTable;
+
+    switch (pname)
+    {
+    case GL_DEVICE_LUID_EXT:
+        if (!funcs->p_query_renderer) break;
+        funcs->p_query_renderer( pname, data );
+        return;
+    }
+
+    return funcs->p_glGetUnsignedBytevEXT( pname, data );
 }
 
 const GLubyte *wrap_glGetString( TEB *teb, GLenum name )
@@ -914,7 +940,7 @@ const GLubyte *wrap_glGetString( TEB *teb, GLenum name )
         {
             struct context *ctx = get_current_context( teb, NULL, NULL );
             GLubyte **extensions = &ctx->extensions;
-            if (*extensions || (*extensions = filter_extensions( ctx, (const char *)ret ))) return *extensions;
+            if (*extensions || (*extensions = filter_extensions( ctx, (const char *)ret, funcs ))) return *extensions;
         }
         else if (name == GL_VERSION)
         {
@@ -1242,6 +1268,9 @@ static void make_context_current( TEB *teb, const struct opengl_funcs *funcs, HD
     if (!ctx->major_version) ctx->major_version = 1;
     TRACE( "context %p version %d.%d\n", ctx, ctx->major_version, ctx->minor_version );
 
+    if (funcs->p_glImportMemoryWin32HandleEXT) size++;
+    if (funcs->p_glImportSemaphoreWin32HandleEXT) size++;
+
     if (ctx->major_version >= 3)
     {
         GLint extensions_count;
@@ -1281,7 +1310,6 @@ static void make_context_current( TEB *teb, const struct opengl_funcs *funcs, HD
             }
             ext++;
         }
-        assert( count + ARRAYSIZE(legacy_extensions) - 1 == size );
     }
 
     if (!disabled && !(disabled = query_opengl_option( "DisabledExtensions" ))) disabled = "";
@@ -1299,6 +1327,8 @@ static void make_context_current( TEB *teb, const struct opengl_funcs *funcs, HD
         count = j;
     }
 
+    if (funcs->p_glImportMemoryWin32HandleEXT) extensions[count++] = "GL_EXT_memory_object_win32";
+    if (funcs->p_glImportSemaphoreWin32HandleEXT) extensions[count++] = "GL_EXT_semaphore_win32";
     for (i = 0; legacy_extensions[i]; i++) extensions[count++] = legacy_extensions[i];
     qsort( extensions, count, sizeof(*extensions), string_array_cmp );
     ctx->extension_array = extensions;
@@ -1465,7 +1495,7 @@ static void flush_context( TEB *teb, void (*flush)(void) )
         NtUserGetClientRect( draw->client->hwnd, &rect, NtUserGetDpiForWindow( draw->client->hwnd ) );
         if (ctx->read_fbo) funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, 0 );
         funcs->p_glReadBuffer( GL_FRONT_LEFT );
-        funcs->p_glBlitFramebuffer( 0, 0, 0, 0, rect.right, rect.bottom, rect.right, rect.bottom, mask, GL_NEAREST );
+        funcs->p_glBlitFramebuffer( 0, 0, rect.right, rect.bottom, 0, 0, rect.right, rect.bottom, mask, GL_NEAREST );
         if (ctx->read_fbo) funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, ctx->read_fbo );
         else funcs->p_glReadBuffer( drawable_buffer_from_buffer( read, ctx->pixel_mode.read_buffer ) );
     }
@@ -1474,15 +1504,15 @@ static void flush_context( TEB *teb, void (*flush)(void) )
 void wrap_glFinish( TEB *teb )
 {
     const struct opengl_funcs *funcs = teb->glTable;
-    flush_context( teb, funcs->p_glFinish );
     resolve_default_fbo( teb, FALSE );
+    flush_context( teb, funcs->p_glFinish );
 }
 
 void wrap_glFlush( TEB *teb )
 {
     const struct opengl_funcs *funcs = teb->glTable;
-    flush_context( teb, funcs->p_glFlush );
     resolve_default_fbo( teb, FALSE );
+    flush_context( teb, funcs->p_glFlush );
 }
 
 void wrap_glClear( TEB *teb, GLbitfield mask )
@@ -1844,41 +1874,43 @@ void resolve_default_fbo( TEB *teb, BOOL read )
 
         NtUserGetClientRect( drawable->client->hwnd, &rect, NtUserGetDpiForWindow( drawable->client->hwnd ) );
 
+        funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, drawable->draw_fbo );
+        funcs->p_glBindFramebuffer( GL_DRAW_FRAMEBUFFER, drawable->read_fbo );
+
         if (context_draws_front( ctx ))
         {
-            funcs->p_glNamedFramebufferReadBuffer( drawable->draw_fbo, GL_COLOR_ATTACHMENT0 );
-            funcs->p_glNamedFramebufferDrawBuffer( drawable->read_fbo, GL_COLOR_ATTACHMENT0 );
-            funcs->p_glBlitNamedFramebuffer( drawable->draw_fbo, drawable->read_fbo, 0, 0, 0, 0, rect.right, rect.bottom,
-                                             rect.right, rect.bottom, mask, GL_NEAREST );
+            funcs->p_glReadBuffer( GL_COLOR_ATTACHMENT0 );
+            funcs->p_glDrawBuffer( GL_COLOR_ATTACHMENT0 );
+            funcs->p_glBlitFramebuffer( 0, 0, 0, 0, rect.right, rect.bottom, rect.right, rect.bottom, mask, GL_NEAREST );
             mask &= ~(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         }
 
         if ((drawable->doublebuffer && context_draws_back( ctx )) || (!drawable->doublebuffer && drawable->stereo && context_draws_front( ctx )))
         {
-            funcs->p_glNamedFramebufferReadBuffer( drawable->draw_fbo, GL_COLOR_ATTACHMENT1 );
-            funcs->p_glNamedFramebufferDrawBuffer( drawable->read_fbo, GL_COLOR_ATTACHMENT1 );
-            funcs->p_glBlitNamedFramebuffer( drawable->draw_fbo, drawable->read_fbo, 0, 0, 0, 0, rect.right, rect.bottom,
-                                             rect.right, rect.bottom, mask, GL_NEAREST );
+            funcs->p_glReadBuffer( GL_COLOR_ATTACHMENT1 );
+            funcs->p_glDrawBuffer( GL_COLOR_ATTACHMENT1 );
+            funcs->p_glBlitFramebuffer( 0, 0, 0, 0, rect.right, rect.bottom, rect.right, rect.bottom, mask, GL_NEAREST );
             mask &= ~(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         }
 
         if (drawable->doublebuffer && drawable->stereo && context_draws_front( ctx ))
         {
-            funcs->p_glNamedFramebufferReadBuffer( drawable->draw_fbo, GL_COLOR_ATTACHMENT2 );
-            funcs->p_glNamedFramebufferDrawBuffer( drawable->read_fbo, GL_COLOR_ATTACHMENT2 );
-            funcs->p_glBlitNamedFramebuffer( drawable->draw_fbo, drawable->read_fbo, 0, 0, 0, 0, rect.right, rect.bottom,
-                                             rect.right, rect.bottom, mask, GL_NEAREST );
+            funcs->p_glReadBuffer( GL_COLOR_ATTACHMENT2 );
+            funcs->p_glDrawBuffer( GL_COLOR_ATTACHMENT2 );
+            funcs->p_glBlitFramebuffer( 0, 0, 0, 0, rect.right, rect.bottom, rect.right, rect.bottom, mask, GL_NEAREST );
             mask &= ~(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         }
 
         if (drawable->doublebuffer && drawable->stereo && context_draws_back( ctx ))
         {
-            funcs->p_glNamedFramebufferReadBuffer( drawable->draw_fbo, GL_COLOR_ATTACHMENT3 );
-            funcs->p_glNamedFramebufferDrawBuffer( drawable->read_fbo, GL_COLOR_ATTACHMENT3 );
-            funcs->p_glBlitNamedFramebuffer( drawable->draw_fbo, drawable->read_fbo, 0, 0, 0, 0, rect.right, rect.bottom,
-                                             rect.right, rect.bottom, mask, GL_NEAREST );
+            funcs->p_glReadBuffer( GL_COLOR_ATTACHMENT3 );
+            funcs->p_glDrawBuffer( GL_COLOR_ATTACHMENT3 );
+            funcs->p_glBlitFramebuffer( 0, 0, 0, 0, rect.right, rect.bottom, rect.right, rect.bottom, mask, GL_NEAREST );
             mask &= ~(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         }
+
+        funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, ctx->read_fbo );
+        funcs->p_glBindFramebuffer( GL_DRAW_FRAMEBUFFER, ctx->draw_fbo );
     }
 }
 

@@ -3967,10 +3967,10 @@ RETURN_CODE WCMD_color(void)
 
 /* We cannot use SetVolumeMountPoint(), because that function forbids setting
  * arbitrary directories as mount points, whereas mklink /j allows it. */
-BOOL create_mount_point(const WCHAR *link, const WCHAR *target) {
+BOOL create_mount_point(const WCHAR *full_link, const WCHAR *target) {
     char buffer[MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
     REPARSE_DATA_BUFFER *data = (void *)buffer;
-    WCHAR full_link[MAX_PATH], *full_target;
+    WCHAR *full_target;
     UNICODE_STRING nt_link, nt_target;
     OBJECT_ATTRIBUTES attr;
     IO_STATUS_BLOCK io;
@@ -3979,10 +3979,7 @@ BOOL create_mount_point(const WCHAR *link, const WCHAR *target) {
     DWORD size;
     BOOL ret;
 
-    TRACE( "link %s, target %s\n", debugstr_w(link), debugstr_w(target) );
-
-    if (!WCMD_get_fullpath(link, ARRAY_SIZE(full_link), full_link, NULL))
-        return FALSE;
+    TRACE( "link %s, target %s\n", debugstr_w(full_link), debugstr_w(target) );
 
     if (!(size = GetFullPathNameW(target, 0, NULL, NULL)))
         return FALSE;
@@ -4051,13 +4048,13 @@ RETURN_CODE WCMD_mklink(WCHAR *args)
     BOOL isdir = FALSE;
     BOOL junction = FALSE;
     BOOL hard = FALSE;
-    BOOL ret = FALSE;
+    BOOL ret = TRUE;
     WCHAR file1[MAX_PATH];
-    WCHAR file2[MAX_PATH];
+    WCHAR file2[MAXSTRING];
 
     file1[0] = file2[0] = L'\0';
 
-    while (argN) {
+    while (argN && ret) {
         WCHAR *thisArg = WCMD_parameter (args, argno++, &argN, FALSE, FALSE);
 
         if (!argN) break;
@@ -4071,27 +4068,30 @@ RETURN_CODE WCMD_mklink(WCHAR *args)
         else if (lstrcmpiW(thisArg, L"/J") == 0)
             junction = TRUE;
         else if (*thisArg == L'/')
-        {
-            return errorlevel = ERROR_INVALID_FUNCTION;
-        }
+            ret = FALSE;
         else
         {
-            if(!file1[0])
-                lstrcpyW(file1, thisArg);
+            if (!file1[0])
+                ret = WCMD_get_fullpath(thisArg, ARRAY_SIZE(file1), file1, NULL);
+            else if (!file2[0])
+                wcscpy(file2, thisArg);
             else
-                lstrcpyW(file2, thisArg);
+                ret = FALSE;
         }
     }
 
-    if (*file1 && *file2)
+    if (!file2[0] || !ret)
     {
-        if (hard)
-            ret = CreateHardLinkW(file1, file2, NULL);
-        else if(!junction)
-            ret = CreateSymbolicLinkW(file1, file2, isdir);
-        else
-            ret = create_mount_point(file1, file2);
+        WCMD_output_stderr(WCMD_LoadMessage(WCMD_SYNTAXERR));
+        return errorlevel = ERROR_INVALID_FUNCTION;
     }
+
+    if (hard)
+        ret = CreateHardLinkW(file1, file2, NULL);
+    else if (!junction)
+        ret = CreateSymbolicLinkW(file1, file2, isdir);
+    else
+        ret = create_mount_point(file1, file2);
 
     if (ret) return errorlevel = NO_ERROR;
 

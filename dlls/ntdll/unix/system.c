@@ -1583,6 +1583,38 @@ static void init_logical_proc_info(void)
     init_tsc_frequency();
 }
 
+static void read_dev_urandom( void *buf, ULONG len )
+{
+    int fd = open( "/dev/urandom", O_RDONLY );
+    if (fd != -1)
+    {
+        int ret;
+        do
+        {
+            ret = read( fd, buf, len );
+        }
+        while (ret == -1 && errno == EINTR);
+        close( fd );
+    }
+    else WARN( "can't open /dev/urandom\n" );
+}
+
+static void get_random( void *buf, ULONG len )
+{
+#ifdef HAVE_GETRANDOM
+    int ret;
+    do
+    {
+        ret = getrandom( buf, len, 0 );
+    }
+    while (ret == -1 && errno == EINTR);
+
+    if (ret == -1 && errno == ENOSYS) read_dev_urandom( buf, len );
+#else
+    read_dev_urandom( buf, len );
+#endif
+}
+
 /******************************************************************
  *		init_cpu_info
  *
@@ -1615,6 +1647,7 @@ void init_cpu_info(void)
 #endif
     peb->NumberOfProcessors = num;
     init_cpu_model();
+    get_random( &process_cookie, sizeof(process_cookie) );
 }
 
 static SYSTEM_CPU_INFORMATION get_cpuinfo(void)
@@ -3008,22 +3041,6 @@ static void get_timezone_info( RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi )
 }
 
 
-static void read_dev_urandom( void *buf, ULONG len )
-{
-    int fd = open( "/dev/urandom", O_RDONLY );
-    if (fd != -1)
-    {
-        int ret;
-        do
-        {
-            ret = read( fd, buf, len );
-        }
-        while (ret == -1 && errno == EINTR);
-        close( fd );
-    }
-    else WARN( "can't open /dev/urandom\n" );
-}
-
 static unsigned int get_system_process_info( SYSTEM_INFORMATION_CLASS class, void *info, ULONG size, ULONG *len )
 {
     unsigned int process_count, total_thread_count, total_name_len, i, j;
@@ -3488,21 +3505,7 @@ NTSTATUS WINAPI NtQuerySystemInformation( SYSTEM_INFORMATION_CLASS class,
         if (size >= len)
         {
             if (!info) ret = STATUS_ACCESS_VIOLATION;
-            else
-            {
-#ifdef HAVE_GETRANDOM
-                int ret;
-                do
-                {
-                    ret = getrandom( info, len, 0 );
-                }
-                while (ret == -1 && errno == EINTR);
-
-                if (ret == -1 && errno == ENOSYS) read_dev_urandom( info, len );
-#else
-                read_dev_urandom( info, len );
-#endif
-            }
+            else get_random( info, len );
         }
         else ret = STATUS_INFO_LENGTH_MISMATCH;
         break;

@@ -2599,9 +2599,14 @@ void toggle_caret( HWND hwnd )
  */
 BOOL WINAPI NtUserEnableMouseInPointer( BOOL enable )
 {
-    FIXME( "enable %u stub!\n", enable );
-    RtlSetLastWin32Error( ERROR_CALL_NOT_IMPLEMENTED );
-    return FALSE;
+    struct ntuser_thread_info *thread_info = NtUserGetThreadInfo();
+
+    if ( enable == TRUE )
+        thread_info->mouse_in_pointer = TRUE;
+    else
+        thread_info->mouse_in_pointer = FALSE;
+  
+    return thread_info->mouse_in_pointer;
 }
 
 /**********************************************************************
@@ -2609,9 +2614,7 @@ BOOL WINAPI NtUserEnableMouseInPointer( BOOL enable )
  */
 BOOL WINAPI NtUserEnableMouseInPointerForThread( void )
 {
-    FIXME( "stub!\n" );
-    RtlSetLastWin32Error( ERROR_CALL_NOT_IMPLEMENTED );
-    return FALSE;
+    return NtUserEnableMouseInPointer(TRUE);
 }
 
 /**********************************************************************
@@ -2619,9 +2622,9 @@ BOOL WINAPI NtUserEnableMouseInPointerForThread( void )
  */
 BOOL WINAPI NtUserIsMouseInPointerEnabled(void)
 {
-    FIXME( "stub!\n" );
-    RtlSetLastWin32Error( ERROR_CALL_NOT_IMPLEMENTED );
-    return FALSE;
+    struct ntuser_thread_info *thread_info = NtUserGetThreadInfo();
+
+    return thread_info->mouse_in_pointer;
 }
 
 static BOOL is_captured_by_system(void)

@@ -665,7 +665,7 @@ void set_clip_rectangle( struct desktop *desktop, const struct rectangle *rect, 
 }
 
 /* change the foreground input and reset the cursor clip rect */
-static void set_foreground_input( struct desktop *desktop, struct thread_input *input )
+static void set_foreground_input( struct desktop *desktop, struct process *process, struct thread_input *input )
 {
     input_shm_t *input_shm, *old_input_shm;
     shared_object_t dummy_obj = {0};
@@ -677,6 +677,7 @@ static void set_foreground_input( struct desktop *desktop, struct thread_input *
 
     set_clip_rectangle( desktop, NULL, SET_CURSOR_NOCLIP, 1 );
     desktop->foreground_input = input;
+    desktop->foreground_pid = process->id;
 
     SHARED_WRITE_BEGIN( old_input_shm, input_shm_t )
     {
@@ -1386,7 +1387,11 @@ static void thread_input_destroy( struct object *obj )
     empty_msg_list( &input->msg_list );
     if ((desktop = input->desktop))
     {
-        if (desktop->foreground_input == input) desktop->foreground_input = NULL;
+        if (desktop->foreground_input == input)
+        {
+            desktop->foreground_input = NULL;
+            desktop->foreground_pid = 0;
+        }
         release_object( desktop );
     }
     if (input->shared) free_shared_object( input->shared );
@@ -2020,14 +2025,8 @@ static struct thread *get_foreground_thread( struct desktop *desktop, user_handl
 
 static int is_current_process_foreground( struct desktop *desktop )
 {
-    struct thread *thread;
-    int ret;
-
-    if (!(thread = get_foreground_thread( desktop, 0 ))) return 1;
-    ret = thread->process == current->process || thread->process->id == current->process->parent_id;
-    release_object( thread );
-
-    return ret;
+    return !desktop->foreground_pid || desktop->foreground_pid == current->process->id ||
+           desktop->foreground_pid == current->process->parent_id;
 }
 
 /* user32 reserves 1 & 2 for winemouse and winekeyboard,
@@ -2917,7 +2916,6 @@ void post_message( user_handle_t win, unsigned int message, lparam_t wparam, lpa
         msg->result    = NULL;
         msg->data      = NULL;
         msg->data_size = 0;
-        msg->unique_id = get_unique_post_id();
 
         get_message_defaults( thread->queue, &msg->x, &msg->y, &msg->time );
 
@@ -2950,6 +2948,7 @@ void send_notify_message( user_handle_t win, unsigned int message, lparam_t wpar
         msg->result    = NULL;
         msg->data      = NULL;
         msg->data_size = 0;
+        msg->unique_id = get_unique_post_id();
 
         get_message_defaults( thread->queue, &msg->x, &msg->y, &msg->time );
 
@@ -3873,9 +3872,9 @@ DECL_HANDLER(set_foreground_window)
 
     if (set_foreground && !req->internal)
     {
-        if (!current->process->set_foreground) current->process->set_foreground = 1;
-        else if (!is_current_process_foreground( desktop ) && queue->input && desktop->foreground_input &&
-                 queue->input->user_time < desktop->foreground_input->user_time)
+        /* allow a process to set foreground after changing desktop, or each window to be set foreground at least once */
+        if (!is_current_process_foreground( desktop ) && queue->input && desktop->foreground_input &&
+            queue->input->user_time < desktop->foreground_input->user_time)
         {
             set_error( STATUS_ACCESS_DENIED );
             goto done;
@@ -3884,7 +3883,7 @@ DECL_HANDLER(set_foreground_window)
 
     reply->previous = desktop->foreground_input ? desktop->foreground_input->shared->active : 0;
     reply->send_msg_old = (reply->previous && desktop->foreground_input != queue->input);
-    set_foreground_input( desktop, req->internal || !is_desktop ? thread->queue->input : NULL );
+    set_foreground_input( desktop, thread->process, req->internal || !is_desktop ? thread->queue->input : NULL );
     reply->send_msg_new = (desktop->foreground_input != queue->input);
 
 done:

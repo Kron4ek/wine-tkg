@@ -298,6 +298,7 @@ static struct desktop *create_desktop( const struct unicode_str *name, unsigned 
             desktop->global_hooks = NULL;
             desktop->close_timeout = NULL;
             desktop->foreground_input = NULL;
+            desktop->foreground_pid = 0;
             desktop->users = 0;
             list_init( &desktop->threads );
             desktop->clip_flags = 0;
@@ -864,7 +865,6 @@ DECL_HANDLER(set_thread_desktop)
         {
             if (old_desktop) remove_desktop_thread( old_desktop, current );
             add_desktop_thread( new_desktop, current );
-            current->process->set_foreground = 0;
         }
         reply->locator = get_shared_object_locator( new_desktop->shared );
     }

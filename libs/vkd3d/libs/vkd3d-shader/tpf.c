@@ -1201,6 +1201,10 @@ static void shader_sm4_read_dcl_global_flags(struct vkd3d_shader_instruction *in
 {
     ins->declaration.global_flags = (opcode_token & VKD3D_SM4_GLOBAL_FLAGS_MASK) >> VKD3D_SM4_GLOBAL_FLAGS_SHIFT;
     sm4->program->global_flags = ins->declaration.global_flags;
+
+    if (sm4->program->global_flags & (VKD3DSGF_ENABLE_DOUBLE_PRECISION_FLOAT_OPS
+            | VKD3DSGF_ENABLE_11_1_DOUBLE_EXTENSIONS))
+        sm4->program->f64_denorm_mode = VSIR_DENORM_PRESERVE;
 }
 
 static void shader_sm5_read_fcall(struct vkd3d_shader_instruction *ins, uint32_t opcode, uint32_t opcode_token,
@@ -1394,14 +1398,30 @@ struct sm4_stat
 struct tpf_compiler
 {
     struct vsir_program *program;
+
+    struct vkd3d_shader_location location;
+    struct vkd3d_shader_message_context *message_context;
+    enum vkd3d_shader_error first_error;
+
     struct vkd3d_sm4_lookup_tables lookup;
     struct sm4_stat *stat;
-
-    int result;
 
     struct vkd3d_bytecode_buffer *buffer;
     struct dxbc_writer dxbc;
 };
+
+static void VKD3D_PRINTF_FUNC(3, 4) tpf_compiler_error(struct tpf_compiler *tpf,
+        enum vkd3d_shader_error error, const char *fmt, ...)
+{
+    va_list args;
+
+    va_start(args, fmt);
+    vkd3d_shader_verror(tpf->message_context, &tpf->location, error, fmt, args);
+    va_end(args);
+
+    if (!tpf->first_error)
+        tpf->first_error = error;
+}
 
 static void init_sm4_lookup_tables(struct vkd3d_sm4_lookup_tables *lookup)
 {
@@ -3212,8 +3232,8 @@ static void add_section(struct tpf_compiler *tpf, uint32_t tag, struct vkd3d_byt
 
     dxbc_writer_add_section(&tpf->dxbc, tag, buffer->data, size);
 
-    if (buffer->status < 0)
-        tpf->result = buffer->status;
+    if (buffer->status < 0 && !tpf->first_error)
+        tpf->first_error = VKD3D_SHADER_ERROR_TPF_OUT_OF_MEMORY;
 }
 
 static int signature_element_pointer_compare(const void *x, const void *y)
@@ -3513,7 +3533,7 @@ static void sm4_write_dst_register(const struct tpf_compiler *tpf, const struct 
         sm4_write_register_index(tpf, &dst->reg, j);
 }
 
-static void sm4_write_src_register(const struct tpf_compiler *tpf, const struct vsir_src_operand *src)
+static void sm4_write_src_register(struct tpf_compiler *tpf, const struct vsir_src_operand *src)
 {
     struct vkd3d_bytecode_buffer *buffer = tpf->buffer;
     uint32_t token = 0, mod_token = 0;
@@ -3543,8 +3563,8 @@ static void sm4_write_src_register(const struct tpf_compiler *tpf, const struct 
             break;
 
         default:
-            ERR("Unhandled register modifier %#x.\n", src->modifiers);
-            vkd3d_unreachable();
+            tpf_compiler_error(tpf, VKD3D_SHADER_ERROR_TPF_NOT_IMPLEMENTED,
+                    "Unhandled register modifier %#x.\n", src->modifiers);
             break;
     }
 
@@ -3619,7 +3639,7 @@ static void sm4_update_stat_counters(const struct tpf_compiler *tpf, const struc
     }
 }
 
-static void write_sm4_instruction(const struct tpf_compiler *tpf, const struct sm4_instruction *instr)
+static void write_sm4_instruction(struct tpf_compiler *tpf, const struct sm4_instruction *instr)
 {
     uint32_t token = instr->opcode | instr->extra_bits;
     struct vkd3d_bytecode_buffer *buffer = tpf->buffer;
@@ -3659,7 +3679,7 @@ static void write_sm4_instruction(const struct tpf_compiler *tpf, const struct s
     sm4_update_stat_counters(tpf, instr);
 }
 
-static void tpf_dcl_constant_buffer(const struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
+static void tpf_dcl_constant_buffer(struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
 {
     const struct vkd3d_shader_constant_buffer *cb = &ins->declaration.cb;
     size_t size = cb->size / VKD3D_VEC4_SIZE / sizeof(float);
@@ -3696,7 +3716,7 @@ static void tpf_dcl_constant_buffer(const struct tpf_compiler *tpf, const struct
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_dcl_temps(const struct tpf_compiler *tpf, unsigned int count)
+static void tpf_dcl_temps(struct tpf_compiler *tpf, unsigned int count)
 {
     struct sm4_instruction instr =
     {
@@ -3709,7 +3729,7 @@ static void tpf_dcl_temps(const struct tpf_compiler *tpf, unsigned int count)
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_dcl_indexable_temp(const struct tpf_compiler *tpf, const struct vkd3d_shader_indexable_temp *temp)
+static void tpf_dcl_indexable_temp(struct tpf_compiler *tpf, const struct vkd3d_shader_indexable_temp *temp)
 {
     struct sm4_instruction instr =
     {
@@ -3722,7 +3742,7 @@ static void tpf_dcl_indexable_temp(const struct tpf_compiler *tpf, const struct 
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_dcl_semantic(const struct tpf_compiler *tpf, enum vkd3d_sm4_opcode opcode,
+static void tpf_dcl_semantic(struct tpf_compiler *tpf, enum vkd3d_sm4_opcode opcode,
         const struct vsir_dst_operand *dst, uint32_t interpolation_flags)
 {
     struct sm4_instruction instr =
@@ -3738,7 +3758,7 @@ static void tpf_dcl_semantic(const struct tpf_compiler *tpf, enum vkd3d_sm4_opco
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_dcl_siv_semantic(const struct tpf_compiler *tpf, enum vkd3d_sm4_opcode opcode,
+static void tpf_dcl_siv_semantic(struct tpf_compiler *tpf, enum vkd3d_sm4_opcode opcode,
         const struct vkd3d_shader_register_semantic *semantic, uint32_t interpolation_flags)
 {
     struct sm4_instruction instr =
@@ -3757,7 +3777,7 @@ static void tpf_dcl_siv_semantic(const struct tpf_compiler *tpf, enum vkd3d_sm4_
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_dcl_thread_group(const struct tpf_compiler *tpf, const struct vsir_thread_group_size *group_size)
+static void tpf_dcl_thread_group(struct tpf_compiler *tpf, const struct vsir_thread_group_size *group_size)
 {
     struct sm4_instruction instr =
     {
@@ -3770,7 +3790,7 @@ static void tpf_dcl_thread_group(const struct tpf_compiler *tpf, const struct vs
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_dcl_sampler(const struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
+static void tpf_dcl_sampler(struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
 {
     const struct vkd3d_shader_sampler *sampler = &ins->declaration.sampler;
     struct sm4_instruction instr =
@@ -3820,7 +3840,7 @@ static uint32_t pack_resource_data_type(const enum vsir_data_type *resource_data
     return type;
 }
 
-static void tpf_dcl_texture(const struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
+static void tpf_dcl_texture(struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
 {
     const struct vkd3d_shader_version *version = &tpf->program->shader_version;
     const struct vkd3d_shader_resource *resource;
@@ -3881,7 +3901,7 @@ static void tpf_dcl_texture(const struct tpf_compiler *tpf, const struct vkd3d_s
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_dcl_tgsm_raw(const struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
+static void tpf_dcl_tgsm_raw(struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
 {
     const struct vkd3d_shader_tgsm_raw *tgsm = &ins->declaration.tgsm_raw;
     struct sm4_instruction instr =
@@ -3898,7 +3918,25 @@ static void tpf_dcl_tgsm_raw(const struct tpf_compiler *tpf, const struct vkd3d_
     write_sm4_instruction(tpf, &instr);
 }
 
-static void write_sm4_dcl_global_flags(const struct tpf_compiler *tpf, uint32_t flags)
+static void tpf_dcl_tgsm_structured(struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
+{
+    const struct vkd3d_shader_tgsm_structured *tgsm = &ins->declaration.tgsm_structured;
+    struct sm4_instruction instr =
+    {
+        .opcode = VKD3D_SM5_OP_DCL_TGSM_STRUCTURED,
+
+        .dsts[0] = tgsm->reg,
+        .dst_count = 1,
+
+        .idx[0] = tgsm->byte_stride,
+        .idx[1] = tgsm->structure_count,
+        .idx_count = 2,
+    };
+
+    write_sm4_instruction(tpf, &instr);
+}
+
+static void write_sm4_dcl_global_flags(struct tpf_compiler *tpf, uint32_t flags)
 {
     struct sm4_instruction instr =
     {
@@ -3909,7 +3947,7 @@ static void write_sm4_dcl_global_flags(const struct tpf_compiler *tpf, uint32_t 
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_write_hs_decls(const struct tpf_compiler *tpf)
+static void tpf_write_hs_decls(struct tpf_compiler *tpf)
 {
     struct sm4_instruction instr =
     {
@@ -3919,7 +3957,7 @@ static void tpf_write_hs_decls(const struct tpf_compiler *tpf)
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_write_dcl_input_control_point_count(const struct tpf_compiler *tpf, const uint32_t count)
+static void tpf_write_dcl_input_control_point_count(struct tpf_compiler *tpf, const uint32_t count)
 {
     struct sm4_instruction instr =
     {
@@ -3930,7 +3968,7 @@ static void tpf_write_dcl_input_control_point_count(const struct tpf_compiler *t
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_write_dcl_output_control_point_count(const struct tpf_compiler *tpf, const uint32_t count)
+static void tpf_write_dcl_output_control_point_count(struct tpf_compiler *tpf, const uint32_t count)
 {
     struct sm4_instruction instr =
     {
@@ -3941,7 +3979,7 @@ static void tpf_write_dcl_output_control_point_count(const struct tpf_compiler *
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_write_dcl_tessellator_domain(const struct tpf_compiler *tpf, enum vkd3d_tessellator_domain domain)
+static void tpf_write_dcl_tessellator_domain(struct tpf_compiler *tpf, enum vkd3d_tessellator_domain domain)
 {
     struct sm4_instruction instr =
     {
@@ -3952,7 +3990,7 @@ static void tpf_write_dcl_tessellator_domain(const struct tpf_compiler *tpf, enu
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_write_dcl_tessellator_partitioning(const struct tpf_compiler *tpf,
+static void tpf_write_dcl_tessellator_partitioning(struct tpf_compiler *tpf,
         enum vkd3d_shader_tessellator_partitioning partitioning)
 {
     struct sm4_instruction instr =
@@ -3964,7 +4002,7 @@ static void tpf_write_dcl_tessellator_partitioning(const struct tpf_compiler *tp
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_write_dcl_tessellator_output_primitive(const struct tpf_compiler *tpf,
+static void tpf_write_dcl_tessellator_output_primitive(struct tpf_compiler *tpf,
         enum vkd3d_shader_tessellator_output_primitive output_primitive)
 {
     struct sm4_instruction instr =
@@ -3976,7 +4014,7 @@ static void tpf_write_dcl_tessellator_output_primitive(const struct tpf_compiler
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_write_dcl_input_primitive(const struct tpf_compiler *tpf, enum vkd3d_primitive_type input_primitive,
+static void tpf_write_dcl_input_primitive(struct tpf_compiler *tpf, enum vkd3d_primitive_type input_primitive,
         unsigned int patch_vertex_count)
 {
     enum vkd3d_sm4_input_primitive_type sm4_input_primitive;
@@ -4001,7 +4039,7 @@ static void tpf_write_dcl_input_primitive(const struct tpf_compiler *tpf, enum v
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_write_dcl_output_topology(const struct tpf_compiler *tpf, enum vkd3d_primitive_type output_topology)
+static void tpf_write_dcl_output_topology(struct tpf_compiler *tpf, enum vkd3d_primitive_type output_topology)
 {
     struct sm4_instruction instr =
     {
@@ -4014,7 +4052,7 @@ static void tpf_write_dcl_output_topology(const struct tpf_compiler *tpf, enum v
     write_sm4_instruction(tpf, &instr);
 }
 
-static void tpf_write_dcl_vertices_out(const struct tpf_compiler *tpf, unsigned int count)
+static void tpf_write_dcl_vertices_out(struct tpf_compiler *tpf, unsigned int count)
 {
     struct sm4_instruction instr =
     {
@@ -4075,16 +4113,19 @@ static void tpf_simple_instruction(struct tpf_compiler *tpf, const struct vkd3d_
 
     if (ins->dst_count != dst_count)
     {
-        ERR("Invalid destination count %zu for vsir instruction %#x (expected %u).\n",
-                ins->dst_count, ins->opcode, dst_count);
-        tpf->result = VKD3D_ERROR_INVALID_SHADER;
+        tpf_compiler_error(tpf, VKD3D_SHADER_ERROR_TPF_INTERNAL,
+                "Internal compiler error: Invalid destination operand count %zu "
+                "for instruction \"%s\" (%#x), expected %u.",
+                ins->dst_count, vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode, dst_count);
         return;
     }
+
     if (ins->src_count != src_count)
     {
-        ERR("Invalid source count %zu for vsir instruction %#x (expected %u).\n",
-                ins->src_count, ins->opcode, src_count);
-        tpf->result = VKD3D_ERROR_INVALID_SHADER;
+        tpf_compiler_error(tpf, VKD3D_SHADER_ERROR_TPF_INTERNAL,
+                "Internal compiler error: Invalid source operand count %zu "
+                "for instruction \"%s\" (%#x), expected %u.",
+                ins->src_count, vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode, src_count);
         return;
     }
 
@@ -4133,6 +4174,8 @@ static void tpf_simple_instruction(struct tpf_compiler *tpf, const struct vkd3d_
 
 static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_shader_instruction *ins)
 {
+    tpf->location = ins->location;
+
     switch (ins->opcode)
     {
         case VSIR_OP_NOP:
@@ -4192,6 +4235,10 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
 
         case VSIR_OP_DCL_TGSM_RAW:
             tpf_dcl_tgsm_raw(tpf, ins);
+            break;
+
+        case VSIR_OP_DCL_TGSM_STRUCTURED:
+            tpf_dcl_tgsm_structured(tpf, ins);
             break;
 
         case VSIR_OP_DCL:
@@ -4330,7 +4377,9 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
             break;
 
         default:
-            vkd3d_unreachable();
+            tpf_compiler_error(tpf, VKD3D_SHADER_ERROR_TPF_NOT_IMPLEMENTED,
+                    "Unhandled instruction \"%s\" (%#x).\n",
+                    vsir_opcode_get_name(ins->opcode, "<unknown>"), ins->opcode);
             break;
     }
 }
@@ -4508,6 +4557,8 @@ int tpf_compile(struct vsir_program *program, uint64_t config_flags,
         return ret;
 
     tpf.program = program;
+    tpf.location.source_name = compile_info->source_name;
+    tpf.message_context = message_context;
     tpf.buffer = NULL;
     tpf.stat = &stat;
     init_sm4_lookup_tables(&tpf.lookup);
@@ -4522,11 +4573,7 @@ int tpf_compile(struct vsir_program *program, uint64_t config_flags,
     tpf_write_sfi0(&tpf);
     tpf_write_stat(&tpf);
 
-    ret = VKD3D_OK;
-    if (tpf.result)
-        ret = tpf.result;
-
-    if (!ret)
+    if (!(ret = vkd3d_result_from_shader_error(tpf.first_error)))
         ret = dxbc_writer_write(&tpf.dxbc, out);
     for (i = 0; i < tpf.dxbc.section_count; ++i)
         vkd3d_shader_free_shader_code(&tpf.dxbc.sections[i].data);

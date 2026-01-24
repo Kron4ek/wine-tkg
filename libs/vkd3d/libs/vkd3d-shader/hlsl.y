@@ -544,7 +544,7 @@ static void check_loop_attributes(struct hlsl_ctx *ctx, const struct parse_attri
         hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Unroll attribute can't be used with 'fastopt' attribute.");
 }
 
-static bool is_static_expression(struct hlsl_block *block)
+static bool is_static_expression(const struct hlsl_block *block)
 {
     struct hlsl_ir_node *node;
 
@@ -654,12 +654,12 @@ static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum hlsl_loop_type 
         struct hlsl_block *iter, struct hlsl_block *body, const struct vkd3d_shader_location *loc)
 {
     enum hlsl_loop_unroll_type unroll_type = HLSL_LOOP_UNROLL;
-    unsigned int i, unroll_limit = 0;
+    struct hlsl_ir_node *unroll_limit = NULL;
+    unsigned int i;
 
     check_attribute_list_for_duplicates(ctx, attributes);
     check_loop_attributes(ctx, attributes, loc);
 
-    /* Ignore unroll(0) attribute, and any invalid attribute. */
     for (i = 0; i < attributes->count; ++i)
     {
         const struct hlsl_attribute *attr = attributes->attrs[i];
@@ -675,12 +675,24 @@ static struct hlsl_block *create_loop(struct hlsl_ctx *ctx, enum hlsl_loop_type 
             if (attr->args_count == 1)
             {
                 struct hlsl_block expr;
+
+                if (!is_static_expression(&attr->instrs))
+                {
+                    hlsl_error(ctx, &attr->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                            "Unroll limit expressions cannot have side effects.");
+                    continue;
+                }
+
+                if (!init && !(init = make_empty_block(ctx)))
+                    return NULL;
+
                 hlsl_block_init(&expr);
                 if (!hlsl_clone_block(ctx, &expr, &attr->instrs))
                     return NULL;
 
-                unroll_limit = evaluate_static_expression_as_uint(ctx, &expr, loc);
-                hlsl_block_cleanup(&expr);
+                list_move_head(&init->instrs, &expr.instrs);
+                unroll_limit = add_implicit_conversion(ctx, init, node_from_block(&expr),
+                        hlsl_get_scalar_type(ctx, HLSL_TYPE_UINT), loc);
             }
 
             unroll_type = HLSL_LOOP_FORCE_UNROLL;

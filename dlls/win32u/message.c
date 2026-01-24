@@ -4632,9 +4632,38 @@ BOOL WINAPI NtUserPostThreadMessage( DWORD thread, UINT msg, WPARAM wparam, LPAR
     return put_message_in_queue( &info, NULL );
 }
 
+UINT isMouseButtonPressed = 0;
+
 LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                   void *result_info, DWORD type, BOOL ansi )
 {
+    if ( type == NtUserGetDispatchParams && 
+        (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_MOUSEMOVE) ) {
+            struct ntuser_thread_info *thread_info = NtUserGetThreadInfo();
+
+            if ( thread_info->mouse_in_pointer == TRUE ) {
+                if ( msg == WM_LBUTTONDOWN ) {
+                    wparam = MAKEWPARAM(1, POINTER_MESSAGE_FLAG_PRIMARY | POINTER_MESSAGE_FLAG_FIRSTBUTTON | POINTER_MESSAGE_FLAG_INCONTACT | POINTER_MESSAGE_FLAG_INRANGE);
+                    isMouseButtonPressed = 1;
+                }
+
+                if ( msg == WM_LBUTTONUP ) {
+                    wparam = MAKEWPARAM(1, POINTER_MESSAGE_FLAG_PRIMARY | POINTER_MESSAGE_FLAG_INRANGE);
+                    isMouseButtonPressed = 0;
+                }
+
+                if ( msg == WM_MOUSEMOVE ) {
+                    if ( isMouseButtonPressed ) {
+                        wparam = MAKEWPARAM(1, POINTER_MESSAGE_FLAG_PRIMARY | POINTER_MESSAGE_FLAG_FIRSTBUTTON | POINTER_MESSAGE_FLAG_INCONTACT | POINTER_MESSAGE_FLAG_INRANGE);
+                    } else {
+                        wparam = MAKEWPARAM(1, POINTER_MESSAGE_FLAG_PRIMARY | POINTER_MESSAGE_FLAG_INRANGE);
+                    }
+                }
+
+                msg = WM_POINTERUPDATE;
+            }
+    }
+
     switch (type)
     {
     case NtUserScrollBarWndProc:

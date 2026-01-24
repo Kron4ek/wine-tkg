@@ -1,8 +1,6 @@
-/*
- * Version file for Common Controls
+/* Chakra JavaScript Engine
  *
- * Copyright 1999 Bertho Stultiens
- * Copyright 1999 Eric Kohl
+ * Copyright (C) 2026 Mohamad Al-Jaf
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -19,11 +17,17 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define WINE_FILEDESCRIPTION_STR "Wine Common Controls"
-#define WINE_FILENAME_STR "comctl32.dll"
-#define WINE_FILEVERSION 6,0,2600,2982
+#include <stdarg.h>
 
-#include "wine/wine_common_ver.rc"
+#include "windef.h"
+#include "winbase.h"
 
-/* @makedep: comctl32.manifest */
-WINE_MANIFEST RT_MANIFEST comctl32.manifest
+#include "wine/debug.h"
+
+WINE_DEFAULT_DEBUG_CHANNEL(chakra);
+
+HRESULT WINAPI DllGetClassObject( REFCLSID clsid, REFIID riid, void **out )
+{
+    FIXME( "clsid %s, riid %s, out %p stub!\n", debugstr_guid( clsid ), debugstr_guid( riid ), out );
+    return CLASS_E_CLASSNOTAVAILABLE;
+}

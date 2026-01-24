@@ -7696,33 +7696,6 @@ static void spirv_compiler_emit_movc(struct spirv_compiler *compiler,
     spirv_compiler_emit_store_dst(compiler, dst, val_id);
 }
 
-static void spirv_compiler_emit_swapc(struct spirv_compiler *compiler,
-        const struct vkd3d_shader_instruction *instruction)
-{
-    struct vkd3d_spirv_builder *builder = &compiler->spirv_builder;
-    uint32_t condition_id, src1_id, src2_id, type_id, val_id;
-    const struct vsir_src_operand *src = instruction->src;
-    const struct vsir_dst_operand *dst = instruction->dst;
-    unsigned int component_count;
-
-    VKD3D_ASSERT(dst[0].write_mask == dst[1].write_mask);
-
-    condition_id = spirv_compiler_emit_load_src(compiler, &src[0], dst->write_mask);
-    src1_id = spirv_compiler_emit_load_src(compiler, &src[1], dst->write_mask);
-    src2_id = spirv_compiler_emit_load_src(compiler, &src[2], dst->write_mask);
-
-    component_count = vsir_write_mask_component_count(dst->write_mask);
-    type_id = spirv_get_type_id(compiler, VSIR_DATA_F32, component_count);
-
-    condition_id = spirv_compiler_emit_int_to_bool(compiler,
-            VKD3D_SHADER_CONDITIONAL_OP_NZ, src[0].reg.data_type, component_count, condition_id);
-
-    val_id = vkd3d_spirv_build_op_select(builder, type_id, condition_id, src2_id, src1_id);
-    spirv_compiler_emit_store_dst(compiler, &dst[0], val_id);
-    val_id = vkd3d_spirv_build_op_select(builder, type_id, condition_id, src1_id, src2_id);
-    spirv_compiler_emit_store_dst(compiler, &dst[1], val_id);
-}
-
 static void spirv_compiler_emit_dot(struct spirv_compiler *compiler,
         const struct vkd3d_shader_instruction *instruction)
 {
@@ -10306,9 +10279,6 @@ static int spirv_compiler_handle_instruction(struct spirv_compiler *compiler,
         case VSIR_OP_MOVC:
         case VSIR_OP_CMP:
             spirv_compiler_emit_movc(compiler, instruction);
-            break;
-        case VSIR_OP_SWAPC:
-            spirv_compiler_emit_swapc(compiler, instruction);
             break;
         case VSIR_OP_ADD:
         case VSIR_OP_AND:

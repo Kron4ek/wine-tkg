@@ -90,6 +90,8 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_DIMENSION   = 1008,
     VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_SWIZZLE     = 1009,
     VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_DCL         = 1010,
+    VKD3D_SHADER_ERROR_TPF_INTERNAL                     = 1011,
+    VKD3D_SHADER_ERROR_TPF_NOT_IMPLEMENTED              = 1012,
 
     VKD3D_SHADER_WARNING_TPF_MASK_NOT_CONTIGUOUS        = 1300,
     VKD3D_SHADER_WARNING_TPF_UNHANDLED_INDEX_RANGE_MASK = 1301,
@@ -233,6 +235,7 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_DXIL_INVALID_STRING              = 8023,
     VKD3D_SHADER_ERROR_DXIL_INVALID_ATTRIBUTE_KIND      = 8024,
     VKD3D_SHADER_ERROR_DXIL_INVALID_ATTRIBUTE           = 8025,
+    VKD3D_SHADER_ERROR_DXIL_INVALID_TYPE                = 8026,
 
     VKD3D_SHADER_WARNING_DXIL_UNKNOWN_MAGIC_NUMBER      = 8300,
     VKD3D_SHADER_WARNING_DXIL_UNKNOWN_SHADER_TYPE       = 8301,
@@ -246,6 +249,7 @@ enum vkd3d_shader_error
     VKD3D_SHADER_WARNING_DXIL_IGNORING_ATTACHMENT       = 8309,
     VKD3D_SHADER_WARNING_DXIL_UNDEFINED_OPERAND         = 8310,
     VKD3D_SHADER_WARNING_DXIL_IGNORING_RECORD           = 8311,
+    VKD3D_SHADER_WARNING_DXIL_UNKNOWN_TYPE              = 8312,
 
     VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED             = 9000,
     VKD3D_SHADER_ERROR_VSIR_INVALID_OPCODE              = 9001,
@@ -288,6 +292,22 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_FX_INVALID_SIZE                  = 11003,
     VKD3D_SHADER_ERROR_FX_OUT_OF_MEMORY                 = 11004,
 };
+
+static inline enum vkd3d_result vkd3d_result_from_shader_error(enum vkd3d_shader_error e)
+{
+    if (!e)
+        return VKD3D_OK;
+
+    switch (e)
+    {
+        case VKD3D_SHADER_ERROR_TPF_OUT_OF_MEMORY:
+            return VKD3D_ERROR_OUT_OF_MEMORY;
+        case VKD3D_SHADER_ERROR_TPF_NOT_IMPLEMENTED:
+            return VKD3D_ERROR_NOT_IMPLEMENTED;
+        default:
+            return VKD3D_ERROR_INVALID_SHADER;
+    }
+}
 
 enum vkd3d_shader_opcode
 {
@@ -1618,6 +1638,8 @@ enum vsir_denorm_mode
     VSIR_DENORM_FLUSH_TO_ZERO,
 };
 
+const char *vsir_denorm_mode_get_name(enum vsir_denorm_mode m, const char *error);
+
 struct vkd3d_shader_descriptor_info1
 {
     enum vkd3d_shader_descriptor_type type;
@@ -1697,7 +1719,9 @@ struct vsir_program
     struct vkd3d_shader_param_allocator src_operands;
     struct vkd3d_shader_param_allocator dst_operands;
 
+    enum vsir_denorm_mode f16_denorm_mode;
     enum vsir_denorm_mode f32_denorm_mode;
+    enum vsir_denorm_mode f64_denorm_mode;
 };
 
 enum vkd3d_result vsir_allocate_temp_registers(struct vsir_program *program,
@@ -1797,6 +1821,7 @@ enum vsir_asm_flags
     VSIR_ASM_FLAG_DUMP_SIGNATURES = 0x4,
     VSIR_ASM_FLAG_DUMP_DESCRIPTORS = 0x8,
     VSIR_ASM_FLAG_ALLOCATE_TEMPS = 0x10,
+    VSIR_ASM_FLAG_DUMP_DENORM_MODES = 0x20,
 };
 
 enum vkd3d_result d3d_asm_compile(struct vsir_program *program,

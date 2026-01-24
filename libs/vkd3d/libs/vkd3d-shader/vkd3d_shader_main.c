@@ -976,6 +976,7 @@ struct vkd3d_shader_scan_context
         {
             VKD3D_SHADER_BLOCK_IF,
             VKD3D_SHADER_BLOCK_LOOP,
+            VKD3D_SHADER_BLOCK_REP,
             VKD3D_SHADER_BLOCK_SWITCH,
         } type;
         bool inside_block;
@@ -1087,6 +1088,7 @@ static struct vkd3d_shader_cf_info *vkd3d_shader_scan_find_innermost_breakable_c
     {
         cf_info = &context->cf_info[--count];
         if (cf_info->type == VKD3D_SHADER_BLOCK_LOOP
+                || cf_info->type == VKD3D_SHADER_BLOCK_REP
                 || cf_info->type == VKD3D_SHADER_BLOCK_SWITCH)
             return cf_info;
     }
@@ -1432,6 +1434,20 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             {
                 vkd3d_shader_scan_error(context, VKD3D_SHADER_ERROR_TPF_MISMATCHED_CF,
                         "Encountered ‘endloop’ instruction without corresponding ‘loop’ block.");
+                return VKD3D_ERROR_INVALID_SHADER;
+            }
+            vkd3d_shader_scan_pop_cf_info(context);
+            break;
+        case VSIR_OP_REP:
+            cf_info = vkd3d_shader_scan_push_cf_info(context);
+            cf_info->type = VKD3D_SHADER_BLOCK_REP;
+            cf_info->inside_block = true;
+            break;
+        case VSIR_OP_ENDREP:
+            if (!(cf_info = vkd3d_shader_scan_get_current_cf_info(context)) || cf_info->type != VKD3D_SHADER_BLOCK_REP)
+            {
+                vkd3d_shader_scan_error(context, VKD3D_SHADER_ERROR_TPF_MISMATCHED_CF,
+                        "Encountered ‘endrep’ instruction without corresponding ‘rep’ block.");
                 return VKD3D_ERROR_INVALID_SHADER;
             }
             vkd3d_shader_scan_pop_cf_info(context);

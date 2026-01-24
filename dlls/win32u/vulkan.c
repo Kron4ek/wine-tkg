@@ -312,7 +312,7 @@ static HANDLE create_shared_resource_handle( D3DKMT_HANDLE local, const VkExport
     return NULL;
 }
 
-static HANDLE open_shared_resource_from_name( const WCHAR *name )
+HANDLE open_shared_resource_from_name( const WCHAR *name )
 {
     D3DKMT_OPENNTHANDLEFROMNAME open_name = {0};
     WCHAR bufferW[MAX_PATH * 2];
@@ -448,11 +448,10 @@ static VkResult convert_instance_create_info( struct mempool *pool, VkInstanceCr
 
     if (instance->obj.extensions.has_VK_KHR_win32_surface && vulkan_funcs.host_extensions.has_VK_EXT_surface_maintenance1)
         instance->obj.extensions.has_VK_EXT_surface_maintenance1 = 1;
-    if (use_external_memory())
-    {
+    if (vulkan_funcs.host_extensions.has_VK_KHR_get_physical_device_properties2)
         instance->obj.extensions.has_VK_KHR_get_physical_device_properties2 = 1;
+    if (use_external_memory())
         instance->obj.extensions.has_VK_KHR_external_memory_capabilities = 1;
-    }
 
     /* VK_KHR_win32_keyed_mutex only requires external memory extensions, but we will use
      * external semaphore fds to implement it, so we enable the instance extensions too */
@@ -1676,8 +1675,11 @@ static void *find_vk_struct( void *s, VkStructureType t )
     return NULL;
 }
 
-static void fill_luid_property( VkPhysicalDeviceProperties2 *properties2 )
+static void get_physical_device_properties2( struct vulkan_physical_device *physical_device, VkPhysicalDeviceProperties2 *properties2,
+                                             PFN_vkGetPhysicalDeviceProperties2 p_vkGetPhysicalDeviceProperties2 )
 {
+    VkPhysicalDeviceIDProperties id_host = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
+    VkPhysicalDeviceProperties2 properties2_host;
     VkPhysicalDeviceVulkan11Properties *vk11;
     VkPhysicalDeviceIDProperties *id;
     VkBool32 device_luid_valid;
@@ -1688,9 +1690,21 @@ static void fill_luid_property( VkPhysicalDeviceProperties2 *properties2 )
     vk11 = find_vk_struct( properties2, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES );
     id = find_vk_struct( properties2, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES );
 
-    if (!vk11 && !id) return;
-    uuid = (const GUID *)(id ? id->deviceUUID : vk11->deviceUUID);
-    device_luid_valid = get_luid_from_vulkan_uuid( uuid, &luid, &node_mask );
+    if (!vk11 && !id)
+    {
+        properties2_host = *properties2;
+        id_host.pNext = properties2->pNext;
+        properties2_host.pNext = &id_host;
+        p_vkGetPhysicalDeviceProperties2( physical_device->host.physical_device, &properties2_host );
+        properties2->properties = properties2_host.properties;
+    }
+    else p_vkGetPhysicalDeviceProperties2( physical_device->host.physical_device, properties2 );
+
+    if (id)        uuid = (const GUID *)id->deviceUUID;
+    else if (vk11) uuid = (const GUID *)vk11->deviceUUID;
+    else           uuid = (const GUID *)id_host.deviceUUID;
+
+    device_luid_valid = get_gpu_info_from_uuid( uuid, &luid, &node_mask, properties2->properties.deviceName );
     if (!device_luid_valid) WARN( "luid for %s not found\n", debugstr_guid(uuid) );
 
     if (id)
@@ -1711,20 +1725,33 @@ static void fill_luid_property( VkPhysicalDeviceProperties2 *properties2 )
            properties2->properties.deviceName, device_luid_valid, luid.HighPart, luid.LowPart );
 }
 
+static void win32u_vkGetPhysicalDeviceProperties( VkPhysicalDevice client_physical_device, VkPhysicalDeviceProperties *properties )
+{
+    struct vulkan_physical_device *physical_device = vulkan_physical_device_from_handle( client_physical_device );
+    VkPhysicalDeviceProperties2 properties2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+
+    if (!physical_device->instance->extensions.has_VK_KHR_get_physical_device_properties2)
+    {
+        physical_device->instance->p_vkGetPhysicalDeviceProperties( physical_device->host.physical_device, properties );
+        return;
+    }
+    get_physical_device_properties2( physical_device, &properties2,
+                                     physical_device->instance->p_vkGetPhysicalDeviceProperties2KHR );
+    *properties = properties2.properties;
+}
+
 static void win32u_vkGetPhysicalDeviceProperties2( VkPhysicalDevice client_physical_device, VkPhysicalDeviceProperties2 *properties2 )
 {
     struct vulkan_physical_device *physical_device = vulkan_physical_device_from_handle( client_physical_device );
 
-    physical_device->instance->p_vkGetPhysicalDeviceProperties2( physical_device->host.physical_device, properties2 );
-    fill_luid_property( properties2 );
+    get_physical_device_properties2( physical_device, properties2, physical_device->instance->p_vkGetPhysicalDeviceProperties2 );
 }
 
 static void win32u_vkGetPhysicalDeviceProperties2KHR( VkPhysicalDevice client_physical_device, VkPhysicalDeviceProperties2 *properties2 )
 {
     struct vulkan_physical_device *physical_device = vulkan_physical_device_from_handle( client_physical_device );
 
-    physical_device->instance->p_vkGetPhysicalDeviceProperties2KHR( physical_device->host.physical_device, properties2 );
-    fill_luid_property( properties2 );
+    get_physical_device_properties2( physical_device, properties2, physical_device->instance->p_vkGetPhysicalDeviceProperties2KHR );
 }
 
 static VkResult win32u_vkGetPhysicalDeviceSurfaceFormatsKHR( VkPhysicalDevice client_physical_device, VkSurfaceKHR client_surface,
@@ -2280,7 +2307,7 @@ static VkResult queue_submit( struct vulkan_queue *queue, uint32_t count, const 
 
         for (uint32_t j = 0; j < submit->commandBufferInfoCount; j++)
         {
-            VkCommandBufferSubmitInfoKHR *command_buffer_infos = (VkCommandBufferSubmitInfoKHR *)submit->pCommandBufferInfos; /* cast away const, chain has been copied in the thunks */
+            VkCommandBufferSubmitInfo *command_buffer_infos = (VkCommandBufferSubmitInfo *)submit->pCommandBufferInfos; /* cast away const, chain has been copied in the thunks */
             struct vulkan_command_buffer *command_buffer = vulkan_command_buffer_from_handle( command_buffer_infos[j].commandBuffer );
             command_buffer_infos[j].commandBuffer = command_buffer->host.command_buffer;
             if (command_buffer_infos->pNext) FIXME( "Unhandled struct chain\n" );
@@ -2369,7 +2396,7 @@ static HANDLE create_shared_semaphore_handle( D3DKMT_HANDLE local, const VkExpor
     return NULL;
 }
 
-static HANDLE open_shared_semaphore_from_name( const WCHAR *name )
+HANDLE open_shared_semaphore_from_name( const WCHAR *name )
 {
     D3DKMT_OPENSYNCOBJECTNTHANDLEFROMNAME open_name = {0};
     WCHAR bufferW[MAX_PATH * 2];
@@ -2876,6 +2903,7 @@ static struct vulkan_funcs vulkan_funcs =
     .p_vkGetPhysicalDeviceImageFormatProperties2 = win32u_vkGetPhysicalDeviceImageFormatProperties2,
     .p_vkGetPhysicalDeviceImageFormatProperties2KHR = win32u_vkGetPhysicalDeviceImageFormatProperties2KHR,
     .p_vkGetPhysicalDevicePresentRectanglesKHR = win32u_vkGetPhysicalDevicePresentRectanglesKHR,
+    .p_vkGetPhysicalDeviceProperties = win32u_vkGetPhysicalDeviceProperties,
     .p_vkGetPhysicalDeviceProperties2 = win32u_vkGetPhysicalDeviceProperties2,
     .p_vkGetPhysicalDeviceProperties2KHR = win32u_vkGetPhysicalDeviceProperties2KHR,
     .p_vkGetPhysicalDeviceSurfaceCapabilities2KHR = win32u_vkGetPhysicalDeviceSurfaceCapabilities2KHR,

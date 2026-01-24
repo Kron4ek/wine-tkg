@@ -121,9 +121,6 @@ PFN_vkVoidFunction WINAPI vkGetInstanceProcAddr(VkInstance instance, const char 
     func = wine_vk_get_instance_proc_addr(name);
     if (func) return func;
 
-    func = wine_vk_get_phys_dev_proc_addr(name);
-    if (func) return func;
-
     /* vkGetInstanceProcAddr also loads any children of instance, so device functions as well. */
     func = wine_vk_get_device_proc_addr(name);
     if (func) return func;
@@ -188,9 +185,7 @@ PFN_vkVoidFunction WINAPI vkGetDeviceProcAddr(VkDevice device, const char *name)
      * https://github.com/KhronosGroup/Vulkan-LoaderAndValidationLayers/issues/2323
      * https://github.com/KhronosGroup/Vulkan-Docs/issues/655
      */
-    if (get_device_proc_addr_instance_procs
-        && ((func = wine_vk_get_instance_proc_addr(name))
-             || (func = wine_vk_get_phys_dev_proc_addr(name))))
+    if (get_device_proc_addr_instance_procs && (func = wine_vk_get_instance_proc_addr(name)))
     {
         WARN("Returning instance function %s.\n", debugstr_a(name));
         return func;
@@ -693,16 +688,19 @@ VkResult WINAPI vkCreateCommandPool(VkDevice device, const VkCommandPoolCreateIn
     if (!(cmd_pool = vulkan_client_object_create(sizeof(*cmd_pool))))
         return VK_ERROR_OUT_OF_HOST_MEMORY;
     list_init(&cmd_pool->command_buffers);
+    *ret = (UINT_PTR)cmd_pool;
 
     params.device = device;
     params.pCreateInfo = create_info;
     params.pAllocator = allocator;
     params.pCommandPool = ret;
-    params.client_ptr = cmd_pool;
     status = UNIX_CALL(vkCreateCommandPool, &params);
     assert(!status);
     if (params.result)
+    {
         free(cmd_pool);
+        *ret = 0;
+    }
     return params.result;
 }
 

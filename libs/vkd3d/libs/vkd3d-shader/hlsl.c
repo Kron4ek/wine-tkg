@@ -461,6 +461,11 @@ static enum hlsl_regset type_get_regset(const struct hlsl_type *type)
 
 enum hlsl_regset hlsl_deref_get_regset(struct hlsl_ctx *ctx, const struct hlsl_deref *deref)
 {
+    if (deref->var->is_tgsm)
+    {
+        /* We should have already validated that TGSM variables are numeric. */
+        return HLSL_REGSET_NUMERIC;
+    }
     return type_get_regset(hlsl_deref_get_type(ctx, deref));
 }
 
@@ -2209,7 +2214,7 @@ struct hlsl_ir_node *hlsl_block_add_resource_load(struct hlsl_ctx *ctx, struct h
         return ctx->error_instr;
     }
 
-    if (load->sampling_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
+    if (load->sampling_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER || load->resource.var->is_tgsm)
         hlsl_src_from_node(&load->byte_offset, hlsl_block_add_uint_constant(ctx, block, 0, loc));
 
     return append_new_instr(ctx, block, &load->node);
@@ -2578,7 +2583,7 @@ void hlsl_block_add_jump(struct hlsl_ctx *ctx, struct hlsl_block *block, enum hl
 
 static struct hlsl_ir_node *hlsl_new_loop(struct hlsl_ctx *ctx, struct hlsl_block *iter,
         struct hlsl_block *block, enum hlsl_loop_unroll_type unroll_type,
-        unsigned int unroll_limit, const struct vkd3d_shader_location *loc)
+        struct hlsl_ir_node *unroll_limit, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_loop *loop;
 
@@ -2593,13 +2598,13 @@ static struct hlsl_ir_node *hlsl_new_loop(struct hlsl_ctx *ctx, struct hlsl_bloc
         hlsl_block_add_block(&loop->iter, iter);
 
     loop->unroll_type = unroll_type;
-    loop->unroll_limit = unroll_limit;
+    hlsl_src_from_node(&loop->unroll_limit, unroll_limit);
     return &loop->node;
 }
 
 void hlsl_block_add_loop(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_block *iter, struct hlsl_block *body, enum hlsl_loop_unroll_type unroll_type,
-        unsigned int unroll_limit, const struct vkd3d_shader_location *loc)
+        struct hlsl_ir_node *unroll_limit, const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_node *instr = hlsl_new_loop(ctx, iter, body, unroll_type, unroll_limit, loc);
 
@@ -2760,8 +2765,8 @@ static struct hlsl_ir_node *clone_load(struct hlsl_ctx *ctx, struct clone_instr_
 
 static struct hlsl_ir_node *clone_loop(struct hlsl_ctx *ctx, struct clone_instr_map *map, struct hlsl_ir_loop *src)
 {
+    struct hlsl_ir_node *dst, *unroll_limit;
     struct hlsl_block iter, body;
-    struct hlsl_ir_node *dst;
 
     if (!clone_block(ctx, &iter, &src->iter, map))
         return NULL;
@@ -2772,7 +2777,8 @@ static struct hlsl_ir_node *clone_loop(struct hlsl_ctx *ctx, struct clone_instr_
         return NULL;
     }
 
-    if (!(dst = hlsl_new_loop(ctx, &iter, &body, src->unroll_type, src->unroll_limit, &src->node.loc)))
+    unroll_limit = map_instr(map, src->unroll_limit.node);
+    if (!(dst = hlsl_new_loop(ctx, &iter, &body, src->unroll_type, unroll_limit, &src->node.loc)))
     {
         hlsl_block_cleanup(&iter);
         hlsl_block_cleanup(&body);
@@ -4383,6 +4389,7 @@ static void free_ir_loop(struct hlsl_ir_loop *loop)
 {
     hlsl_block_cleanup(&loop->body);
     hlsl_block_cleanup(&loop->iter);
+    hlsl_src_remove(&loop->unroll_limit);
     vkd3d_free(loop);
 }
 
