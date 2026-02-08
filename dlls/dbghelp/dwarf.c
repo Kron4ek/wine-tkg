@@ -3063,7 +3063,7 @@ static BOOL dwarf2_parse_compilation_unit(dwarf2_parse_context_t* ctx)
             ctx->language = language.u.uvalue;
 
             tmp = source_build_path(comp_dir.u.string, name.u.string);
-            ctx->compiland = symt_new_compiland(ctx->module_ctx->module, tmp);
+            ctx->compiland = symt_new_compiland(ctx->module_ctx->module, symt_ptr_to_symref(&ctx->module_ctx->module->top->symt), tmp);
             HeapFree(GetProcessHeap(), 0, tmp);
             ctx->compiland->address = ctx->module_ctx->load_offset + low_pc.u.uvalue;
             dwarf2_cache_cuhead(ctx->module_ctx->module, ctx->module_ctx->module->format_info[DFI_DWARF]->u.dwarf2_info, ctx->compiland, &ctx->head);

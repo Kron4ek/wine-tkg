@@ -336,7 +336,9 @@ static const struct wl_pointer_listener pointer_listener =
     pointer_handle_axis_source,
     pointer_handle_axis_stop,
     pointer_handle_axis_discrete,
+#ifdef WL_POINTER_AXIS_VALUE120_SINCE_VERSION
     pointer_handle_axis_value120
+#endif
 };
 
 /**********************************************************************
@@ -552,7 +554,7 @@ static void wayland_pointer_update_cursor_buffer(HCURSOR hcursor, double scale)
     {
         HDC hdc = NtGdiCreateCompatibleDC(0);
         cursor->shm_buffer =
-            wayland_shm_buffer_from_color_bitmaps(hdc, info.hbmColor, info.hbmMask);
+            wayland_shm_buffer_from_color_bitmaps(hdc, info.hbmColor, info.hbmMask, FALSE);
         NtGdiDeleteObjectApp(hdc);
     }
     else

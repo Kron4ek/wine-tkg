@@ -582,6 +582,11 @@ static void d3dbc_parse_register(struct vkd3d_shader_sm1_parser *d3dbc,
         reg->dimension = VSIR_DIMENSION_SCALAR;
     else
         reg->dimension = VSIR_DIMENSION_VEC4;
+
+    if (reg->type == VKD3DSPR_CONSTINT)
+        reg->data_type = VSIR_DATA_U32;
+    else if (reg->type == VKD3DSPR_CONSTBOOL)
+        reg->data_type = VSIR_DATA_BOOL;
 }
 
 static void d3dbc_parse_src_operand(struct vkd3d_shader_sm1_parser *d3dbc,
@@ -757,6 +762,7 @@ static bool add_signature_element_from_register(struct vkd3d_shader_sm1_parser *
 {
     const struct vkd3d_shader_version *version = &sm1->program->shader_version;
     unsigned int register_index = reg->idx_count > 0 ? reg->idx[0].offset : 0;
+    struct signature_element *e;
 
     switch (reg->type)
     {
@@ -769,13 +775,23 @@ static bool add_signature_element_from_register(struct vkd3d_shader_sm1_parser *
         case VKD3DSPR_INPUT:
             /* For vertex shaders or sm3 pixel shaders, we should have already
              * had a DCL instruction. Otherwise, this is a colour input. */
-            if (version->type == VKD3D_SHADER_TYPE_VERTEX || version->major == 3)
+            if (version->type == VKD3D_SHADER_TYPE_PIXEL && version->major < 3)
+                return add_signature_element(sm1, false, "COLOR", register_index,
+                        VKD3D_SHADER_SV_NONE, SM1_COLOR_REGISTER_OFFSET + register_index, is_dcl, mask, dst_modifiers);
+
+            if (reg->idx_count > 0 && reg->idx[0].rel_addr)
             {
-                add_signature_mask(sm1, false, register_index, mask);
+                WARN("Indirect addressing detected, adding used_mask %#x to all input elements.\n", mask);
+                for (unsigned int i = 0; i < sm1->program->input_signature.element_count; ++i)
+                {
+                    e = &sm1->program->input_signature.elements[i];
+                    e->used_mask |= mask & e->mask;
+                }
                 return true;
             }
-            return add_signature_element(sm1, false, "COLOR", register_index,
-                    VKD3D_SHADER_SV_NONE, SM1_COLOR_REGISTER_OFFSET + register_index, is_dcl, mask, dst_modifiers);
+
+            add_signature_mask(sm1, false, register_index, mask);
+            return true;
 
         case VKD3DSPR_TEXTURE:
             return add_signature_element(sm1, false, "TEXCOORD", register_index,
@@ -2275,13 +2291,8 @@ int d3dbc_compile(struct vsir_program *program, uint64_t config_flags,
         result = VKD3D_ERROR_INVALID_SHADER;
 
     if (!result)
-    {
-        out->code = buffer->data;
-        out->size = buffer->size;
-    }
-    else
-    {
-        vkd3d_free(buffer->data);
-    }
+        vkd3d_shader_code_from_bytecode_buffer(out, buffer);
+    vkd3d_bytecode_buffer_cleanup(buffer);
+
     return result;
 }

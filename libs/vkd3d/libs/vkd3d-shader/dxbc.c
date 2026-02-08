@@ -90,10 +90,9 @@ int vkd3d_shader_serialize_dxbc(size_t section_count, const struct vkd3d_shader_
         set_u32(&buffer, checksum_position + i * sizeof(uint32_t), checksum[i]);
 
     if (!buffer.status)
-    {
-        dxbc->code = buffer.data;
-        dxbc->size = buffer.size;
-    }
+        vkd3d_shader_code_from_bytecode_buffer(dxbc, &buffer);
+    vkd3d_bytecode_buffer_cleanup(&buffer);
+
     return buffer.status;
 }
 

@@ -92,10 +92,12 @@ unsigned __int64 __getReg(int);
 
 #if defined(_MSC_VER)
 unsigned char _BitScanForward(unsigned long*,unsigned long);
+unsigned char _BitScanReverse(unsigned long*,unsigned long);
 #endif
 
 #if defined(_MSC_VER) && (defined(__x86_64__) || defined(__aarch64__))
 unsigned char _BitScanForward64(unsigned long*,unsigned __int64);
+unsigned char _BitScanReverse64(unsigned long*,unsigned __int64);
 #endif
 
 #if defined(_MSC_VER) && defined(__x86_64__)

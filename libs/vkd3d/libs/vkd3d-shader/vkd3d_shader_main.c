@@ -474,6 +474,11 @@ void vkd3d_shader_error(struct vkd3d_shader_message_context *context, const stru
     va_end(args);
 }
 
+void vkd3d_bytecode_buffer_cleanup(struct vkd3d_bytecode_buffer *buffer)
+{
+    vkd3d_free(buffer->data);
+}
+
 size_t bytecode_align(struct vkd3d_bytecode_buffer *buffer)
 {
     size_t aligned_size = align(buffer->size, 4);
@@ -550,6 +555,16 @@ void set_u32(struct vkd3d_bytecode_buffer *buffer, size_t offset, uint32_t value
 void set_string(struct vkd3d_bytecode_buffer *buffer, size_t offset, const char *string, size_t length)
 {
     bytecode_set_bytes(buffer, offset, string, length);
+}
+
+void vkd3d_shader_code_from_bytecode_buffer(struct vkd3d_shader_code *code, struct vkd3d_bytecode_buffer *buffer)
+{
+    code->size = buffer->size;
+    code->code = buffer->data;
+
+    buffer->data = NULL;
+    buffer->size = 0;
+    buffer->capacity = 0;
 }
 
 struct shader_dump_data
@@ -2045,7 +2060,7 @@ void shader_signature_cleanup(struct shader_signature *signature)
 {
     for (unsigned int i = 0; i < signature->element_count; ++i)
     {
-        vkd3d_free((void *)signature->elements[i].semantic_name);
+        vsir_signature_element_cleanup(&signature->elements[i]);
     }
     vkd3d_free(signature->elements);
     signature->elements = NULL;

@@ -4363,6 +4363,7 @@ static void tpf_handle_instruction(struct tpf_compiler *tpf, const struct vkd3d_
         case VSIR_OP_SINCOS:
         case VSIR_OP_SQRT:
         case VSIR_OP_STORE_RAW:
+        case VSIR_OP_STORE_STRUCTURED:
         case VSIR_OP_STORE_UAV_TYPED:
         case VSIR_OP_SWITCH:
         case VSIR_OP_UDIV:

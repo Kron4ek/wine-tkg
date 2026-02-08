@@ -6589,7 +6589,12 @@ BOOL WINAPI NtUserSystemParametersInfo( UINT action, UINT val, void *ptr, UINT w
     WINE_SPI_FIXME(SPI_SETICONS);
 
     case SPI_GETDEFAULTINPUTLANG:
-        ret = NtUserGetKeyboardLayout(0) != 0;
+        if (ptr)
+        {
+            HKL layout = NtUserGetKeyboardLayout(0);
+            *(HKL*)ptr = layout;
+            ret = layout != 0;
+        }
         break;
 
     WINE_SPI_FIXME(SPI_SETDEFAULTINPUTLANG);

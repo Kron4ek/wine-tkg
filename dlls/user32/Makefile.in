@@ -6,6 +6,8 @@ EXTRAINCL = $(PNG_PE_CFLAGS)
 DELAYIMPORTS = imm32 combase
 i386_EXTRADLLFLAGS = -Wl,--image-base,0x7e410000
 
+VER_PRODUCTVERSION = 5,1,2600,2180
+
 SOURCES = \
 	button.c \
 	class.c \

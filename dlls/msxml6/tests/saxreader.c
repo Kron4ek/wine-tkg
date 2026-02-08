@@ -34,6 +34,170 @@
 
 #include "wine/test.h"
 
+struct sink
+{
+    IVBSAXContentHandler IVBSAXContentHandler_iface;
+    LONG refcount;
+};
+
+static struct sink *impl_from_IVBSAXContentHandler(IVBSAXContentHandler *iface)
+{
+    return CONTAINING_RECORD(iface, struct sink, IVBSAXContentHandler_iface);
+}
+
+static HRESULT WINAPI vb_content_handler_QueryInterface(IVBSAXContentHandler *iface,
+        REFIID riid, void **obj)
+{
+    if (IsEqualGUID(riid, &IID_IUnknown)
+        || IsEqualGUID(riid, &IID_IDispatch)
+        || IsEqualGUID(riid, &IID_IVBSAXContentHandler))
+    {
+        *obj = iface;
+        IVBSAXContentHandler_AddRef(iface);
+        return S_OK;
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI vb_content_handler_AddRef(IVBSAXContentHandler *iface)
+{
+    struct sink *sink = impl_from_IVBSAXContentHandler(iface);
+    return InterlockedIncrement(&sink->refcount);
+}
+
+static ULONG WINAPI vb_content_handler_Release(IVBSAXContentHandler *iface)
+{
+    struct sink *sink = impl_from_IVBSAXContentHandler(iface);
+    LONG refcount = InterlockedDecrement(&sink->refcount);
+
+    if (!refcount)
+        free(sink);
+
+    return refcount;
+}
+
+static HRESULT WINAPI vb_content_handler_GetTypeInfoCount(IVBSAXContentHandler *iface, UINT *count)
+{
+    ok(0, "Unexpected call.\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI vb_content_handler_GetTypeInfo(IVBSAXContentHandler *iface, UINT index,
+        LCID lcid, ITypeInfo **ti)
+{
+    ok(0, "Unexpected call.\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI vb_content_handler_GetIDsOfNames(IVBSAXContentHandler *iface, REFIID riid,
+        LPOLESTR *names, UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    ok(0, "Unexpected call.\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI vb_content_handler_Invoke(IVBSAXContentHandler *iface, DISPID dispIdMember,
+        REFIID riid, LCID lcid, WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult, EXCEPINFO *pExcepInfo,
+        UINT *puArgErr)
+{
+    ok(0, "Unexpected call.\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI vb_content_handler_putref_documentLocator(IVBSAXContentHandler *iface, IVBSAXLocator *locator)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI vb_content_handler_startDocument(IVBSAXContentHandler *iface)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI vb_content_handler_endDocument(IVBSAXContentHandler *iface)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI vb_content_handler_startPrefixMapping(IVBSAXContentHandler *iface, BSTR *prefix, BSTR *uri)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI vb_content_handler_endPrefixMapping(IVBSAXContentHandler *iface, BSTR *prefix)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI vb_content_handler_startElement(IVBSAXContentHandler *iface, BSTR *uri, BSTR *localName,
+        BSTR *qname, IVBSAXAttributes * oAttributes)
+{
+    ok(uri != NULL && *uri != NULL, "Unexpected pointer.\n");
+    ok(localName != NULL && *localName != NULL, "Unexpected pointer.\n");
+    ok(qname != NULL && *qname != NULL, "Unexpected pointer.\n");
+    return S_OK;
+}
+
+static HRESULT WINAPI vb_content_handler_endElement(IVBSAXContentHandler *iface, BSTR *uri, BSTR *localName,
+        BSTR * strQName)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI vb_content_handler_characters(IVBSAXContentHandler *iface, BSTR * chars)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI vb_content_handler_ignorableWhitespace(IVBSAXContentHandler *iface, BSTR * chars)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI vb_content_handler_processingInstruction(IVBSAXContentHandler *iface, BSTR * target, BSTR * data)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI vb_content_handler_skippedEntity(IVBSAXContentHandler *iface, BSTR * name)
+{
+    return S_OK;
+}
+
+static const IVBSAXContentHandlerVtbl vbcontenthandlervtbl =
+{
+    vb_content_handler_QueryInterface,
+    vb_content_handler_AddRef,
+    vb_content_handler_Release,
+    vb_content_handler_GetTypeInfoCount,
+    vb_content_handler_GetTypeInfo,
+    vb_content_handler_GetIDsOfNames,
+    vb_content_handler_Invoke,
+    vb_content_handler_putref_documentLocator,
+    vb_content_handler_startDocument,
+    vb_content_handler_endDocument,
+    vb_content_handler_startPrefixMapping,
+    vb_content_handler_endPrefixMapping,
+    vb_content_handler_startElement,
+    vb_content_handler_endElement,
+    vb_content_handler_characters,
+    vb_content_handler_ignorableWhitespace,
+    vb_content_handler_processingInstruction,
+    vb_content_handler_skippedEntity,
+};
+
+static struct sink *create_test_sink(void)
+{
+    struct sink *sink = calloc(1, sizeof(*sink));
+
+    sink->IVBSAXContentHandler_iface.lpVtbl = &vbcontenthandlervtbl;
+    sink->refcount = 1;
+
+    return sink;
+}
+
 typedef enum _CH
 {
     CH_ENDTEST,
@@ -4812,6 +4976,32 @@ static void test_saxreader_properties(void)
     free_bstrs();
 }
 
+static void test_saxreader_vb_content_handler(void)
+{
+    IVBSAXXMLReader *reader;
+    struct sink *sink;
+    VARIANT var;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_SAXXMLReader60, NULL, CLSCTX_INPROC_SERVER, &IID_IVBSAXXMLReader, (void **)&reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    sink = create_test_sink();
+
+    hr = IVBSAXXMLReader_putref_contentHandler(reader, &sink->IVBSAXContentHandler_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = _bstr_("<a>text</a>");
+    hr = IVBSAXXMLReader_parse(reader, var);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    IVBSAXContentHandler_Release(&sink->IVBSAXContentHandler_iface);
+    IVBSAXXMLReader_Release(reader);
+
+    free_bstrs();
+}
+
 START_TEST(saxreader)
 {
     HRESULT hr;
@@ -4830,6 +5020,7 @@ START_TEST(saxreader)
         test_saxreader_features();
         test_saxreader_encoding();
         test_saxreader_dispex();
+        test_saxreader_vb_content_handler();
     }
 
     if (is_class_supported(&CLSID_MXXMLWriter60))

@@ -522,7 +522,7 @@ static BOOL pe_load_coff_symbol_table(struct module* module)
             if (name[0] == '_') name++;
 
             if (!compiland && lastfilename)
-                compiland = symt_new_compiland(module, lastfilename);
+                compiland = symt_new_compiland(module, symt_ptr_to_symref(&module->top->symt), lastfilename);
 
             if (!(dbghelp_options & SYMOPT_NO_PUBLICS))
                 symt_new_public(module, compiland, name, FALSE,

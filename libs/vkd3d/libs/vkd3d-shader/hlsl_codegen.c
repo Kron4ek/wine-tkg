@@ -191,8 +191,7 @@ static unsigned int struct_field_get_packed_offset(const struct hlsl_type *recor
     return align(offset, hlsl_type_get_packed_alignment(record->e.record.fields[field_idx].type));
 }
 
-
-static struct hlsl_ir_node *hlsl_block_add_packed_index_offset_append(struct hlsl_ctx *ctx,
+struct hlsl_ir_node *hlsl_block_add_packed_index_offset_append(struct hlsl_ctx *ctx,
         struct hlsl_block *block, struct hlsl_ir_node *prev_offset, struct hlsl_ir_node *idx,
         struct hlsl_type *type, const struct vkd3d_shader_location *loc)
 {
@@ -1798,7 +1797,7 @@ static struct hlsl_ir_node *lower_tgsm_stores(struct hlsl_ctx *ctx,
     coords = hlsl_block_add_uint_constant(ctx, block, 0, &instr->loc);
 
     return hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STORE, &res_deref,
-            coords, store->rhs.node, store->writemask, &instr->loc);
+            NULL, coords, store->rhs.node, store->writemask, &instr->loc);
 }
 
 /* Allocate a unique, ordered index to each instruction, which will be used for
@@ -6299,6 +6298,8 @@ static void compute_liveness_recurse(struct hlsl_block *block, unsigned int loop
                 store->coords.node->last_read = last_read;
             if (store->value.node)
                 store->value.node->last_read = last_read;
+            if (store->byte_offset.node)
+                store->byte_offset.node->last_read = last_read;
             break;
         }
         case HLSL_IR_SWIZZLE:
@@ -11093,14 +11094,11 @@ static void sm1_generate_ctab(struct hlsl_ctx *ctx, struct vkd3d_shader_code *ct
     struct vkd3d_bytecode_buffer buffer = {0};
 
     write_sm1_uniforms(ctx, &buffer);
-    if (buffer.status)
-    {
-        vkd3d_free(buffer.data);
+    if (ctx->result >= 0 && buffer.status < 0)
         ctx->result = buffer.status;
-        return;
-    }
-    ctab->code = buffer.data;
-    ctab->size = buffer.size;
+    if (ctx->result >= 0)
+        vkd3d_shader_code_from_bytecode_buffer(ctab, &buffer);
+    vkd3d_bytecode_buffer_cleanup(&buffer);
 }
 
 static enum vkd3d_shader_input_sysval_semantic vkd3d_siv_from_sysval_indexed(enum vkd3d_shader_sysval_semantic sysval,
@@ -12087,6 +12085,7 @@ static bool sm4_generate_vsir_instr_resource_store(struct hlsl_ctx *ctx,
     struct hlsl_ir_node *instr = &store->node;
     bool tgsm = store->resource.var->is_tgsm;
     struct vkd3d_shader_instruction *ins;
+    bool structured;
 
     if (store->store_type != HLSL_RESOURCE_STORE)
     {
@@ -12119,19 +12118,24 @@ static bool sm4_generate_vsir_instr_resource_store(struct hlsl_ctx *ctx,
         return false;
     }
 
-    if (resource_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
-    {
-        hlsl_fixme(ctx, &store->node.loc, "Structured buffers store is not implemented.");
-        return false;
-    }
-
     if (tgsm && !hlsl_is_numeric_type(resource_type))
     {
         hlsl_fixme(ctx, &store->node.loc, "Store to structured TGSM.");
         return false;
     }
 
-    if (tgsm || resource_type->sampler_dim == HLSL_SAMPLER_DIM_RAW_BUFFER)
+    if ((structured = resource_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER))
+    {
+        if (!(ins = generate_vsir_add_program_instruction(ctx, program, &instr->loc, VSIR_OP_STORE_STRUCTURED, 1, 3)))
+            return false;
+
+        if (!sm4_generate_vsir_init_dst_operand_from_deref(ctx, program, &ins->dst[0],
+                &store->resource, &instr->loc, store->writemask))
+            return false;
+
+        vsir_src_from_hlsl_node(&ins->src[1], ctx, store->byte_offset.node, VKD3DSP_WRITEMASK_ALL);
+    }
+    else if (tgsm || resource_type->sampler_dim == HLSL_SAMPLER_DIM_RAW_BUFFER)
     {
         if (!(ins = generate_vsir_add_program_instruction(ctx, program, &instr->loc, VSIR_OP_STORE_RAW, 1, 2)))
             return false;
@@ -12151,7 +12155,7 @@ static bool sm4_generate_vsir_instr_resource_store(struct hlsl_ctx *ctx,
     }
 
     vsir_src_from_hlsl_node(&ins->src[0], ctx, coords, VKD3DSP_WRITEMASK_ALL);
-    vsir_src_from_hlsl_node(&ins->src[1], ctx, value, VKD3DSP_WRITEMASK_ALL);
+    vsir_src_from_hlsl_node(&ins->src[structured ? 2 : 1], ctx, value, VKD3DSP_WRITEMASK_ALL);
 
     return true;
 }
@@ -14320,14 +14324,11 @@ static void sm4_generate_rdef(struct hlsl_ctx *ctx, struct vkd3d_shader_code *rd
 
     sm4_free_extern_resources(extern_resources, extern_resources_count);
 
-    if (buffer.status)
-    {
-        vkd3d_free(buffer.data);
+    if (ctx->result >= 0 && buffer.status < 0)
         ctx->result = buffer.status;
-        return;
-    }
-    rdef->code = buffer.data;
-    rdef->size = buffer.size;
+    if (ctx->result >= 0)
+        vkd3d_shader_code_from_bytecode_buffer(rdef, &buffer);
+    vkd3d_bytecode_buffer_cleanup(&buffer);
 }
 
 static bool loop_unrolling_generate_const_bool_store(struct hlsl_ctx *ctx, struct hlsl_ir_var *var,
@@ -14905,8 +14906,9 @@ static struct hlsl_ir_node *lower_f16tof32(struct hlsl_ctx *ctx, struct hlsl_ir_
 
     if (!(body = hlsl_sprintf_alloc(ctx, template, component_count, component_count)))
         return NULL;
-
-    if (!(func = hlsl_compile_internal_function(ctx, "soft_f16tof32", body)))
+    func = hlsl_compile_internal_function(ctx, "soft_f16tof32", body);
+    vkd3d_free(body);
+    if (!func)
         return NULL;
 
     lhs = func->parameters.vars[0];
@@ -14969,8 +14971,9 @@ static struct hlsl_ir_node *lower_f32tof16(struct hlsl_ctx *ctx, struct hlsl_ir_
 
     if (!(body = hlsl_sprintf_alloc(ctx, template, component_count, component_count)))
         return NULL;
-
-    if (!(func = hlsl_compile_internal_function(ctx, "soft_f32tof16", body)))
+    func = hlsl_compile_internal_function(ctx, "soft_f32tof16", body);
+    vkd3d_free(body);
+    if (!func)
         return NULL;
 
     lhs = func->parameters.vars[0];
@@ -15110,8 +15113,9 @@ static struct hlsl_ir_node *lower_isinf(struct hlsl_ctx *ctx, struct hlsl_ir_nod
     component_count = hlsl_type_component_count(rhs->data_type);
     if (!(body = hlsl_sprintf_alloc(ctx, template, component_count, component_count)))
         return NULL;
-
-    if (!(func = hlsl_compile_internal_function(ctx, "isinf", body)))
+    func = hlsl_compile_internal_function(ctx, "isinf", body);
+    vkd3d_free(body);
+    if (!func)
         return NULL;
 
     hlsl_block_add_simple_store(ctx, block, func->parameters.vars[0], rhs);
@@ -15514,16 +15518,18 @@ int hlsl_emit_vsir(struct hlsl_ctx *ctx, const struct vkd3d_shader_compile_info 
     process_entry_function(ctx, &semantic_vars, &body, &initializer_block, entry_func);
 
     if (ctx->result)
+    {
+        hlsl_block_cleanup(&body);
+        hlsl_block_cleanup(&initializer_block);
         return ctx->result;
+    }
 
     if (profile->type == VKD3D_SHADER_TYPE_HULL)
     {
         process_entry_function(ctx, &patch_semantic_vars, &patch_body, &initializer_block, ctx->patch_constant_func);
         if (ctx->result)
-            return ctx->result;
+            goto done;
     }
-
-    hlsl_block_cleanup(&initializer_block);
 
     if (profile->major_version < 4)
     {
@@ -15550,7 +15556,7 @@ int hlsl_emit_vsir(struct hlsl_ctx *ctx, const struct vkd3d_shader_compile_info 
     }
 
     if (ctx->result)
-        return ctx->result;
+        goto done;
 
     generate_vsir_signature(ctx, program, entry_func, &semantic_vars);
     if (program->shader_version.type == VKD3D_SHADER_TYPE_HULL)
@@ -15563,15 +15569,22 @@ int hlsl_emit_vsir(struct hlsl_ctx *ctx, const struct vkd3d_shader_compile_info 
     else
         sm4_generate_rdef(ctx, reflection_data);
     if (ctx->result)
-        return ctx->result;
+        goto done;
 
     if (program->shader_version.major < 4)
         sm1_generate_vsir(ctx, compile_info, entry_func, &semantic_vars, &body, config_flags, program);
     else
         sm4_generate_vsir(ctx, compile_info, entry_func, &semantic_vars, &body,
                 &patch_semantic_vars, &patch_body, config_flags, program);
+
     if (ctx->result)
         vkd3d_shader_free_shader_code(reflection_data);
+
+done:
+    if (profile->type == VKD3D_SHADER_TYPE_HULL)
+        hlsl_block_cleanup(&patch_body);
+    hlsl_block_cleanup(&body);
+    hlsl_block_cleanup(&initializer_block);
 
     return ctx->result;
 }

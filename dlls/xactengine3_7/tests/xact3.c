@@ -437,7 +437,7 @@ if (!winetest_platform_is_wine)
     hr = IXACT3WaveBank_Destroy(wavebank);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(destroyed_data.count == 0, "Got %u notifications.\n", destroyed_data.count);
-    todo_wine ok(destroyed_data2.count == 1, "Got %u notifications.\n", destroyed_data2.count);
+    ok(destroyed_data2.count == 1, "Got %u notifications.\n", destroyed_data2.count);
 
     notification_desc.pvContext = &destroyed_data2;
     notification_desc.flags = XACT_FLAG_NOTIFICATION_PERSIST;
@@ -475,7 +475,7 @@ if (!winetest_platform_is_wine)
     destroyed_data.wave_bank = wavebank;
     hr = IXACT3WaveBank_Destroy(wavebank);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    ok(!destroyed_data.count, "Got %u notifications.\n", destroyed_data.count);
+    todo_wine ok(!destroyed_data.count, "Got %u notifications.\n", destroyed_data.count);
 
 if (!winetest_platform_is_wine)
 {
@@ -626,10 +626,12 @@ if (!winetest_platform_is_wine)
     hr = IXACT3Engine_CreateStreamingWaveBank(engine, &streaming_params, &wavebank);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     destroyed_data.wave_bank = wavebank;
+    destroyed_data2.todo_wave_bank = TRUE;
     hr = IXACT3WaveBank_Destroy(wavebank);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     todo_wine ok(destroyed_data.count == 1, "Got %u notifications.\n", destroyed_data.count);
-    ok(!destroyed_data2.count, "Got %u notifications.\n", destroyed_data2.count);
+    todo_wine ok(!destroyed_data2.count, "Got %u notifications.\n", destroyed_data2.count);
+    destroyed_data2.todo_wave_bank = FALSE;
 
     destroyed_data.count = destroyed_data2.count = 0;
 
@@ -719,7 +721,7 @@ static void test_renderer_details(void)
 
         hr = IXACT3Engine_GetFinalMixFormat(engine, &format);
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
-        todo_wine ok(!memcmp(&format, &xaudio_details.OutputFormat, sizeof(WAVEFORMATEXTENSIBLE)), "Formats didn't match.\n");
+        ok(!memcmp(&format, &xaudio_details.OutputFormat, sizeof(WAVEFORMATEXTENSIBLE)), "Formats didn't match.\n");
 
         refcount = IXACT3Engine_Release(engine);
         todo_wine ok(!refcount, "Got outstanding refcount %ld.\n", refcount);
@@ -778,7 +780,7 @@ static void test_properties(void)
 
     hr = IXACT3SoundBank_GetState(soundbank, &state);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine ok(!state, "Got state %#lx.\n", state);
+    ok(!state, "Got state %#lx.\n", state);
 
     hr = IXACT3SoundBank_GetNumCues(soundbank, &count);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -789,7 +791,7 @@ static void test_properties(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(!strcmp(cue_props.friendlyName, "c1"), "Got name %s.\n", debugstr_a(cue_props.friendlyName));
     ok(!cue_props.interactive, "Got interactive %d.\n", cue_props.interactive);
-    todo_wine ok(cue_props.iaVariableIndex == XACTINDEX_INVALID, "Got variable index %u.\n", cue_props.iaVariableIndex);
+    ok(cue_props.iaVariableIndex == XACTINDEX_INVALID, "Got variable index %u.\n", cue_props.iaVariableIndex);
     ok(cue_props.numVariations == 2, "Got %u variations.\n", cue_props.numVariations);
     ok(cue_props.maxInstances == XACTINSTANCELIMIT_INFINITE, "Got max instances %u.\n", cue_props.maxInstances);
     ok(!cue_props.currentInstances, "Got current instances %u.\n", cue_props.currentInstances);
@@ -809,8 +811,8 @@ static void test_properties(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(!strcmp(cue_props.friendlyName, "c3"), "Got name %s.\n", debugstr_a(cue_props.friendlyName));
     ok(!cue_props.interactive, "Got interactive %d.\n", cue_props.interactive);
-    todo_wine ok(cue_props.iaVariableIndex == XACTINDEX_INVALID, "Got variable index %u.\n", cue_props.iaVariableIndex);
-    todo_wine ok(cue_props.numVariations == 1, "Got %u variations.\n", cue_props.numVariations);
+    ok(cue_props.iaVariableIndex == XACTINDEX_INVALID, "Got variable index %u.\n", cue_props.iaVariableIndex);
+    ok(cue_props.numVariations == 1, "Got %u variations.\n", cue_props.numVariations);
     ok(cue_props.maxInstances == XACTINSTANCELIMIT_INFINITE, "Got max instances %u.\n", cue_props.maxInstances);
     ok(!cue_props.currentInstances, "Got current instances %u.\n", cue_props.currentInstances);
 
@@ -830,7 +832,7 @@ static void test_properties(void)
     ok(!strcmp(props->cueProperties.friendlyName, "c1"),
             "Got name %s.\n", debugstr_a(props->cueProperties.friendlyName));
     ok(!props->cueProperties.interactive, "Got interactive %d.\n", props->cueProperties.interactive);
-    todo_wine ok(props->cueProperties.iaVariableIndex == XACTINDEX_INVALID,
+    ok(props->cueProperties.iaVariableIndex == XACTINDEX_INVALID,
             "Got variable index %u.\n", props->cueProperties.iaVariableIndex);
     ok(props->cueProperties.numVariations == 2, "Got %u variations.\n", props->cueProperties.numVariations);
     ok(props->cueProperties.maxInstances == XACTINSTANCELIMIT_INFINITE,
@@ -838,7 +840,7 @@ static void test_properties(void)
     ok(!props->cueProperties.currentInstances, "Got current instances %u.\n", props->cueProperties.currentInstances);
     var_props = &props->activeVariationProperties.variationProperties;
     ok(!var_props->index, "Got variation index %u.\n", var_props->index);
-    todo_wine ok(var_props->weight == 20, "Got variation weight %u.\n", var_props->weight);
+    ok(var_props->weight == 20, "Got variation weight %u.\n", var_props->weight);
     ok(!var_props->iaVariableMin, "Got variable min %.8e.\n", var_props->iaVariableMin);
     ok(!var_props->iaVariableMax, "Got variable max %.8e.\n", var_props->iaVariableMax);
     ok(!var_props->linger, "Got linger %u.\n", var_props->linger);
@@ -846,36 +848,33 @@ static void test_properties(void)
      * which will play. Since our cue has the variation type 0 (ordered) this
      * will always be its first sound variation. */
     sound_props = &props->activeVariationProperties.soundProperties;
-    todo_wine ok(sound_props->category == 1, "Got category %u.\n", sound_props->category);
+    ok(sound_props->category == 1, "Got category %u.\n", sound_props->category);
     ok(!sound_props->priority, "Got priority %u.\n", sound_props->priority);
     /* Pitch isn't quite consistent, and probably varies due to floating point
      * accuracy. */
-    todo_wine ok(sound_props->pitch == 65 || sound_props->pitch == 66, "Got pitch %d.\n", sound_props->pitch);
+    ok(sound_props->pitch == 65 || sound_props->pitch == 66, "Got pitch %d.\n", sound_props->pitch);
     todo_wine ok(sound_props->volume == 0.237621084f, "Got volume %.8e.\n", sound_props->volume);
-    todo_wine ok(sound_props->numTracks == 2, "Got %u tracks.\n", sound_props->numTracks);
-    if (sound_props->numTracks == 2)
-    {
-        track_props = &sound_props->arrTrackProperties[0];
-        ok(track_props->numVariations == 2, "Got %u variations.\n", track_props->numVariations);
-        ok(track_props->numChannels == 1, "Got %u channels.\n", track_props->numChannels);
-        /* Similarly the wave variation is filled for the first wave variation
-         * which will play, and we use the ordered type here. */
-        ok(!track_props->waveVariation, "Got active variation %u.\n", track_props->waveVariation);
-        /* The duration reflects the loop count multiplied by the track length.
-         * This would seem to be a bug in native, since the event has the "new
-         * variation on loop" flag set and so we should presumably get the
-         * second wave variation on the second loop. That said, when manually
-         * testing I was unable to get the track to actually play more than
-         * once. */
-        ok(track_props->duration == 300 * 3, "Got duration %lu.\n", track_props->duration);
-        ok(track_props->loopCount == 2, "Got loop count %u.\n", track_props->loopCount);
-        track_props = &sound_props->arrTrackProperties[1];
-        ok(track_props->duration == 522, "Got duration %lu.\n", track_props->duration);
-        ok(track_props->numVariations == 1, "Got %u variations.\n", track_props->numVariations);
-        ok(track_props->numChannels == 2, "Got %u channels.\n", track_props->numChannels);
-        ok(!track_props->waveVariation, "Got active variation %u.\n", track_props->waveVariation);
-        ok(!track_props->loopCount, "Got loop count %u.\n", track_props->loopCount);
-    }
+    ok(sound_props->numTracks == 2, "Got %u tracks.\n", sound_props->numTracks);
+    track_props = &sound_props->arrTrackProperties[0];
+    ok(track_props->numVariations == 2, "Got %u variations.\n", track_props->numVariations);
+    ok(track_props->numChannels == 1, "Got %u channels.\n", track_props->numChannels);
+    /* Similarly the wave variation is filled for the first wave variation
+     * which will play, and we use the ordered type here. */
+    ok(!track_props->waveVariation, "Got active variation %u.\n", track_props->waveVariation);
+    /* The duration reflects the loop count multiplied by the track length.
+     * This would seem to be a bug in native, since the event has the "new
+     * variation on loop" flag set and so we should presumably get the
+     * second wave variation on the second loop. That said, when manually
+     * testing I was unable to get the track to actually play more than
+     * once. */
+    ok(track_props->duration == 300 * 3, "Got duration %lu.\n", track_props->duration);
+    ok(track_props->loopCount == 2, "Got loop count %u.\n", track_props->loopCount);
+    track_props = &sound_props->arrTrackProperties[1];
+    todo_wine ok(track_props->duration == 522, "Got duration %lu.\n", track_props->duration);
+    ok(track_props->numVariations == 1, "Got %u variations.\n", track_props->numVariations);
+    ok(track_props->numChannels == 2, "Got %u channels.\n", track_props->numChannels);
+    ok(!track_props->waveVariation, "Got active variation %u.\n", track_props->waveVariation);
+    ok(!track_props->loopCount, "Got loop count %u.\n", track_props->loopCount);
     CoTaskMemFree(props);
 
     hr = IXACT3Cue_GetProperties(cue2, &props);
@@ -896,11 +895,11 @@ static void test_properties(void)
     if (sound_props->numTracks)
     {
         track_props = &sound_props->arrTrackProperties[0];
-        ok(track_props->numVariations == 1, "Got %u variations.\n", track_props->numVariations);
+        todo_wine ok(track_props->numVariations == 1, "Got %u variations.\n", track_props->numVariations);
         ok(track_props->numChannels == 1, "Got %u channels.\n", track_props->numChannels);
         ok(!track_props->waveVariation, "Got active variation %u.\n", track_props->waveVariation);
-        ok(track_props->duration == 400, "Got duration %lu.\n", track_props->duration);
-        ok(!track_props->loopCount, "Got loop count %u.\n", track_props->loopCount);
+        todo_wine ok(track_props->duration == 400, "Got duration %lu.\n", track_props->duration);
+        todo_wine ok(!track_props->loopCount, "Got loop count %u.\n", track_props->loopCount);
     }
     CoTaskMemFree(props);
 
@@ -915,21 +914,21 @@ static void test_properties(void)
 
     hr = IXACT3Cue_GetState(cue, &state);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine ok(state == (XACT_STATE_PLAYING | XACT_STATE_PAUSED), "Got state %#lx.\n", state);
+    ok(state == (XACT_STATE_PLAYING | XACT_STATE_PAUSED), "Got state %#lx.\n", state);
 
     hr = IXACT3Cue_Play(cue);
-    todo_wine ok(hr == XACTENGINE_E_INVALIDUSAGE, "Got hr %#lx.\n", hr);
+    ok(hr == XACTENGINE_E_INVALIDUSAGE, "Got hr %#lx.\n", hr);
 
     hr = IXACT3Cue_GetProperties(cue, &props);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine ok(props->cueProperties.currentInstances == 1, "Got current instances %u.\n", props->cueProperties.currentInstances);
+    ok(props->cueProperties.currentInstances == 1, "Got current instances %u.\n", props->cueProperties.currentInstances);
     var_props = &props->activeVariationProperties.variationProperties;
     ok(!var_props->index, "Got variation index %u.\n", var_props->index);
     CoTaskMemFree(props);
 
     hr = IXACT3Cue_GetProperties(cue2, &props);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine ok(props->cueProperties.currentInstances == 1, "Got current instances %u.\n", props->cueProperties.currentInstances);
+    ok(props->cueProperties.currentInstances == 1, "Got current instances %u.\n", props->cueProperties.currentInstances);
     var_props = &props->activeVariationProperties.variationProperties;
     todo_wine ok(var_props->index == 1, "Got variation index %u.\n", var_props->index);
     CoTaskMemFree(props);
@@ -944,11 +943,11 @@ static void test_properties(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(state == (XACT_STATE_PLAYING | XACT_STATE_PAUSED), "Got state %#lx.\n", state);
     hr = IXACT3Cue_Play(cue2);
-    todo_wine ok(hr == XACTENGINE_E_INVALIDUSAGE, "Got hr %#lx.\n", hr);
+    ok(hr == XACTENGINE_E_INVALIDUSAGE, "Got hr %#lx.\n", hr);
 
     hr = IXACT3Cue_GetProperties(cue, &props);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine ok(props->cueProperties.currentInstances == 2, "Got current instances %u.\n", props->cueProperties.currentInstances);
+    ok(props->cueProperties.currentInstances == 2, "Got current instances %u.\n", props->cueProperties.currentInstances);
     var_props = &props->activeVariationProperties.variationProperties;
     ok(!var_props->index, "Got variation index %u.\n", var_props->index);
     CoTaskMemFree(props);
@@ -958,7 +957,7 @@ static void test_properties(void)
 
     hr = IXACT3Cue_GetProperties(cue, &props);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine ok(props->cueProperties.currentInstances == 1, "Got current instances %u.\n", props->cueProperties.currentInstances);
+    ok(props->cueProperties.currentInstances == 1, "Got current instances %u.\n", props->cueProperties.currentInstances);
     CoTaskMemFree(props);
 
     index = IXACT3Engine_GetGlobalVariableIndex(engine, "v1");
@@ -978,7 +977,7 @@ static void test_properties(void)
     ok(state == XACT_STATE_STOPPING || state == XACT_STATE_STOPPED, "Got state %#lx.\n", state);
 
     hr = IXACT3Cue_Play(cue);
-    todo_wine ok(hr == XACTENGINE_E_INVALIDUSAGE, "Got hr %#lx.\n", hr);
+    ok(hr == XACTENGINE_E_INVALIDUSAGE, "Got hr %#lx.\n", hr);
 
     /* Third instance of this cue: we've now alternated back to the first sound
      * variation, and since this is the second instance of that variation we
@@ -993,22 +992,19 @@ static void test_properties(void)
     var_props = &props->activeVariationProperties.variationProperties;
     ok(!var_props->index, "Got variation index %u.\n", var_props->index);
     sound_props = &props->activeVariationProperties.soundProperties;
-    todo_wine ok(sound_props->numTracks == 2, "Got %u tracks.\n", sound_props->numTracks);
-    if (sound_props->numTracks == 2)
-    {
-        track_props = &sound_props->arrTrackProperties[0];
-        ok(track_props->numVariations == 2, "Got %u variations.\n", track_props->numVariations);
-        ok(track_props->numChannels == 1, "Got %u channels.\n", track_props->numChannels);
-        ok(track_props->waveVariation == 1, "Got active variation %u.\n", track_props->waveVariation);
-        ok(track_props->duration == 400 * 3, "Got duration %lu.\n", track_props->duration);
-        ok(track_props->loopCount == 2, "Got loop count %u.\n", track_props->loopCount);
-        track_props = &sound_props->arrTrackProperties[1];
-        ok(track_props->duration == 522, "Got duration %lu.\n", track_props->duration);
-        ok(track_props->numVariations == 1, "Got %u variations.\n", track_props->numVariations);
-        ok(track_props->numChannels == 2, "Got %u channels.\n", track_props->numChannels);
-        ok(!track_props->waveVariation, "Got active variation %u.\n", track_props->waveVariation);
-        ok(!track_props->loopCount, "Got loop count %u.\n", track_props->loopCount);
-    }
+    ok(sound_props->numTracks == 2, "Got %u tracks.\n", sound_props->numTracks);
+    track_props = &sound_props->arrTrackProperties[0];
+    ok(track_props->numVariations == 2, "Got %u variations.\n", track_props->numVariations);
+    ok(track_props->numChannels == 1, "Got %u channels.\n", track_props->numChannels);
+    todo_wine ok(track_props->waveVariation == 1, "Got active variation %u.\n", track_props->waveVariation);
+    todo_wine ok(track_props->duration == 400 * 3, "Got duration %lu.\n", track_props->duration);
+    ok(track_props->loopCount == 2, "Got loop count %u.\n", track_props->loopCount);
+    track_props = &sound_props->arrTrackProperties[1];
+    todo_wine ok(track_props->duration == 522, "Got duration %lu.\n", track_props->duration);
+    ok(track_props->numVariations == 1, "Got %u variations.\n", track_props->numVariations);
+    ok(track_props->numChannels == 2, "Got %u channels.\n", track_props->numChannels);
+    ok(!track_props->waveVariation, "Got active variation %u.\n", track_props->waveVariation);
+    ok(!track_props->loopCount, "Got loop count %u.\n", track_props->loopCount);
     CoTaskMemFree(props);
 
     hr = IXACT3SoundBank_Prepare(soundbank, 2, 0, 0, &cue);
@@ -1061,20 +1057,20 @@ static void test_properties(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     hr = IXACT3Cue_GetProperties(cue, &props);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    ok(props->cueProperties.currentInstances == 1, "Got current instances %u.\n", props->cueProperties.currentInstances);
+    todo_wine ok(props->cueProperties.currentInstances == 1, "Got current instances %u.\n", props->cueProperties.currentInstances);
 
     hr = IXACT3Cue_GetState(cue, &state);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(state == XACT_STATE_PLAYING, "Got state %#lx.\n", state);
     hr = IXACT3Cue_Play(cue);
-    todo_wine ok(hr == XACTENGINE_E_INVALIDUSAGE, "Got hr %#lx.\n", hr);
+    ok(hr == XACTENGINE_E_INVALIDUSAGE, "Got hr %#lx.\n", hr);
     hr = IXACT3Cue_Stop(cue, XACT_FLAG_STOP_IMMEDIATE);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     hr = IXACT3Cue_GetState(cue, &state);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     ok(state == XACT_STATE_STOPPING || state == XACT_STATE_STOPPED, "Got state %#lx.\n", state);
     hr = IXACT3Cue_Play(cue);
-    todo_wine ok(hr == XACTENGINE_E_INVALIDUSAGE, "Got hr %#lx.\n", hr);
+    ok(hr == XACTENGINE_E_INVALIDUSAGE, "Got hr %#lx.\n", hr);
 
     hr = IXACT3Cue_Destroy(cue);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1084,10 +1080,10 @@ static void test_properties(void)
         hr = IXACT3SoundBank_Prepare(soundbank, 2, 0, 0, &cue);
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
         hr = IXACT3Cue_Play(cue);
-        todo_wine_if (i == 10) ok(hr == (i < 11 ? S_OK : XACTENGINE_E_INSTANCELIMITFAILTOPLAY), "Got hr %#lx.\n", hr);
+        todo_wine_if (i == 11) ok(hr == (i < 11 ? S_OK : XACTENGINE_E_INSTANCELIMITFAILTOPLAY), "Got hr %#lx.\n", hr);
         hr = IXACT3Cue_GetProperties(cue, &props);
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
-        todo_wine_if (i < 10) ok(props->cueProperties.currentInstances == min(i + 1, 11),
+        todo_wine ok(props->cueProperties.currentInstances == min(i + 1, 11),
                 "Got current instances %u.\n", props->cueProperties.currentInstances);
     }
 
@@ -1106,24 +1102,24 @@ static void test_properties(void)
     ok(!strcmp(props->cueProperties.friendlyName, "c3"),
             "Got name %s.\n", debugstr_a(props->cueProperties.friendlyName));
     ok(!props->cueProperties.interactive, "Got interactive %d.\n", props->cueProperties.interactive);
-    todo_wine ok(props->cueProperties.iaVariableIndex == XACTINDEX_INVALID,
+    ok(props->cueProperties.iaVariableIndex == XACTINDEX_INVALID,
             "Got variable index %u.\n", props->cueProperties.iaVariableIndex);
-    todo_wine ok(props->cueProperties.numVariations == 1, "Got %u variations.\n", props->cueProperties.numVariations);
+    ok(props->cueProperties.numVariations == 1, "Got %u variations.\n", props->cueProperties.numVariations);
     ok(props->cueProperties.maxInstances == XACTINSTANCELIMIT_INFINITE,
             "Got max instances %u.\n", props->cueProperties.maxInstances);
     ok(!props->cueProperties.currentInstances, "Got current instances %u.\n", props->cueProperties.currentInstances);
     var_props = &props->activeVariationProperties.variationProperties;
     ok(!var_props->index, "Got variation index %u.\n", var_props->index);
-    todo_wine ok(var_props->weight == 0xff, "Got variation weight %u.\n", var_props->weight);
+    ok(var_props->weight == 0xff, "Got variation weight %u.\n", var_props->weight);
     ok(!var_props->iaVariableMin, "Got variable min %.8e.\n", var_props->iaVariableMin);
     ok(!var_props->iaVariableMax, "Got variable max %.8e.\n", var_props->iaVariableMax);
     ok(!var_props->linger, "Got linger %u.\n", var_props->linger);
     sound_props = &props->activeVariationProperties.soundProperties;
-    todo_wine ok(sound_props->category == 2, "Got category %u.\n", sound_props->category);
+    ok(sound_props->category == 2, "Got category %u.\n", sound_props->category);
     ok(!sound_props->priority, "Got priority %u.\n", sound_props->priority);
-    todo_wine ok(sound_props->pitch == -8, "Got pitch %d.\n", sound_props->pitch);
+    ok(sound_props->pitch == -8, "Got pitch %d.\n", sound_props->pitch);
     todo_wine ok(sound_props->volume == 1.66583312f, "Got volume %.8e.\n", sound_props->volume);
-    todo_wine ok(sound_props->numTracks == 1, "Got %u tracks.\n", sound_props->numTracks);
+    ok(sound_props->numTracks == 1, "Got %u tracks.\n", sound_props->numTracks);
     if (sound_props->numTracks)
     {
         track_props = &sound_props->arrTrackProperties[0];
@@ -1289,12 +1285,12 @@ if (!winetest_platform_is_wine)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     hr = IXACT3Wave_GetState(wave, &state);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine ok(state == (XACT_STATE_PREPARED | XACT_STATE_PAUSED), "Got state %#lx.\n", state);
+    ok(state == (XACT_STATE_PREPARED | XACT_STATE_PAUSED), "Got state %#lx.\n", state);
     hr = IXACT3Wave_Pause(wave, FALSE);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     hr = IXACT3Wave_GetState(wave, &state);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine ok(state == XACT_STATE_PREPARED, "Got state %#lx.\n", state);
+    ok(state == XACT_STATE_PREPARED, "Got state %#lx.\n", state);
 
     hr = IXACT3WaveBank_Prepare(wavebank, 2, XACT_FLAG_UNITS_MS, 100, 2, &wave);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1310,7 +1306,7 @@ if (!winetest_platform_is_wine)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     hr = IXACT3Wave_GetProperties(wave, &wave_props);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine ok(wave_props.backgroundMusic == TRUE, "Got background music %d.\n", wave_props.backgroundMusic);
+    ok(wave_props.backgroundMusic == TRUE, "Got background music %d.\n", wave_props.backgroundMusic);
 
     refcount = IXACT3Engine_Release(engine);
     todo_wine ok(!refcount, "Got outstanding refcount %ld.\n", refcount);
@@ -1483,16 +1479,14 @@ static void test_matrices(void)
     for (unsigned int src_count = 0; src_count < 10; ++src_count)
     {
         hr = IXACT3Cue_SetMatrixCoefficients(cue, src_count, format.Format.nChannels, coefficients);
-        todo_wine_if (src_count == 0 || src_count == 9)
-            ok(hr == (src_count >= 1 && src_count <= 8 ? S_OK : E_FAIL),
-                    "Got hr %#lx for source count %u.\n", hr, src_count);
+        ok(hr == (src_count >= 1 && src_count <= 8 ? S_OK : E_FAIL),
+            "Got hr %#lx for source count %u.\n", hr, src_count);
     }
     for (unsigned int dst_count = 0; dst_count < 10; ++dst_count)
     {
         hr = IXACT3Cue_SetMatrixCoefficients(cue, 1, dst_count, coefficients);
-        todo_wine_if (dst_count != format.Format.nChannels)
-            ok(hr == (dst_count == format.Format.nChannels ? S_OK : E_INVALIDARG),
-                    "Got hr %#lx for destination count %u.\n", hr, dst_count);
+        ok(hr == (dst_count == format.Format.nChannels ? S_OK : E_INVALIDARG),
+            "Got hr %#lx for destination count %u.\n", hr, dst_count);
     }
 
     refcount = IXACT3Engine_Release(engine);
@@ -1544,7 +1538,7 @@ static void test_create_wavebank(void)
     streaming_params.file = file;
     streaming_params.packetSize = 16;
     hr = IXACT3Engine_CreateStreamingWaveBank(engine, &streaming_params, &wavebank);
-    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    todo_wine ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     CloseHandle(file);
 

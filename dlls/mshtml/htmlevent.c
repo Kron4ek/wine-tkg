@@ -4748,42 +4748,31 @@ HRESULT set_event_handler(EventTarget *event_target, eventid_t eid, VARIANT *var
         return set_event_handler_disp(event_target, eid, V_DISPATCH(var));
 
     case VT_BSTR: {
-        HTMLInnerWindow *script_global;
-        IDispatch *disp;
+        compat_mode_t compat_mode = dispex_compat_mode(&event_target->dispex);
+        VARIANT *v;
+        HRESULT hres;
 
-        /* Compile the string into a callable function using the script engine */
-        script_global = get_script_global(&event_target->dispex);
-        if(script_global) {
-            TRACE("Compiling event handler string: %s\n", debugstr_w(V_BSTR(var)));
-            disp = script_parse_event(script_global, V_BSTR(var));
-            IHTMLWindow2_Release(&script_global->base.IHTMLWindow2_iface);
-            if(disp) {
-                HRESULT hres = set_event_handler_disp(event_target, eid, disp);
-                IDispatch_Release(disp);
-                return hres;
-            }
-            WARN("Failed to compile event handler string\n");
-        }
+        if(compat_mode == COMPAT_MODE_IE8)
+            FIXME("Setting to string %s not supported\n", debugstr_w(V_BSTR(var)));
 
-        /* Fallback: store the value in DispatchEx for quirks mode compatibility */
-        if(use_event_quirks(event_target)) {
-            VARIANT *v;
-            HRESULT hres;
-
-            remove_event_handler(event_target, eid);
-
-            hres = get_event_dispex_ref(event_target, eid, TRUE, &v);
-            if(FAILED(hres))
-                return hres;
-
-            V_BSTR(v) = SysAllocString(V_BSTR(var));
-            if(!V_BSTR(v))
-                return E_OUTOFMEMORY;
-            V_VT(v) = VT_BSTR;
+        /*
+         * Setting event handler to string is a rare case and we don't want to
+         * complicate nor increase memory of listener_container_t for that. Instead,
+         * we store the value in DispatchEx, which can already handle custom
+         * properties.
+         */
+        remove_event_handler(event_target, eid);
+        if(compat_mode >= COMPAT_MODE_IE9)
             return S_OK;
-        }
 
-        FIXME("Setting to string %s not supported (no script global)\n", debugstr_w(V_BSTR(var)));
+        hres = get_event_dispex_ref(event_target, eid, TRUE, &v);
+        if(FAILED(hres))
+            return hres;
+
+        V_BSTR(v) = SysAllocString(V_BSTR(var));
+        if(!V_BSTR(v))
+            return E_OUTOFMEMORY;
+        V_VT(v) = VT_BSTR;
         return S_OK;
     }
 
@@ -4885,20 +4874,6 @@ void bind_target_event(HTMLDocumentNode *doc, EventTarget *event_target, const W
     set_event_handler_disp(event_target, eid, disp);
 }
 
-HRESULT set_node_event_handler_by_attr(HTMLDOMNode *node, const WCHAR *attr_name, VARIANT *var)
-{
-    eventid_t eid;
-
-    eid = attr_to_eid(attr_name);
-    if(eid == EVENTID_LAST) {
-        WARN("Unsupported event attribute %s\n", debugstr_w(attr_name));
-        return DISP_E_UNKNOWNNAME;
-    }
-
-    TRACE("Setting event handler for %s (eid=%d)\n", debugstr_w(attr_name), eid);
-    return set_node_event(node, eid, var);
-}
-
 void update_doc_cp_events(HTMLDocumentNode *doc, cp_static_data_t *cp)
 {
     int i;
@@ -4907,6 +4882,45 @@ void update_doc_cp_events(HTMLDocumentNode *doc, cp_static_data_t *cp)
         if((event_info[i].flags & EVENT_DEFAULTLISTENER) && is_cp_event(cp, event_info[i].dispid))
             ensure_doc_nsevent_handler(doc, NULL, i);
     }
+}
+
+void event_attr_changed(HTMLDocumentNode *doc, nsIDOMElement *nselem, const WCHAR *name)
+{
+    nsAString name_str, value_str;
+    const PRUnichar *value;
+    HTMLDOMNode *node;
+    IDispatch *disp;
+    eventid_t eid;
+    nsresult nsres;
+    HRESULT hres;
+
+    eid = attr_to_eid(name);
+    if(eid == EVENTID_LAST)
+        return;
+
+    hres = get_node((nsIDOMNode*)nselem, TRUE, &node);
+    if(FAILED(hres))
+        return;
+
+    nsAString_InitDepend(&name_str, name);
+    nsAString_InitDepend(&value_str, NULL);
+
+    nsres = nsIDOMElement_GetAttribute(nselem, &name_str, &value_str);
+    if(NS_SUCCEEDED(nsres)) {
+        nsAString_GetData(&value_str, &value);
+
+        TRACE("%p.%s = %s\n", nselem, debugstr_w(name), debugstr_w(value));
+
+        disp = script_parse_event(doc->window, value);
+        if(disp) {
+            set_event_handler_disp(get_node_event_prop_target(node, eid), eid, disp);
+            IDispatch_Release(disp);
+        }
+    }
+
+    node_release(node);
+    nsAString_Finish(&name_str);
+    nsAString_Finish(&value_str);
 }
 
 void check_event_attr(HTMLDocumentNode *doc, nsIDOMElement *nselem)

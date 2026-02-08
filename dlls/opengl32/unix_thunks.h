@@ -3,7 +3,7 @@
 typedef ULONG PTR32;
 
 extern BOOL wrap_wglCopyContext( TEB *teb, HGLRC hglrcSrc, HGLRC hglrcDst, UINT mask );
-extern HGLRC wrap_wglCreateContext( TEB *teb, HDC hDc );
+extern HGLRC wrap_wglCreateContext( TEB *teb, HDC hDc, HGLRC handle );
 extern BOOL wrap_wglDeleteContext( TEB *teb, HGLRC oldContext );
 extern PROC wrap_wglGetProcAddress( TEB *teb, LPCSTR lpszProc );
 extern BOOL wrap_wglMakeCurrent( TEB *teb, HDC hDc, HGLRC newContext );
@@ -23,10 +23,12 @@ extern const GLubyte *wrap_glGetString( TEB *teb, GLenum name );
 extern void wrap_glReadBuffer( TEB *teb, GLenum src );
 extern void wrap_glReadPixels( TEB *teb, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels );
 extern void wrap_glViewport( TEB *teb, GLint x, GLint y, GLsizei width, GLsizei height );
+extern GLsync wrap_glCreateSyncFromCLeventARB( TEB *teb, struct _cl_context *context, struct _cl_event *event, GLbitfield flags, GLsync handle );
 extern void wrap_glDebugMessageCallback( TEB *teb, GLDEBUGPROC callback, const void *userParam );
 extern void wrap_glDebugMessageCallbackAMD( TEB *teb, GLDEBUGPROCAMD callback, void *userParam );
 extern void wrap_glDebugMessageCallbackARB( TEB *teb, GLDEBUGPROCARB callback, const void *userParam );
 extern void wrap_glDrawBuffers( TEB *teb, GLsizei n, const GLenum *bufs );
+extern GLsync wrap_glFenceSync( TEB *teb, GLenum condition, GLbitfield flags, GLsync handle );
 extern void wrap_glFramebufferDrawBufferEXT( TEB *teb, GLuint framebuffer, GLenum mode );
 extern void wrap_glFramebufferDrawBuffersEXT( TEB *teb, GLuint framebuffer, GLsizei n, const GLenum *bufs );
 extern void wrap_glFramebufferReadBufferEXT( TEB *teb, GLuint framebuffer, GLenum mode );
@@ -34,26 +36,16 @@ extern void wrap_glGetFramebufferParameterivEXT( TEB *teb, GLuint framebuffer, G
 extern void wrap_glGetInteger64v( TEB *teb, GLenum pname, GLint64 *data );
 extern const GLubyte *wrap_glGetStringi( TEB *teb, GLenum name, GLuint index );
 extern void wrap_glGetUnsignedBytevEXT( TEB *teb, GLenum pname, GLubyte *data );
+extern GLsync wrap_glImportSyncEXT( TEB *teb, GLenum external_sync_type, GLintptr external_sync, GLbitfield flags, GLsync handle );
 extern void wrap_glNamedFramebufferDrawBuffer( TEB *teb, GLuint framebuffer, GLenum buf );
 extern void wrap_glNamedFramebufferDrawBuffers( TEB *teb, GLuint framebuffer, GLsizei n, const GLenum *bufs );
 extern void wrap_glNamedFramebufferReadBuffer( TEB *teb, GLuint framebuffer, GLenum src );
-extern BOOL wrap_wglBindTexImageARB( TEB *teb, HPBUFFERARB hPbuffer, int iBuffer );
-extern HGLRC wrap_wglCreateContextAttribsARB( TEB *teb, HDC hDC, HGLRC hShareContext, const int *attribList );
-extern HPBUFFERARB wrap_wglCreatePbufferARB( TEB *teb, HDC hDC, int iPixelFormat, int iWidth, int iHeight, const int *piAttribList );
-extern BOOL wrap_wglDestroyPbufferARB( TEB *teb, HPBUFFERARB hPbuffer );
-extern HDC wrap_wglGetPbufferDCARB( TEB *teb, HPBUFFERARB hPbuffer );
+extern HGLRC wrap_wglCreateContextAttribsARB( TEB *teb, HDC hDC, HGLRC hShareContext, const int *attribList, HGLRC handle );
 extern BOOL wrap_wglMakeContextCurrentARB( TEB *teb, HDC hDrawDC, HDC hReadDC, HGLRC hglrc );
-extern BOOL wrap_wglQueryPbufferARB( TEB *teb, HPBUFFERARB hPbuffer, int iAttribute, int *piValue );
-extern int wrap_wglReleasePbufferDCARB( TEB *teb, HPBUFFERARB hPbuffer, HDC hDC );
-extern BOOL wrap_wglReleaseTexImageARB( TEB *teb, HPBUFFERARB hPbuffer, int iBuffer );
-extern BOOL wrap_wglSetPbufferAttribARB( TEB *teb, HPBUFFERARB hPbuffer, const int *piAttribList );
 
 #ifdef _WIN64
 extern void wow64_glBufferStorage( TEB *teb, GLenum target, GLsizeiptr size, const void *data, GLbitfield flags );
-extern GLenum wow64_glClientWaitSync( TEB *teb, GLsync sync, GLbitfield flags, GLuint64 timeout );
 extern void wow64_glDeleteBuffers( TEB *teb, GLsizei n, const GLuint *buffers );
-extern void wow64_glDeleteSync( TEB *teb, GLsync sync );
-extern GLsync wow64_glFenceSync( TEB *teb, GLenum condition, GLbitfield flags );
 extern void wow64_glFlushMappedBufferRange( TEB *teb, GLenum target, GLintptr offset, GLsizeiptr length );
 extern void wow64_glFlushMappedNamedBufferRange( TEB *teb, GLuint buffer, GLintptr offset, GLsizeiptr length );
 extern void wow64_glFlushMappedNamedBufferRangeEXT( TEB *teb, GLuint buffer, GLintptr offset, GLsizeiptr length );
@@ -61,8 +53,6 @@ extern void wow64_glGetBufferPointerv( TEB *teb, GLenum target, GLenum pname, PT
 extern void wow64_glGetBufferPointervARB( TEB *teb, GLenum target, GLenum pname, PTR32 *params );
 extern void wow64_glGetNamedBufferPointerv( TEB *teb, GLuint buffer, GLenum pname, PTR32 *params );
 extern void wow64_glGetNamedBufferPointervEXT( TEB *teb, GLuint buffer, GLenum pname, PTR32 *params );
-extern void wow64_glGetSynciv( TEB *teb, GLsync sync, GLenum pname, GLsizei count, GLsizei *length, GLint *values );
-extern GLboolean wow64_glIsSync( TEB *teb, GLsync sync );
 extern void *wow64_glMapBuffer( TEB *teb, GLenum target, GLenum access );
 extern void *wow64_glMapBufferARB( TEB *teb, GLenum target, GLenum access );
 extern void *wow64_glMapBufferRange( TEB *teb, GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access );
@@ -76,5 +66,4 @@ extern GLboolean wow64_glUnmapBuffer( TEB *teb, GLenum target );
 extern GLboolean wow64_glUnmapBufferARB( TEB *teb, GLenum target );
 extern GLboolean wow64_glUnmapNamedBuffer( TEB *teb, GLuint buffer );
 extern GLboolean wow64_glUnmapNamedBufferEXT( TEB *teb, GLuint buffer );
-extern void wow64_glWaitSync( TEB *teb, GLsync sync, GLbitfield flags, GLuint64 timeout );
 #endif

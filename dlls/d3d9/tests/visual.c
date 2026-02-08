@@ -15861,7 +15861,7 @@ done:
 
 static void shadow_test(void)
 {
-    static const DWORD ps_code[] =
+    static const DWORD ps2_code[] =
     {
         0xffff0200,                                                             /* ps_2_0                       */
         0x0200001f, 0x90000000, 0xa00f0800,                                     /* dcl_2d s0                    */
@@ -15874,6 +15874,22 @@ static void shadow_test(void)
         0x02000001, 0x800f0800, 0x80e40000,                                     /* mov oC0, r0                  */
         0x0000ffff,                                                             /* end                          */
     };
+
+    static const DWORD ps14_code[] =
+    {
+        0xffff0104,                                                             /* ps_1_4                       */
+        0x00000042, 0x800f0000, 0xb0e40000,                                     /* texld r0, t0                 */
+        0x0000ffff,                                                             /* end                          */
+    };
+
+    static const DWORD ps1_code[] =
+    {
+        0xffff0101,                                                             /* ps_1_1                       */
+        0x00000042, 0xb00f0000,                                                 /* tex t0                       */
+        0x00000001, 0x800f0000, 0xb0e40000,                                     /* mov r0, t0                   */
+        0x0000ffff,                                                             /* end                          */
+    };
+
     struct
     {
         D3DFORMAT format;
@@ -15905,23 +15921,23 @@ static void shadow_test(void)
     };
     struct
     {
-        unsigned int x, y, color;
+        unsigned int x, y, color, ps2_color;
     }
     expected_colors[] =
     {
-        {400,  60, 0x00000000},
-        {560, 180, 0xffff00ff},
-        {560, 300, 0xffff00ff},
-        {400, 420, 0xffffffff},
-        {240, 420, 0xffffffff},
-        { 80, 300, 0x00000000},
-        { 80, 180, 0x00000000},
-        {240,  60, 0x00000000},
+        {400,  60, 0x00000000, 0x00000000},
+        {560, 180, 0xffffffff, 0xffff00ff},
+        {560, 300, 0xffffffff, 0xffff00ff},
+        {400, 420, 0xffffffff, 0xffffffff},
+        {240, 420, 0xffffffff, 0xffffffff},
+        { 80, 300, 0x00000000, 0x00000000},
+        { 80, 180, 0x00000000, 0x00000000},
+        {240,  60, 0x00000000, 0x00000000},
     };
 
     IDirect3DSurface9 *original_ds, *original_rt, *rt;
+    IDirect3DPixelShader9 *ps[4];
     struct surface_readback rb;
-    IDirect3DPixelShader9 *ps;
     IDirect3DDevice9 *device;
     IDirect3D9 *d3d;
     ULONG refcount;
@@ -15956,8 +15972,13 @@ static void shadow_test(void)
     hr = IDirect3DDevice9_CreateRenderTarget(device, 1024, 1024, D3DFMT_A8R8G8B8,
             D3DMULTISAMPLE_NONE, 0, FALSE, &rt, NULL);
     ok(SUCCEEDED(hr), "CreateRenderTarget failed, hr %#lx.\n", hr);
-    hr = IDirect3DDevice9_CreatePixelShader(device, ps_code, &ps);
+    hr = IDirect3DDevice9_CreatePixelShader(device, ps2_code, &ps[0]);
     ok(SUCCEEDED(hr), "CreatePixelShader failed, hr %#lx.\n", hr);
+    hr = IDirect3DDevice9_CreatePixelShader(device, ps14_code, &ps[1]);
+    ok(SUCCEEDED(hr), "CreatePixelShader failed, hr %#lx.\n", hr);
+    hr = IDirect3DDevice9_CreatePixelShader(device, ps1_code, &ps[2]);
+    ok(SUCCEEDED(hr), "CreatePixelShader failed, hr %#lx.\n", hr);
+    ps[3] = NULL;
 
     hr = IDirect3DDevice9_SetFVF(device, D3DFVF_XYZ | D3DFVF_TEX1 | D3DFVF_TEXCOORDSIZE4(0));
     ok(SUCCEEDED(hr), "SetFVF failed, hr %#lx.\n", hr);
@@ -15991,6 +16012,8 @@ static void shadow_test(void)
         if (FAILED(IDirect3D9_CheckDeviceFormat(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL,
                 D3DFMT_X8R8G8B8, D3DUSAGE_DEPTHSTENCIL, D3DRTYPE_TEXTURE, format)))
             continue;
+
+        winetest_push_context("%s", formats[i].name);
 
         hr = IDirect3DDevice9_CreateTexture(device, 1024, 1024, 1,
                 D3DUSAGE_DEPTHSTENCIL, format, D3DPOOL_DEFAULT, &texture, NULL);
@@ -16029,41 +16052,48 @@ static void shadow_test(void)
         hr = IDirect3DDevice9_SetTexture(device, 0, (IDirect3DBaseTexture9 *)texture);
         ok(SUCCEEDED(hr), "SetTexture failed, hr %#lx.\n", hr);
 
-        hr = IDirect3DDevice9_SetPixelShader(device, ps);
-        ok(SUCCEEDED(hr), "SetPixelShader failed, hr %#lx.\n", hr);
+        for (unsigned int p = 0; p < 4; ++p)
+        {
+            winetest_push_context("ps %u", p);
 
-        /* Do the actual shadow mapping. */
-        hr = IDirect3DDevice9_BeginScene(device);
-        ok(SUCCEEDED(hr), "BeginScene failed, hr %#lx.\n", hr);
-        hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, quad, sizeof(*quad));
-        ok(SUCCEEDED(hr), "DrawPrimitiveUP failed, hr %#lx.\n", hr);
-        hr = IDirect3DDevice9_EndScene(device);
-        ok(SUCCEEDED(hr), "EndScene failed, hr %#lx.\n", hr);
+            hr = IDirect3DDevice9_SetPixelShader(device, ps[p]);
+            ok(SUCCEEDED(hr), "SetPixelShader failed, hr %#lx.\n", hr);
+
+            /* Do the actual shadow mapping. */
+            hr = IDirect3DDevice9_BeginScene(device);
+            ok(SUCCEEDED(hr), "BeginScene failed, hr %#lx.\n", hr);
+            hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, quad, sizeof(*quad));
+            ok(SUCCEEDED(hr), "DrawPrimitiveUP failed, hr %#lx.\n", hr);
+            hr = IDirect3DDevice9_EndScene(device);
+            ok(SUCCEEDED(hr), "EndScene failed, hr %#lx.\n", hr);
+
+            get_rt_readback(original_rt, &rb);
+            for (j = 0; j < ARRAY_SIZE(expected_colors); ++j)
+            {
+                unsigned int color = get_readback_color(&rb, expected_colors[j].x, expected_colors[j].y);
+                unsigned int expect = (p == 0 ? expected_colors[j].ps2_color : expected_colors[j].color);
+
+                /* Geforce 7 on Windows returns 1.0 in alpha when the depth format is D24S8 or D24X8,
+                 * whereas other GPUs (all AMD, newer Nvidia) return the same value they return in .rgb.
+                 * Accept alpha mismatches as broken but make sure to check the color channels. */
+                todo_wine_if (p == 3) ok(color_match(color, expect, 0)
+                        || broken(color_match(color & 0x00ffffff, expect & 0x00ffffff, 0)),
+                        "Expected color 0x%08x at (%u, %u), got 0x%08x.\n",
+                        expect, expected_colors[j].x, expected_colors[j].y, color);
+            }
+            release_surface_readback(&rb);
+
+            winetest_pop_context();
+        }
 
         hr = IDirect3DDevice9_SetTexture(device, 0, NULL);
         ok(SUCCEEDED(hr), "SetTexture failed, hr %#lx.\n", hr);
         IDirect3DTexture9_Release(texture);
-
-        get_rt_readback(original_rt, &rb);
-        for (j = 0; j < ARRAY_SIZE(expected_colors); ++j)
-        {
-            unsigned int color = get_readback_color(&rb, expected_colors[j].x, expected_colors[j].y);
-            /* Geforce 7 on Windows returns 1.0 in alpha when the depth format is D24S8 or D24X8,
-             * whereas other GPUs (all AMD, newer Nvidia) return the same value they return in .rgb.
-             * Accept alpha mismatches as broken but make sure to check the color channels. */
-            ok(color_match(color, expected_colors[j].color, 0)
-                    || broken(color_match(color & 0x00ffffff, expected_colors[j].color & 0x00ffffff, 0)),
-                    "Expected color 0x%08x at (%u, %u) for format %s, got 0x%08x.\n",
-                    expected_colors[j].color, expected_colors[j].x, expected_colors[j].y,
-                    formats[i].name, color);
-        }
-        release_surface_readback(&rb);
-
-        hr = IDirect3DDevice9_Present(device, NULL, NULL, NULL, NULL);
-        ok(SUCCEEDED(hr), "Present failed, hr %#lx.\n", hr);
+        winetest_pop_context();
     }
 
-    IDirect3DPixelShader9_Release(ps);
+    for (unsigned int p = 0; p < 3; ++p)
+        IDirect3DPixelShader9_Release(ps[p]);
     IDirect3DSurface9_Release(original_ds);
     IDirect3DSurface9_Release(original_rt);
     IDirect3DSurface9_Release(rt);

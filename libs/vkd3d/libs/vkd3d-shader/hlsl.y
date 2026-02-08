@@ -1994,11 +1994,172 @@ static bool invert_swizzle_matrix(const struct hlsl_matrix_swizzle *swizzle,
     return true;
 }
 
+static bool add_resource_store(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct hlsl_ir_index *lhs, struct hlsl_ir_index *resource_access,
+        struct hlsl_ir_node *rhs, unsigned int width, uint32_t writemask, bool matrix_writemask)
+{
+    struct hlsl_ir_node *coords = resource_access->idx.node;
+    struct hlsl_type *resource_type, *resource_format;
+    struct vkd3d_shader_location loc = lhs->node.loc;
+    unsigned int dim_count, expected_width;
+    struct hlsl_deref resource_deref;
+
+    if (!hlsl_init_deref_from_index_chain(ctx, &resource_deref, resource_access->val.node))
+        return false;
+
+    resource_type = hlsl_deref_get_type(ctx, &resource_deref);
+    resource_format = resource_type->e.resource.format;
+    expected_width = resource_format->e.numeric.dimx * resource_format->e.numeric.dimy;
+    VKD3D_ASSERT(resource_type->class == HLSL_CLASS_TEXTURE || resource_type->class == HLSL_CLASS_UAV);
+
+    if (resource_type->class != HLSL_CLASS_UAV)
+        hlsl_error(ctx, &loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE, "Read-only resources cannot be stored to.");
+
+    dim_count = hlsl_sampler_dim_count(resource_type->sampler_dim);
+
+    VKD3D_ASSERT(coords->data_type->class == HLSL_CLASS_VECTOR);
+    VKD3D_ASSERT(coords->data_type->e.numeric.type == HLSL_TYPE_UINT);
+    VKD3D_ASSERT(coords->data_type->e.numeric.dimx == dim_count);
+
+    if (resource_type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
+    {
+        struct hlsl_ir_node *field_offset = hlsl_block_add_uint_constant(ctx, block, 0, &loc);
+        struct hlsl_type *val_type = lhs->node.data_type;
+        struct hlsl_ir_index *ptr = lhs, *prev = NULL;
+
+        if (rhs->data_type->class > HLSL_CLASS_LAST_NUMERIC)
+        {
+            hlsl_fixme(ctx, &loc, "Composite type structured buffer stores.");
+            return false;
+        }
+
+        while (ptr != resource_access)
+        {
+            struct hlsl_ir_index *next = hlsl_ir_index(ptr->val.node);
+            struct hlsl_type *type = ptr->val.node->data_type;
+
+            if (hlsl_index_is_noncontiguous(next))
+            {
+                type = next->val.node->data_type;
+            }
+            else if (hlsl_index_is_noncontiguous(ptr))
+            {
+                if (prev)
+                {
+                    type = prev->val.node->data_type;
+                }
+                else
+                {
+                    val_type = ptr->val.node->data_type;
+                    type = ptr->node.data_type;
+                }
+            }
+
+            field_offset = hlsl_block_add_packed_index_offset_append(ctx,
+                    block, field_offset, ptr->idx.node, type, &loc);
+
+            prev = ptr;
+            ptr = next;
+        }
+
+        if (matrix_writemask || rhs->data_type->class == HLSL_CLASS_MATRIX)
+        {
+            /* Type of the minor inner vector. column type for row major,
+             * row type for column major. */
+            struct hlsl_type *minor_type = hlsl_get_vector_type(ctx,
+                    val_type->e.numeric.type, hlsl_type_minor_size(val_type));
+            struct hlsl_block writes;
+            bool written = false;
+
+            hlsl_block_init(&writes);
+
+            for (unsigned int i = 0, k = 0; i < val_type->e.numeric.dimy; ++i)
+            {
+                bool row_major = hlsl_type_is_row_major(val_type);
+                struct hlsl_ir_node *mtx_offset;
+                struct hlsl_ir_node *row_c;
+
+                row_c = hlsl_block_add_uint_constant(ctx, &writes, i, &loc);
+                mtx_offset = hlsl_block_add_packed_index_offset_append(ctx, &writes,
+                        field_offset, row_c, row_major ? val_type : minor_type, &loc);
+
+                for (unsigned int j = 0; j < val_type->e.numeric.dimx; ++j)
+                {
+                    struct hlsl_ir_node *column_c, *load, *col_offset;
+
+                    if (matrix_writemask)
+                    {
+                        unsigned int idx = i * 4 + j;
+
+                        if (!(writemask & (1u << idx)))
+                            continue;
+                    }
+
+                    written = true;
+                    column_c = hlsl_block_add_uint_constant(ctx, &writes, j, &loc);
+                    col_offset = hlsl_block_add_packed_index_offset_append(ctx, &writes,
+                            mtx_offset, column_c, row_major ? minor_type : val_type, &loc);
+                    load = hlsl_add_load_component(ctx, &writes, rhs, k++, &loc);
+                    hlsl_block_add_resource_store(ctx, &writes, HLSL_RESOURCE_STORE,
+                            &resource_deref, col_offset, coords, load, VKD3DSP_WRITEMASK_0, &loc);
+                }
+            }
+
+            if (written)
+                hlsl_block_add_block(block, &writes);
+            hlsl_block_cleanup(&writes);
+        }
+        else
+        {
+            unsigned int size = val_type->e.numeric.dimx;
+
+            for (unsigned int i = 0, k = 0; i < size; ++i)
+            {
+                struct hlsl_ir_node *c, *load, *offset;
+
+                if (!(writemask & (1u << i)))
+                    continue;
+
+                if (val_type->class == HLSL_CLASS_SCALAR)
+                {
+                    VKD3D_ASSERT(i == 0);
+                    VKD3D_ASSERT(size == 1);
+
+                    offset = field_offset;
+                }
+                else
+                {
+                    c = hlsl_block_add_uint_constant(ctx, block, i, &loc);
+                    offset = hlsl_block_add_packed_index_offset_append(ctx, block, field_offset, c, val_type, &loc);
+                }
+
+                load = hlsl_add_load_component(ctx, block, rhs, k++, &loc);
+                hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STORE,
+                        &resource_deref, offset, coords, load, VKD3DSP_WRITEMASK_0, &loc);
+            }
+        }
+    }
+    else
+    {
+        if (width != expected_width)
+            hlsl_error(ctx, &loc, VKD3D_SHADER_ERROR_HLSL_INVALID_WRITEMASK,
+                    "Resource store expressions must write to all components.");
+
+        hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STORE,
+                &resource_deref, NULL, coords, rhs, writemask, &loc);
+    }
+
+    hlsl_cleanup_deref(&resource_deref);
+
+    return true;
+}
+
 static bool add_assignment(struct hlsl_ctx *ctx, struct hlsl_block *block, struct hlsl_ir_node *lhs,
         enum parse_assign_op assign_op, struct hlsl_ir_node *rhs, bool is_function_out_arg)
 {
     struct hlsl_type *lhs_type = lhs->data_type;
     unsigned int writemask = 0, width = 0;
+    struct hlsl_ir_index *resource_access;
     bool matrix_writemask = false;
     bool first_cast = true;
 
@@ -2107,42 +2268,11 @@ static bool add_assignment(struct hlsl_ctx *ctx, struct hlsl_block *block, struc
      * stored to. This is corrected. */
     rhs = add_cast(ctx, block, rhs, lhs_type, &rhs->loc);
 
-    if (lhs->type == HLSL_IR_INDEX && hlsl_index_chain_has_resource_access(hlsl_ir_index(lhs)))
+    if (lhs->type == HLSL_IR_INDEX && (resource_access = hlsl_index_chain_find_resource_access(hlsl_ir_index(lhs))))
     {
-        struct hlsl_ir_node *coords = hlsl_ir_index(lhs)->idx.node;
-        struct hlsl_deref resource_deref;
-        struct hlsl_type *resource_type;
-        unsigned int dim_count;
-
-        if (!hlsl_index_is_resource_access(hlsl_ir_index(lhs)))
-        {
-            hlsl_fixme(ctx, &lhs->loc, "Non-direct structured resource store.");
+        if (!add_resource_store(ctx, block, hlsl_ir_index(lhs),
+                resource_access, rhs, width, writemask, matrix_writemask))
             return false;
-        }
-
-        if (!hlsl_init_deref_from_index_chain(ctx, &resource_deref, hlsl_ir_index(lhs)->val.node))
-            return false;
-
-        resource_type = hlsl_deref_get_type(ctx, &resource_deref);
-        VKD3D_ASSERT(resource_type->class == HLSL_CLASS_TEXTURE || resource_type->class == HLSL_CLASS_UAV);
-
-        if (resource_type->class != HLSL_CLASS_UAV)
-            hlsl_error(ctx, &lhs->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                    "Read-only resources cannot be stored to.");
-
-        dim_count = hlsl_sampler_dim_count(resource_type->sampler_dim);
-
-        if (width != resource_type->e.resource.format->e.numeric.dimx * resource_type->e.resource.format->e.numeric.dimy)
-            hlsl_error(ctx, &lhs->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_WRITEMASK,
-                    "Resource store expressions must write to all components.");
-
-        VKD3D_ASSERT(coords->data_type->class == HLSL_CLASS_VECTOR);
-        VKD3D_ASSERT(coords->data_type->e.numeric.type == HLSL_TYPE_UINT);
-        VKD3D_ASSERT(coords->data_type->e.numeric.dimx == dim_count);
-
-        hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STORE,
-                &resource_deref, coords, rhs, writemask, &lhs->loc);
-        hlsl_cleanup_deref(&resource_deref);
     }
     else if (matrix_writemask)
     {
@@ -5236,7 +5366,7 @@ static bool intrinsic_interlocked(struct hlsl_ctx *ctx, enum hlsl_interlocked_op
         return false;
 
     /* TODO: groupshared variables */
-    if (lhs->type == HLSL_IR_INDEX && hlsl_index_chain_has_resource_access(hlsl_ir_index(lhs)))
+    if (lhs->type == HLSL_IR_INDEX && hlsl_index_chain_find_resource_access(hlsl_ir_index(lhs)))
     {
         if (!hlsl_index_is_resource_access(hlsl_ir_index(lhs)))
         {
@@ -6620,7 +6750,8 @@ static bool add_store_method_call(struct hlsl_ctx *ctx, struct hlsl_block *block
     if (!hlsl_init_deref_from_index_chain(ctx, &resource_deref, object))
         return false;
 
-    hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STORE, &resource_deref, offset, rhs, writemask, loc);
+    hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STORE,
+            &resource_deref, NULL, offset, rhs, writemask, loc);
     hlsl_cleanup_deref(&resource_deref);
 
     return true;
@@ -6645,7 +6776,7 @@ static bool add_so_append_method_call(struct hlsl_ctx *ctx, struct hlsl_block *b
     if (!(rhs = add_implicit_conversion(ctx, block, params->args[0], object->data_type->e.so.type, loc)))
         return false;
 
-    hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STREAM_APPEND, &so_deref, NULL, rhs, 0, loc);
+    hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STREAM_APPEND, &so_deref, NULL, NULL, rhs, 0, loc);
     hlsl_cleanup_deref(&so_deref);
 
     return true;
@@ -6666,7 +6797,7 @@ static bool add_so_restartstrip_method_call(struct hlsl_ctx *ctx, struct hlsl_bl
     if (!hlsl_init_deref_from_index_chain(ctx, &so_deref, object))
         return false;
 
-    hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STREAM_RESTART, &so_deref, NULL, NULL, 0, loc);
+    hlsl_block_add_resource_store(ctx, block, HLSL_RESOURCE_STREAM_RESTART, &so_deref, NULL, NULL, NULL, 0, loc);
     hlsl_cleanup_deref(&so_deref);
 
     return true;
@@ -7269,6 +7400,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %type <name> var_identifier
 %type <name> stateblock_lhs_identifier
 %type <name> name_opt
+%destructor { vkd3d_free($$); } <name>
 
 %type <parameter> parameter
 %type <parameter> parameter_decl
@@ -7561,6 +7693,7 @@ base_optional:
             if ($$->class != HLSL_CLASS_STRUCT)
             {
                 hlsl_error(ctx, &@2, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE, "Base type \"%s\" is not a struct.", $2);
+                vkd3d_free($2);
                 YYABORT;
             }
             vkd3d_free($2);
@@ -7764,7 +7897,7 @@ func_prototype_no_attrs:
             /* Functions are unconditionally inlined. */
             modifiers &= ~HLSL_MODIFIER_INLINE;
 
-            if (modifiers & ~(HLSL_MODIFIERS_MAJORITY_MASK | HLSL_MODIFIER_EXPORT))
+            if (modifiers & ~(HLSL_MODIFIERS_MAJORITY_MASK | HLSL_STORAGE_EXPORT | HLSL_STORAGE_STATIC))
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_INVALID_MODIFIER,
                         "Unexpected modifier used on a function.");
             if (!(type = apply_type_modifiers(ctx, $2, &modifiers, true, &@1)))
@@ -7797,6 +7930,13 @@ func_prototype_no_attrs:
                 {
                     hlsl_error(ctx, &@3, VKD3D_SHADER_ERROR_HLSL_REDEFINED,
                             "\"%s\" was already declared with a different return type.", $3);
+                    hlsl_note(ctx, &$$.decl->loc, VKD3D_SHADER_LOG_ERROR, "\"%s\" was previously declared here.", $3);
+                }
+
+                if (($$.decl->storage_modifiers & HLSL_STORAGE_STATIC) != (modifiers & HLSL_STORAGE_STATIC))
+                {
+                    hlsl_error(ctx, &@3, VKD3D_SHADER_ERROR_HLSL_REDEFINED,
+                            "\"%s\" was already declared with different storage modifiers.", $3);
                     hlsl_note(ctx, &$$.decl->loc, VKD3D_SHADER_LOG_ERROR, "\"%s\" was previously declared here.", $3);
                 }
 
@@ -7860,7 +8000,7 @@ func_prototype_no_attrs:
             }
             else
             {
-                if (!($$.decl = hlsl_new_func_decl(ctx, type, &$5, &$7.semantic, &@3)))
+                if (!($$.decl = hlsl_new_func_decl(ctx, modifiers, type, &$5, &$7.semantic, &@3)))
                     YYABORT;
 
                 hlsl_add_function(ctx, $3, $$.decl);
@@ -8551,6 +8691,7 @@ type_no_void:
 
             if (hlsl_is_numeric_type(type) && type->e.numeric.type == HLSL_TYPE_INT)
             {
+                vkd3d_free($2);
                 if (!(type = hlsl_type_clone(ctx, type, 0, 0)))
                     YYABORT;
                 vkd3d_free((void *)type->name);
@@ -8561,6 +8702,7 @@ type_no_void:
             {
                 hlsl_error(ctx, &@2, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
                         "The 'unsigned' keyword can't be used with type %s.", $2);
+                vkd3d_free($2);
             }
 
             $$ = type;
@@ -8970,6 +9112,7 @@ array:
     | '[' expr ']'
         {
             $$ = evaluate_static_expression_as_uint(ctx, $2, &@2);
+            destroy_block($2);
 
             if (!$$)
             {
@@ -8984,8 +9127,6 @@ array:
                         "Array size %u is not between 1 and 65536.", $$);
                 YYABORT;
             }
-
-            destroy_block($2);
         }
 
 arrays:
@@ -9085,7 +9226,7 @@ var_modifiers:
         }
     | KW_EXPORT var_modifiers
         {
-            $$ = add_modifiers(ctx, $2, HLSL_MODIFIER_EXPORT, &@1);
+            $$ = add_modifiers(ctx, $2, HLSL_STORAGE_EXPORT, &@1);
         }
     | KW_UNORM var_modifiers
         {
@@ -9126,6 +9267,7 @@ var_modifiers:
             else
                 hlsl_error(ctx, &@1, VKD3D_SHADER_ERROR_HLSL_UNKNOWN_MODIFIER,
                         "Unknown modifier %s.", debugstr_a($1));
+            vkd3d_free($1);
         }
 
 complex_initializer:
@@ -9729,9 +9871,11 @@ postfix_expr:
             if (!add_method_call(ctx, $1, object, $3, &$5, &@3))
             {
                 destroy_block($1);
+                vkd3d_free($3);
                 vkd3d_free($5.args);
                 YYABORT;
             }
+            vkd3d_free($3);
             vkd3d_free($5.args);
             $$ = $1;
         }

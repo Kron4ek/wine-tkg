@@ -708,7 +708,7 @@ static void init_visuals( Display *display, int screen )
 /***********************************************************************
  *           X11DRV process initialisation routine
  */
-static NTSTATUS x11drv_init( void *arg )
+NTSTATUS __wine_unix_lib_init(void)
 {
     Display *display;
     void *libx11 = dlopen( SONAME_LIBX11, RTLD_NOW|RTLD_GLOBAL );
@@ -891,17 +891,3 @@ BOOL X11DRV_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, 
     }
     return FALSE;  /* let user32 handle it */
 }
-
-const unixlib_entry_t __wine_unix_call_funcs[] =
-{
-    x11drv_init,
-};
-
-#ifdef _WIN64
-
-const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
-{
-    x11drv_init,
-};
-
-#endif /* _WIN64 */

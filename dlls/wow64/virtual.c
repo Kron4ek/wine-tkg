@@ -691,11 +691,24 @@ NTSTATUS WINAPI wow64_NtQueryVirtualMemory( UINT *args )
         break;
     }
 
-    case MemoryWineUnixWow64Funcs:
+    case MemoryWineLoadUnixLibWow64:
+    case MemoryWineLoadUnixLibByNameWow64:
         return STATUS_INVALID_INFO_CLASS;
 
-    case MemoryWineUnixFuncs:
-        status = NtQueryVirtualMemory( handle, addr, MemoryWineUnixWow64Funcs, ptr, len, &res_len );
+    case MemoryWineLoadUnixLib:
+        status = NtQueryVirtualMemory( handle, addr, MemoryWineLoadUnixLibWow64, ptr, len, &res_len );
+        break;
+    case MemoryWineLoadUnixLibByName:
+    {
+        UNICODE_STRING32 *str32 = addr;
+        UNICODE_STRING str;
+
+        status = NtQueryVirtualMemory( handle, unicode_str_32to64( &str, str32 ),
+                                       MemoryWineLoadUnixLibByNameWow64, ptr, len, &res_len );
+        break;
+    }
+    case MemoryWineUnloadUnixLib:
+        status = NtQueryVirtualMemory( handle, addr, class, ptr, len, &res_len );
         break;
 
     default:
@@ -777,11 +790,13 @@ NTSTATUS WINAPI wow64_NtSetInformationVirtualMemory( UINT *args )
 NTSTATUS WINAPI wow64_NtSetLdtEntries( UINT *args )
 {
     ULONG sel1 = get_ulong( &args );
-    ULONG64 entry1 = get_ulong64( &args );
+    ULONG entry1_low = get_ulong( &args );
+    ULONG entry1_high = get_ulong( &args );
     ULONG sel2 = get_ulong( &args );
-    ULONG64 entry2 = get_ulong64( &args );
+    ULONG entry2_low = get_ulong( &args );
+    ULONG entry2_high = get_ulong( &args );
 
-    return NtSetLdtEntries( sel1, *(LDT_ENTRY *)&entry1, sel2, *(LDT_ENTRY *)&entry2 );
+    return NtSetLdtEntries( sel1, entry1_low, entry1_high, sel2, entry2_low, entry2_high );
 }
 
 

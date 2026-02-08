@@ -379,6 +379,7 @@ static void write_fx_4_annotation(struct hlsl_ir_var *var, struct fx_write_conte
 static uint32_t write_type(const struct type_entry *type, struct fx_write_context *fx)
 {
     struct type_entry *type_entry;
+    uint32_t offset;
 
     /* We don't try to reuse nameless types; they will get the same
      * "<unnamed>" name, but are not available for the type cache. */
@@ -402,16 +403,19 @@ static uint32_t write_type(const struct type_entry *type, struct fx_write_contex
         }
     }
 
+    offset = write_fx_4_type(type, fx);
+
+    if (!type->name)
+        return offset;
+
     if (!(type_entry = hlsl_alloc(fx->ctx, sizeof(*type_entry))))
-        return 0;
+        return offset;
 
     *type_entry = *type;
-    type_entry->offset = write_fx_4_type(type, fx);
+    type_entry->offset = offset;
+    list_add_tail(&fx->types, &type_entry->entry);
 
-    if (type_entry->name)
-        list_add_tail(&fx->types, &type_entry->entry);
-
-    return type_entry->offset;
+    return offset;
 }
 
 static void type_entry_from_type(struct type_entry *e, const struct hlsl_type *type, const struct fx_write_context *fx)
@@ -1147,6 +1151,7 @@ enum fx_4_type_constants
     FX_4_OBJECT_TYPE_RTV = 0x13,
     FX_4_OBJECT_TYPE_DSV = 0x14,
     FX_4_OBJECT_TYPE_SAMPLER_STATE = 0x15,
+    FX_4_OBJECT_TYPE_BUFFER = 0x16,
     FX_4_OBJECT_TYPE_TEXTURE_CUBEARRAY = 0x17,
 
     FX_5_OBJECT_TYPE_GEOMETRY_SHADER = 0x1b,
@@ -1241,16 +1246,19 @@ static const char * get_fx_4_type_name(const struct hlsl_type *type)
 {
     static const char * const texture_type_names[] =
     {
-        [HLSL_SAMPLER_DIM_GENERIC]   = "texture",
-        [HLSL_SAMPLER_DIM_1D]        = "Texture1D",
-        [HLSL_SAMPLER_DIM_1DARRAY]   = "Texture1DArray",
-        [HLSL_SAMPLER_DIM_2D]        = "Texture2D",
-        [HLSL_SAMPLER_DIM_2DARRAY]   = "Texture2DArray",
-        [HLSL_SAMPLER_DIM_2DMS]      = "Texture2DMS",
-        [HLSL_SAMPLER_DIM_2DMSARRAY] = "Texture2DMSArray",
-        [HLSL_SAMPLER_DIM_3D]        = "Texture3D",
-        [HLSL_SAMPLER_DIM_CUBE]      = "TextureCube",
-        [HLSL_SAMPLER_DIM_CUBEARRAY] = "TextureCubeArray",
+        [HLSL_SAMPLER_DIM_GENERIC]           = "texture",
+        [HLSL_SAMPLER_DIM_1D]                = "Texture1D",
+        [HLSL_SAMPLER_DIM_1DARRAY]           = "Texture1DArray",
+        [HLSL_SAMPLER_DIM_2D]                = "Texture2D",
+        [HLSL_SAMPLER_DIM_2DARRAY]           = "Texture2DArray",
+        [HLSL_SAMPLER_DIM_2DMS]              = "Texture2DMS",
+        [HLSL_SAMPLER_DIM_2DMSARRAY]         = "Texture2DMSArray",
+        [HLSL_SAMPLER_DIM_3D]                = "Texture3D",
+        [HLSL_SAMPLER_DIM_CUBE]              = "TextureCube",
+        [HLSL_SAMPLER_DIM_CUBEARRAY]         = "TextureCubeArray",
+        [HLSL_SAMPLER_DIM_BUFFER]            = "Buffer",
+        [HLSL_SAMPLER_DIM_STRUCTURED_BUFFER] = "StructuredBuffer",
+        [HLSL_SAMPLER_DIM_RAW_BUFFER]        = "ByteAddressBuffer",
     };
     static const char * const uav_type_names[] =
     {
@@ -1270,9 +1278,11 @@ static const char * get_fx_4_type_name(const struct hlsl_type *type)
             return "SamplerState";
 
         case HLSL_CLASS_TEXTURE:
+            VKD3D_ASSERT(type->sampler_dim < ARRAY_SIZE(texture_type_names));
             return texture_type_names[type->sampler_dim];
 
         case HLSL_CLASS_UAV:
+            VKD3D_ASSERT(type->sampler_dim < ARRAY_SIZE(uav_type_names));
             return uav_type_names[type->sampler_dim];
 
         case HLSL_CLASS_DEPTH_STENCIL_STATE:
@@ -1436,18 +1446,22 @@ static uint32_t write_fx_4_type(const struct type_entry *type, struct fx_write_c
     {
         static const uint32_t texture_type[] =
         {
-            [HLSL_SAMPLER_DIM_GENERIC]   = FX_4_OBJECT_TYPE_TEXTURE,
-            [HLSL_SAMPLER_DIM_1D]        = FX_4_OBJECT_TYPE_TEXTURE_1D,
-            [HLSL_SAMPLER_DIM_1DARRAY]   = FX_4_OBJECT_TYPE_TEXTURE_1DARRAY,
-            [HLSL_SAMPLER_DIM_2D]        = FX_4_OBJECT_TYPE_TEXTURE_2D,
-            [HLSL_SAMPLER_DIM_2DARRAY]   = FX_4_OBJECT_TYPE_TEXTURE_2DARRAY,
-            [HLSL_SAMPLER_DIM_2DMS]      = FX_4_OBJECT_TYPE_TEXTURE_2DMS,
-            [HLSL_SAMPLER_DIM_2DMSARRAY] = FX_4_OBJECT_TYPE_TEXTURE_2DMSARRAY,
-            [HLSL_SAMPLER_DIM_3D]        = FX_4_OBJECT_TYPE_TEXTURE_3D,
-            [HLSL_SAMPLER_DIM_CUBE]      = FX_4_OBJECT_TYPE_TEXTURE_CUBE,
-            [HLSL_SAMPLER_DIM_CUBEARRAY] = FX_4_OBJECT_TYPE_TEXTURE_CUBEARRAY,
+            [HLSL_SAMPLER_DIM_GENERIC]           = FX_4_OBJECT_TYPE_TEXTURE,
+            [HLSL_SAMPLER_DIM_1D]                = FX_4_OBJECT_TYPE_TEXTURE_1D,
+            [HLSL_SAMPLER_DIM_1DARRAY]           = FX_4_OBJECT_TYPE_TEXTURE_1DARRAY,
+            [HLSL_SAMPLER_DIM_2D]                = FX_4_OBJECT_TYPE_TEXTURE_2D,
+            [HLSL_SAMPLER_DIM_2DARRAY]           = FX_4_OBJECT_TYPE_TEXTURE_2DARRAY,
+            [HLSL_SAMPLER_DIM_2DMS]              = FX_4_OBJECT_TYPE_TEXTURE_2DMS,
+            [HLSL_SAMPLER_DIM_2DMSARRAY]         = FX_4_OBJECT_TYPE_TEXTURE_2DMSARRAY,
+            [HLSL_SAMPLER_DIM_3D]                = FX_4_OBJECT_TYPE_TEXTURE_3D,
+            [HLSL_SAMPLER_DIM_CUBE]              = FX_4_OBJECT_TYPE_TEXTURE_CUBE,
+            [HLSL_SAMPLER_DIM_CUBEARRAY]         = FX_4_OBJECT_TYPE_TEXTURE_CUBEARRAY,
+            [HLSL_SAMPLER_DIM_BUFFER]            = FX_4_OBJECT_TYPE_BUFFER,
+            [HLSL_SAMPLER_DIM_STRUCTURED_BUFFER] = FX_5_OBJECT_TYPE_SRV_STRUCTURED_BUFFER,
+            [HLSL_SAMPLER_DIM_RAW_BUFFER]        = FX_5_OBJECT_TYPE_SRV_RAW_BUFFER,
         };
 
+        VKD3D_ASSERT(element_type->sampler_dim < ARRAY_SIZE(texture_type));
         put_u32_unaligned(buffer, texture_type[element_type->sampler_dim]);
     }
     else if (element_type->class == HLSL_CLASS_SAMPLER)
@@ -1468,6 +1482,7 @@ static uint32_t write_fx_4_type(const struct type_entry *type, struct fx_write_c
             [HLSL_SAMPLER_DIM_RAW_BUFFER]        = FX_5_OBJECT_TYPE_UAV_RAW_BUFFER,
         };
 
+        VKD3D_ASSERT(element_type->sampler_dim < ARRAY_SIZE(uav_type));
         put_u32_unaligned(buffer, uav_type[element_type->sampler_dim]);
     }
     else if (element_type->class == HLSL_CLASS_DEPTH_STENCIL_VIEW)
@@ -2147,10 +2162,8 @@ static int hlsl_fx_2_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
         ctx->result = fx.status;
 
     if (!ctx->result)
-    {
-        out->code = buffer.data;
-        out->size = buffer.size;
-    }
+        vkd3d_shader_code_from_bytecode_buffer(out, &buffer);
+    vkd3d_bytecode_buffer_cleanup(&buffer);
 
     return fx_write_context_cleanup(&fx);
 }
@@ -3215,7 +3228,7 @@ static unsigned int decompose_fx_4_state_function_call(struct hlsl_ir_var *var, 
     const struct state_block_function_info *info;
     struct function_component components[9];
     struct hlsl_ctx *ctx = fx->ctx;
-    unsigned int i;
+    unsigned int i, count;
 
     if (!entry->is_function_call)
         return 1;
@@ -3243,16 +3256,16 @@ static unsigned int decompose_fx_4_state_function_call(struct hlsl_ir_var *var, 
 
     get_state_block_function_components(info, components, entry->args_count);
 
-    for (i = 0; i < entry->args_count; ++i)
+    for (i = 0, count = entry->args_count; i < count; ++i)
     {
         const struct function_component *comp = &components[i];
-        unsigned int arg_index = (i + 1) % entry->args_count;
+        unsigned int arg_index = (i + 1) % count;
         block->entries[entry_index + i] = clone_stateblock_entry(ctx, entry, comp->name,
                 comp->lhs_has_index, comp->lhs_index, true, arg_index);
     }
     hlsl_free_state_block_entry(entry);
 
-    return entry->args_count;
+    return count;
 }
 
 /* For some states assignment sets all of the elements. This behaviour is limited to certain states of BlendState
@@ -3581,7 +3594,6 @@ static bool is_supported_object_variable(const struct hlsl_ctx *ctx, const struc
         case HLSL_CLASS_RASTERIZER_STATE:
         case HLSL_CLASS_RENDER_TARGET_VIEW:
         case HLSL_CLASS_SAMPLER:
-        case HLSL_CLASS_TEXTURE:
         case HLSL_CLASS_BLEND_STATE:
         case HLSL_CLASS_VERTEX_SHADER:
         case HLSL_CLASS_GEOMETRY_SHADER:
@@ -3591,6 +3603,13 @@ static bool is_supported_object_variable(const struct hlsl_ctx *ctx, const struc
         case HLSL_CLASS_DOMAIN_SHADER:
         case HLSL_CLASS_HULL_SHADER:
             if (ctx->profile->major_version < 5)
+                return false;
+            return true;
+        case HLSL_CLASS_TEXTURE:
+            if (ctx->profile->major_version >= 5)
+                return true;
+            if (type->sampler_dim == HLSL_SAMPLER_DIM_STRUCTURED_BUFFER
+                    || type->sampler_dim == HLSL_SAMPLER_DIM_RAW_BUFFER)
                 return false;
             return true;
         case HLSL_CLASS_UAV:
@@ -3676,10 +3695,8 @@ static int hlsl_fx_4_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
         ctx->result = fx.status;
 
     if (!ctx->result)
-    {
-        out->code = buffer.data;
-        out->size = buffer.size;
-    }
+        vkd3d_shader_code_from_bytecode_buffer(out, &buffer);
+    vkd3d_bytecode_buffer_cleanup(&buffer);
 
     return fx_write_context_cleanup(&fx);
 }
@@ -3739,10 +3756,8 @@ static int hlsl_fx_5_write(struct hlsl_ctx *ctx, struct vkd3d_shader_code *out)
         ctx->result = fx.status;
 
     if (!ctx->result)
-    {
-        out->code = buffer.data;
-        out->size = buffer.size;
-    }
+        vkd3d_shader_code_from_bytecode_buffer(out, &buffer);
+    vkd3d_bytecode_buffer_cleanup(&buffer);
 
     return fx_write_context_cleanup(&fx);
 }

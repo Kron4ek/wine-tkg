@@ -1188,7 +1188,7 @@ void start_android_device(void)
 
 static int android_ioctl( enum android_ioctl code, void *in, DWORD in_size, void *out, DWORD *out_size )
 {
-    static const WCHAR deviceW[] = {'\\','\\','.','\\','W','i','n','e','A','n','d','r','o','i','d',0 };
+    static const WCHAR deviceW[] = { '\\','D','e','v','i','c','e','\\','W','i','n','e','A','n','d','r','o','i','d', 0 };
     static HANDLE device;
     IO_STATUS_BLOCK iosb;
     NTSTATUS status;
@@ -1196,12 +1196,11 @@ static int android_ioctl( enum android_ioctl code, void *in, DWORD in_size, void
     if (!device)
     {
         OBJECT_ATTRIBUTES attr;
-        UNICODE_STRING name;
+        UNICODE_STRING name = RTL_CONSTANT_STRING( deviceW );
         IO_STATUS_BLOCK io;
         NTSTATUS status;
         HANDLE file;
 
-        RtlInitUnicodeString( &name, deviceW );
         InitializeObjectAttributes( &attr, &name, OBJ_CASE_INSENSITIVE, NULL, NULL );
         status = NtCreateFile( &file, GENERIC_READ | SYNCHRONIZE, &attr, &io, NULL, 0,
                                FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_OPEN,

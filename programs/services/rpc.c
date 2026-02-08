@@ -589,6 +589,8 @@ static DWORD create_serviceW(
         return err;
     }
 
+    if (lpDisplayName && !*lpDisplayName) lpDisplayName = NULL;
+
     entry->is_wow64 = is_wow64;
     entry->config.dwServiceType = entry->status.dwServiceType = dwServiceType;
     entry->config.dwStartType = dwStartType;

@@ -2892,7 +2892,6 @@ sync_test("elem_attr", function() {
     ok(r === (v < 9 ? "test" : "string"), "onclick attr = " + r);
     r = elem.removeAttribute("onclick");
     ok(r === (v < 9 ? true : undefined), "removeAttribute returned " + r);
-    todo_wine_if(v >= 9).
     ok(elem.onclick === null, "removed onclick = " + elem.onclick);
 
     elem.setAttribute("ondblclick", arr);
@@ -3168,6 +3167,39 @@ sync_test("elem_attrNS", function() {
     elem.setAttributeNS(svg_ns, "numattr", 13);
     r = elem.getAttributeNS(svg_ns, "numattr");
     ok(r === "13", "numattr = " + r);
+});
+
+
+var rec;
+
+sync_test("event attr", function() {
+    document.body.innerHTML = '<div></div>';
+    var elem = document.body.firstChild, prev;
+    var v = document.documentMode;
+
+    ok(elem.onclick === null, "elem.onclick = " + elem.onclick);
+    elem.setAttribute("onclick", "rec += 'attr';");
+    if (v < 8)
+        ok(elem.onclick === "rec += 'attr';", "elem.onclick = " + elem.onclick);
+    else
+        todo_wine_if(v == 8).
+        ok(typeof(elem.onclick) === "function", "elem.onclick = " + elem.onclick);
+    rec = "";
+    elem.click();
+    todo_wine_if(v == 8).
+    ok(rec === (v < 8 ? "" : "attr"), "unexpected rec = " + rec );
+
+    elem.setAttribute("onclick", "rec += 'attr2';");
+    rec = "";
+    elem.click();
+    todo_wine_if(v == 8).
+    ok(rec === (v < 8 ? "" : "attr2"), "unexpected rec = " + rec );
+
+    elem.onclick = "rec += 'prop';";
+    ok(elem.onclick === (v < 9 ? "rec += 'prop';" : null), "elem.onclick = " + elem.onclick);
+    rec = "";
+    elem.click();
+    ok(rec === "", "unexpected rec = " + rec );
 });
 
 sync_test("builtins_diffs", function() {
@@ -4421,6 +4453,7 @@ sync_test("prototype props", function() {
     check(DocumentFragment, [ ["attachEvent",9,10], ["detachEvent",9,10], "querySelector", "querySelectorAll", "removeNode", "replaceNode", "swapNode" ]);
     check(DocumentType, [ "entities", "internalSubset", "name", "notations", "publicId", "systemId" ]);
     check(DOMParser, [ "parseFromString" ]);
+    check(XMLSerializer, [ "serializeToString" ]);
     check(Element, [
         "childElementCount", "clientHeight", "clientLeft", "clientTop", "clientWidth", ["fireEvent",9,10], "firstElementChild",
         "getAttribute", "getAttributeNS", "getAttributeNode", "getAttributeNodeNS", "getBoundingClientRect", "getClientRects",
@@ -4863,7 +4896,7 @@ async_test("window own props", function() {
             ["URL",10], ["ValidityState",10], ["VideoPlaybackQuality",11], ["WebGLActiveInfo",11], ["WebGLBuffer",11], ["WebGLContextEvent",11],
             ["WebGLFramebuffer",11], ["WebGLObject",11], ["WebGLProgram",11], ["WebGLRenderbuffer",11], ["WebGLRenderingContext",11], ["WebGLShader",11], ["WebGLShaderPrecisionFormat",11],
             ["WebGLTexture",11], ["WebGLUniformLocation",11], ["WEBGL_compressed_texture_s3tc",11], ["WEBGL_debug_renderer_info",11], ["WebSocket",10], "WheelEvent", ["Worker",10],
-            ["XMLHttpRequestEventTarget",10], "XMLSerializer"
+            ["XMLHttpRequestEventTarget",10]
         ]);
         next_test();
     }

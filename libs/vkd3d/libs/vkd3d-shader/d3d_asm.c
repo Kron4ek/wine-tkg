@@ -489,7 +489,7 @@ static void shader_print_dcl_usage(struct vkd3d_d3d_asm_compiler *compiler,
         return;
     }
 
-    /* Pixel shaders 3.0 don't have usage semantics. */
+    /* Pixel shaders before 3.0 don't have usage semantics. */
     if (!vkd3d_shader_ver_ge(&compiler->shader_version, 3, 0)
             && compiler->shader_version.type == VKD3D_SHADER_TYPE_PIXEL)
         return;

@@ -98,6 +98,7 @@ typedef struct DOMEvent {
 
 const WCHAR *get_event_name(eventid_t);
 void check_event_attr(HTMLDocumentNode*,nsIDOMElement*);
+void event_attr_changed(HTMLDocumentNode*,nsIDOMElement*,const WCHAR*);
 void traverse_event_target(EventTarget*,nsCycleCollectionTraversalCallback*);
 void release_event_target(EventTarget*);
 HRESULT set_event_handler(EventTarget*,eventid_t,VARIANT*);
@@ -110,7 +111,6 @@ HRESULT doc_init_events(HTMLDocumentNode*);
 void detach_events(HTMLDocumentNode *doc);
 HRESULT create_event_obj(DOMEvent*,HTMLDocumentNode*,IHTMLEventObj**);
 void bind_target_event(HTMLDocumentNode*,EventTarget*,const WCHAR*,IDispatch*);
-HRESULT set_node_event_handler_by_attr(HTMLDOMNode*,const WCHAR*,VARIANT*);
 HRESULT ensure_doc_nsevent_handler(HTMLDocumentNode*,nsIDOMNode*,eventid_t);
 
 void dispatch_event(EventTarget*,DOMEvent*);

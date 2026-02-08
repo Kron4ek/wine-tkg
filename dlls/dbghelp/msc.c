@@ -2295,7 +2295,7 @@ static struct symt_compiland* codeview_new_compiland(const struct msc_debug_info
         if (symt_check_tag(&p->symt, SymTagCompiland) && !strcmp(p->filename, objname))
             return p;
     }
-    return symt_new_compiland(msc_dbg->module, objname);
+    return symt_new_compiland(msc_dbg->module, symt_ptr_to_symref(&msc_dbg->module->top->symt), objname);
 }
 
 static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg,

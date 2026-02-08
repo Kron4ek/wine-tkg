@@ -1229,6 +1229,11 @@ struct signature_element
     unsigned int target_location;
 };
 
+static inline void vsir_signature_element_cleanup(struct signature_element *e)
+{
+    vkd3d_free((void *)e->semantic_name);
+}
+
 static inline bool vsir_signature_element_is_array(const struct signature_element *element,
         const struct vsir_normalisation_flags *flags)
 {
@@ -1859,6 +1864,8 @@ size_t bytecode_put_bytes_unaligned(struct vkd3d_bytecode_buffer *buffer, const 
 size_t bytecode_reserve_bytes(struct vkd3d_bytecode_buffer *buffer, size_t size);
 void set_u32(struct vkd3d_bytecode_buffer *buffer, size_t offset, uint32_t value);
 void set_string(struct vkd3d_bytecode_buffer *buffer, size_t offset, const char *string, size_t length);
+void vkd3d_bytecode_buffer_cleanup(struct vkd3d_bytecode_buffer *buffer);
+void vkd3d_shader_code_from_bytecode_buffer(struct vkd3d_shader_code *code, struct vkd3d_bytecode_buffer *buffer);
 
 static inline size_t put_u32(struct vkd3d_bytecode_buffer *buffer, uint32_t value)
 {
