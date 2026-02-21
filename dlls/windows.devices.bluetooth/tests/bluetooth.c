@@ -24,6 +24,8 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winstring.h"
+#include "bthsdpdef.h"
+#include "bluetoothapis.h"
 
 #include "roapi.h"
 
@@ -281,14 +283,88 @@ static void check_bluetoothledevice_async( int line, IAsyncOperation_BluetoothLE
     }
 }
 
+static void await_bluetoothadapter( int line, IAsyncOperation_BluetoothAdapter *async )
+{
+    IAsyncOperationCompletedHandler_IInspectable *handler;
+    HANDLE event;
+    HRESULT hr;
+    DWORD ret;
+
+    event = CreateEventW( NULL, FALSE, FALSE, NULL );
+    ok_(__FILE__, line)( !!event, "CreateEventW failed, error %lu\n", GetLastError() );
+
+    handler = inspectable_async_handler_create( event, &IID_IAsyncOperationCompletedHandler_BluetoothAdapter );
+    ok_( __FILE__, line )( !!handler, "inspectable_async_handler_create failed\n" );
+    hr = IAsyncOperation_BluetoothAdapter_put_Completed( async, (IAsyncOperationCompletedHandler_BluetoothAdapter *)handler );
+    ok_(__FILE__, line)( hr == S_OK, "put_Completed returned %#lx\n", hr );
+    IAsyncOperationCompletedHandler_IInspectable_Release( handler );
+
+    ret = WaitForSingleObject( event, 5000 );
+    ok_(__FILE__, line)( !ret, "WaitForSingleObject returned %#lx\n", ret );
+    ret = CloseHandle( event );
+    ok_(__FILE__, line)( ret, "CloseHandle failed, error %lu\n", GetLastError() );
+}
+
+static void check_bluetoothadapter_async( int line, IAsyncOperation_BluetoothAdapter *async, AsyncStatus expect_status,
+                                          HRESULT expect_hr, IBluetoothAdapter **result )
+{
+    AsyncStatus async_status;
+    IAsyncInfo *async_info;
+    HRESULT hr, async_hr;
+
+    hr = IAsyncOperation_BluetoothAdapter_QueryInterface( async, &IID_IAsyncInfo, (void **)&async_info );
+    ok_(__FILE__, line)( hr == S_OK, "QueryInterface returned %#lx\n", hr );
+
+    if (expect_status < 4) ok_(__FILE__, line)( hr == S_OK, "get_Id returned %#lx\n", hr );
+    else ok_(__FILE__, line)( hr == E_ILLEGAL_METHOD_CALL, "get_Id returned %#lx\n", hr );
+
+    async_status = 0xdeadbeef;
+    hr = IAsyncInfo_get_Status( async_info, &async_status );
+    if (expect_status < 4) ok_(__FILE__, line)( hr == S_OK, "get_Status returned %#lx\n", hr );
+    else ok_(__FILE__, line)( hr == E_ILLEGAL_METHOD_CALL, "get_Status returned %#lx\n", hr );
+    ok_(__FILE__, line)( async_status == expect_status, "got status %u\n", async_status );
+
+    async_hr = 0xdeadbeef;
+    hr = IAsyncInfo_get_ErrorCode( async_info, &async_hr );
+    if (expect_status < 4) ok_(__FILE__, line)( hr == S_OK, "get_ErrorCode returned %#lx\n", hr );
+    else ok_(__FILE__, line)( hr == E_ILLEGAL_METHOD_CALL, "get_ErrorCode returned %#lx\n", hr );
+    if (expect_status < 4) todo_wine_if( FAILED(expect_hr))
+    ok_(__FILE__, line)( async_hr == expect_hr, "got error %#lx\n", async_hr );
+    else ok_(__FILE__, line)( async_hr == E_ILLEGAL_METHOD_CALL, "got error %#lx\n", async_hr );
+
+    IAsyncInfo_Release( async_info );
+
+    hr = IAsyncOperation_BluetoothAdapter_GetResults( async, result );
+    switch (expect_status)
+    {
+    case Completed:
+    case Error:
+        todo_wine_if( FAILED(expect_hr))
+        ok_(__FILE__, line)( hr == expect_hr, "GetResults returned %#lx\n", hr );
+        break;
+    case Canceled:
+    case Started:
+    default:
+        ok_(__FILE__, line)( hr == E_ILLEGAL_METHOD_CALL, "GetResults returned %#lx\n", hr );
+        break;
+    }
+}
+
 static void test_BluetoothAdapterStatics(void)
 {
     static const WCHAR *default_res = L"System.Devices.InterfaceClassGuid:=\"{92383B0E-F90E-4AC9-8D44-8C2D0D0EBDA2}\" "
                                       L"AND System.Devices.InterfaceEnabled:=System.StructuredQueryType.Boolean#True";
     static const WCHAR *bluetoothadapter_statics_name = L"Windows.Devices.Bluetooth.BluetoothAdapter";
+    BLUETOOTH_FIND_RADIO_PARAMS params = { sizeof( params ) };
+    IAsyncOperation_BluetoothAdapter *adapter_async = NULL;
+    IBluetoothAdapter *adapter1 = NULL, *adapter2 = NULL;
     IBluetoothAdapterStatics *bluetoothadapter_statics;
+    boolean bool_val = FALSE, found = FALSE;
+    HBLUETOOTH_RADIO_FIND radio_find;
     IActivationFactory *factory;
     HSTRING str, default_str;
+    UINT64 address = 0;
+    HANDLE radio;
     HRESULT hr;
     INT32 res;
     LONG ref;
@@ -324,6 +400,80 @@ static void test_BluetoothAdapterStatics(void)
 
     WindowsDeleteString( str );
     WindowsDeleteString( default_str );
+
+    hr = IBluetoothAdapterStatics_GetDefaultAsync( bluetoothadapter_statics, &adapter_async );
+    ok( hr == S_OK, "got hr %#lx.\n", hr );
+    await_bluetoothadapter( __LINE__, adapter_async );
+    check_bluetoothadapter_async( __LINE__, adapter_async, Completed, S_OK, &adapter1 );
+    IAsyncOperation_BluetoothAdapter_Release( adapter_async );
+    if (!adapter1)
+    {
+        skip( "No Bluetooth adapter found.\n" );
+        goto done;
+    }
+
+    check_interface( adapter1, &IID_IUnknown );
+    check_interface( adapter1, &IID_IInspectable );
+    check_interface( adapter1, &IID_IAgileObject );
+
+    str = NULL;
+    hr = IBluetoothAdapter_get_DeviceId( adapter1, &str );
+    ok( hr == S_OK, "got hr %#lx.\n", hr );
+    ok( !WindowsIsStringEmpty( str ), "got str %s.\n", debugstr_hstring( str ) );
+
+    hr = IBluetoothAdapterStatics_FromIdAsync( bluetoothadapter_statics, str, &adapter_async );
+    ok( hr == S_OK, "got hr %#lx.\n", hr );
+    await_bluetoothadapter( __LINE__, adapter_async );
+    check_bluetoothadapter_async( __LINE__, adapter_async, Completed, S_OK, &adapter2 );
+    IAsyncOperation_BluetoothAdapter_Release( adapter_async );
+    ok( adapter2 != NULL, "got adapter2 %p.\n", adapter2 );
+    ref = IBluetoothAdapter_Release( adapter2 );
+    ok( !ref, "got ref %ld.\n", ref );
+    WindowsDeleteString( str );
+
+    address = 0;
+    hr = IBluetoothAdapter_get_BluetoothAddress( adapter1, &address );
+    ok( hr == S_OK, "got hr %#lx.\n", hr );
+    ok( address, "got address %#I64x.\n", address );
+
+    radio_find = BluetoothFindFirstRadio( &params, &radio );
+    ok( radio_find != NULL, "Got radio_find %p\n", radio_find );
+    for (;;)
+    {
+        BLUETOOTH_RADIO_INFO info = { sizeof( info ) };
+        DWORD ret;
+
+        ret = BluetoothGetRadioInfo( radio, &info );
+        ok( !ret, "Got ret %lu\n", ret );
+        CloseHandle( radio );
+        if (info.address.ullLong == address)
+        {
+            found = TRUE;
+            break;
+        }
+        if (!BluetoothFindNextRadio( radio_find, &radio )) break;
+    }
+    BluetoothFindRadioClose( radio_find );
+    ok( found, "got found %d\n", found );
+
+    hr = IBluetoothAdapter_get_IsLowEnergySupported( adapter1, &bool_val );
+    todo_wine ok( hr == S_OK, "got hr %#lx.\n", hr );
+
+    hr = IBluetoothAdapter_get_IsClassicSupported( adapter1, &bool_val );
+    todo_wine ok( hr == S_OK, "got hr %#lx.\n", hr );
+
+    hr = IBluetoothAdapter_get_IsPeripheralRoleSupported( adapter1, &bool_val );
+    todo_wine ok( hr == S_OK, "got hr %#lx.\n", hr );
+
+    hr = IBluetoothAdapter_get_IsCentralRoleSupported( adapter1, &bool_val );
+    todo_wine ok( hr == S_OK, "got hr %#lx.\n", hr );
+
+    hr = IBluetoothAdapter_get_IsAdvertisementOffloadSupported( adapter1, &bool_val );
+    todo_wine ok( hr == S_OK, "got hr %#lx.\n", hr );
+
+    ref = IBluetoothAdapter_Release( adapter1 );
+    ok( !ref, "got ref %ld.\n", ref );
+done:
     ref = IBluetoothAdapterStatics_Release( bluetoothadapter_statics );
     ok( ref == 2, "got ref %ld.\n", ref );
     ref = IActivationFactory_Release( factory );

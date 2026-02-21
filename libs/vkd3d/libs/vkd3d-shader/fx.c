@@ -2476,8 +2476,6 @@ static uint32_t write_fx_shader(enum fx_shader_type type, const struct hlsl_ir_c
             break;
     }
 
-    ++fx->inline_shader_count;
-
     return ret;
 }
 
@@ -2591,6 +2589,8 @@ static void write_fx_4_state_assignment(const struct hlsl_ir_var *var, struct hl
             }
 
             value_offset = write_fx_shader(shader_type, hlsl_ir_compile(value), unstructured, fx);
+            ++fx->inline_shader_count;
+            ++fx->shader_count;
             break;
         }
         default:
@@ -5468,7 +5468,13 @@ static void fx_4_parse_fxlvm_expression(struct fx_parser *parser, uint32_t offse
 static void fx_4_parse_state_object_initializer(struct fx_parser *parser, uint32_t count,
         enum hlsl_type_class type_class)
 {
+    const struct rhs_named_value *named_value;
+    struct fx_5_shader shader = { 0 };
+    const struct fx_state *state;
+    unsigned int shader_type = 0;
+    struct fx_state_table table;
     struct fx_assignment entry;
+    uint32_t i, j, comp_count;
     struct
     {
         uint32_t name;
@@ -5483,6 +5489,7 @@ static void fx_4_parse_state_object_initializer(struct fx_parser *parser, uint32
             float f;
         };
     } value;
+
     static const char *const value_types[FX_COMPONENT_TYPE_COUNT] =
     {
         [FX_BOOL]  = "bool",
@@ -5490,12 +5497,6 @@ static void fx_4_parse_state_object_initializer(struct fx_parser *parser, uint32
         [FX_UINT]  = "uint",
         [FX_UINT8] = "byte",
     };
-    const struct rhs_named_value *named_value;
-    struct fx_5_shader shader = { 0 };
-    struct fx_state_table table;
-    unsigned int shader_type = 0;
-    uint32_t i, j, comp_count;
-    struct fx_state *state;
 
     table = fx_get_state_table(type_class, parser->version.major, parser->version.minor);
 

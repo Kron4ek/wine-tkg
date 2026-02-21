@@ -690,6 +690,12 @@ typedef struct VkPipelineVertexInputStateCreateInfo32
     PTR32 pVertexAttributeDescriptions;
 } VkPipelineVertexInputStateCreateInfo32;
 
+typedef struct VkPresentStageTimeEXT32
+{
+    VkPresentStageFlagsEXT stage;
+    uint64_t DECLSPEC_ALIGN(8) time;
+} VkPresentStageTimeEXT32;
+
 typedef struct VkSampleLocationsInfoEXT32
 {
     VkStructureType sType;
@@ -1374,6 +1380,19 @@ typedef struct VkPartitionedAccelerationStructureInstancesInputNV32
     uint32_t maxInstanceInGlobalPartitionCount;
 } VkPartitionedAccelerationStructureInstancesInputNV32;
 
+typedef struct VkPastPresentationTimingEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    uint64_t DECLSPEC_ALIGN(8) presentId;
+    uint64_t DECLSPEC_ALIGN(8) targetTime;
+    uint32_t presentStageCount;
+    PTR32 pPresentStages;
+    VkTimeDomainKHR timeDomain;
+    uint64_t DECLSPEC_ALIGN(8) timeDomainId;
+    VkBool32 reportComplete;
+} VkPastPresentationTimingEXT32;
+
 typedef union VkPerformanceValueDataINTEL32
 {
     uint32_t value32;
@@ -1546,6 +1565,17 @@ typedef struct VkPresentRegionKHR32
     uint32_t rectangleCount;
     PTR32 pRectangles;
 } VkPresentRegionKHR32;
+
+typedef struct VkPresentTimingInfoEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    VkPresentTimingInfoFlagsEXT flags;
+    uint64_t DECLSPEC_ALIGN(8) targetTime;
+    uint64_t DECLSPEC_ALIGN(8) timeDomainId;
+    VkPresentStageFlagsEXT presentStageQueries;
+    VkPresentStageFlagsEXT targetTimeDomainPresentStage;
+} VkPresentTimingInfoEXT32;
 
 typedef struct VkRayTracingPipelineInterfaceCreateInfoKHR32
 {
@@ -4358,6 +4388,24 @@ typedef struct VkPartitionedAccelerationStructureFlagsNV32
     VkBool32 enablePartitionTranslation;
 } VkPartitionedAccelerationStructureFlagsNV32;
 
+typedef struct VkPastPresentationTimingInfoEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    VkPastPresentationTimingFlagsEXT flags;
+    VkSwapchainKHR DECLSPEC_ALIGN(8) swapchain;
+} VkPastPresentationTimingInfoEXT32;
+
+typedef struct VkPastPresentationTimingPropertiesEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    uint64_t DECLSPEC_ALIGN(8) timingPropertiesCounter;
+    uint64_t DECLSPEC_ALIGN(8) timeDomainsCounter;
+    uint32_t presentationTimingCount;
+    PTR32 pPresentationTimings;
+} VkPastPresentationTimingPropertiesEXT32;
+
 typedef struct VkPerTileBeginInfoQCOM32
 {
     VkStructureType sType;
@@ -4718,6 +4766,13 @@ typedef struct VkPhysicalDeviceCooperativeMatrix2PropertiesNV32
     uint32_t cooperativeMatrixFlexibleDimensionsMaxDimension;
     uint32_t cooperativeMatrixWorkgroupScopeReservedSharedMemory;
 } VkPhysicalDeviceCooperativeMatrix2PropertiesNV32;
+
+typedef struct VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    VkBool32 cooperativeMatrixConversion;
+} VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM32;
 
 typedef struct VkPhysicalDeviceCooperativeMatrixFeaturesKHR32
 {
@@ -6415,6 +6470,15 @@ typedef struct VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR32
 } VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR32;
 typedef VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR32 VkPhysicalDevicePresentModeFifoLatestReadyFeaturesEXT32;
 
+typedef struct VkPhysicalDevicePresentTimingFeaturesEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    VkBool32 presentTiming;
+    VkBool32 presentAtAbsoluteTime;
+    VkBool32 presentAtRelativeTime;
+} VkPhysicalDevicePresentTimingFeaturesEXT32;
+
 typedef struct VkPhysicalDevicePresentWait2FeaturesKHR32
 {
     VkStructureType sType;
@@ -7041,6 +7105,16 @@ typedef struct VkPhysicalDeviceShaderMaximalReconvergenceFeaturesKHR32
     PTR32 pNext;
     VkBool32 shaderMaximalReconvergence;
 } VkPhysicalDeviceShaderMaximalReconvergenceFeaturesKHR32;
+
+typedef struct VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    VkBool32 shaderMixedFloatDotProductFloat16AccFloat32;
+    VkBool32 shaderMixedFloatDotProductFloat16AccFloat16;
+    VkBool32 shaderMixedFloatDotProductBFloat16Acc;
+    VkBool32 shaderMixedFloatDotProductFloat8AccFloat32;
+} VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE32;
 
 typedef struct VkPhysicalDeviceShaderModuleIdentifierFeaturesEXT32
 {
@@ -8324,6 +8398,24 @@ typedef struct VkPresentRegionsKHR32
     PTR32 pRegions;
 } VkPresentRegionsKHR32;
 
+typedef struct VkPresentTimingSurfaceCapabilitiesEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    VkBool32 presentTimingSupported;
+    VkBool32 presentAtAbsoluteTimeSupported;
+    VkBool32 presentAtRelativeTimeSupported;
+    VkPresentStageFlagsEXT presentStageQueries;
+} VkPresentTimingSurfaceCapabilitiesEXT32;
+
+typedef struct VkPresentTimingsInfoEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    uint32_t swapchainCount;
+    PTR32 pTimingInfos;
+} VkPresentTimingsInfoEXT32;
+
 typedef struct VkPresentWait2InfoKHR32
 {
     VkStructureType sType;
@@ -9207,6 +9299,15 @@ typedef struct VkSurfacePresentScalingCapabilitiesKHR32
 } VkSurfacePresentScalingCapabilitiesKHR32;
 typedef VkSurfacePresentScalingCapabilitiesKHR32 VkSurfacePresentScalingCapabilitiesEXT32;
 
+typedef struct VkSwapchainCalibratedTimestampInfoEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    VkSwapchainKHR DECLSPEC_ALIGN(8) swapchain;
+    VkPresentStageFlagsEXT presentStage;
+    uint64_t DECLSPEC_ALIGN(8) timeDomainId;
+} VkSwapchainCalibratedTimestampInfoEXT32;
+
 typedef struct VkSwapchainCreateInfoKHR32
 {
     VkStructureType sType;
@@ -9279,6 +9380,23 @@ typedef struct VkSwapchainPresentScalingCreateInfoKHR32
     VkPresentGravityFlagsKHR presentGravityY;
 } VkSwapchainPresentScalingCreateInfoKHR32;
 typedef VkSwapchainPresentScalingCreateInfoKHR32 VkSwapchainPresentScalingCreateInfoEXT32;
+
+typedef struct VkSwapchainTimeDomainPropertiesEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    uint32_t timeDomainCount;
+    PTR32 pTimeDomains;
+    PTR32 pTimeDomainIds;
+} VkSwapchainTimeDomainPropertiesEXT32;
+
+typedef struct VkSwapchainTimingPropertiesEXT32
+{
+    VkStructureType sType;
+    PTR32 pNext;
+    uint64_t DECLSPEC_ALIGN(8) refreshDuration;
+    uint64_t DECLSPEC_ALIGN(8) refreshInterval;
+} VkSwapchainTimingPropertiesEXT32;
 
 typedef struct VkTensorCaptureDescriptorDataInfoARM32
 {
@@ -18037,6 +18155,17 @@ static void convert_VkDeviceCreateInfo_win64_to_host(struct conversion_context *
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_CONVERSION_FEATURES_QCOM:
+        {
+            VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM *in_ext = (const VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_CONVERSION_FEATURES_QCOM;
+            out_ext->pNext = NULL;
+            out_ext->cooperativeMatrixConversion = in_ext->cooperativeMatrixConversion;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR:
         {
             VkPhysicalDeviceCooperativeMatrixFeaturesKHR *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
@@ -19370,6 +19499,19 @@ static void convert_VkDeviceCreateInfo_win64_to_host(struct conversion_context *
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT:
+        {
+            VkPhysicalDevicePresentTimingFeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDevicePresentTimingFeaturesEXT *in_ext = (const VkPhysicalDevicePresentTimingFeaturesEXT *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT;
+            out_ext->pNext = NULL;
+            out_ext->presentTiming = in_ext->presentTiming;
+            out_ext->presentAtAbsoluteTime = in_ext->presentAtAbsoluteTime;
+            out_ext->presentAtRelativeTime = in_ext->presentAtRelativeTime;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_2_FEATURES_KHR:
         {
             VkPhysicalDevicePresentWait2FeaturesKHR *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
@@ -19962,6 +20104,20 @@ static void convert_VkDeviceCreateInfo_win64_to_host(struct conversion_context *
             out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MAXIMAL_RECONVERGENCE_FEATURES_KHR;
             out_ext->pNext = NULL;
             out_ext->shaderMaximalReconvergence = in_ext->shaderMaximalReconvergence;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MIXED_FLOAT_DOT_PRODUCT_FEATURES_VALVE:
+        {
+            VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE *in_ext = (const VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MIXED_FLOAT_DOT_PRODUCT_FEATURES_VALVE;
+            out_ext->pNext = NULL;
+            out_ext->shaderMixedFloatDotProductFloat16AccFloat32 = in_ext->shaderMixedFloatDotProductFloat16AccFloat32;
+            out_ext->shaderMixedFloatDotProductFloat16AccFloat16 = in_ext->shaderMixedFloatDotProductFloat16AccFloat16;
+            out_ext->shaderMixedFloatDotProductBFloat16Acc = in_ext->shaderMixedFloatDotProductBFloat16Acc;
+            out_ext->shaderMixedFloatDotProductFloat8AccFloat32 = in_ext->shaderMixedFloatDotProductFloat8AccFloat32;
             out_header->pNext = (void *)out_ext;
             out_header = (void *)out_ext;
             break;
@@ -21128,6 +21284,17 @@ static void convert_VkDeviceCreateInfo_win32_to_host(struct conversion_context *
             out_ext->cooperativeMatrixPerElementOperations = in_ext->cooperativeMatrixPerElementOperations;
             out_ext->cooperativeMatrixTensorAddressing = in_ext->cooperativeMatrixTensorAddressing;
             out_ext->cooperativeMatrixBlockLoads = in_ext->cooperativeMatrixBlockLoads;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_CONVERSION_FEATURES_QCOM:
+        {
+            VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM32 *in_ext = (const VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_CONVERSION_FEATURES_QCOM;
+            out_ext->pNext = NULL;
+            out_ext->cooperativeMatrixConversion = in_ext->cooperativeMatrixConversion;
             out_header->pNext = (void *)out_ext;
             out_header = (void *)out_ext;
             break;
@@ -22465,6 +22632,19 @@ static void convert_VkDeviceCreateInfo_win32_to_host(struct conversion_context *
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT:
+        {
+            VkPhysicalDevicePresentTimingFeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDevicePresentTimingFeaturesEXT32 *in_ext = (const VkPhysicalDevicePresentTimingFeaturesEXT32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT;
+            out_ext->pNext = NULL;
+            out_ext->presentTiming = in_ext->presentTiming;
+            out_ext->presentAtAbsoluteTime = in_ext->presentAtAbsoluteTime;
+            out_ext->presentAtRelativeTime = in_ext->presentAtRelativeTime;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_2_FEATURES_KHR:
         {
             VkPhysicalDevicePresentWait2FeaturesKHR *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
@@ -23057,6 +23237,20 @@ static void convert_VkDeviceCreateInfo_win32_to_host(struct conversion_context *
             out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MAXIMAL_RECONVERGENCE_FEATURES_KHR;
             out_ext->pNext = NULL;
             out_ext->shaderMaximalReconvergence = in_ext->shaderMaximalReconvergence;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MIXED_FLOAT_DOT_PRODUCT_FEATURES_VALVE:
+        {
+            VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE32 *in_ext = (const VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MIXED_FLOAT_DOT_PRODUCT_FEATURES_VALVE;
+            out_ext->pNext = NULL;
+            out_ext->shaderMixedFloatDotProductFloat16AccFloat32 = in_ext->shaderMixedFloatDotProductFloat16AccFloat32;
+            out_ext->shaderMixedFloatDotProductFloat16AccFloat16 = in_ext->shaderMixedFloatDotProductFloat16AccFloat16;
+            out_ext->shaderMixedFloatDotProductBFloat16Acc = in_ext->shaderMixedFloatDotProductBFloat16Acc;
+            out_ext->shaderMixedFloatDotProductFloat8AccFloat32 = in_ext->shaderMixedFloatDotProductFloat8AccFloat32;
             out_header->pNext = (void *)out_ext;
             out_header = (void *)out_ext;
             break;
@@ -28716,15 +28910,94 @@ static void convert_VkBufferCaptureDescriptorDataInfoEXT_win32_to_host(const VkB
         FIXME("Unexpected pNext\n");
 }
 
-static void convert_VkCalibratedTimestampInfoKHR_win32_to_host(const VkCalibratedTimestampInfoKHR32 *in, VkCalibratedTimestampInfoKHR *out)
+#ifdef _WIN64
+static void convert_VkCalibratedTimestampInfoKHR_win64_to_host(struct conversion_context *ctx, const VkCalibratedTimestampInfoKHR *in, VkCalibratedTimestampInfoKHR *out)
 {
+    const VkBaseInStructure *in_header;
+    VkBaseOutStructure *out_header = (void *)out;
+
     if (!in) return;
 
     out->sType = in->sType;
     out->pNext = NULL;
     out->timeDomain = in->timeDomain;
-    if (in->pNext)
-        FIXME("Unexpected pNext\n");
+
+    for (in_header = (void *)in->pNext; in_header; in_header = (void *)in_header->pNext)
+    {
+        switch (in_header->sType)
+        {
+        case VK_STRUCTURE_TYPE_SWAPCHAIN_CALIBRATED_TIMESTAMP_INFO_EXT:
+        {
+            VkSwapchainCalibratedTimestampInfoEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkSwapchainCalibratedTimestampInfoEXT *in_ext = (const VkSwapchainCalibratedTimestampInfoEXT *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CALIBRATED_TIMESTAMP_INFO_EXT;
+            out_ext->pNext = NULL;
+            out_ext->swapchain = vulkan_swapchain_from_handle(in_ext->swapchain)->host.swapchain;
+            out_ext->presentStage = in_ext->presentStage;
+            out_ext->timeDomainId = in_ext->timeDomainId;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        default:
+            FIXME("Unhandled sType %u.\n", in_header->sType);
+            break;
+        }
+    }
+}
+#endif /* _WIN64 */
+
+#ifdef _WIN64
+static const VkCalibratedTimestampInfoKHR *convert_VkCalibratedTimestampInfoKHR_array_win64_to_host(struct conversion_context *ctx, const VkCalibratedTimestampInfoKHR *in, uint32_t count)
+{
+    VkCalibratedTimestampInfoKHR *out;
+    unsigned int i;
+
+    if (!in || !count) return NULL;
+
+    out = conversion_context_alloc(ctx, count * sizeof(*out));
+    for (i = 0; i < count; i++)
+    {
+        convert_VkCalibratedTimestampInfoKHR_win64_to_host(ctx, &in[i], &out[i]);
+    }
+
+    return out;
+}
+#endif /* _WIN64 */
+
+static void convert_VkCalibratedTimestampInfoKHR_win32_to_host(struct conversion_context *ctx, const VkCalibratedTimestampInfoKHR32 *in, VkCalibratedTimestampInfoKHR *out)
+{
+    const VkBaseInStructure32 *in_header;
+    VkBaseOutStructure *out_header = (void *)out;
+
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = NULL;
+    out->timeDomain = in->timeDomain;
+
+    for (in_header = UlongToPtr(in->pNext); in_header; in_header = UlongToPtr(in_header->pNext))
+    {
+        switch (in_header->sType)
+        {
+        case VK_STRUCTURE_TYPE_SWAPCHAIN_CALIBRATED_TIMESTAMP_INFO_EXT:
+        {
+            VkSwapchainCalibratedTimestampInfoEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkSwapchainCalibratedTimestampInfoEXT32 *in_ext = (const VkSwapchainCalibratedTimestampInfoEXT32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CALIBRATED_TIMESTAMP_INFO_EXT;
+            out_ext->pNext = NULL;
+            out_ext->swapchain = vulkan_swapchain_from_handle(in_ext->swapchain)->host.swapchain;
+            out_ext->presentStage = in_ext->presentStage;
+            out_ext->timeDomainId = in_ext->timeDomainId;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        default:
+            FIXME("Unhandled sType %u.\n", in_header->sType);
+            break;
+        }
+    }
 }
 
 static const VkCalibratedTimestampInfoKHR *convert_VkCalibratedTimestampInfoKHR_array_win32_to_host(struct conversion_context *ctx, const VkCalibratedTimestampInfoKHR32 *in, uint32_t count)
@@ -28737,7 +29010,7 @@ static const VkCalibratedTimestampInfoKHR *convert_VkCalibratedTimestampInfoKHR_
     out = conversion_context_alloc(ctx, count * sizeof(*out));
     for (i = 0; i < count; i++)
     {
-        convert_VkCalibratedTimestampInfoKHR_win32_to_host(&in[i], &out[i]);
+        convert_VkCalibratedTimestampInfoKHR_win32_to_host(ctx, &in[i], &out[i]);
     }
 
     return out;
@@ -30138,6 +30411,133 @@ static void convert_VkPartitionedAccelerationStructureInstancesInputNV_host_to_w
 
 }
 
+#ifdef _WIN64
+static void convert_VkPastPresentationTimingInfoEXT_win64_to_host(const VkPastPresentationTimingInfoEXT *in, VkPastPresentationTimingInfoEXT *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = in->pNext;
+    out->flags = in->flags;
+    out->swapchain = vulkan_swapchain_from_handle(in->swapchain)->host.swapchain;
+}
+#endif /* _WIN64 */
+
+static void convert_VkPastPresentationTimingInfoEXT_win32_to_host(const VkPastPresentationTimingInfoEXT32 *in, VkPastPresentationTimingInfoEXT *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = NULL;
+    out->flags = in->flags;
+    out->swapchain = vulkan_swapchain_from_handle(in->swapchain)->host.swapchain;
+    if (in->pNext)
+        FIXME("Unexpected pNext\n");
+}
+
+static VkPresentStageTimeEXT *convert_VkPresentStageTimeEXT_array_win32_to_host(struct conversion_context *ctx, const VkPresentStageTimeEXT32 *in, uint32_t count)
+{
+    VkPresentStageTimeEXT *out;
+    if (!in || !count) return NULL;
+
+    out = conversion_context_alloc(ctx, count * sizeof(*out));
+
+    return out;
+}
+
+static void convert_VkPastPresentationTimingEXT_win32_to_host(struct conversion_context *ctx, const VkPastPresentationTimingEXT32 *in, VkPastPresentationTimingEXT *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = NULL;
+    out->pPresentStages = convert_VkPresentStageTimeEXT_array_win32_to_host(ctx, (VkPresentStageTimeEXT32 *)UlongToPtr(in->pPresentStages), in->presentStageCount);
+    if (in->pNext)
+        FIXME("Unexpected pNext\n");
+}
+
+static VkPastPresentationTimingEXT *convert_VkPastPresentationTimingEXT_array_win32_to_host(struct conversion_context *ctx, const VkPastPresentationTimingEXT32 *in, uint32_t count)
+{
+    VkPastPresentationTimingEXT *out;
+    unsigned int i;
+
+    if (!in || !count) return NULL;
+
+    out = conversion_context_alloc(ctx, count * sizeof(*out));
+    for (i = 0; i < count; i++)
+    {
+        convert_VkPastPresentationTimingEXT_win32_to_host(ctx, &in[i], &out[i]);
+    }
+
+    return out;
+}
+
+static void convert_VkPastPresentationTimingPropertiesEXT_win32_to_host(struct conversion_context *ctx, const VkPastPresentationTimingPropertiesEXT32 *in, VkPastPresentationTimingPropertiesEXT *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = NULL;
+    out->pPresentationTimings = convert_VkPastPresentationTimingEXT_array_win32_to_host(ctx, (VkPastPresentationTimingEXT32 *)UlongToPtr(in->pPresentationTimings), in->presentationTimingCount);
+    if (in->pNext)
+        FIXME("Unexpected pNext\n");
+}
+
+static void convert_VkPresentStageTimeEXT_host_to_win32(const VkPresentStageTimeEXT *in, VkPresentStageTimeEXT32 *out)
+{
+    if (!in) return;
+
+    out->stage = in->stage;
+    out->time = in->time;
+}
+
+static void convert_VkPresentStageTimeEXT_array_host_to_win32(const VkPresentStageTimeEXT *in, VkPresentStageTimeEXT32 *out, uint32_t count)
+{
+    unsigned int i;
+
+    if (!in) return;
+
+    for (i = 0; i < count; i++)
+    {
+        convert_VkPresentStageTimeEXT_host_to_win32(&in[i], &out[i]);
+    }
+}
+
+static void convert_VkPastPresentationTimingEXT_host_to_win32(const VkPastPresentationTimingEXT *in, VkPastPresentationTimingEXT32 *out)
+{
+    if (!in) return;
+
+    out->presentId = in->presentId;
+    out->targetTime = in->targetTime;
+    out->presentStageCount = in->presentStageCount;
+    convert_VkPresentStageTimeEXT_array_host_to_win32(in->pPresentStages, (VkPresentStageTimeEXT32 *)UlongToPtr(out->pPresentStages), in->presentStageCount);
+    out->timeDomain = in->timeDomain;
+    out->timeDomainId = in->timeDomainId;
+    out->reportComplete = in->reportComplete;
+}
+
+static void convert_VkPastPresentationTimingEXT_array_host_to_win32(const VkPastPresentationTimingEXT *in, VkPastPresentationTimingEXT32 *out, uint32_t count)
+{
+    unsigned int i;
+
+    if (!in) return;
+
+    for (i = 0; i < count; i++)
+    {
+        convert_VkPastPresentationTimingEXT_host_to_win32(&in[i], &out[i]);
+    }
+}
+
+static void convert_VkPastPresentationTimingPropertiesEXT_host_to_win32(const VkPastPresentationTimingPropertiesEXT *in, VkPastPresentationTimingPropertiesEXT32 *out)
+{
+    if (!in) return;
+
+    out->timingPropertiesCounter = in->timingPropertiesCounter;
+    out->timeDomainsCounter = in->timeDomainsCounter;
+    out->presentationTimingCount = in->presentationTimingCount;
+    convert_VkPastPresentationTimingEXT_array_host_to_win32(in->pPresentationTimings, (VkPastPresentationTimingEXT32 *)UlongToPtr(out->pPresentationTimings), in->presentationTimingCount);
+}
+
 static void convert_VkPerformanceValueDataINTEL_host_to_win32(const VkPerformanceValueDataINTEL *in, VkPerformanceValueDataINTEL32 *out, VkFlags selector)
 {
     if (!in) return;
@@ -30853,6 +31253,17 @@ static void convert_VkPhysicalDeviceFeatures2_win32_to_host(struct conversion_co
             out_ext->cooperativeMatrixPerElementOperations = in_ext->cooperativeMatrixPerElementOperations;
             out_ext->cooperativeMatrixTensorAddressing = in_ext->cooperativeMatrixTensorAddressing;
             out_ext->cooperativeMatrixBlockLoads = in_ext->cooperativeMatrixBlockLoads;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_CONVERSION_FEATURES_QCOM:
+        {
+            VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM32 *in_ext = (const VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_CONVERSION_FEATURES_QCOM;
+            out_ext->pNext = NULL;
+            out_ext->cooperativeMatrixConversion = in_ext->cooperativeMatrixConversion;
             out_header->pNext = (void *)out_ext;
             out_header = (void *)out_ext;
             break;
@@ -32179,6 +32590,19 @@ static void convert_VkPhysicalDeviceFeatures2_win32_to_host(struct conversion_co
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT:
+        {
+            VkPhysicalDevicePresentTimingFeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDevicePresentTimingFeaturesEXT32 *in_ext = (const VkPhysicalDevicePresentTimingFeaturesEXT32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT;
+            out_ext->pNext = NULL;
+            out_ext->presentTiming = in_ext->presentTiming;
+            out_ext->presentAtAbsoluteTime = in_ext->presentAtAbsoluteTime;
+            out_ext->presentAtRelativeTime = in_ext->presentAtRelativeTime;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_2_FEATURES_KHR:
         {
             VkPhysicalDevicePresentWait2FeaturesKHR *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
@@ -32771,6 +33195,20 @@ static void convert_VkPhysicalDeviceFeatures2_win32_to_host(struct conversion_co
             out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MAXIMAL_RECONVERGENCE_FEATURES_KHR;
             out_ext->pNext = NULL;
             out_ext->shaderMaximalReconvergence = in_ext->shaderMaximalReconvergence;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MIXED_FLOAT_DOT_PRODUCT_FEATURES_VALVE:
+        {
+            VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE32 *in_ext = (const VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MIXED_FLOAT_DOT_PRODUCT_FEATURES_VALVE;
+            out_ext->pNext = NULL;
+            out_ext->shaderMixedFloatDotProductFloat16AccFloat32 = in_ext->shaderMixedFloatDotProductFloat16AccFloat32;
+            out_ext->shaderMixedFloatDotProductFloat16AccFloat16 = in_ext->shaderMixedFloatDotProductFloat16AccFloat16;
+            out_ext->shaderMixedFloatDotProductBFloat16Acc = in_ext->shaderMixedFloatDotProductBFloat16Acc;
+            out_ext->shaderMixedFloatDotProductFloat8AccFloat32 = in_ext->shaderMixedFloatDotProductFloat8AccFloat32;
             out_header->pNext = (void *)out_ext;
             out_header = (void *)out_ext;
             break;
@@ -33709,6 +34147,15 @@ static void convert_VkPhysicalDeviceFeatures2_host_to_win32(const VkPhysicalDevi
             out_ext->cooperativeMatrixPerElementOperations = in_ext->cooperativeMatrixPerElementOperations;
             out_ext->cooperativeMatrixTensorAddressing = in_ext->cooperativeMatrixTensorAddressing;
             out_ext->cooperativeMatrixBlockLoads = in_ext->cooperativeMatrixBlockLoads;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_CONVERSION_FEATURES_QCOM:
+        {
+            VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_CONVERSION_FEATURES_QCOM);
+            const VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM *in_ext = (const VkPhysicalDeviceCooperativeMatrixConversionFeaturesQCOM *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_CONVERSION_FEATURES_QCOM;
+            out_ext->cooperativeMatrixConversion = in_ext->cooperativeMatrixConversion;
             out_header = (void *)out_ext;
             break;
         }
@@ -34812,6 +35259,17 @@ static void convert_VkPhysicalDeviceFeatures2_host_to_win32(const VkPhysicalDevi
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT:
+        {
+            VkPhysicalDevicePresentTimingFeaturesEXT32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT);
+            const VkPhysicalDevicePresentTimingFeaturesEXT *in_ext = (const VkPhysicalDevicePresentTimingFeaturesEXT *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_TIMING_FEATURES_EXT;
+            out_ext->presentTiming = in_ext->presentTiming;
+            out_ext->presentAtAbsoluteTime = in_ext->presentAtAbsoluteTime;
+            out_ext->presentAtRelativeTime = in_ext->presentAtRelativeTime;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_2_FEATURES_KHR:
         {
             VkPhysicalDevicePresentWait2FeaturesKHR32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_2_FEATURES_KHR);
@@ -35305,6 +35763,18 @@ static void convert_VkPhysicalDeviceFeatures2_host_to_win32(const VkPhysicalDevi
             const VkPhysicalDeviceShaderMaximalReconvergenceFeaturesKHR *in_ext = (const VkPhysicalDeviceShaderMaximalReconvergenceFeaturesKHR *)in_header;
             out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MAXIMAL_RECONVERGENCE_FEATURES_KHR;
             out_ext->shaderMaximalReconvergence = in_ext->shaderMaximalReconvergence;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MIXED_FLOAT_DOT_PRODUCT_FEATURES_VALVE:
+        {
+            VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MIXED_FLOAT_DOT_PRODUCT_FEATURES_VALVE);
+            const VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE *in_ext = (const VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MIXED_FLOAT_DOT_PRODUCT_FEATURES_VALVE;
+            out_ext->shaderMixedFloatDotProductFloat16AccFloat32 = in_ext->shaderMixedFloatDotProductFloat16AccFloat32;
+            out_ext->shaderMixedFloatDotProductFloat16AccFloat16 = in_ext->shaderMixedFloatDotProductFloat16AccFloat16;
+            out_ext->shaderMixedFloatDotProductBFloat16Acc = in_ext->shaderMixedFloatDotProductBFloat16Acc;
+            out_ext->shaderMixedFloatDotProductFloat8AccFloat32 = in_ext->shaderMixedFloatDotProductFloat8AccFloat32;
             out_header = (void *)out_ext;
             break;
         }
@@ -39705,6 +40175,15 @@ static void convert_VkSurfaceCapabilities2KHR_win32_to_host(struct conversion_co
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PRESENT_TIMING_SURFACE_CAPABILITIES_EXT:
+        {
+            VkPresentTimingSurfaceCapabilitiesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            out_ext->sType = VK_STRUCTURE_TYPE_PRESENT_TIMING_SURFACE_CAPABILITIES_EXT;
+            out_ext->pNext = NULL;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_PRESENT_BARRIER_NV:
         {
             VkSurfaceCapabilitiesPresentBarrierNV *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
@@ -39790,6 +40269,18 @@ static void convert_VkSurfaceCapabilities2KHR_host_to_win32(const VkSurfaceCapab
             out_ext->sType = VK_STRUCTURE_TYPE_LATENCY_SURFACE_CAPABILITIES_NV;
             out_ext->presentModeCount = in_ext->presentModeCount;
             out_ext->pPresentModes = PtrToUlong(in_ext->pPresentModes);
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PRESENT_TIMING_SURFACE_CAPABILITIES_EXT:
+        {
+            VkPresentTimingSurfaceCapabilitiesEXT32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PRESENT_TIMING_SURFACE_CAPABILITIES_EXT);
+            const VkPresentTimingSurfaceCapabilitiesEXT *in_ext = (const VkPresentTimingSurfaceCapabilitiesEXT *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PRESENT_TIMING_SURFACE_CAPABILITIES_EXT;
+            out_ext->presentTimingSupported = in_ext->presentTimingSupported;
+            out_ext->presentAtAbsoluteTimeSupported = in_ext->presentAtAbsoluteTimeSupported;
+            out_ext->presentAtRelativeTimeSupported = in_ext->presentAtRelativeTimeSupported;
+            out_ext->presentStageQueries = in_ext->presentStageQueries;
             out_header = (void *)out_ext;
             break;
         }
@@ -40952,6 +41443,43 @@ static void convert_VkShaderModuleIdentifierEXT_host_to_win32(const VkShaderModu
     memcpy(out->identifier, in->identifier, VK_MAX_SHADER_MODULE_IDENTIFIER_SIZE_EXT * sizeof(uint8_t));
 }
 
+static void convert_VkSwapchainTimeDomainPropertiesEXT_win32_to_host(const VkSwapchainTimeDomainPropertiesEXT32 *in, VkSwapchainTimeDomainPropertiesEXT *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = NULL;
+    if (in->pNext)
+        FIXME("Unexpected pNext\n");
+}
+
+static void convert_VkSwapchainTimeDomainPropertiesEXT_host_to_win32(const VkSwapchainTimeDomainPropertiesEXT *in, VkSwapchainTimeDomainPropertiesEXT32 *out)
+{
+    if (!in) return;
+
+    out->timeDomainCount = in->timeDomainCount;
+    out->pTimeDomains = PtrToUlong(in->pTimeDomains);
+    out->pTimeDomainIds = PtrToUlong(in->pTimeDomainIds);
+}
+
+static void convert_VkSwapchainTimingPropertiesEXT_win32_to_host(const VkSwapchainTimingPropertiesEXT32 *in, VkSwapchainTimingPropertiesEXT *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = NULL;
+    if (in->pNext)
+        FIXME("Unexpected pNext\n");
+}
+
+static void convert_VkSwapchainTimingPropertiesEXT_host_to_win32(const VkSwapchainTimingPropertiesEXT *in, VkSwapchainTimingPropertiesEXT32 *out)
+{
+    if (!in) return;
+
+    out->refreshDuration = in->refreshDuration;
+    out->refreshInterval = in->refreshInterval;
+}
+
 static void convert_VkTensorMemoryRequirementsInfoARM_win32_to_host(const VkTensorMemoryRequirementsInfoARM32 *in, VkTensorMemoryRequirementsInfoARM *out)
 {
     if (!in) return;
@@ -41760,6 +42288,18 @@ static void convert_VkPresentInfoKHR_win64_to_unwrapped_host(struct conversion_c
             out_header = (void *)out_ext;
             break;
         }
+        case VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT:
+        {
+            VkPresentTimingsInfoEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPresentTimingsInfoEXT *in_ext = (const VkPresentTimingsInfoEXT *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT;
+            out_ext->pNext = NULL;
+            out_ext->swapchainCount = in_ext->swapchainCount;
+            out_ext->pTimingInfos = in_ext->pTimingInfos;
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
         case VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_KHR:
         {
             VkSwapchainPresentFenceInfoKHR *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
@@ -41843,6 +42383,37 @@ static const VkPresentRegionKHR *convert_VkPresentRegionKHR_array_win32_to_host(
     for (i = 0; i < count; i++)
     {
         convert_VkPresentRegionKHR_win32_to_host(&in[i], &out[i]);
+    }
+
+    return out;
+}
+
+static void convert_VkPresentTimingInfoEXT_win32_to_host(const VkPresentTimingInfoEXT32 *in, VkPresentTimingInfoEXT *out)
+{
+    if (!in) return;
+
+    out->sType = in->sType;
+    out->pNext = NULL;
+    out->flags = in->flags;
+    out->targetTime = in->targetTime;
+    out->timeDomainId = in->timeDomainId;
+    out->presentStageQueries = in->presentStageQueries;
+    out->targetTimeDomainPresentStage = in->targetTimeDomainPresentStage;
+    if (in->pNext)
+        FIXME("Unexpected pNext\n");
+}
+
+static const VkPresentTimingInfoEXT *convert_VkPresentTimingInfoEXT_array_win32_to_host(struct conversion_context *ctx, const VkPresentTimingInfoEXT32 *in, uint32_t count)
+{
+    VkPresentTimingInfoEXT *out;
+    unsigned int i;
+
+    if (!in || !count) return NULL;
+
+    out = conversion_context_alloc(ctx, count * sizeof(*out));
+    for (i = 0; i < count; i++)
+    {
+        convert_VkPresentTimingInfoEXT_win32_to_host(&in[i], &out[i]);
     }
 
     return out;
@@ -41960,6 +42531,18 @@ static void convert_VkPresentInfoKHR_win32_to_unwrapped_host(struct conversion_c
             out_ext->pNext = NULL;
             out_ext->swapchainCount = in_ext->swapchainCount;
             out_ext->pRegions = convert_VkPresentRegionKHR_array_win32_to_host(ctx, (const VkPresentRegionKHR32 *)UlongToPtr(in_ext->pRegions), in_ext->swapchainCount);
+            out_header->pNext = (void *)out_ext;
+            out_header = (void *)out_ext;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT:
+        {
+            VkPresentTimingsInfoEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+            const VkPresentTimingsInfoEXT32 *in_ext = (const VkPresentTimingsInfoEXT32 *)in_header;
+            out_ext->sType = VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT;
+            out_ext->pNext = NULL;
+            out_ext->swapchainCount = in_ext->swapchainCount;
+            out_ext->pTimingInfos = convert_VkPresentTimingInfoEXT_array_win32_to_host(ctx, (const VkPresentTimingInfoEXT32 *)UlongToPtr(in_ext->pTimingInfos), in_ext->swapchainCount);
             out_header->pNext = (void *)out_ext;
             out_header = (void *)out_ext;
             break;
@@ -55713,10 +56296,16 @@ static NTSTATUS thunk32_vkGetBufferOpaqueCaptureDescriptorDataEXT(void *args)
 static NTSTATUS thunk64_vkGetCalibratedTimestampsEXT(void *args)
 {
     struct vkGetCalibratedTimestampsEXT_params *params = args;
+    const VkCalibratedTimestampInfoKHR *pTimestampInfos_host;
+    struct conversion_context local_ctx;
+    struct conversion_context *ctx = &local_ctx;
 
     TRACE("%p, %u, %p, %p, %p\n", params->device, params->timestampCount, params->pTimestampInfos, params->pTimestamps, params->pMaxDeviation);
 
-    params->result = wine_vkGetCalibratedTimestampsEXT(params->device, params->timestampCount, params->pTimestampInfos, params->pTimestamps, params->pMaxDeviation);
+    init_conversion_context(ctx);
+    pTimestampInfos_host = convert_VkCalibratedTimestampInfoKHR_array_win64_to_host(ctx, params->pTimestampInfos, params->timestampCount);
+    params->result = wine_vkGetCalibratedTimestampsEXT(params->device, params->timestampCount, pTimestampInfos_host, params->pTimestamps, params->pMaxDeviation);
+    free_conversion_context(ctx);
     return STATUS_SUCCESS;
 }
 #endif /* _WIN64 */
@@ -55749,10 +56338,16 @@ static NTSTATUS thunk32_vkGetCalibratedTimestampsEXT(void *args)
 static NTSTATUS thunk64_vkGetCalibratedTimestampsKHR(void *args)
 {
     struct vkGetCalibratedTimestampsKHR_params *params = args;
+    const VkCalibratedTimestampInfoKHR *pTimestampInfos_host;
+    struct conversion_context local_ctx;
+    struct conversion_context *ctx = &local_ctx;
 
     TRACE("%p, %u, %p, %p, %p\n", params->device, params->timestampCount, params->pTimestampInfos, params->pTimestamps, params->pMaxDeviation);
 
-    params->result = wine_vkGetCalibratedTimestampsKHR(params->device, params->timestampCount, params->pTimestampInfos, params->pTimestamps, params->pMaxDeviation);
+    init_conversion_context(ctx);
+    pTimestampInfos_host = convert_VkCalibratedTimestampInfoKHR_array_win64_to_host(ctx, params->pTimestampInfos, params->timestampCount);
+    params->result = wine_vkGetCalibratedTimestampsKHR(params->device, params->timestampCount, pTimestampInfos_host, params->pTimestamps, params->pMaxDeviation);
+    free_conversion_context(ctx);
     return STATUS_SUCCESS;
 }
 #endif /* _WIN64 */
@@ -58045,6 +58640,45 @@ static NTSTATUS thunk32_vkGetPartitionedAccelerationStructuresBuildSizesNV(void 
     vulkan_device_from_handle((VkDevice)UlongToPtr(params->device))->p_vkGetPartitionedAccelerationStructuresBuildSizesNV(vulkan_device_from_handle((VkDevice)UlongToPtr(params->device))->host.device, &pInfo_host, &pSizeInfo_host);
     convert_VkPartitionedAccelerationStructureInstancesInputNV_host_to_win32(&pInfo_host, (const VkPartitionedAccelerationStructureInstancesInputNV32 *)UlongToPtr(params->pInfo));
     convert_VkAccelerationStructureBuildSizesInfoKHR_host_to_win32(&pSizeInfo_host, (VkAccelerationStructureBuildSizesInfoKHR32 *)UlongToPtr(params->pSizeInfo));
+    free_conversion_context(ctx);
+    return STATUS_SUCCESS;
+}
+
+#ifdef _WIN64
+static NTSTATUS thunk64_vkGetPastPresentationTimingEXT(void *args)
+{
+    struct vkGetPastPresentationTimingEXT_params *params = args;
+    VkPastPresentationTimingInfoEXT pPastPresentationTimingInfo_host;
+
+    TRACE("%p, %p, %p\n", params->device, params->pPastPresentationTimingInfo, params->pPastPresentationTimingProperties);
+
+    convert_VkPastPresentationTimingInfoEXT_win64_to_host(params->pPastPresentationTimingInfo, &pPastPresentationTimingInfo_host);
+    params->result = vulkan_device_from_handle(params->device)->p_vkGetPastPresentationTimingEXT(vulkan_device_from_handle(params->device)->host.device, &pPastPresentationTimingInfo_host, params->pPastPresentationTimingProperties);
+    return STATUS_SUCCESS;
+}
+#endif /* _WIN64 */
+
+static NTSTATUS thunk32_vkGetPastPresentationTimingEXT(void *args)
+{
+    struct
+    {
+        PTR32 device;
+        PTR32 pPastPresentationTimingInfo;
+        PTR32 pPastPresentationTimingProperties;
+        VkResult result;
+    } *params = args;
+    VkPastPresentationTimingInfoEXT pPastPresentationTimingInfo_host;
+    VkPastPresentationTimingPropertiesEXT pPastPresentationTimingProperties_host;
+    struct conversion_context local_ctx;
+    struct conversion_context *ctx = &local_ctx;
+
+    TRACE("%#x, %#x, %#x\n", params->device, params->pPastPresentationTimingInfo, params->pPastPresentationTimingProperties);
+
+    init_conversion_context(ctx);
+    convert_VkPastPresentationTimingInfoEXT_win32_to_host((const VkPastPresentationTimingInfoEXT32 *)UlongToPtr(params->pPastPresentationTimingInfo), &pPastPresentationTimingInfo_host);
+    convert_VkPastPresentationTimingPropertiesEXT_win32_to_host(ctx, (VkPastPresentationTimingPropertiesEXT32 *)UlongToPtr(params->pPastPresentationTimingProperties), &pPastPresentationTimingProperties_host);
+    params->result = vulkan_device_from_handle((VkDevice)UlongToPtr(params->device))->p_vkGetPastPresentationTimingEXT(vulkan_device_from_handle((VkDevice)UlongToPtr(params->device))->host.device, &pPastPresentationTimingInfo_host, &pPastPresentationTimingProperties_host);
+    convert_VkPastPresentationTimingPropertiesEXT_host_to_win32(&pPastPresentationTimingProperties_host, (VkPastPresentationTimingPropertiesEXT32 *)UlongToPtr(params->pPastPresentationTimingProperties));
     free_conversion_context(ctx);
     return STATUS_SUCCESS;
 }
@@ -60885,6 +61519,70 @@ static NTSTATUS thunk32_vkGetSwapchainImagesKHR(void *args)
 }
 
 #ifdef _WIN64
+static NTSTATUS thunk64_vkGetSwapchainTimeDomainPropertiesEXT(void *args)
+{
+    struct vkGetSwapchainTimeDomainPropertiesEXT_params *params = args;
+
+    TRACE("%p, 0x%s, %p, %p\n", params->device, wine_dbgstr_longlong(params->swapchain), params->pSwapchainTimeDomainProperties, params->pTimeDomainsCounter);
+
+    params->result = wine_vkGetSwapchainTimeDomainPropertiesEXT(params->device, params->swapchain, params->pSwapchainTimeDomainProperties, params->pTimeDomainsCounter);
+    return STATUS_SUCCESS;
+}
+#endif /* _WIN64 */
+
+static NTSTATUS thunk32_vkGetSwapchainTimeDomainPropertiesEXT(void *args)
+{
+    struct
+    {
+        PTR32 device;
+        VkSwapchainKHR DECLSPEC_ALIGN(8) swapchain;
+        PTR32 pSwapchainTimeDomainProperties;
+        PTR32 pTimeDomainsCounter;
+        VkResult result;
+    } *params = args;
+    VkSwapchainTimeDomainPropertiesEXT pSwapchainTimeDomainProperties_host;
+
+    TRACE("%#x, 0x%s, %#x, %#x\n", params->device, wine_dbgstr_longlong(params->swapchain), params->pSwapchainTimeDomainProperties, params->pTimeDomainsCounter);
+
+    convert_VkSwapchainTimeDomainPropertiesEXT_win32_to_host((VkSwapchainTimeDomainPropertiesEXT32 *)UlongToPtr(params->pSwapchainTimeDomainProperties), &pSwapchainTimeDomainProperties_host);
+    params->result = wine_vkGetSwapchainTimeDomainPropertiesEXT((VkDevice)UlongToPtr(params->device), params->swapchain, &pSwapchainTimeDomainProperties_host, (uint64_t *)UlongToPtr(params->pTimeDomainsCounter));
+    convert_VkSwapchainTimeDomainPropertiesEXT_host_to_win32(&pSwapchainTimeDomainProperties_host, (VkSwapchainTimeDomainPropertiesEXT32 *)UlongToPtr(params->pSwapchainTimeDomainProperties));
+    return STATUS_SUCCESS;
+}
+
+#ifdef _WIN64
+static NTSTATUS thunk64_vkGetSwapchainTimingPropertiesEXT(void *args)
+{
+    struct vkGetSwapchainTimingPropertiesEXT_params *params = args;
+
+    TRACE("%p, 0x%s, %p, %p\n", params->device, wine_dbgstr_longlong(params->swapchain), params->pSwapchainTimingProperties, params->pSwapchainTimingPropertiesCounter);
+
+    params->result = vulkan_device_from_handle(params->device)->p_vkGetSwapchainTimingPropertiesEXT(vulkan_device_from_handle(params->device)->host.device, vulkan_swapchain_from_handle(params->swapchain)->host.swapchain, params->pSwapchainTimingProperties, params->pSwapchainTimingPropertiesCounter);
+    return STATUS_SUCCESS;
+}
+#endif /* _WIN64 */
+
+static NTSTATUS thunk32_vkGetSwapchainTimingPropertiesEXT(void *args)
+{
+    struct
+    {
+        PTR32 device;
+        VkSwapchainKHR DECLSPEC_ALIGN(8) swapchain;
+        PTR32 pSwapchainTimingProperties;
+        PTR32 pSwapchainTimingPropertiesCounter;
+        VkResult result;
+    } *params = args;
+    VkSwapchainTimingPropertiesEXT pSwapchainTimingProperties_host;
+
+    TRACE("%#x, 0x%s, %#x, %#x\n", params->device, wine_dbgstr_longlong(params->swapchain), params->pSwapchainTimingProperties, params->pSwapchainTimingPropertiesCounter);
+
+    convert_VkSwapchainTimingPropertiesEXT_win32_to_host((VkSwapchainTimingPropertiesEXT32 *)UlongToPtr(params->pSwapchainTimingProperties), &pSwapchainTimingProperties_host);
+    params->result = vulkan_device_from_handle((VkDevice)UlongToPtr(params->device))->p_vkGetSwapchainTimingPropertiesEXT(vulkan_device_from_handle((VkDevice)UlongToPtr(params->device))->host.device, vulkan_swapchain_from_handle(params->swapchain)->host.swapchain, &pSwapchainTimingProperties_host, (uint64_t *)UlongToPtr(params->pSwapchainTimingPropertiesCounter));
+    convert_VkSwapchainTimingPropertiesEXT_host_to_win32(&pSwapchainTimingProperties_host, (VkSwapchainTimingPropertiesEXT32 *)UlongToPtr(params->pSwapchainTimingProperties));
+    return STATUS_SUCCESS;
+}
+
+#ifdef _WIN64
 static NTSTATUS thunk64_vkGetTensorMemoryRequirementsARM(void *args)
 {
     struct vkGetTensorMemoryRequirementsARM_params *params = args;
@@ -62427,6 +63125,34 @@ static NTSTATUS thunk32_vkSetPrivateDataEXT(void *args)
 }
 
 #ifdef _WIN64
+static NTSTATUS thunk64_vkSetSwapchainPresentTimingQueueSizeEXT(void *args)
+{
+    struct vkSetSwapchainPresentTimingQueueSizeEXT_params *params = args;
+
+    TRACE("%p, 0x%s, %u\n", params->device, wine_dbgstr_longlong(params->swapchain), params->size);
+
+    params->result = vulkan_device_from_handle(params->device)->p_vkSetSwapchainPresentTimingQueueSizeEXT(vulkan_device_from_handle(params->device)->host.device, vulkan_swapchain_from_handle(params->swapchain)->host.swapchain, params->size);
+    return STATUS_SUCCESS;
+}
+#endif /* _WIN64 */
+
+static NTSTATUS thunk32_vkSetSwapchainPresentTimingQueueSizeEXT(void *args)
+{
+    struct
+    {
+        PTR32 device;
+        VkSwapchainKHR DECLSPEC_ALIGN(8) swapchain;
+        uint32_t size;
+        VkResult result;
+    } *params = args;
+
+    TRACE("%#x, 0x%s, %u\n", params->device, wine_dbgstr_longlong(params->swapchain), params->size);
+
+    params->result = vulkan_device_from_handle((VkDevice)UlongToPtr(params->device))->p_vkSetSwapchainPresentTimingQueueSizeEXT(vulkan_device_from_handle((VkDevice)UlongToPtr(params->device))->host.device, vulkan_swapchain_from_handle(params->swapchain)->host.swapchain, params->size);
+    return STATUS_SUCCESS;
+}
+
+#ifdef _WIN64
 static NTSTATUS thunk64_vkSignalSemaphore(void *args)
 {
     struct vkSignalSemaphore_params *params = args;
@@ -63824,6 +64550,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     thunk64_vkGetMemoryWin32HandlePropertiesKHR,
     thunk64_vkGetMicromapBuildSizesEXT,
     thunk64_vkGetPartitionedAccelerationStructuresBuildSizesNV,
+    thunk64_vkGetPastPresentationTimingEXT,
     thunk64_vkGetPerformanceParameterINTEL,
     thunk64_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT,
     thunk64_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR,
@@ -63910,6 +64637,8 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     thunk64_vkGetShaderModuleCreateInfoIdentifierEXT,
     thunk64_vkGetShaderModuleIdentifierEXT,
     thunk64_vkGetSwapchainImagesKHR,
+    thunk64_vkGetSwapchainTimeDomainPropertiesEXT,
+    thunk64_vkGetSwapchainTimingPropertiesEXT,
     thunk64_vkGetTensorMemoryRequirementsARM,
     thunk64_vkGetTensorOpaqueCaptureDataARM,
     thunk64_vkGetTensorOpaqueCaptureDescriptorDataARM,
@@ -63959,6 +64688,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     thunk64_vkSetLatencySleepModeNV,
     thunk64_vkSetPrivateData,
     thunk64_vkSetPrivateDataEXT,
+    thunk64_vkSetSwapchainPresentTimingQueueSizeEXT,
     thunk64_vkSignalSemaphore,
     thunk64_vkSignalSemaphoreKHR,
     thunk64_vkSubmitDebugUtilsMessageEXT,
@@ -64521,6 +65251,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     thunk32_vkGetMemoryWin32HandlePropertiesKHR,
     thunk32_vkGetMicromapBuildSizesEXT,
     thunk32_vkGetPartitionedAccelerationStructuresBuildSizesNV,
+    thunk32_vkGetPastPresentationTimingEXT,
     thunk32_vkGetPerformanceParameterINTEL,
     thunk32_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT,
     thunk32_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR,
@@ -64607,6 +65338,8 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     thunk32_vkGetShaderModuleCreateInfoIdentifierEXT,
     thunk32_vkGetShaderModuleIdentifierEXT,
     thunk32_vkGetSwapchainImagesKHR,
+    thunk32_vkGetSwapchainTimeDomainPropertiesEXT,
+    thunk32_vkGetSwapchainTimingPropertiesEXT,
     thunk32_vkGetTensorMemoryRequirementsARM,
     thunk32_vkGetTensorOpaqueCaptureDataARM,
     thunk32_vkGetTensorOpaqueCaptureDescriptorDataARM,
@@ -64656,6 +65389,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     thunk32_vkSetLatencySleepModeNV,
     thunk32_vkSetPrivateData,
     thunk32_vkSetPrivateDataEXT,
+    thunk32_vkSetSwapchainPresentTimingQueueSizeEXT,
     thunk32_vkSignalSemaphore,
     thunk32_vkSignalSemaphoreKHR,
     thunk32_vkSubmitDebugUtilsMessageEXT,

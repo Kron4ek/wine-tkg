@@ -3231,7 +3231,6 @@ static void test_simple_joystick( DWORD version )
     escape.lpvOutBuffer = buffer + 10;
     escape.cbOutBuffer = 10;
     hr = IDirectInputDevice8_Escape( device, &escape );
-    todo_wine
     ok( hr == DIERR_UNSUPPORTED, "Escape returned: %#lx\n", hr );
 
     if (version == 0x800) test_action_map( device, file, event );

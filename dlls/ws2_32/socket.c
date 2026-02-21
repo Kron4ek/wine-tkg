@@ -1412,7 +1412,7 @@ int WINAPI closesocket( SOCKET s )
         return -1;
     }
 
-    if (!socket_list_remove( s ))
+    if (!socket_list_remove( s ) && !is_valid_socket( s ))
     {
         SetLastError( WSAENOTSOCK );
         return -1;

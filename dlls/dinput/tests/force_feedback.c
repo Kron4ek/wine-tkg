@@ -3597,7 +3597,6 @@ static BOOL test_force_feedback_joystick( DWORD version )
     wait_hid_expect( file, 100 ); /* device gain reports are written asynchronously */
 
     hr = IDirectInputDevice8_Escape( device, &escape );
-    todo_wine
     ok( hr == DIERR_UNSUPPORTED, "Escape returned: %#lx\n", hr );
 
     prop_dword.dwData = 0xdeadbeef;

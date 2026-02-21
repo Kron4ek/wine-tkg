@@ -76,11 +76,11 @@ LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 THEMES_INI TEXTFILE
 {
 "[documentation]\r\n"
-"DisplayName = Light\r\n"
-"ToolTip = Light Visual Style\r\n"
+"DisplayName = Aero\r\n"
+"ToolTip = Aero Visual Style\r\n"
 }
 
-/* Light theme definition */
+/* Aero theme definition */
 /* Blue theme */
 BLUE_INI TEXTFILE
 {

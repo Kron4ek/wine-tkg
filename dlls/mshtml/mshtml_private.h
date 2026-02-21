@@ -177,6 +177,7 @@ struct constructor;
     XIID(IDOMUIEvent) \
     XIID(IDOMDocumentType) \
     XIID(IDOMParser) \
+    XIID(IDOMXmlSerializer) \
     XIID(IDocumentEvent) \
     XIID(IDocumentRange) \
     XIID(IDocumentSelector) \
@@ -299,7 +300,6 @@ struct constructor;
     XIID(IHTMLXMLHttpRequestFactory) \
     XIID(IHTMLXDomainRequest) \
     XIID(IHTMLXDomainRequestFactory) \
-    XIID(IXMLSerializer) \
     XIID(IOmHistory) \
     XIID(IOmNavigator) \
     XIID(ISVGCircleElement) \

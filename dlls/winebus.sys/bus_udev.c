@@ -60,6 +60,10 @@
 # define BUS_BLUETOOTH 5
 #endif
 
+#ifndef BUS_USB
+# define BUS_USB 3
+#endif
+
 #include <pthread.h>
 
 #include "ntstatus.h"

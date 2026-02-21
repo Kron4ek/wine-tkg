@@ -15,6 +15,7 @@ SOURCES = \
 	libxslt/pattern.c \
 	libxslt/preproc.c \
 	libxslt/security.c \
+	libxslt/security.h \
 	libxslt/templates.c \
 	libxslt/transform.c \
 	libxslt/variables.c \

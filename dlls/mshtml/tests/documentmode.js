@@ -4453,7 +4453,6 @@ sync_test("prototype props", function() {
     check(DocumentFragment, [ ["attachEvent",9,10], ["detachEvent",9,10], "querySelector", "querySelectorAll", "removeNode", "replaceNode", "swapNode" ]);
     check(DocumentType, [ "entities", "internalSubset", "name", "notations", "publicId", "systemId" ]);
     check(DOMParser, [ "parseFromString" ]);
-    check(XMLSerializer, [ "serializeToString" ]);
     check(Element, [
         "childElementCount", "clientHeight", "clientLeft", "clientTop", "clientWidth", ["fireEvent",9,10], "firstElementChild",
         "getAttribute", "getAttributeNS", "getAttributeNode", "getAttributeNodeNS", "getBoundingClientRect", "getClientRects",
@@ -4693,6 +4692,7 @@ sync_test("prototype props", function() {
         ["overrideMimeType",11], "readyState", "removeEventListener", ["response",10], "responseBody", "responseText", ["responseType",10], "responseXML", "send",
         "setRequestHeader", "status", "statusText", "timeout", ["upload",10], ["withCredentials",10]
     ], [ "DONE", "HEADERS_RECEIVED", "LOADING", "OPENED", "UNSENT", ["msCaching",11], ["msCachingEnabled",11] ]);
+    check(XMLSerializer, [ "serializeToString" ]);
 });
 
 sync_test("constructors", function() {

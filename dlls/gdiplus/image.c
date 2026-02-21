@@ -1125,7 +1125,7 @@ GpStatus WINGDIPAPI GdipBitmapLockBits(GpBitmap* bitmap, GDIPCONST GpRect* rect,
 
     if(rect){
         if(rect->X < 0 || rect->Y < 0 || (rect->X + rect->Width > bitmap->width) ||
-          (rect->Y + rect->Height > bitmap->height) || !flags)
+          (rect->Y + rect->Height > bitmap->height))
         {
             image_unlock(&bitmap->image);
             return InvalidParameter;

@@ -227,7 +227,11 @@ struct strarray find_tool( const char *name, const char * const *names )
         names++;
     }
 
-    if (!file && cc_command.count) file = find_clang_tool( cc_command, name );
+    if (!file && cc_command.count)
+    {
+        file = find_clang_tool( cc_command, strmake( "llvm-%s", name ));
+        if (!file) file = find_clang_tool( cc_command, name );
+    }
     if (!file) file = find_binary( "llvm", name );
     if (!file) file = find_clang_tool( empty_strarray, strmake( "llvm-%s", name ));
     if (!file) file = find_clang_tool( empty_strarray, name );

@@ -46,7 +46,11 @@
 #endif
 
 #ifndef _FPOS_T_DEFINED
-typedef __int64 DECLSPEC_ALIGN(8) fpos_t;
+#if defined(_MSC_VER) || defined(__MINGW32__)
+typedef __int64 fpos_t;
+#else
+typedef __int64 _CRT_ALIGN(8) fpos_t;
+#endif
 #define _FPOS_T_DEFINED
 #endif
 

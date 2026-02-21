@@ -25,22 +25,7 @@
 extern "C" {
 #endif
 
-#ifndef WINBASEAPI
-#ifdef _KERNEL32_
-#define WINBASEAPI
-#else
-#define WINBASEAPI DECLSPEC_IMPORT
-#endif
-#endif
-
-#ifndef WINADVAPI
-#ifdef _ADVAPI32_
-#define WINADVAPI
-#else
-#define WINADVAPI DECLSPEC_IMPORT
-#endif
-#endif
-
+#include <apisetcconv.h>
 #include <minwinbase.h>
 #include <libloaderapi.h>
 #include <processthreadsapi.h>
@@ -2623,9 +2608,11 @@ static inline LPSTR WINAPI lstrcatA( LPSTR dst, LPCSTR src )
 
 /* strncpy/wcsncpy don't do what you think, don't use them */
 #undef strncpy
-#undef wcsncpy
 #define strncpy(d,s,n) error do_not_use_strncpy_use_lstrcpynA_or_memcpy_instead
+#ifdef __WINE_WCHAR_H
+#undef wcsncpy
 #define wcsncpy(d,s,n) error do_not_use_wcsncpy_use_lstrcpynW_or_memcpy_instead
+#endif
 
 #endif /* !defined(__WINESRC__) || defined(WINE_NO_INLINE_STRING) */
 

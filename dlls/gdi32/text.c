@@ -2524,7 +2524,24 @@ static int add_font_resource( const WCHAR *str, DWORD flags, void *dv )
     if (!ret && !wcschr( str, '\\' ))
     {
         /* try as system font */
-        ret = NtGdiAddFontResourceW( str, lstrlenW( str ) + 1, 1, flags, 0, dv );
+        WCHAR *system_dir;
+
+        if ((ret = NtGdiAddFontResourceW( str, wcslen( str ) + 1, 1, flags, 0, dv )))
+            return ret;
+
+        if (!(system_dir = malloc( (MAX_PATH + 1 + wcslen( str )) * sizeof(WCHAR) )))
+            return 0;
+        GetSystemDirectoryW( system_dir, MAX_PATH + 1 + wcslen( str ));
+        wcscat( system_dir, L"\\" );
+        wcscat( system_dir, str );
+        if (!RtlDosPathNameToNtPathName_U( system_dir, &nt_name, NULL, NULL ))
+        {
+            free( system_dir );
+            return 0;
+        }
+        ret = NtGdiAddFontResourceW( nt_name.Buffer, nt_name.Length / sizeof(WCHAR) + 1,
+                                     1, flags, 0, dv );
+        RtlFreeUnicodeString( &nt_name );
     }
     return ret;
 }
@@ -2559,7 +2576,24 @@ static int remove_font_resource( const WCHAR *str, DWORD flags, void *dv )
     if (!ret && !wcschr( str, '\\' ))
     {
         /* try as system font */
-        ret = NtGdiRemoveFontResourceW( str, lstrlenW( str ) + 1, 1, flags, 0, dv );
+        WCHAR *system_dir;
+
+        if ((ret = NtGdiRemoveFontResourceW( str, wcslen( str ) + 1, 1, flags, 0, dv )))
+            return ret;
+
+        if (!(system_dir = malloc( (MAX_PATH + 1 + wcslen( str )) * sizeof(WCHAR) )))
+            return 0;
+        GetSystemDirectoryW( system_dir, MAX_PATH + 1 + wcslen( str ));
+        wcscat( system_dir, L"\\" );
+        wcscat( system_dir, str );
+        if (!RtlDosPathNameToNtPathName_U( system_dir, &nt_name, NULL, NULL ))
+        {
+            free( system_dir );
+            return 0;
+        }
+        ret = NtGdiRemoveFontResourceW( nt_name.Buffer, nt_name.Length / sizeof(WCHAR) + 1,
+                                        1, flags, 0, dv );
+        RtlFreeUnicodeString( &nt_name );
     }
     return ret;
 }

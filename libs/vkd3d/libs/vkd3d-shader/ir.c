@@ -614,12 +614,12 @@ static struct vsir_src_operand *vsir_program_clone_src_operands(
     return ret;
 }
 
-static void shader_instruction_array_destroy(struct vkd3d_shader_instruction_array *array)
+void shader_instruction_array_cleanup(struct vkd3d_shader_instruction_array *array)
 {
     vkd3d_free(array->elements);
 }
 
-static bool shader_instruction_array_init(struct vkd3d_shader_instruction_array *array, size_t reserve)
+bool shader_instruction_array_init(struct vkd3d_shader_instruction_array *array, size_t reserve)
 {
     memset(array, 0, sizeof(*array));
 
@@ -724,7 +724,7 @@ void vsir_program_cleanup(struct vsir_program *program)
         vkd3d_free((void *)program->block_names[i]);
     vkd3d_free(program->block_names);
     vkd3d_shader_source_list_cleanup(&program->source_files);
-    shader_instruction_array_destroy(&program->instructions);
+    shader_instruction_array_cleanup(&program->instructions);
     shader_signature_cleanup(&program->input_signature);
     shader_signature_cleanup(&program->output_signature);
     shader_signature_cleanup(&program->patch_constant_signature);
@@ -3131,7 +3131,7 @@ static enum vkd3d_result vsir_program_lower_d3dbc_loops(
     struct vsir_program_iterator it = vsir_program_iterator(&program->instructions);
     bool has_loop = false, has_input_with_loop_rel_addr = false;
     struct vkd3d_shader_instruction *ins;
-    unsigned int idxtemp_idx, i;
+    unsigned int idxtemp_idx = 0, i;
     enum vkd3d_result ret;
 
     for (ins = vsir_program_iterator_head(&it); ins; ins = vsir_program_iterator_next(&it))
@@ -4617,7 +4617,8 @@ static unsigned int shader_register_normalise_arrayed_addressing(struct vkd3d_sh
     return id_idx;
 }
 
-static bool vsir_dst_operand_io_normalise(struct vsir_dst_operand *dst, struct io_normaliser *normaliser)
+static bool vsir_dst_operand_io_normalise(struct vsir_dst_operand *dst,
+        struct io_normaliser *normaliser, struct vkd3d_shader_instruction *ins)
 {
     unsigned int id_idx, reg_idx, write_mask, element_idx;
     struct vkd3d_shader_register *reg = &dst->reg;
@@ -4690,7 +4691,13 @@ static bool vsir_dst_operand_io_normalise(struct vsir_dst_operand *dst, struct i
 
     id_idx = reg->idx_count - 1;
     if (!shader_signature_find_element_for_reg(signature, reg_idx, write_mask, &element_idx))
-        vkd3d_unreachable();
+    {
+        vkd3d_shader_error(normaliser->message_context, &ins->location, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
+                "Unable to resolve I/O register type %#x, index %u, write mask %#x, to a signature element.",
+                reg->type, reg_idx, write_mask);
+        normaliser->result = VKD3D_ERROR_INVALID_SHADER;
+        return false;
+    }
     e = &signature->elements[element_idx];
 
     if (vsir_signature_element_is_array(e, normaliser->normalisation_flags))
@@ -4769,7 +4776,8 @@ static void vsir_src_operand_io_normalise(struct vsir_src_operand *src,
     if (!shader_signature_find_element_for_reg(signature, reg_idx, write_mask, &element_idx))
     {
         vkd3d_shader_error(normaliser->message_context, &ins->location, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
-                "Unable to resolve I/O register to a signature element.");
+                "Unable to resolve I/O register type %#x, index %u, swizzle %#x, to a signature element.",
+                reg->type, reg_idx, src->swizzle);
         normaliser->result = VKD3D_ERROR_INVALID_SHADER;
         return;
     }
@@ -4810,7 +4818,7 @@ static void shader_instruction_normalise_io_params(struct vkd3d_shader_instructi
                 break;
             for (i = 0; i < ins->dst_count; ++i)
             {
-                vsir_dst_operand_io_normalise(&ins->dst[i], normaliser);
+                vsir_dst_operand_io_normalise(&ins->dst[i], normaliser, ins);
             }
             for (i = 0; i < ins->src_count; ++i)
             {
@@ -5101,7 +5109,7 @@ static enum vkd3d_result vsir_program_remove_dead_code(struct vsir_program *prog
 static void vsir_program_replace_instructions(struct vsir_program *program,
         struct vkd3d_shader_instruction_array *array)
 {
-    shader_instruction_array_destroy(&program->instructions);
+    shader_instruction_array_cleanup(&program->instructions);
 
     program->instructions = *array;
     memset(array, 0, sizeof(*array));
@@ -5762,7 +5770,7 @@ static enum vkd3d_result vsir_program_flatten_control_flow_constructs(struct vsi
     }
     else
     {
-        shader_instruction_array_destroy(&flattener.instructions);
+        shader_instruction_array_cleanup(&flattener.instructions);
     }
 
     vkd3d_free(flattener.control_flow_info);
@@ -5938,7 +5946,7 @@ static enum vkd3d_result vsir_program_lower_switch_to_selection_ladder(struct vs
     return VKD3D_OK;
 
 fail:
-    shader_instruction_array_destroy(&instructions);
+    shader_instruction_array_cleanup(&instructions);
     vkd3d_free(block_map);
 
     return VKD3D_ERROR_OUT_OF_MEMORY;
@@ -8392,7 +8400,7 @@ static enum vkd3d_result vsir_program_structurize(struct vsir_program *program,
     return VKD3D_OK;
 
 fail:
-    shader_instruction_array_destroy(&target.instructions);
+    shader_instruction_array_cleanup(&target.instructions);
 
     return ret;
 }

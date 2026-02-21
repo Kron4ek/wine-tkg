@@ -1784,6 +1784,7 @@ static int get_file_info( const char *path, struct stat *st, ULONG *attr, ULONG 
     *attr = 0;
     ret = lstat( path, st );
     if (ret == -1) return ret;
+    if (reparse_tag) *reparse_tag = 0;
     if (S_ISLNK( st->st_mode ))
     {
         ret = stat( path, st );
@@ -2089,6 +2090,7 @@ static NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
     case FileIdExtdBothDirectoryInformation:
         {
             FILE_ID_EXTD_BOTH_DIRECTORY_INFORMATION *info = ptr;
+            memset( &info->FileId, 0, sizeof(info->FileId) );
             *(ULONGLONG *)&info->FileId = st->st_ino;
             fill_file_info( st, attr, info, FileDirectoryInformation );
         }
@@ -2498,30 +2500,32 @@ static NTSTATUS get_dir_data_entry( struct dir_data *dir_data, void *info_ptr, I
         break;
 
     case FileFullDirectoryInformation:
-        info->full.EaSize = 0; /* FIXME */
+        /* non-Extd classes return the reparse tag in EaSize if there is one */
+        info->full.EaSize = reparse_tag;
         info->full.FileNameLength = name_len;
         break;
 
     case FileIdFullDirectoryInformation:
-        info->id_full.EaSize = 0; /* FIXME */
+        info->id_full.EaSize = reparse_tag;
         info->id_full.FileNameLength = name_len;
         break;
 
     case FileBothDirectoryInformation:
-        info->both.EaSize = 0; /* FIXME */
+        info->both.EaSize = reparse_tag;
         info->both.ShortNameLength = wcslen( names->short_name ) * sizeof(WCHAR);
         memcpy( info->both.ShortName, names->short_name, info->both.ShortNameLength );
         info->both.FileNameLength = name_len;
         break;
 
     case FileIdBothDirectoryInformation:
-        info->id_both.EaSize = 0; /* FIXME */
+        info->id_both.EaSize = reparse_tag;
         info->id_both.ShortNameLength = wcslen( names->short_name ) * sizeof(WCHAR);
         memcpy( info->id_both.ShortName, names->short_name, info->id_both.ShortNameLength );
         info->id_both.FileNameLength = name_len;
         break;
 
     case FileIdExtdBothDirectoryInformation:
+        /* Extd classes do *not* return the reparse tag in EaSize */
         info->extd_both.EaSize = 0; /* FIXME */
         info->extd_both.ReparsePointTag = reparse_tag;
         info->extd_both.ShortNameLength = wcslen( names->short_name ) * sizeof(WCHAR);
@@ -2531,6 +2535,7 @@ static NTSTATUS get_dir_data_entry( struct dir_data *dir_data, void *info_ptr, I
 
     case FileIdGlobalTxDirectoryInformation:
         info->id_tx.TxInfoFlags = 0;
+        memset( &info->id_tx.LockingTransactionId, 0, sizeof(GUID) );
         info->id_tx.FileNameLength = name_len;
         break;
 

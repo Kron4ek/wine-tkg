@@ -4329,6 +4329,7 @@ static void test_dpi_context(void)
     DPI_AWARENESS_CONTEXT context;
     BOOL ret;
     UINT dpi;
+    HANDLE process;
     HDC hdc = GetDC( 0 );
 
     context = pGetThreadDpiAwarenessContext();
@@ -4375,6 +4376,12 @@ static void test_dpi_context(void)
     ret = pGetProcessDpiAwarenessInternal( GetCurrentProcess(), &awareness );
     ok( ret, "got %d\n", ret );
     ok( awareness == DPI_AWARENESS_SYSTEM_AWARE, "wrong value %d\n", awareness );
+    process = OpenProcess( PROCESS_QUERY_LIMITED_INFORMATION, FALSE, GetCurrentProcessId() );
+    ret = pGetProcessDpiAwarenessInternal( process, &awareness );
+    ok( ret, "got %d\n", ret );
+    ok( awareness == DPI_AWARENESS_SYSTEM_AWARE, "wrong value %d\n", awareness );
+    CloseHandle(process);
+
     SetLastError(0xdeadbeef);
     ret = pGetProcessDpiAwarenessInternal( (HANDLE)0xdeadbeef, &awareness );
     todo_wine

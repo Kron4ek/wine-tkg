@@ -73,8 +73,8 @@ struct incl_file
     int                included_line; /* line where this file was included */
     enum incl_type     type;          /* type of include */
     unsigned int       arch;          /* architecture for multi-arch files, otherwise 0 */
-    unsigned int       use_msvcrt:1;  /* put msvcrt headers in the search path? */
-    unsigned int       is_external:1; /* file from external library? */
+    bool               use_msvcrt:1;  /* put msvcrt headers in the search path? */
+    bool               is_external:1; /* file from external library? */
     struct incl_file  *owner;
     struct array       files;         /* array of struct incl_file* */
     struct strarray    dependencies;  /* file dependencies */
@@ -168,15 +168,16 @@ static const char *winegcc;
 static const char *widl;
 static const char *wrc;
 static const char *wmc;
-static int so_dll_supported;
-static int symlinks_supported;
-static int unix_lib_supported;
+static bool so_dll_supported;
+static bool symlinks_supported;
+static bool unix_lib_supported;
 /* per-architecture global variables */
 static const char *dll_ext[MAX_ARCHS];
 static const char *arch_dirs[MAX_ARCHS];
 static const char *arch_pe_dirs[MAX_ARCHS];
 static const char *arch_install_dirs[MAX_ARCHS];
 static const char *strip_progs[MAX_ARCHS];
+static const char *cc_cmds[MAX_ARCHS];
 static const char *delay_load_flags[MAX_ARCHS];
 static struct strarray debug_flags[MAX_ARCHS];
 static struct strarray target_flags[MAX_ARCHS];
@@ -214,10 +215,10 @@ struct makefile
     const char     *staticlib;
     const char     *importlib;
     const char     *unixlib;
-    int             data_only;
-    int             is_win16;
-    int             is_exe;
-    int             disabled[MAX_ARCHS];
+    bool            data_only;
+    bool            is_win16;
+    bool            is_exe;
+    bool            disabled[MAX_ARCHS];
 
     /* values generated at output time */
     struct strarray in_files;
@@ -251,8 +252,8 @@ static const char *input_file_name;
 static const char *output_file_name;
 static const char *temp_file_name;
 static char cwd[PATH_MAX];
-static int compile_commands_mode;
-static int silent_rules;
+static bool compile_commands_mode;
+static bool silent_rules;
 static int input_line;
 static int output_column;
 static FILE *output_file;
@@ -605,17 +606,17 @@ static const char *escape_cstring( const char *str )
  *
  * Check if the makefile was disabled for a PE arch that matches the native arch.
  */
-static int is_native_arch_disabled( struct makefile *make )
+static bool is_native_arch_disabled( struct makefile *make )
 {
     unsigned int arch;
 
-    if (archs.count == 1) return 0;
-    if (!so_dll_supported) return 1;
+    if (archs.count == 1) return false;
+    if (!so_dll_supported) return true;
 
     for (arch = 1; arch < archs.count; arch++)
         if (make->disabled[arch] && !strcmp( archs.str[0], archs.str[arch] ))
-            return 1;
-    return 0;
+            return true;
+    return false;
 }
 
 
@@ -625,7 +626,7 @@ static int is_native_arch_disabled( struct makefile *make )
  * Check if the filename is in a subdirectory named from a different arch.
  * Used to avoid building asm files for the wrong platform.
  */
-static int is_subdir_other_arch( const char *name, unsigned int arch )
+static bool is_subdir_other_arch( const char *name, unsigned int arch )
 {
     const char *dir, *p = strrchr( name, '/' );
 
@@ -633,7 +634,7 @@ static int is_subdir_other_arch( const char *name, unsigned int arch )
     dir = get_basename( strmake( "%.*s", (int)(p - name), name ));
     if (!strcmp( dir, "arm64" )) dir = "aarch64";
     if (!strcmp( dir, "amd64" )) dir = "x86_64";
-    if (native_archs[arch] && !strcmp( dir, archs.str[native_archs[arch]] )) return 0;
+    if (native_archs[arch] && !strcmp( dir, archs.str[native_archs[arch]] )) return false;
     return strcmp( dir, archs.str[arch] );
 }
 
@@ -657,9 +658,9 @@ static int get_link_arch( const struct makefile *make, unsigned int arch, unsign
  *         is_multiarch
  *
  * Check if arch is one of the PE architectures in multiarch.
- * Also return TRUE for native arch iff there's no PE architecture, not even "none".
+ * Also return true for native arch iff there's no PE architecture, not even "none".
  */
-static int is_multiarch( unsigned int arch )
+static bool is_multiarch( unsigned int arch )
 {
     return archs.count == 1 || (arch && strcmp( archs.str[arch], "none" ));
 }
@@ -670,7 +671,7 @@ static int is_multiarch( unsigned int arch )
  *
  * Check if the files of a makefile use msvcrt by default.
  */
-static int is_using_msvcrt( struct makefile *make )
+static bool is_using_msvcrt( struct makefile *make )
 {
     return make->module || make->testdll;
 }
@@ -1349,6 +1350,26 @@ static struct file *open_same_dir_generated_file( const struct makefile *make,
 
 
 /*******************************************************************
+ *         open_local_explicit_file
+ *
+ * Open a file explicitly listed in the makefile.
+ */
+static struct file *open_local_explicit_file( const struct makefile *make, struct incl_file *file )
+{
+    struct incl_file *include;
+
+    if (!(include = find_src_file( make, file->name )))
+    {
+        if (strchr( file->included_by->name, '/' ))
+            include = find_src_file( make, replace_filename( file->included_by->name, file->name ));
+    }
+    if (!include) return NULL;
+    file->filename = include->filename;
+    return include->file;
+}
+
+
+/*******************************************************************
  *         open_local_file
  *
  * Open a file in the source directory of the makefile.
@@ -1468,11 +1489,11 @@ static struct file *open_global_generated_file( const struct makefile *make, str
 /*******************************************************************
  *         open_src_file
  */
-static struct file *open_src_file( const struct makefile *make, struct incl_file *pFile )
+static struct file *open_src_file( const struct makefile *make, struct incl_file *source )
 {
-    struct file *file = open_local_file( make, pFile->name, &pFile->filename );
+    struct file *file = open_local_file( make, source->name, &source->filename );
 
-    if (!file) fatal_perror( "open %s", pFile->name );
+    if (!file) fatal_perror( "open %s", source->name );
     return file;
 }
 
@@ -1498,65 +1519,60 @@ static struct makefile *find_importlib_module( const char *name )
 /*******************************************************************
  *         open_include_file
  */
-static struct file *open_include_file( const struct makefile *make, struct incl_file *pFile )
+static struct file *open_include_file( const struct makefile *make, struct incl_file *source )
 {
     struct file *file = NULL;
-    struct incl_file *include;
     unsigned int len;
 
     errno = ENOENT;
 
     /* check for generated files */
-    if ((file = open_local_generated_file( make, pFile, ".tab.h", ".y" ))) return file;
-    if ((file = open_local_generated_file( make, pFile, ".h", ".idl" ))) return file;
-    if (fontforge && (file = open_local_generated_file( make, pFile, ".ttf", ".sfd" ))) return file;
+    if ((file = open_local_generated_file( make, source, ".tab.h", ".y" ))) return file;
+    if ((file = open_local_generated_file( make, source, ".h", ".idl" ))) return file;
+    if (fontforge && (file = open_local_generated_file( make, source, ".ttf", ".sfd" ))) return file;
     if (convert && rsvg && icotool)
     {
-        if ((file = open_local_maintainer_file( make, pFile, ".bmp", ".svg" ))) return file;
-        if ((file = open_local_maintainer_file( make, pFile, ".cur", ".svg" ))) return file;
-        if ((file = open_local_maintainer_file( make, pFile, ".ico", ".svg" ))) return file;
+        if ((file = open_local_maintainer_file( make, source, ".bmp", ".svg" ))) return file;
+        if ((file = open_local_maintainer_file( make, source, ".cur", ".svg" ))) return file;
+        if ((file = open_local_maintainer_file( make, source, ".ico", ".svg" ))) return file;
     }
-    if ((file = open_local_generated_file( make, pFile, "-client-protocol.h", ".xml" ))) return file;
-    if ((file = open_local_generated_file( make, pFile, ".winmd", ".idl" ))) return file;
+    if ((file = open_local_generated_file( make, source, "-client-protocol.h", ".xml" ))) return file;
+    if ((file = open_local_generated_file( make, source, ".winmd", ".idl" ))) return file;
 
     /* check for extra targets */
-    if (strarray_exists( make->extra_targets, pFile->name ))
+    if (strarray_exists( make->extra_targets, source->name ))
     {
-        pFile->sourcename = src_dir_path( make, pFile->name );
-        pFile->filename = obj_dir_path( make, pFile->name );
+        source->sourcename = src_dir_path( make, source->name );
+        source->filename = obj_dir_path( make, source->name );
         return NULL;
     }
 
     /* check for header explicitly listed in the makefile */
-    if ((include = find_src_file( make, pFile->name )))
-    {
-        pFile->filename = include->filename;
-        return include->file;
-    }
+    if ((file = open_local_explicit_file( make, source ))) return file;
 
     /* check for global importlib (module dependency) */
-    if (pFile->type == INCL_IMPORTLIB && find_importlib_module( pFile->name ))
+    if (source->type == INCL_IMPORTLIB && find_importlib_module( source->name ))
     {
-        pFile->filename = pFile->name;
+        source->filename = source->name;
         return NULL;
     }
 
     /* check for generated files in global includes */
-    if ((file = open_global_generated_file( make, pFile, ".h", ".idl" ))) return file;
-    if ((file = open_global_generated_file( make, pFile, ".h", ".h.in" ))) return file;
-    if (strendswith( pFile->name, "tmpl.h" ) &&
-        (file = open_global_generated_file( make, pFile, ".h", ".x" ))) return file;
+    if ((file = open_global_generated_file( make, source, ".h", ".idl" ))) return file;
+    if ((file = open_global_generated_file( make, source, ".h", ".h.in" ))) return file;
+    if (strendswith( source->name, "tmpl.h" ) &&
+        (file = open_global_generated_file( make, source, ".h", ".x" ))) return file;
 
     /* check in global includes source dir */
-    if ((file = open_global_header( pFile->name, &pFile->filename ))) return file;
+    if ((file = open_global_header( source->name, &source->filename ))) return file;
 
     /* check in global msvcrt includes */
-    if (pFile->use_msvcrt &&
-        (file = open_global_header( strmake( "msvcrt/%s", pFile->name ), &pFile->filename )))
+    if (source->use_msvcrt &&
+        (file = open_global_header( strmake( "msvcrt/%s", source->name ), &source->filename )))
         return file;
 
     /* now try in source dir */
-    if ((file = open_local_file( make, pFile->name, &pFile->filename ))) return file;
+    if ((file = open_local_file( make, source->name, &source->filename ))) return file;
 
     /* now search in include paths */
     STRARRAY_FOR_EACH( dir, &make->include_paths )
@@ -1567,42 +1583,42 @@ static struct file *open_include_file( const struct makefile *make, struct incl_
             if (!strncmp( dir, root_src_dir, len ) && (!dir[len] || dir[len] == '/'))
             {
                 while (dir[len] == '/') len++;
-                file = open_global_file( concat_paths( dir + len, pFile->name ), &pFile->filename );
+                file = open_global_file( concat_paths( dir + len, source->name ), &source->filename );
             }
         }
         else
         {
             if (*dir == '/') continue;
-            file = open_include_path_file( make, dir, pFile->name, &pFile->filename );
+            file = open_include_path_file( make, dir, source->name, &source->filename );
         }
         if (!file) continue;
-        pFile->is_external = 1;
+        source->is_external = true;
         return file;
     }
 
-    if (pFile->type == INCL_SYSTEM) return NULL;  /* ignore system files we cannot find */
+    if (source->type == INCL_SYSTEM) return NULL;  /* ignore system files we cannot find */
 
     /* try in src file directory */
-    if ((file = open_same_dir_generated_file( make, pFile->included_by, pFile, ".tab.h", ".y" )) ||
-        (file = open_same_dir_generated_file( make, pFile->included_by, pFile, ".h", ".idl" )) ||
-        (file = open_file_same_dir( pFile->included_by, pFile->name, &pFile->filename )))
+    if ((file = open_same_dir_generated_file( make, source->included_by, source, ".tab.h", ".y" )) ||
+        (file = open_same_dir_generated_file( make, source->included_by, source, ".h", ".idl" )) ||
+        (file = open_file_same_dir( source->included_by, source->name, &source->filename )))
     {
-        pFile->is_external = pFile->included_by->is_external;
+        source->is_external = source->included_by->is_external;
         return file;
     }
 
     if (make->extlib) return NULL; /* ignore missing files in external libs */
 
-    fprintf( stderr, "%s:%d: error: ", pFile->included_by->file->name, pFile->included_line );
-    perror( pFile->name );
-    pFile = pFile->included_by;
-    while (pFile && pFile->included_by)
+    fprintf( stderr, "%s:%d: error: ", source->included_by->file->name, source->included_line );
+    perror( source->name );
+    source = source->included_by;
+    while (source && source->included_by)
     {
-        const char *parent = pFile->included_by->sourcename;
-        if (!parent) parent = pFile->included_by->file->name;
+        const char *parent = source->included_by->sourcename;
+        if (!parent) parent = source->included_by->file->name;
         fprintf( stderr, "%s:%d: note: %s was first included here\n",
-                 parent, pFile->included_line, pFile->name );
-        pFile = pFile->included_by;
+                 parent, source->included_line, source->name );
+        source = source->included_by;
     }
     exit(1);
 }
@@ -1638,7 +1654,7 @@ static void add_all_includes( struct makefile *make, struct incl_file *parent, s
 /*******************************************************************
  *         parse_file
  */
-static void parse_file( struct makefile *make, struct incl_file *source, int src )
+static void parse_file( struct makefile *make, struct incl_file *source, bool src )
 {
     struct file *file = src ? open_src_file( make, source ) : open_include_file( make, source );
 
@@ -1647,8 +1663,8 @@ static void parse_file( struct makefile *make, struct incl_file *source, int src
     source->file = file;
 
     if (strendswith( file->name, ".m" )) file->flags |= FLAG_C_UNIX;
-    if (file->flags & FLAG_C_UNIX) source->use_msvcrt = 0;
-    else if (file->flags & FLAG_C_IMPLIB) source->use_msvcrt = 1;
+    if (file->flags & FLAG_C_UNIX) source->use_msvcrt = false;
+    else if (file->flags & FLAG_C_IMPLIB) source->use_msvcrt = true;
 
     if (source->sourcename)
     {
@@ -1707,7 +1723,7 @@ static struct incl_file *add_src_file( struct makefile *make, const char *name )
         unsigned int hash = hash_filename( name );
         list_add_tail( &global_includes[hash], &file->hash_entry );
     }
-    parse_file( make, file, 1 );
+    parse_file( make, file, true );
     return file;
 }
 
@@ -1841,24 +1857,24 @@ static struct strarray get_expanded_arch_var_array( const struct makefile *make,
 /*******************************************************************
  *         set_make_variable
  */
-static int set_make_variable( struct strarray *array, const char *assignment )
+static bool set_make_variable( struct strarray *array, const char *assignment )
 {
     char *p, *name;
 
     p = name = xstrdup( assignment );
     while (isalnum(*p) || *p == '_') p++;
-    if (name == p) return 0;  /* not a variable */
+    if (name == p) return false;  /* not a variable */
     if (isspace(*p))
     {
         *p++ = 0;
         p = skip_spaces( p );
     }
-    if (*p != '=') return 0;  /* not an assignment */
+    if (*p != '=') return false;  /* not an assignment */
     *p++ = 0;
     p = skip_spaces( p );
 
     strarray_set_value( array, name, p );
-    return 1;
+    return true;
 }
 
 
@@ -2038,10 +2054,10 @@ static void add_generated_sources( struct makefile *make )
 
             file = add_generated_source( make, code_name, NULL, 0 );
             file->file->flags |= FLAG_C_UNIX;
-            file->use_msvcrt = 0;
+            file->use_msvcrt = false;
             file = add_generated_source( make, header_name, NULL, 0 );
             file->file->flags |= FLAG_C_UNIX;
-            file->use_msvcrt = 0;
+            file->use_msvcrt = false;
 
             free( code_name );
             free( header_name );
@@ -2069,7 +2085,7 @@ static void add_generated_sources( struct makefile *make )
         {
             file = add_generated_source( make, obj, replace_extension( obj, ".o", ".c" ), 0);
             file->file->flags |= FLAG_C_UNIX;
-            file->use_msvcrt = 0;
+            file->use_msvcrt = false;
         }
         else if (strendswith( obj, ".res" ))
             add_generated_source( make, replace_extension( obj, ".res", ".rc" ), NULL, 0 );
@@ -2223,10 +2239,10 @@ static struct makefile *get_parent_makefile( struct makefile *make )
 /*******************************************************************
  *         needs_delay_lib
  */
-static int needs_delay_lib( const struct makefile *make, unsigned int arch )
+static bool needs_delay_lib( const struct makefile *make, unsigned int arch )
 {
-    if (delay_load_flags[arch]) return 0;
-    if (!make->importlib) return 0;
+    if (delay_load_flags[arch]) return false;
+    if (!make->importlib) return false;
     return strarray_exists( delay_import_libs, make->importlib );
 }
 
@@ -2270,7 +2286,7 @@ static struct strarray add_unix_libraries( const struct makefile *make, struct s
 /*******************************************************************
  *         is_crt_module
  */
-static int is_crt_module( const char *file )
+static bool is_crt_module( const char *file )
 {
     return !strncmp( file, "msvcr", 5 ) || !strncmp( file, "ucrt", 4 ) || !strcmp( file, "crtdll.dll" );
 }
@@ -2316,7 +2332,7 @@ static const char *get_crt_define( const struct makefile *make )
  *         get_default_imports
  */
 static struct strarray get_default_imports( const struct makefile *make, struct strarray imports,
-                                            int nodefaultlibs )
+                                            bool nodefaultlibs )
 {
     struct strarray ret = empty_strarray;
     const char *crt_dll = get_default_crt( make );
@@ -2723,6 +2739,7 @@ static void output_winegcc_command( struct makefile *make, unsigned int arch )
         output_filename( "--winebuild" );
         output_filename( winebuild );
     }
+    if (cc_cmds[arch]) output_filename( cc_cmds[arch] );
     output_filenames( target_flags[arch] );
     if (native_archs[arch] && !make->disabled[native_archs[arch]])
         output_filenames( hybrid_target_flags[arch] );
@@ -3814,6 +3831,7 @@ static void output_import_lib( struct makefile *make, unsigned int arch )
     if (hybrid_arch) output_filenames_obj_dir( make, make->implib_files[hybrid_arch] );
     output( "\n" );
     output( "\t%s%s -w --implib -o $@", cmd_prefix( "BUILD" ), winebuild );
+    if (cc_cmds[arch]) output_filename( cc_cmds[arch] );
     if (!delay_load_flags[arch]) output_filename( "--without-dlltool" );
     output_filenames( target_flags[hybrid_arch ? hybrid_arch : arch] );
     if (make->is_win16) output_filename( "-m16" );
@@ -3874,6 +3892,7 @@ static void output_static_lib( struct makefile *make, unsigned int arch )
     if (!arch) output_filenames_obj_dir( make, make->unixobj_files );
     output( "\n" );
     output( "\t%s%s -w --staticlib -o $@", cmd_prefix( "BUILD" ), winebuild );
+    if (cc_cmds[arch]) output_filename( cc_cmds[arch] );
     output_filenames( target_flags[hybrid_arch ? hybrid_arch : arch] );
     output_filenames_obj_dir( make, make->object_files[arch] );
     if (hybrid_arch) output_filenames_obj_dir( make, make->object_files[hybrid_arch] );
@@ -3891,7 +3910,7 @@ static void output_test_module( struct makefile *make, unsigned int arch )
     char *basemodule = replace_extension( make->testdll, ".dll", "" );
     char *stripped = arch_module_name( strmake( "%s_test-stripped.exe", basemodule ), arch );
     char *testmodule = arch_module_name( strmake( "%s_test.exe", basemodule ), arch );
-    struct strarray default_imports = get_default_imports( make, make->imports, 0 );
+    struct strarray default_imports = get_default_imports( make, make->imports, false );
     struct strarray dep_libs = empty_strarray;
     struct strarray all_libs = empty_strarray;
     struct makefile *parent = get_parent_makefile( make );
@@ -4322,16 +4341,16 @@ static void rename_temp_file( const char *dest )
 /*******************************************************************
  *         are_files_identical
  */
-static int are_files_identical( FILE *file1, FILE *file2 )
+static bool are_files_identical( FILE *file1, FILE *file2 )
 {
     for (;;)
     {
         char buffer1[8192], buffer2[8192];
         int size1 = fread( buffer1, 1, sizeof(buffer1), file1 );
         int size2 = fread( buffer2, 1, sizeof(buffer2), file2 );
-        if (size1 != size2) return 0;
+        if (size1 != size2) return false;
         if (!size1) return feof( file1 ) && feof( file2 );
-        if (memcmp( buffer1, buffer2, size1 )) return 0;
+        if (memcmp( buffer1, buffer2, size1 )) return false;
     }
 }
 
@@ -4342,7 +4361,7 @@ static int are_files_identical( FILE *file1, FILE *file2 )
 static void rename_temp_file_if_changed( const char *dest )
 {
     FILE *file1, *file2;
-    int do_rename = 1;
+    bool do_rename = true;
 
     if ((file1 = fopen( dest, "r" )))
     {
@@ -4549,7 +4568,7 @@ static void output_top_makefile( struct makefile *make )
     char buffer[1024];
     FILE *src_file;
     unsigned int i;
-    int found = 0;
+    bool found = false;
 
     output_file_name = obj_dir_path( make, output_makefile_name );
     output_file = create_temp_file( output_file_name );
@@ -4746,7 +4765,7 @@ static void load_sources( struct makefile *make )
 
     add_generated_sources( make );
 
-    LIST_FOR_EACH_ENTRY( file, &make->includes, struct incl_file, entry ) parse_file( make, file, 0 );
+    LIST_FOR_EACH_ENTRY( file, &make->includes, struct incl_file, entry ) parse_file( make, file, false );
     LIST_FOR_EACH_ENTRY( file, &make->sources, struct incl_file, entry ) get_dependencies( file, file );
 
     STRARRAY_FOR_EACH( imp, &make->delayimports )
@@ -4780,12 +4799,12 @@ static void parse_makeflags( const char *flags )
 /*******************************************************************
  *         parse_option
  */
-static int parse_option( const char *opt )
+static bool parse_option( const char *opt )
 {
     if (opt[0] != '-')
     {
         if (strchr( opt, '=' )) return set_make_variable( &cmdline_vars, opt );
-        return 0;
+        return false;
     }
     switch(opt[1])
     {
@@ -4796,16 +4815,16 @@ static int parse_option( const char *opt )
         if (opt[2]) input_makefile_name = opt + 2;
         break;
     case 'C':
-        compile_commands_mode = 1;
+        compile_commands_mode = true;
         break;
     case 'S':
-        silent_rules = 1;
+        silent_rules = true;
         break;
     default:
         fprintf( stderr, "Unknown option '%s'\n%s", opt, Usage );
         exit(1);
     }
-    return 1;
+    return true;
 }
 
 
@@ -4945,6 +4964,7 @@ int main( int argc, char *argv[] )
         if (!is_multiarch( arch )) continue;
         delay_load_flags[arch] = get_expanded_arch_var( top_makefile, "DELAYLOADFLAG", arch );
         debug_flags[arch] = get_expanded_arch_var_array( top_makefile, "DEBUG", arch );
+        cc_cmds[arch] = strmake( "--cc-cmd=\"%s\"", get_expanded_arch_var( top_makefile, "CC", arch ));
     }
 
     if (unix_lib_supported)

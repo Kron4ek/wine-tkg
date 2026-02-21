@@ -45,6 +45,9 @@ struct _complex
 };
 #endif /* _COMPLEX_DEFINED */
 
+typedef float float_t;
+typedef double double_t;
+
 _ACRTIMP double __cdecl sin(double);
 _ACRTIMP double __cdecl cos(double);
 _ACRTIMP double __cdecl tan(double);
@@ -89,6 +92,7 @@ _ACRTIMP double __cdecl _y1(double);
 _ACRTIMP double __cdecl _yn(int, double);
 
 _ACRTIMP double __cdecl cbrt(double);
+_ACRTIMP double __cdecl erfc(double);
 _ACRTIMP double __cdecl exp2(double);
 _ACRTIMP double __cdecl expm1(double);
 _ACRTIMP double __cdecl log1p(double);
@@ -99,6 +103,7 @@ _ACRTIMP double __cdecl round(double);
 _ACRTIMP double __cdecl trunc(double);
 
 _ACRTIMP float __cdecl cbrtf(float);
+_ACRTIMP float __cdecl erfcf(float);
 _ACRTIMP float __cdecl exp2f(float);
 _ACRTIMP float __cdecl expm1f(float);
 _ACRTIMP float __cdecl log1pf(float);
@@ -291,6 +296,9 @@ _ACRTIMP int   __cdecl _dsign(double);
 _ACRTIMP int   __cdecl _ldsign(long double);
 _ACRTIMP int   __cdecl _fdsign(float);
 
+_ACRTIMP double __cdecl nan(const char *);
+_ACRTIMP float __cdecl nanf(const char *);
+
 #ifdef __cplusplus
 
 extern "C++" {
@@ -431,6 +439,70 @@ static inline double y1( double x ) { return _y1( x ); }
 static inline double yn( int n, double x ) { return _yn( n, x ); }
 
 static inline float hypotf( float x, float y ) { return _hypotf( x, y ); }
-static inline long double atan2l( long double x, long double y ) { return atan2( (double)y, (double)x ); }
 
+#if !defined(__SIZEOF_LONG_DOUBLE__) || __SIZEOF_LONG_DOUBLE__ == 8
+
+_ACRTIMP float __cdecl nexttowardf(float, long double);
+_ACRTIMP double __cdecl nexttoward(double, long double);
+_ACRTIMP long double __cdecl nexttowardl(long double, long double);
+
+_ACRTIMP long double __cdecl acoshl(long double);
+_ACRTIMP long double __cdecl asinhl(long double);
+_ACRTIMP long double __cdecl atanhl(long double);
+_ACRTIMP long double __cdecl cbrtl(long double);
+_ACRTIMP long double __cdecl copysignl(long double, long double);
+_ACRTIMP long double __cdecl coshl(long double);
+_ACRTIMP long double __cdecl erfcl(long double);
+_ACRTIMP long double __cdecl erfl(long double);
+_ACRTIMP long double __cdecl exp2l(long double);
+_ACRTIMP long double __cdecl expm1l(long double);
+_ACRTIMP long double __cdecl fdiml(long double, long double);
+_ACRTIMP long double __cdecl fmal(long double, long double, long double);
+_ACRTIMP long double __cdecl fmaxl(long double, long double);
+_ACRTIMP long double __cdecl fminl(long double, long double);
+_ACRTIMP int __cdecl ilogbl(long double);
+_ACRTIMP long double __cdecl lgammal(long double);
+_ACRTIMP __int64 __cdecl llrintl(long double);
+_ACRTIMP __int64 __cdecl llroundl(long double);
+_ACRTIMP __msvcrt_long __cdecl lrintl(long double);
+_ACRTIMP __msvcrt_long __cdecl lroundl(long double);
+_ACRTIMP long double __cdecl log1pl(long double);
+_ACRTIMP long double __cdecl log2l(long double);
+_ACRTIMP long double __cdecl logbl(long double);
+_ACRTIMP long double __cdecl nanl(const char *);
+_ACRTIMP long double __cdecl nearbyintl(long double);
+_ACRTIMP long double __cdecl nextafterl(long double, long double);
+_ACRTIMP long double __cdecl remainderl(long double, long double);
+_ACRTIMP long double __cdecl remquol(long double, long double, int *);
+_ACRTIMP long double __cdecl rintl(long double);
+_ACRTIMP long double __cdecl roundl(long double);
+_ACRTIMP long double __cdecl scalblnl(long double, __msvcrt_long);
+_ACRTIMP long double __cdecl scalbnl(long double, int);
+_ACRTIMP long double __cdecl tgammal(long double);
+_ACRTIMP long double __cdecl truncl(long double);
+
+static inline long double acosl(long double x) { return acos(x); }
+static inline long double asinl(long double x) { return asin(x); }
+static inline long double atan2l(long double y, long double x) { return atan2(y, x); }
+static inline long double atanl(long double x) { return atan(x); }
+static inline long double ceill(long double x) { return ceil(x); }
+static inline long double cosl(long double x) { return cos(x); }
+static inline long double expl(long double x) { return exp(x); }
+static inline long double fabsl(long double x) { return fabs(x); }
+static inline long double floorl(long double x) { return floor(x); }
+static inline long double fmodl(long double x, long double y) { return fmod(x, y); }
+static inline long double frexpl(long double x, int *y) { return frexp(x, y); }
+static inline long double hypotl(long double x, long double y) { return _hypot(x, y); }
+static inline long double ldexpl(long double x, int y) { return ldexp(x, y); }
+static inline long double log10l(long double x) { return log10(x); }
+static inline long double logl(long double x) { return log(x); }
+static inline long double modfl(long double x, long double *y) { return modf(x, (double *)y); }
+static inline long double powl(long double x, long double y) { return pow(x, y); }
+static inline long double sinhl(long double x) { return sinh(x); }
+static inline long double sinl(long double x) { return sin(x); }
+static inline long double sqrtl(long double x) { return sqrt(x); }
+static inline long double tanhl(long double x) { return tanh(x); }
+static inline long double tanl(long double x) { return tan(x); }
+
+#endif
 #endif /* __WINE_MATH_H */

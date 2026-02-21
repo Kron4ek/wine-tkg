@@ -760,7 +760,13 @@ static void cleanup_parse_attribute_list(struct parse_attribute_list *attr_list)
     vkd3d_free(attr_list->attrs);
 }
 
-static void free_parse_initializer(struct parse_initializer *initializer)
+static void parse_function_cleanup(struct parse_function *f)
+{
+    hlsl_func_parameters_cleanup(&f->parameters);
+    hlsl_cleanup_semantic(&f->return_semantic);
+}
+
+static void cleanup_parse_initializer(struct parse_initializer *initializer)
 {
     destroy_block(initializer->instrs);
     vkd3d_free(initializer->args);
@@ -1016,7 +1022,7 @@ static struct hlsl_type *apply_type_modifiers(struct hlsl_ctx *ctx, struct hlsl_
 
 static void free_parse_variable_def(struct parse_variable_def *v)
 {
-    free_parse_initializer(&v->initializer);
+    cleanup_parse_initializer(&v->initializer);
     vkd3d_free(v->arrays.sizes);
     vkd3d_free(v->name);
     hlsl_cleanup_semantic(&v->semantic);
@@ -1108,7 +1114,7 @@ static bool gen_struct_fields(struct hlsl_ctx *ctx, struct parse_fields *fields,
         if (v->initializer.args_count)
         {
             hlsl_error(ctx, &v->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX, "Illegal initializer on a struct field.");
-            free_parse_initializer(&v->initializer);
+            cleanup_parse_initializer(&v->initializer);
         }
         if (v->reg_reservation.offset_type)
             hlsl_error(ctx, &v->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
@@ -1211,7 +1217,7 @@ static bool add_typedef(struct hlsl_ctx *ctx, struct hlsl_type *const orig_type,
         if (!ret)
             hlsl_error(ctx, &v->loc, VKD3D_SHADER_ERROR_HLSL_REDEFINED,
                     "Type '%s' is already defined.", v->name);
-        free_parse_initializer(&v->initializer);
+        cleanup_parse_initializer(&v->initializer);
         vkd3d_free(v);
     }
     vkd3d_free(list);
@@ -1297,7 +1303,7 @@ static bool add_func_parameter(struct hlsl_ctx *ctx, struct hlsl_func_parameters
                     &store_index, param->initializer.args[i], true);
         }
 
-        free_parse_initializer(&param->initializer);
+        cleanup_parse_initializer(&param->initializer);
     }
 
     hlsl_add_var(ctx, var);
@@ -5783,7 +5789,7 @@ static int intrinsic_function_name_compare(const void *a, const void *b)
 static struct hlsl_block *add_call(struct hlsl_ctx *ctx, const char *name,
         struct parse_initializer *args, const struct vkd3d_shader_location *loc)
 {
-    struct intrinsic_function *intrinsic;
+    const struct intrinsic_function *intrinsic;
     struct hlsl_ir_function_decl *decl;
 
     for (unsigned int i = 0; i < args->args_count; ++i)
@@ -5907,7 +5913,7 @@ static struct hlsl_block *add_shader_compilation(struct hlsl_ctx *ctx, const cha
     block = make_block(ctx, compile);
 
 out:
-    free_parse_initializer(args);
+    cleanup_parse_initializer(args);
     return block;
 }
 
@@ -7342,6 +7348,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 
 %type <attr_list> attribute_list
 %type <attr_list> attribute_list_optional
+%destructor { cleanup_parse_attribute_list(&$$); } <attr_list>
 
 %type <block> add_expr
 %type <block> assignment_expr
@@ -7389,6 +7396,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %type <initializer> complex_initializer_list
 %type <initializer> func_arguments
 %type <initializer> initializer_expr_list
+%destructor { cleanup_parse_initializer(&$$); } <initializer>
 
 %type <if_body> if_body
 
@@ -7407,6 +7415,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 
 %type <parameters> param_list
 %type <parameters> parameters
+%destructor { hlsl_func_parameters_cleanup(&$$); } <parameters>
 
 %type <reg_reservation> register_reservation
 %type <reg_reservation> packoffset_reservation
@@ -7419,6 +7428,7 @@ static void validate_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim dim,
 %type <so_type> so_type
 
 %type <state_block> state_block
+%destructor { hlsl_free_state_block($$); } <state_block>
 
 %type <state_block_index> state_block_index_opt
 
@@ -7778,7 +7788,7 @@ attribute:
             if (!($$ = hlsl_alloc(ctx, offsetof(struct hlsl_attribute, args[$4.args_count]))))
             {
                 vkd3d_free($2);
-                free_parse_initializer(&$4);
+                cleanup_parse_initializer(&$4);
                 YYABORT;
             }
             $$->name = $2;
@@ -7788,7 +7798,7 @@ attribute:
             $$->args_count = $4.args_count;
             for (i = 0; i < $4.args_count; ++i)
                 hlsl_src_from_node(&$$->args[i], $4.args[i]);
-            free_parse_initializer(&$4);
+            cleanup_parse_initializer(&$4);
         }
 
 attribute_list:
@@ -7876,14 +7886,13 @@ func_declaration:
             hlsl_pop_scope(ctx);
 
             if (!$1.first)
-            {
-                vkd3d_free($1.parameters.vars);
-                hlsl_cleanup_semantic(&$1.return_semantic);
-            }
+                parse_function_cleanup(&$1);
         }
     | func_prototype ';'
         {
             hlsl_pop_scope(ctx);
+            if (!$1.first)
+                parse_function_cleanup(&$1);
         }
 
 func_prototype_no_attrs:
@@ -9305,15 +9314,15 @@ complex_initializer_list:
             $$ = $1;
             if (!(new_args = hlsl_realloc(ctx, $$.args, ($$.args_count + $3.args_count) * sizeof(*$$.args))))
             {
-                free_parse_initializer(&$$);
-                free_parse_initializer(&$3);
+                cleanup_parse_initializer(&$$);
+                cleanup_parse_initializer(&$3);
                 YYABORT;
             }
             $$.args = new_args;
             for (i = 0; i < $3.args_count; ++i)
                 $$.args[$$.args_count++] = $3.args[i];
             hlsl_block_add_block($$.instrs, $3.instrs);
-            free_parse_initializer(&$3);
+            cleanup_parse_initializer(&$3);
             $$.loc = @$;
         }
 
@@ -9341,7 +9350,7 @@ initializer_expr_list:
             $$ = $1;
             if (!(new_args = hlsl_realloc(ctx, $$.args, ($$.args_count + 1) * sizeof(*$$.args))))
             {
-                free_parse_initializer(&$$);
+                cleanup_parse_initializer(&$$);
                 destroy_block($3);
                 YYABORT;
             }
@@ -9415,7 +9424,10 @@ jump_statement:
             if (!($$ = make_empty_block(ctx)))
                 YYABORT;
             if (!add_return(ctx, $$, NULL, &@1))
+            {
+                destroy_block($$);
                 YYABORT;
+            }
         }
     | KW_DISCARD ';'
         {
@@ -9857,7 +9869,7 @@ postfix_expr:
 
             if (!($$ = add_constructor(ctx, $2, &$4, &@2)))
             {
-                free_parse_initializer(&$4);
+                cleanup_parse_initializer(&$4);
                 YYABORT;
             }
         }
@@ -10051,7 +10063,10 @@ conditional_expr:
             destroy_block($5);
 
             if (!add_ternary(ctx, $1, cond, first, second))
+            {
+                destroy_block($1);
                 YYABORT;
+            }
             $$ = $1;
         }
 
@@ -10067,7 +10082,10 @@ assignment_expr:
             hlsl_block_add_block($3, $1);
             destroy_block($1);
             if (!add_assignment(ctx, $3, lhs, $2, rhs, false))
+            {
+                destroy_block($3);
                 YYABORT;
+            }
             $$ = $3;
         }
 

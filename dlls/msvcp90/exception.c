@@ -18,6 +18,7 @@
 
 #include <errno.h>
 #include <stdarg.h>
+#include <malloc.h>
 
 #define COBJMACROS
 
@@ -1077,6 +1078,9 @@ typedef struct
     LONG *ref; /* not binary compatible with native */
 } exception_ptr;
 
+static inline void copy_exception( void *object, void **dest, UINT catch_flags,
+                                   const cxx_type_info *type, uintptr_t base );
+
 static void exception_ptr_rethrow(const exception_ptr *ep)
 {
     TRACE("(%p)\n", ep);
@@ -1088,6 +1092,20 @@ static void exception_ptr_rethrow(const exception_ptr *ep)
 
         MSVCP_exception_ctor(&e, &exception_msg);
         _CxxThrowException(&e, &exception_exception_type);
+        return;
+    }
+    if (ep->rec->ExceptionCode == CXX_EXCEPTION)
+    {
+        void **e;
+        void *obj = (void*)ep->rec->ExceptionInformation[1];
+        const cxx_exception_type *et = (void*)ep->rec->ExceptionInformation[2];
+        uintptr_t base = cxx_rva_base( et );
+        const cxx_type_info_table *table = cxx_rva( et->type_info_table, base );
+        const cxx_type_info *ti = cxx_rva( table->info[0], base );
+
+        e = alloca(ti->size);
+        copy_exception(obj, e, 0, ti, base);
+        _CxxThrowException(e, et);
         return;
     }
 
@@ -1138,10 +1156,6 @@ void __cdecl _Throw_C_error(int code)
 
     _CxxThrowException(&se, &system_error_exception_type);
 }
-#endif
-
-#if _MSVCP_VER >= 140
-void** CDECL __current_exception(void);
 
 /* compute the this pointer for a base class of a given type */
 static inline void *get_this_pointer( const this_ptr_offsets *off, void *object )
@@ -1218,6 +1232,10 @@ static inline void copy_exception( void *object, void **dest, UINT catch_flags,
         }
     }
 }
+
+#endif
+
+#if _MSVCP_VER >= 140
 
 int __cdecl __uncaught_exceptions(void)
 {
@@ -1301,6 +1319,8 @@ void __cdecl __ExceptionPtrRethrow(const exception_ptr *ep)
 {
     exception_ptr_rethrow(ep);
 }
+
+void** CDECL __current_exception(void);
 
 /*********************************************************************
  * ?__ExceptionPtrCurrentException@@YAXPAX@Z

@@ -18,6 +18,7 @@ SOURCES = \
 	amstream.idl \
 	amva.h \
 	amvideo.idl \
+	apisetcconv.h \
 	appcompatapi.h \
 	appmgmt.h \
 	appmodel.h \
@@ -404,6 +405,7 @@ SOURCES = \
 	inseng.idl \
 	inspectable.idl \
 	interactioncontext.h \
+	intsafe.h \
 	intshcut.h \
 	ioringapi.h \
 	ip2string.h \
@@ -1084,6 +1086,7 @@ SOURCES = \
 	wspiapi.h \
 	wtsapi32.h \
 	wtypes.idl \
+	wtypesbase.idl \
 	wuapi.idl \
 	x3daudio.h \
 	xact.h \

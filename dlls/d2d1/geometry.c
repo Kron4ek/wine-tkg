@@ -1142,6 +1142,229 @@ static bool d2d_figure_add_lines(struct d2d_figure *figure, const D2D1_POINT_2F 
     return true;
 }
 
+static bool d2d_arc_check_radius(float halfchord2, float fuzz2, float *radius)
+{
+    bool accept = !(*radius * *radius <= halfchord2 * fuzz2);
+    if (accept)
+    {
+        if (*radius < 0.0f)
+            *radius = -*radius;
+    }
+    return accept;
+}
+
+static int d2d_arc_get_piece_count(const D2D_POINT_2F *start, const D2D_POINT_2F *end,
+        bool large_arc, bool sweep_up, float *cos_angle, float *sin_angle)
+{
+    float angle;
+    int count;
+
+    *cos_angle = d2d_point_dot(start, end);
+    *sin_angle = start->x * end->y - start->y * end->x;
+
+    if (*cos_angle >= 0.0f)
+    {
+        if (!large_arc) return 1;
+        count = 4;
+    }
+    else
+    {
+        count = large_arc ? 3 : 2;
+    }
+
+    angle = atan2f(*sin_angle, *cos_angle);
+    if (sweep_up)
+    {
+        if (angle < 0.0f)
+            angle += 2.0f * M_PI;
+    }
+    else
+    {
+        if (angle > 0.0f)
+            angle -= 2.0f * M_PI;
+    }
+
+    angle /= count;
+    *cos_angle = cosf(angle);
+    *sin_angle = sinf(angle);
+
+    return count;
+}
+
+static float d2d_arc_get_bezier_distance(float rDot, bool sweep_up)
+{
+    float denom_squared, denominator;
+    const float fuzz = 1.e-6;
+    float numerator, rA, dist;
+
+    rA = 0.5f * (1.0f + rDot);
+    if (rA < 0.0f)
+        return 0.0f;
+
+    denom_squared = 1.0f - rA;
+    if (denom_squared <= 0.0f)
+        return 0.0f;
+
+    denominator = sqrt(denom_squared);
+    numerator = (4.0f / 3.0f) * (1.0f - sqrt(rA));
+
+    dist = (numerator <= denominator * fuzz) ? 0.0f : numerator / denominator;
+    if (!sweep_up)
+        dist = -dist;
+
+    return dist;
+}
+
+/* Approximation logic is taken in its entirety from WpfGfx graphics core of
+   Windows Presentation Foundation framework, distributed under MIT license. */
+static int d2d_arc_to_bezier(const D2D_POINT_2F *start_point, const D2D1_ARC_SEGMENT *arc,
+        D2D_POINT_2F *points)
+{
+    float x, y, rHalfChord2, rCos, rSin, rCosArcAngle, rSinArcAngle, dist, rotation;
+    D2D_POINT_2F ptStart, ptEnd, vecToBez1, vecToBez2;
+    const float FUZZ = 1.e-6;
+    const float PI_OVER_180 = 0.0174532925199432957692;
+    bool large_arc, sweep_up, zero_center = false;
+    D2D_POINT_2F center, radius;
+    D2D1_MATRIX_3X2_F m;
+    int cPieces = -1;
+
+    float fuzz2 = FUZZ * FUZZ;
+    int i, j;
+
+    d2d_point_set(&radius, arc->size.width, arc->size.height);
+    rotation = arc->rotationAngle;
+    large_arc = arc->arcSize == D2D1_ARC_SIZE_LARGE;
+    sweep_up = arc->sweepDirection == D2D1_SWEEP_DIRECTION_CLOCKWISE;
+
+    x = 0.5f * (arc->point.x - start_point->x);
+    y = 0.5f * (arc->point.y - start_point->y);
+
+    rHalfChord2 = x * x + y * y;
+    if (rHalfChord2 < fuzz2)
+        return -1;
+
+    if (!d2d_arc_check_radius(rHalfChord2, fuzz2, &radius.x) ||
+        !d2d_arc_check_radius(rHalfChord2, fuzz2, &radius.y))
+    {
+        return 0;
+    }
+
+    if (fabs(rotation) < FUZZ)
+    {
+        rCos = 1.0f;
+        rSin = 0.0f;
+    }
+    else
+    {
+        float tmp;
+
+        rotation = -rotation * PI_OVER_180;
+
+        rCos = cosf(rotation);
+        rSin = sinf(rotation);
+
+        tmp = x * rCos - y * rSin;
+        y = x * rSin + y * rCos;
+        x = tmp;
+    }
+
+    x /= radius.x;
+    y /= radius.y;
+
+    rHalfChord2 = x * x + y * y;
+    if (rHalfChord2 > 1.0f)
+    {
+        float tmp = sqrtf(rHalfChord2);
+
+        radius.x *= tmp;
+        radius.y *= tmp;
+        center.x = center.y = 0.0f;
+        zero_center = true;
+
+        x /= tmp;
+        y /= tmp;
+    }
+    else
+    {
+        float tmp = sqrtf((1.0f - rHalfChord2) / rHalfChord2);
+        if (large_arc != sweep_up)
+        {
+            center.x = -tmp * y;
+            center.y = tmp * x;
+        }
+        else
+        {
+            center.x = tmp * y;
+            center.y = -tmp * x;
+        }
+    }
+
+    d2d_point_set(&ptStart, -x - center.x, -y - center.y);
+    d2d_point_set(&ptEnd, x - center.x, y - center.y);
+
+    m._11 = rCos * radius.x;
+    m._12 = -rSin * radius.x;
+    m._21 = rSin * radius.y;
+    m._22 = rCos * radius.y;
+    m._31 = 0.5f * (arc->point.x + start_point->x);
+    m._32 = 0.5f * (arc->point.y + start_point->y);
+    if (!zero_center)
+    {
+        m._31 += (m._11 * center.x + m._12 * center.x);
+        m._32 += (m._21 * center.x + m._22 * center.y);
+    }
+
+    cPieces = d2d_arc_get_piece_count(&ptStart, &ptEnd, large_arc, sweep_up, &rCosArcAngle, &rSinArcAngle);
+
+    dist = d2d_arc_get_bezier_distance(rCosArcAngle, sweep_up);
+    d2d_point_set(&vecToBez1, -dist * ptStart.y, dist * ptStart.x);
+
+    j = 0;
+    for (i = 1; i < cPieces; ++i)
+    {
+        D2D_POINT_2F ptPieceEnd;
+
+        d2d_point_set(&ptPieceEnd, ptStart.x * rCosArcAngle - ptStart.y * rSinArcAngle,
+                              ptStart.x * rSinArcAngle + ptStart.y * rCosArcAngle);
+        d2d_point_set(&vecToBez2, -dist * ptPieceEnd.y, dist * ptPieceEnd.x);
+
+        d2d_point_transform(&points[j++], &m, ptStart.x + vecToBez1.x, ptStart.y + vecToBez1.y);
+        d2d_point_transform(&points[j++], &m, ptPieceEnd.x - vecToBez2.x, ptPieceEnd.y - vecToBez2.y);
+        d2d_point_transform(&points[j++], &m, ptPieceEnd.x, ptPieceEnd.y);
+
+        ptStart = ptPieceEnd;
+        vecToBez1 = vecToBez2;
+    }
+
+    d2d_point_set(&vecToBez2, -dist * ptEnd.y, dist * ptEnd.x);
+    d2d_point_transform(&points[j++], &m, ptStart.x + vecToBez1.x, ptStart.y + vecToBez1.y);
+    d2d_point_transform(&points[j++], &m, ptEnd.x - vecToBez2.x, ptEnd.y - vecToBez2.y);
+    d2d_point_set(&points[j], arc->point.x, arc->point.y);
+
+    return cPieces;
+}
+
+static bool d2d_figure_add_arc(struct d2d_figure *figure, const D2D1_ARC_SEGMENT *arc)
+{
+    size_t last = figure->vertex_count - 1;
+    D2D_POINT_2F points[12];
+    int count = 0;
+
+    count = d2d_arc_to_bezier(&figure->vertices[last], arc, points);
+
+    if (count > 0)
+    {
+        return d2d_figure_add_beziers(figure, (D2D1_BEZIER_SEGMENT *)points, count);
+    }
+    else if (count == 0)
+    {
+        return d2d_figure_add_lines(figure, points, 1);
+    }
+
+    return true;
+}
+
 static bool d2d_figure_produce_vertices(struct d2d_figure *figure)
 {
     union
@@ -1178,10 +1401,9 @@ static bool d2d_figure_produce_vertices(struct d2d_figure *figure)
                 size = FIELD_OFFSET(struct d2d_segment_lines, points[s.lines->count]);
                 break;
             case D2D_SEGMENT_TYPE_ARCS:
-                /* FIXME: use a sequence of bezier curves */
                 for (j = 0; j < s.arcs->count; ++j)
                 {
-                    if (!d2d_figure_add_vertex(figure, s.arcs->segments[j].point))
+                    if (!d2d_figure_add_arc(figure, &s.arcs->segments[j]))
                         return false;
                 }
 
@@ -3578,7 +3800,7 @@ static void STDMETHODCALLTYPE d2d_geometry_sink_AddArc(ID2D1GeometrySink *iface,
 {
     struct d2d_geometry *geometry = impl_from_ID2D1GeometrySink(iface);
 
-    FIXME("iface %p, arc %p stub!\n", iface, arc);
+    TRACE("iface %p, arc %p.\n", iface, arc);
 
     if (geometry->u.path.state != D2D_GEOMETRY_STATE_FIGURE)
     {
@@ -4794,7 +5016,7 @@ static void d2d_ellipse_geometry_stream(struct d2d_geometry *geometry, const D2D
 
     arcs[0].size.width = e->radiusX;
     arcs[0].size.height = e->radiusY;
-    arcs[0].rotationAngle = 90.0f;
+    arcs[0].rotationAngle = 0.0f;
     arcs[0].sweepDirection = D2D1_SWEEP_DIRECTION_CLOCKWISE;
     arcs[0].arcSize = D2D1_ARC_SIZE_SMALL;
     arcs[1] = arcs[2] = arcs[3] = arcs[0];
@@ -5857,7 +6079,7 @@ static HRESULT STDMETHODCALLTYPE d2d_transformed_geometry_GetBounds(ID2D1Transfo
 
     TRACE("iface %p, transform %p, bounds %p.\n", iface, transform, bounds);
 
-    g = geometry->transform;
+    g = geometry->u.transformed.transform;
     if (transform)
         d2d_matrix_multiply(&g, transform);
 
@@ -5884,7 +6106,7 @@ static HRESULT STDMETHODCALLTYPE d2d_transformed_geometry_StrokeContainsPoint(ID
     TRACE("iface %p, point %s, stroke_width %.8e, stroke_style %p, transform %p, tolerance %.8e, contains %p.\n",
             iface, debug_d2d_point_2f(&point), stroke_width, stroke_style, transform, tolerance, contains);
 
-    g = geometry->transform;
+    g = geometry->u.transformed.transform;
     stroke_width /= g.m11;
     if (transform)
         d2d_matrix_multiply(&g, transform);
@@ -5905,7 +6127,7 @@ static HRESULT STDMETHODCALLTYPE d2d_transformed_geometry_FillContainsPoint(ID2D
     TRACE("iface %p, point %s, transform %p, tolerance %.8e, contains %p.\n",
             iface, debug_d2d_point_2f(&point), transform, tolerance, contains);
 
-    g = geometry->transform;
+    g = geometry->u.transformed.transform;
     if (transform)
         d2d_matrix_multiply(&g, transform);
 
@@ -5931,7 +6153,7 @@ static HRESULT STDMETHODCALLTYPE d2d_transformed_geometry_Simplify(ID2D1Transfor
     TRACE("iface %p, option %#x, transform %p, tolerance %.8e, sink %p.\n",
             iface, option, transform, tolerance, sink);
 
-    g = geometry->transform;
+    g = geometry->u.transformed.transform;
     if (transform)
         d2d_matrix_multiply(&g, transform);
 
@@ -5946,7 +6168,7 @@ static HRESULT STDMETHODCALLTYPE d2d_transformed_geometry_Tessellate(ID2D1Transf
 
     TRACE("iface %p, transform %p, tolerance %.8e, sink %p.\n", iface, transform, tolerance, sink);
 
-    g = geometry->transform;
+    g = geometry->u.transformed.transform;
     if (transform)
         d2d_matrix_multiply(&g, transform);
 
@@ -5979,7 +6201,7 @@ static HRESULT STDMETHODCALLTYPE d2d_transformed_geometry_ComputeArea(ID2D1Trans
 
     TRACE("iface %p, transform %p, tolerance %.8e, area %p.\n", iface, transform, tolerance, area);
 
-    g = geometry->transform;
+    g = geometry->u.transformed.transform;
     if (transform)
         d2d_matrix_multiply(&g, transform);
 
@@ -6169,133 +6391,149 @@ static HRESULT STDMETHODCALLTYPE d2d_geometry_group_GetBounds(ID2D1GeometryGroup
         const D2D1_MATRIX_3X2_F *transform, D2D1_RECT_F *bounds)
 {
     struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
-    D2D1_RECT_F rect;
-    unsigned int i;
 
     TRACE("iface %p, transform %p, bounds %p.\n", iface, transform, bounds);
 
-    bounds->left = FLT_MAX;
-    bounds->top = FLT_MAX;
-    bounds->right = -FLT_MAX;
-    bounds->bottom = -FLT_MAX;
-
-    for (i = 0; i < geometry->u.group.geometry_count; ++i)
-    {
-        if (SUCCEEDED(ID2D1Geometry_GetBounds(geometry->u.group.src_geometries[i], transform, &rect)))
-            d2d_rect_union(bounds, &rect);
-    }
-
-    return S_OK;
+    return ID2D1PathGeometry_GetBounds(geometry->u.group.path, transform, bounds);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_GetWidenedBounds(ID2D1GeometryGroup *iface,
         float stroke_width, ID2D1StrokeStyle *stroke_style, const D2D1_MATRIX_3X2_F *transform,
         float tolerance, D2D1_RECT_F *bounds)
 {
-    FIXME("iface %p, stroke_width %.8e, stroke_style %p, transform %p, tolerance %.8e, bounds %p stub!\n",
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
+
+    TRACE("iface %p, stroke_width %.8e, stroke_style %p, transform %p, tolerance %.8e, bounds %p.\n",
             iface, stroke_width, stroke_style, transform, tolerance, bounds);
 
-    return E_NOTIMPL;
+    return ID2D1PathGeometry_GetWidenedBounds(geometry->u.group.path, stroke_width, stroke_style, transform,
+            tolerance, bounds);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_StrokeContainsPoint(ID2D1GeometryGroup *iface,
         D2D1_POINT_2F point, float stroke_width, ID2D1StrokeStyle *stroke_style, const D2D1_MATRIX_3X2_F *transform,
         float tolerance, BOOL *contains)
 {
-    FIXME("iface %p, point %s, stroke_width %.8e, stroke_style %p, transform %p, tolerance %.8e, contains %p.\n",
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
+
+    TRACE("iface %p, point %s, stroke_width %.8e, stroke_style %p, transform %p, tolerance %.8e, contains %p.\n",
             iface, debug_d2d_point_2f(&point), stroke_width, stroke_style, transform, tolerance, contains);
 
-    return E_NOTIMPL;
+    return ID2D1PathGeometry_StrokeContainsPoint(geometry->u.group.path, point, stroke_width,
+            stroke_style, transform, tolerance, contains);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_FillContainsPoint(ID2D1GeometryGroup *iface,
         D2D1_POINT_2F point, const D2D1_MATRIX_3X2_F *transform, float tolerance, BOOL *contains)
 {
-    FIXME("iface %p, point %s, transform %p, tolerance %.8e, contains %p stub!.\n",
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
+
+    TRACE("iface %p, point %s, transform %p, tolerance %.8e, contains %p.\n",
             iface, debug_d2d_point_2f(&point), transform, tolerance, contains);
 
-    return E_NOTIMPL;
+    return ID2D1PathGeometry_FillContainsPoint(geometry->u.group.path, point, transform, tolerance, contains);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_CompareWithGeometry(ID2D1GeometryGroup *iface,
-        ID2D1Geometry *geometry, const D2D1_MATRIX_3X2_F *transform, float tolerance, D2D1_GEOMETRY_RELATION *relation)
+        ID2D1Geometry *geometry2, const D2D1_MATRIX_3X2_F *transform, float tolerance, D2D1_GEOMETRY_RELATION *relation)
 {
-    FIXME("iface %p, geometry %p, transform %p, tolerance %.8e, relation %p stub!\n",
-            iface, geometry, transform, tolerance, relation);
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
 
-    return E_NOTIMPL;
+    TRACE("iface %p, geometry %p, transform %p, tolerance %.8e, relation %p.\n",
+            iface, geometry2, transform, tolerance, relation);
+
+    return ID2D1PathGeometry_CompareWithGeometry(geometry->u.group.path, geometry2, transform, tolerance, relation);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_Simplify(ID2D1GeometryGroup *iface,
         D2D1_GEOMETRY_SIMPLIFICATION_OPTION option, const D2D1_MATRIX_3X2_F *transform, float tolerance,
         ID2D1SimplifiedGeometrySink *sink)
 {
-    FIXME("iface %p, option %#x, transform %p, tolerance %.8e, sink %p stub!.\n",
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
+
+    TRACE("iface %p, option %#x, transform %p, tolerance %.8e, sink %p.\n",
             iface, option, transform, tolerance, sink);
 
-    return E_NOTIMPL;
+    return ID2D1PathGeometry_Simplify(geometry->u.group.path, option, transform, tolerance, sink);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_Tessellate(ID2D1GeometryGroup *iface,
         const D2D1_MATRIX_3X2_F *transform, float tolerance, ID2D1TessellationSink *sink)
 {
-    FIXME("iface %p, transform %p, tolerance %.8e, sink %p stub!\n", iface, transform, tolerance, sink);
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
 
-    return E_NOTIMPL;
+    TRACE("iface %p, transform %p, tolerance %.8e, sink %p.\n", iface, transform, tolerance, sink);
+
+    return ID2D1PathGeometry_Tessellate(geometry->u.group.path, transform, tolerance, sink);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_CombineWithGeometry(ID2D1GeometryGroup *iface,
-        ID2D1Geometry *geometry, D2D1_COMBINE_MODE combine_mode, const D2D1_MATRIX_3X2_F *transform,
+        ID2D1Geometry *geometry2, D2D1_COMBINE_MODE combine_mode, const D2D1_MATRIX_3X2_F *transform,
         float tolerance, ID2D1SimplifiedGeometrySink *sink)
 {
-    FIXME("iface %p, geometry %p, combine_mode %#x, transform %p, tolerance %.8e, sink %p stub!\n",
-            iface, geometry, combine_mode, transform, tolerance, sink);
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
 
-    return E_NOTIMPL;
+    TRACE("iface %p, geometry %p, combine_mode %#x, transform %p, tolerance %.8e, sink %p.\n",
+            iface, geometry2, combine_mode, transform, tolerance, sink);
+
+    return ID2D1PathGeometry_CombineWithGeometry(geometry->u.group.path, geometry2, combine_mode,
+            transform, tolerance, sink);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_Outline(ID2D1GeometryGroup *iface,
         const D2D1_MATRIX_3X2_F *transform, float tolerance, ID2D1SimplifiedGeometrySink *sink)
 {
-    FIXME("iface %p, transform %p, tolerance %.8e, sink %p stub!\n", iface, transform, tolerance, sink);
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
 
-    return E_NOTIMPL;
+    TRACE("iface %p, transform %p, tolerance %.8e, sink %p.\n", iface, transform, tolerance, sink);
+
+    return ID2D1PathGeometry_Outline(geometry->u.group.path, transform, tolerance, sink);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_ComputeArea(ID2D1GeometryGroup *iface,
         const D2D1_MATRIX_3X2_F *transform, float tolerance, float *area)
 {
-    FIXME("iface %p, transform %p, tolerance %.8e, area %p stub!\n", iface, transform, tolerance, area);
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
 
-    return E_NOTIMPL;
+    TRACE("iface %p, transform %p, tolerance %.8e, area %p.\n", iface, transform, tolerance, area);
+
+    return ID2D1PathGeometry_ComputeArea(geometry->u.group.path, transform, tolerance, area);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_ComputeLength(ID2D1GeometryGroup *iface,
         const D2D1_MATRIX_3X2_F *transform, float tolerance, float *length)
 {
-    FIXME("iface %p, transform %p, tolerance %.8e, length %p stub!\n", iface, transform, tolerance, length);
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
 
-    return E_NOTIMPL;
+    TRACE("iface %p, transform %p, tolerance %.8e, length %p.\n", iface, transform, tolerance, length);
+
+    return ID2D1PathGeometry_ComputeLength(geometry->u.group.path, transform, tolerance, length);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_ComputePointAtLength(ID2D1GeometryGroup *iface,
         float length, const D2D1_MATRIX_3X2_F *transform, float tolerance, D2D1_POINT_2F *point,
         D2D1_POINT_2F *tangent)
 {
-    FIXME("iface %p, length %.8e, transform %p, tolerance %.8e, point %p, tangent %p stub!\n",
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
+
+    TRACE("iface %p, length %.8e, transform %p, tolerance %.8e, point %p, tangent %p.\n",
             iface, length, transform, tolerance, point, tangent);
 
-    return E_NOTIMPL;
+    return ID2D1PathGeometry_ComputePointAtLength(geometry->u.group.path, length, transform, tolerance,
+            point, tangent);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_geometry_group_Widen(ID2D1GeometryGroup *iface, float stroke_width,
         ID2D1StrokeStyle *stroke_style, const D2D1_MATRIX_3X2_F *transform, float tolerance,
         ID2D1SimplifiedGeometrySink *sink)
 {
-    FIXME("iface %p, stroke_width %.8e, stroke_style %p, transform %p, tolerance %.8e, sink %p stub!\n",
+    struct d2d_geometry *geometry = impl_from_ID2D1GeometryGroup(iface);
+
+    TRACE("iface %p, stroke_width %.8e, stroke_style %p, transform %p, tolerance %.8e, sink %p.\n",
             iface, stroke_width, stroke_style, transform, tolerance, sink);
 
-    return E_NOTIMPL;
+    return ID2D1PathGeometry_Widen(geometry->u.group.path, stroke_width, stroke_style, transform,
+            tolerance, sink);
 }
 
 static D2D1_FILL_MODE STDMETHODCALLTYPE d2d_geometry_group_GetFillMode(ID2D1GeometryGroup *iface)

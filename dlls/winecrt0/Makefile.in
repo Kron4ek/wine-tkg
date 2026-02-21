@@ -18,6 +18,7 @@ SOURCES = \
 	exe_main.c \
 	exe_wentry.c \
 	exe_wmain.c \
+	gcc_ctors.c \
 	register.c \
 	setjmp.c \
 	stub.c \

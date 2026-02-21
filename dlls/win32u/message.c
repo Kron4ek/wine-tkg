@@ -2605,6 +2605,51 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
     msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
     set_thread_dpi_awareness_context( get_window_dpi_awareness_context( msg->hwnd ));
 
+    if ((extra_info & 0xffffff00) != 0xff515700 && is_mouse_in_pointer_enabled( msg->hwnd ))
+    {
+        WORD flags = POINTER_MESSAGE_FLAG_INRANGE;
+        DWORD message = 0;
+
+        switch (msg->message)
+        {
+        case WM_MOUSEMOVE:
+            message = WM_POINTERUPDATE;
+            flags |= POINTER_MESSAGE_FLAG_PRIMARY;
+            break;
+        case WM_LBUTTONDOWN:
+        case WM_RBUTTONDOWN:
+        case WM_MBUTTONDOWN:
+        case WM_XBUTTONDOWN:
+            message = WM_POINTERDOWN;
+            flags |= POINTER_MESSAGE_FLAG_PRIMARY|POINTER_MESSAGE_FLAG_INCONTACT;
+            if (msg->message == WM_LBUTTONDOWN) flags |= POINTER_MESSAGE_FLAG_FIRSTBUTTON;
+            if (msg->message == WM_RBUTTONDOWN) flags |= POINTER_MESSAGE_FLAG_SECONDBUTTON;
+            if (msg->message == WM_MBUTTONDOWN) flags |= POINTER_MESSAGE_FLAG_THIRDBUTTON;
+            if (msg->message == WM_XBUTTONDOWN && LOWORD( msg->wParam ) == MK_LBUTTON) flags |= POINTER_MESSAGE_FLAG_FIRSTBUTTON;
+            if (msg->message == WM_XBUTTONDOWN && LOWORD( msg->wParam ) == MK_RBUTTON) flags |= POINTER_MESSAGE_FLAG_SECONDBUTTON;
+            if (msg->message == WM_XBUTTONDOWN && LOWORD( msg->wParam ) == MK_MBUTTON) flags |= POINTER_MESSAGE_FLAG_THIRDBUTTON;
+            if (msg->message == WM_XBUTTONDOWN && LOWORD( msg->wParam ) == MK_XBUTTON1) flags |= POINTER_MESSAGE_FLAG_FOURTHBUTTON;
+            if (msg->message == WM_XBUTTONDOWN && LOWORD( msg->wParam ) == MK_XBUTTON2) flags |= POINTER_MESSAGE_FLAG_FIFTHBUTTON;
+            break;
+        case WM_LBUTTONUP:
+        case WM_RBUTTONUP:
+        case WM_MBUTTONUP:
+        case WM_XBUTTONUP:
+            message = WM_POINTERUP;
+            break;
+        case WM_MOUSEWHEEL:
+            message = WM_POINTERWHEEL;
+            flags = HIWORD( msg->wParam );
+            break;
+        case WM_MOUSEHWHEEL:
+            message = WM_POINTERHWHEEL;
+            flags = HIWORD( msg->wParam );
+            break;
+        }
+
+        if (message) send_message( msg->hwnd, message, MAKELONG( 1, flags ), MAKELONG( msg->pt.x, msg->pt.y ) );
+    }
+
     /* FIXME: is this really the right place for this hook? */
     event.message = msg->message;
     event.time    = msg->time;
@@ -4632,38 +4677,9 @@ BOOL WINAPI NtUserPostThreadMessage( DWORD thread, UINT msg, WPARAM wparam, LPAR
     return put_message_in_queue( &info, NULL );
 }
 
-UINT isMouseButtonPressed = 0;
-
 LRESULT WINAPI NtUserMessageCall( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                   void *result_info, DWORD type, BOOL ansi )
 {
-    if ( type == NtUserGetDispatchParams && 
-        (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_MOUSEMOVE) ) {
-            struct ntuser_thread_info *thread_info = NtUserGetThreadInfo();
-
-            if ( thread_info->mouse_in_pointer == TRUE ) {
-                if ( msg == WM_LBUTTONDOWN ) {
-                    wparam = MAKEWPARAM(1, POINTER_MESSAGE_FLAG_PRIMARY | POINTER_MESSAGE_FLAG_FIRSTBUTTON | POINTER_MESSAGE_FLAG_INCONTACT | POINTER_MESSAGE_FLAG_INRANGE);
-                    isMouseButtonPressed = 1;
-                }
-
-                if ( msg == WM_LBUTTONUP ) {
-                    wparam = MAKEWPARAM(1, POINTER_MESSAGE_FLAG_PRIMARY | POINTER_MESSAGE_FLAG_INRANGE);
-                    isMouseButtonPressed = 0;
-                }
-
-                if ( msg == WM_MOUSEMOVE ) {
-                    if ( isMouseButtonPressed ) {
-                        wparam = MAKEWPARAM(1, POINTER_MESSAGE_FLAG_PRIMARY | POINTER_MESSAGE_FLAG_FIRSTBUTTON | POINTER_MESSAGE_FLAG_INCONTACT | POINTER_MESSAGE_FLAG_INRANGE);
-                    } else {
-                        wparam = MAKEWPARAM(1, POINTER_MESSAGE_FLAG_PRIMARY | POINTER_MESSAGE_FLAG_INRANGE);
-                    }
-                }
-
-                msg = WM_POINTERUPDATE;
-            }
-    }
-
     switch (type)
     {
     case NtUserScrollBarWndProc:

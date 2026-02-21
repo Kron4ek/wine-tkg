@@ -935,7 +935,7 @@ extern struct symt_data*
                                              symref_t type);
 extern struct symt_function*
                     symt_new_function(struct module* module,
-                                      struct symt_compiland* parent,
+                                      symref_t compiland,
                                       const char* name,
                                       ULONG_PTR addr, ULONG_PTR size,
                                       symref_t type, DWORD_PTR user);

@@ -69,6 +69,7 @@ AddReg=\
     Misc,\
     OLE,\
     Printing,\
+    CustomOverrides,\
     Services, \
     SessionMgr,\
     ThemeManager
@@ -233,6 +234,7 @@ HKCR,.lnk,,2,"lnkfile"
 HKCR,.msi,,2,"Msi.Package"
 HKCR,.msp,,2,"Msi.Patch"
 HKCR,.pdf,,2,"pdffile"
+HKCR,.reg,,2,"regfile"
 HKCR,.rtf,,2,"rtffile"
 HKCR,.wri,,2,"wrifile"
 HKCR,*\shellex\ContextMenuHandlers,,16
@@ -284,6 +286,8 @@ HKCR,Msi.Patch\DefaultIcon,,2,"msiexec.exe"
 HKCR,Msi.Patch\shell\Open\command,,2,"%11%\msiexec.exe /p ""%1"" %*"
 HKCR,pdffile,,2,"PDF Document"
 HKCR,pdffile\shell\open\command,,2,"""%11%\winebrowser.exe"" ""%1"""
+HKCR,regfile,,2,"Windows Registry File"
+HKCR,regfile\shell\open\command,,2,"""%11%\regedit.exe"" ""%1"""
 HKCR,rtffile,,2,"Rich Text Document"
 HKCR,rtffile\shell\open\command,,2,"""%16422%\Windows NT\Accessories\wordpad.exe"" ""%1"""
 HKCR,rtffile\shell\print\command,,2,"""%16422%\Windows NT\Accessories\wordpad.exe"" /p ""%1"""
@@ -1068,7 +1072,7 @@ HKLM,SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x86,"Version",2,"14.42.344
 11,,win32k.sys
 11,,winetest.exe,-
 ; themes
-10,resources\themes\light,light.msstyles
+10,resources\themes\aero,aero.msstyles
 ; skip .NET fake dlls in Wine Mono package
 11,,aspnet_regiis.exe,-
 11,,ngen.exe,-
@@ -1256,7 +1260,7 @@ ErrorControl=1
 
 [ThemeManager]
 HKCU,"Software\Microsoft\Windows\CurrentVersion\ThemeManager","ThemeActive",2,"1"
-HKCU,"Software\Microsoft\Windows\CurrentVersion\ThemeManager","DllName",2,"%10%\resources\themes\light\light.msstyles"
+HKCU,"Software\Microsoft\Windows\CurrentVersion\ThemeManager","DllName",2,"%10%\resources\themes\aero\aero.msstyles"
 HKCU,"Software\Microsoft\Windows\CurrentVersion\ThemeManager","ColorName",2,"Blue"
 HKCU,"Software\Microsoft\Windows\CurrentVersion\ThemeManager","SizeName",2,"NormalSize"
 
@@ -1585,3 +1589,12 @@ InfFiles  = 17
 NlsFiles  = 11
 SortFiles = 10,globalization\sorting
 WinmdFiles = 11,winmetadata
+
+[CustomOverrides]
+HKCU,Software\Wine\DllOverrides,"ddraw",0x2,"native,builtin"
+HKCU,Software\Wine\DllOverrides,"winhttp",0x2,"native,builtin"
+HKCU,Software\Wine\DllOverrides,"winmm",0x2,"native,builtin"
+HKCU,Software\Wine\DllOverrides,"version",0x2,"native,builtin"
+HKCU,Software\Wine\DllOverrides,"dinput8",0x2,"native,builtin"
+HKCU,Software\Wine\DllOverrides,"dinput",0x2,"native,builtin"
+HKCU,Software\Wine\DllOverrides,"dsound",0x2,"native,builtin"

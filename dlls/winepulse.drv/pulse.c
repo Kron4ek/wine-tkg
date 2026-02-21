@@ -1178,6 +1178,12 @@ static NTSTATUS pulse_create_stream(void *args)
                                                                stream->ss.rate,
                                                                10000000);
 
+    if (stream->period_bytes == 0)
+    {
+        hr = E_INVALIDARG;
+        goto exit;
+    }
+
     stream->bufsize_frames = ceil((params->duration / 10000000.) * params->fmt->nSamplesPerSec);
     bufsize_bytes = stream->bufsize_frames * pa_frame_size(&stream->ss);
     stream->mmdev_period_usec = params->period / 10;

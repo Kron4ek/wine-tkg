@@ -133,4 +133,13 @@ extern void main_loop_stop(void);
 
 extern const WCHAR drv_keyW[];
 
+extern HRESULT get_audio_session(const GUID *sessionguid, IMMDevice *device, UINT channels,
+                                 struct audio_session **out);
+extern HRESULT get_audio_session_wrapper(const GUID *guid, IMMDevice *device,
+                                         struct audio_session_wrapper **out);
 extern HRESULT get_audio_sessions(IMMDevice *device, GUID **ret, int *ret_count);
+
+extern struct audio_session_wrapper *session_wrapper_create(struct audio_client *client);
+
+extern void sessions_lock(void);
+extern void sessions_unlock(void);

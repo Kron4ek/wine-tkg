@@ -30287,17 +30287,17 @@ coclass DOMParser
 }
 
 /*****************************************************************************
- *    IXMLSerializer interface
+ *    IDOMXmlSerializer interface
  */
 [
     object,
     oleautomation,
     dual,
-    uuid(30510783-98b5-11cf-bb82-00aa00bdce0b)
+    uuid(3051077d-98b5-11cf-bb82-00aa00bdce0b)
 ]
-interface IXMLSerializer : IDispatch
+interface IDOMXmlSerializer : IDispatch
 {
-    [id(DISPID_IXMLSERIALIZER_SERIALIZETOSTRING)]
+    [id(DISPID_IDOMXMLSERIALIZER_SERIALIZETOSTRING)]
     HRESULT serializeToString([in] IHTMLDOMNode *node, [retval, out] BSTR *pString);
 }
 
@@ -30306,24 +30306,24 @@ interface IXMLSerializer : IDispatch
  */
 [
     hidden,
-    uuid(305900af-98b5-11cf-bb82-00aa00bdce0b)
+    uuid(305900ad-98b5-11cf-bb82-00aa00bdce0b)
 ]
 dispinterface DispXMLSerializer
 {
 properties:
 methods:
-    [id(DISPID_IXMLSERIALIZER_SERIALIZETOSTRING)]
+    [id(DISPID_IDOMXMLSERIALIZER_SERIALIZETOSTRING)]
     BSTR serializeToString([in] IHTMLDOMNode *node);
 }
 
 [
     noncreatable,
-    uuid(30510784-98b5-11cf-bb82-00aa00bdce0b)
+    uuid(3051077e-98b5-11cf-bb82-00aa00bdce0b)
 ]
 coclass XMLSerializer
 {
     [default] dispinterface DispXMLSerializer;
-    interface IXMLSerializer;
+    interface IDOMXmlSerializer;
 }
 
 /*****************************************************************************

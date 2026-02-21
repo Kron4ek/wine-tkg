@@ -3092,6 +3092,33 @@ static void test_create(void)
     IXMLDOMComment_Release(comment);
     SysFreeString(str);
 
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"comment");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, NULL, NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"coMment");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, NULL, NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"8");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, NULL, NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
+
     /* NODE_TEXT */
     V_VT(&var) = VT_I1;
     V_I1(&var) = NODE_TEXT;
@@ -3140,6 +3167,24 @@ static void test_create(void)
     ok( str && SysStringLen(str) == 0, "expected empty comment, %p\n", str);
     IXMLDOMText_Release(text);
     SysFreeString(str);
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"text");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, NULL, NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"teXt");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, NULL, NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
 
     /* NODE_CDATA_SECTION */
     V_VT(&var) = VT_I1;
@@ -3190,6 +3235,24 @@ static void test_create(void)
     IXMLDOMCDATASection_Release(cdata);
     SysFreeString(str);
 
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"cdatasection");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, NULL, NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"cdataSection");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, NULL, NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
+
     /* NODE_ATTRIBUTE */
     V_VT(&var) = VT_I1;
     V_I1(&var) = NODE_ATTRIBUTE;
@@ -3223,6 +3286,24 @@ static void test_create(void)
     ok(hr == E_FAIL, "Unexpected hr %#lx.\n", hr);
     ok( node == (void*)0x1, "expected same ptr, got %p\n", node);
     SysFreeString(str);
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"attribute");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, _bstr_("name"), NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"attriBute");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, _bstr_("name"), NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
 
     /* NODE_PROCESSING_INSTRUCTION */
     V_VT(&var) = VT_I1;
@@ -3273,6 +3354,24 @@ static void test_create(void)
     hr = IXMLDOMDocument_createNode( doc, var, _bstr_(""), NULL, &node );
     ok(hr == E_FAIL, "Unexpected hr %#lx.\n", hr);
     ok( node == (void*)0x1, "expected same ptr, got %p\n", node);
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"element");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, _bstr_("name"), NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
+
+    V_VT(&var) = VT_BSTR;
+    V_BSTR(&var) = SysAllocString(L"elemEnt");
+    node = NULL;
+    hr = IXMLDOMDocument_createNode( doc, var, _bstr_("name"), NULL, &node );
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!!node, "Unexpected object %p.\n", node);
+    IXMLDOMNode_Release(node);
+    VariantClear(&var);
 
     V_VT(&var) = VT_I1;
     V_I1(&var) = NODE_ELEMENT;

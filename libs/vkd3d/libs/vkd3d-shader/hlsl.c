@@ -614,6 +614,7 @@ static struct hlsl_type *hlsl_new_simple_type(struct hlsl_ctx *ctx, const char *
     hlsl_type_calculate_reg_size(ctx, type);
 
     list_add_tail(&ctx->types, &type->entry);
+    type->type_id = ctx->type_count++;
 
     return type;
 }
@@ -639,6 +640,7 @@ static struct hlsl_type *hlsl_new_type(struct hlsl_ctx *ctx, const char *name, e
     hlsl_type_calculate_reg_size(ctx, type);
 
     list_add_tail(&ctx->types, &type->entry);
+    type->type_id = ctx->type_count++;
 
     return type;
 }
@@ -1043,6 +1045,7 @@ struct hlsl_type *hlsl_new_array_type(struct hlsl_ctx *ctx, struct hlsl_type *ba
     hlsl_type_calculate_reg_size(ctx, type);
 
     list_add_tail(&ctx->types, &type->entry);
+    type->type_id = ctx->type_count++;
 
     return type;
 }
@@ -1060,6 +1063,7 @@ struct hlsl_type *hlsl_new_stream_output_type(struct hlsl_ctx *ctx,
     hlsl_type_calculate_reg_size(ctx, type);
 
     list_add_tail(&ctx->types, &type->entry);
+    type->type_id = ctx->type_count++;
 
     return type;
 }
@@ -1078,6 +1082,7 @@ struct hlsl_type *hlsl_new_struct_type(struct hlsl_ctx *ctx, const char *name,
     hlsl_type_calculate_reg_size(ctx, type);
 
     list_add_tail(&ctx->types, &type->entry);
+    type->type_id = ctx->type_count++;
 
     return type;
 }
@@ -1095,6 +1100,8 @@ struct hlsl_type *hlsl_new_texture_type(struct hlsl_ctx *ctx, enum hlsl_sampler_
     type->sample_count = sample_count;
     hlsl_type_calculate_reg_size(ctx, type);
     list_add_tail(&ctx->types, &type->entry);
+    type->type_id = ctx->type_count++;
+
     return type;
 }
 
@@ -1111,6 +1118,8 @@ struct hlsl_type *hlsl_new_uav_type(struct hlsl_ctx *ctx, enum hlsl_sampler_dim 
     type->e.resource.rasteriser_ordered = rasteriser_ordered;
     hlsl_type_calculate_reg_size(ctx, type);
     list_add_tail(&ctx->types, &type->entry);
+    type->type_id = ctx->type_count++;
+
     return type;
 }
 
@@ -1124,6 +1133,8 @@ struct hlsl_type *hlsl_new_cb_type(struct hlsl_ctx *ctx, struct hlsl_type *forma
     type->e.resource.format = format;
     hlsl_type_calculate_reg_size(ctx, type);
     list_add_tail(&ctx->types, &type->entry);
+    type->type_id = ctx->type_count++;
+
     return type;
 }
 
@@ -1451,6 +1462,8 @@ struct hlsl_type *hlsl_type_clone(struct hlsl_ctx *ctx, struct hlsl_type *old,
     hlsl_type_calculate_reg_size(ctx, type);
 
     list_add_tail(&ctx->types, &type->entry);
+    type->type_id = ctx->type_count++;
+
     return type;
 }
 
@@ -4627,7 +4640,7 @@ static void free_function_decl(struct hlsl_ir_function_decl *decl)
         hlsl_free_attribute((void *)decl->attrs[i]);
     vkd3d_free((void *)decl->attrs);
 
-    vkd3d_free(decl->parameters.vars);
+    hlsl_func_parameters_cleanup(&decl->parameters);
     hlsl_block_cleanup(&decl->body);
     vkd3d_free(decl);
 }

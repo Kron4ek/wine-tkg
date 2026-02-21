@@ -453,19 +453,19 @@ static HRESULT init_dom_parser_ctor(struct constructor *constr)
 
 struct xml_serializer {
     DispatchEx dispex;
-    IXMLSerializer IXMLSerializer_iface;
+    IDOMXmlSerializer IDOMXmlSerializer_iface;
 };
 
-static inline struct xml_serializer *impl_from_IXMLSerializer(IXMLSerializer *iface)
+static inline struct xml_serializer *impl_from_IDOMXmlSerializer(IDOMXmlSerializer *iface)
 {
-    return CONTAINING_RECORD(iface, struct xml_serializer, IXMLSerializer_iface);
+    return CONTAINING_RECORD(iface, struct xml_serializer, IDOMXmlSerializer_iface);
 }
 
-DISPEX_IDISPATCH_IMPL(xml_serializer, IXMLSerializer, impl_from_IXMLSerializer(iface)->dispex)
+DISPEX_IDISPATCH_IMPL(xml_serializer, IDOMXmlSerializer, impl_from_IDOMXmlSerializer(iface)->dispex)
 
-static HRESULT WINAPI xml_serializer_serializeToString(IXMLSerializer *iface, IHTMLDOMNode *node, BSTR *pString)
+static HRESULT WINAPI xml_serializer_serializeToString(IDOMXmlSerializer *iface, IHTMLDOMNode *node, BSTR *pString)
 {
-    struct xml_serializer *This = impl_from_IXMLSerializer(iface);
+    struct xml_serializer *This = impl_from_IDOMXmlSerializer(iface);
     HTMLDOMNode *dom_node;
     nsAString nsstr;
     HRESULT hres;
@@ -497,7 +497,7 @@ static HRESULT WINAPI xml_serializer_serializeToString(IXMLSerializer *iface, IH
     return hres;
 }
 
-static const IXMLSerializerVtbl xml_serializer_vtbl = {
+static const IDOMXmlSerializerVtbl xml_serializer_vtbl = {
     xml_serializer_QueryInterface,
     xml_serializer_AddRef,
     xml_serializer_Release,
@@ -517,8 +517,8 @@ static void *xml_serializer_query_interface(DispatchEx *dispex, REFIID riid)
 {
     struct xml_serializer *This = xml_serializer_from_DispatchEx(dispex);
 
-    if(IsEqualGUID(&IID_IXMLSerializer, riid))
-        return &This->IXMLSerializer_iface;
+    if(IsEqualGUID(&IID_IDOMXmlSerializer, riid))
+        return &This->IDOMXmlSerializer_iface;
 
     return NULL;
 }
@@ -537,7 +537,7 @@ static const dispex_static_data_vtbl_t xml_serializer_dispex_vtbl = {
 };
 
 static const tid_t xml_serializer_iface_tids[] = {
-    IXMLSerializer_tid,
+    IDOMXmlSerializer_tid,
     0
 };
 
@@ -573,11 +573,11 @@ static HRESULT xml_serializer_ctor_value(DispatchEx *dispex, LCID lcid, WORD fla
     if(!(ret = calloc(1, sizeof(*ret))))
         return E_OUTOFMEMORY;
 
-    ret->IXMLSerializer_iface.lpVtbl = &xml_serializer_vtbl;
+    ret->IDOMXmlSerializer_iface.lpVtbl = &xml_serializer_vtbl;
     init_dispatch(&ret->dispex, &XMLSerializer_dispex, This->window, dispex_compat_mode(&This->dispex));
 
     V_VT(res) = VT_DISPATCH;
-    V_DISPATCH(res) = (IDispatch*)&ret->IXMLSerializer_iface;
+    V_DISPATCH(res) = (IDispatch*)&ret->IDOMXmlSerializer_iface;
     return S_OK;
 }
 

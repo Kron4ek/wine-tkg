@@ -323,7 +323,7 @@ struct symt_data* symt_new_global_variable(struct module* module,
 
 static struct symt_function* init_function_or_inlinesite(struct module* module,
                                                          DWORD tag,
-                                                         struct symt* container,
+                                                         symref_t container,
                                                          const char* name,
                                                          symref_t sig_type,
                                                          DWORD_PTR user,
@@ -335,7 +335,7 @@ static struct symt_function* init_function_or_inlinesite(struct module* module,
     {
         sym->symt.tag   = tag;
         sym->hash_elt.name = pool_strdup(&module->pool, name);
-        sym->container  = symt_ptr_to_symref(container);
+        sym->container  = container;
         sym->type       = sig_type;
         vector_init(&sym->vlines,  sizeof(struct line_info), 0);
         vector_init(&sym->vchildren, sizeof(symref_t), 0);
@@ -346,7 +346,7 @@ static struct symt_function* init_function_or_inlinesite(struct module* module,
 }
 
 struct symt_function* symt_new_function(struct module* module,
-                                        struct symt_compiland* compiland,
+                                        symref_t compiland,
                                         const char* name,
                                         ULONG_PTR addr, ULONG_PTR size,
                                         symref_t sig_type, DWORD_PTR user)
@@ -356,17 +356,20 @@ struct symt_function* symt_new_function(struct module* module,
     TRACE_(dbghelp_symt)("Adding global function %s:%s @%Ix-%Ix\n",
                          debugstr_w(module->modulename), debugstr_a(name), addr, addr + size - 1);
 
-    if ((sym = init_function_or_inlinesite(module, SymTagFunction, &compiland->symt, name, sig_type, user, 1)))
+    if ((sym = init_function_or_inlinesite(module, SymTagFunction, compiland, name, sig_type, user, 1)))
     {
         symref_t* p;
         sym->ranges[0].low = addr;
         sym->ranges[0].high = addr + size;
         sym->next_inlinesite = NULL; /* first of list */
-        symt_add_module_ht(module, (struct symt_ht*)sym);
-        if (compiland)
+        if (symt_is_symref_ptr(compiland))
         {
-            p = vector_add(&compiland->vchildren, &module->pool);
-            if (p) *p = symt_ptr_to_symref(&sym->symt);
+            symt_add_module_ht(module, (struct symt_ht*)sym);
+            if (compiland)
+            {
+                p = vector_add(&((struct symt_compiland*)SYMT_SYMREF_TO_PTR(compiland))->vchildren, &module->pool);
+                if (p) *p = symt_ptr_to_symref(&sym->symt);
+            }
         }
     }
     return sym;
@@ -383,7 +386,7 @@ struct symt_function* symt_new_inlinesite(struct module* module,
     struct symt_function* sym;
 
     TRACE_(dbghelp_symt)("Adding inline site %s\n", debugstr_a(name));
-    if ((sym = init_function_or_inlinesite(module, SymTagInlineSite, container, name, sig_type, user, num_ranges)))
+    if ((sym = init_function_or_inlinesite(module, SymTagInlineSite, symt_ptr_to_symref(container), name, sig_type, user, num_ranges)))
     {
         symref_t* p;
         assert(container);

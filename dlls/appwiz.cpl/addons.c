@@ -56,10 +56,10 @@ WINE_DEFAULT_DEBUG_CHANNEL(appwizcpl);
 #define GECKO_SHA "???"
 #endif
 
-#define MONO_VERSION "10.4.1"
+#define MONO_VERSION "11.0.0"
 #if defined(__i386__) || defined(__x86_64__)
 #define MONO_ARCH "x86"
-#define MONO_SHA "071f4b2887e1c97a11d791ff3d65be9429eed6dec4c2708888bfd546ba358e23"
+#define MONO_SHA "d7efede0b9bdcf52134f8cd6ced59d9fece976f70b11a400bdb47b864569cd27"
 #else
 #define MONO_ARCH ""
 #define MONO_SHA "???"

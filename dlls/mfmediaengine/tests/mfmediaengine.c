@@ -823,25 +823,22 @@ static void test_audio_session(BOOL session_count_todo)
         ok(!IsEqualGUID(&guid, &GUID_NULL), "unexpected session GUID %s.\n", wine_dbgstr_guid(&guid));
         CoTaskMemFree(name);
         hr = IAudioSessionControl2_QueryInterface(asc2, &IID_ISimpleAudioVolume, (void **)&sav);
-        todo_wine ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-        if (SUCCEEDED(hr))
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = ISimpleAudioVolume_GetMasterVolume(sav, &vol);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(vol == 1.0f, "Unexpected volume %.8e.\n", vol);
+        ISimpleAudioVolume_Release(sav);
+        hr = IAudioSessionControl2_QueryInterface(asc2, &IID_IChannelAudioVolume, (void **)&cav);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = IChannelAudioVolume_GetChannelCount(cav, &channel_count);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        for (j = 0; j < channel_count; j++)
         {
-            hr = ISimpleAudioVolume_GetMasterVolume(sav, &vol);
+            hr = IChannelAudioVolume_GetChannelVolume(cav, j, &vol);
             ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-            ok(vol == 1.0f, "Unexpected volume %.8e.\n", vol);
-            ISimpleAudioVolume_Release(sav);
-            hr = IAudioSessionControl2_QueryInterface(asc2, &IID_IChannelAudioVolume, (void **)&cav);
-            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-            hr = IChannelAudioVolume_GetChannelCount(cav, &channel_count);
-            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-            for (j = 0; j < channel_count; j++)
-            {
-                hr = IChannelAudioVolume_GetChannelVolume(cav, j, &vol);
-                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-                ok(vol == 1.0f, "Unexpected channel %u volume %.8e.\n", j, vol);
-            }
-            IChannelAudioVolume_Release(cav);
+            ok(vol == 1.0f, "Unexpected channel %u volume %.8e.\n", j, vol);
         }
+        IChannelAudioVolume_Release(cav);
         IAudioSessionControl2_Release(asc2);
         IAudioSessionControl_Release(asc);
     }

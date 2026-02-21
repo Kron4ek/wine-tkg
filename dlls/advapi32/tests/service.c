@@ -200,9 +200,20 @@ static void test_create_delete_svc(void)
     static const CHAR pathname            [] = "we_dont_care.exe";
     static const CHAR empty               [] = "";
     static const CHAR password            [] = "secret";
+    static const struct
+    {
+        const CHAR *account;
+    } localsystem_account_tests[] =
+    {
+        {"LocalSystem"},
+        {"localsystem"},
+        {".\\LocalSystem"},
+        {".\\localsystem"},
+    };
     char buffer[200];
     DWORD size;
     BOOL ret;
+    UINT i;
 
     /* Get the username and turn it into an account to be used in some tests */
     GetUserNameA(username, &user_size);
@@ -325,8 +336,31 @@ static void test_create_delete_svc(void)
     svc_handle1 = CreateServiceA(scm_handle, servicename, NULL, GENERIC_ALL, SERVICE_WIN32_OWN_PROCESS | SERVICE_INTERACTIVE_PROCESS,
                                  SERVICE_DISABLED, 0, pathname, NULL, NULL, NULL, account, password);
     ok(!svc_handle1, "Expected failure\n");
-    ok(GetLastError() == ERROR_INVALID_PARAMETER || GetLastError() == ERROR_INVALID_SERVICE_ACCOUNT,
-       "Expected ERROR_INVALID_PARAMETER or ERROR_INVALID_SERVICE_ACCOUNT, got %ld\n", GetLastError());
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %ld\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    svc_handle1 = CreateServiceA(scm_handle, servicename, NULL, GENERIC_ALL, SERVICE_WIN32_SHARE_PROCESS | SERVICE_INTERACTIVE_PROCESS,
+                                 SERVICE_DISABLED, 0, pathname, NULL, NULL, NULL, account, password);
+    ok(!svc_handle1, "Expected failure\n");
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %ld\n", GetLastError());
+
+    /* A valid LocalSystem account name is accepted for an interactive service. */
+    for (i = 0; i < ARRAY_SIZE(localsystem_account_tests); i++)
+    {
+        winetest_push_context("%u:%s", i, localsystem_account_tests[i].account);
+
+        do
+        {
+            SetLastError(0xdeadbeef);
+            svc_handle1 = CreateServiceA(scm_handle, servicename, NULL, GENERIC_ALL, SERVICE_WIN32_OWN_PROCESS | SERVICE_INTERACTIVE_PROCESS,
+                                         SERVICE_DISABLED, 0, pathname, NULL, NULL, NULL, localsystem_account_tests[i].account, NULL);
+        } while (!svc_handle1 && GetLastError() == ERROR_SERVICE_MARKED_FOR_DELETE);
+        ok(!!svc_handle1, "Failed to create service, error %lu\n", GetLastError());
+        ret = DeleteService(svc_handle1);
+        ok(ret, "Failed to delete service, error %lu\n", GetLastError());
+        CloseServiceHandle(svc_handle1);
+        winetest_pop_context();
+    }
 
     /* Illegal (start-type is not a mask and should only be one of the possibilities)
      * Remark : 'OR'-ing them could result in a valid possibility (but doesn't make sense as

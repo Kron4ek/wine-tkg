@@ -1,11 +1,12 @@
-MODULE = light.msstyles
+MODULE = aero.msstyles
 
 EXTRADLLFLAGS = -Wb,--data-only
 
-VER_FILEDESCRIPTION_STR = "Light Theme"
+VER_FILEDESCRIPTION_STR = "Aero Theme"
 VER_PRODUCTVERSION      = 1,0,0,1
 
 SOURCES = \
+	aero.rc \
 	blue_button.svg \
 	blue_checkbox_13px.svg \
 	blue_checkbox_16px.svg \
@@ -487,5 +488,4 @@ SOURCES = \
 	blue_window_small_close_button_glyph.svg \
 	blue_window_small_frame_bottom.svg \
 	blue_window_small_frame_left.svg \
-	blue_window_small_frame_right.svg \
-	light.rc
+	blue_window_small_frame_right.svg

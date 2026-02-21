@@ -43,6 +43,16 @@ msgstr ""
 msgid "Permissions for %1"
 msgstr "ප්‍රවේශය අත්හිටුවා ඇත.\n"
 
+#: dlls/aero.msstyles/aero.rc:29 dlls/aero.msstyles/aero.rc:35
+#: dlls/comdlg32/comdlg32.rc:134 programs/wordpad/wordpad.rc:137
+msgid "Blue"
+msgstr "නිල්"
+
+#: dlls/aero.msstyles/aero.rc:41 dlls/aero.msstyles/aero.rc:47
+#: programs/winhlp32/winhlp32.rc:53 programs/winhlp32/winhlp32.rc:73
+msgid "Normal"
+msgstr "සාමාන"
+
 #: dlls/appwiz.cpl/appwiz.rc:60
 msgid "Install/Uninstall"
 msgstr "ස්ථාපනය/අස්ථාපනය කරන්න"
@@ -1124,11 +1134,6 @@ msgstr "කොළට හුරු කහ"
 #: dlls/comdlg32/comdlg32.rc:133 programs/wordpad/wordpad.rc:136
 msgid "Yellow"
 msgstr "කහ"
-
-#: dlls/comdlg32/comdlg32.rc:134 dlls/light.msstyles/light.rc:29
-#: dlls/light.msstyles/light.rc:35 programs/wordpad/wordpad.rc:137
-msgid "Blue"
-msgstr "නිල්"
 
 # The translation actually means "pink", as there seems to be no exact Sinhala equivalent for "fuchsia".
 #: dlls/comdlg32/comdlg32.rc:135 programs/wordpad/wordpad.rc:138
@@ -7318,11 +7323,6 @@ msgstr "අවලංගු මට්ටමක්.\n"
 #| msgid "Value is not available.\n"
 msgid "Resource is not currently available.\n"
 msgstr "අගය ලද හැකි නැහැ.\n"
-
-#: dlls/light.msstyles/light.rc:41 dlls/light.msstyles/light.rc:47
-#: programs/winhlp32/winhlp32.rc:53 programs/winhlp32/winhlp32.rc:73
-msgid "Normal"
-msgstr "සාමාන"
 
 #: dlls/localspl/localspl.rc:37
 #, fuzzy

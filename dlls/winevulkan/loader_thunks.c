@@ -5403,6 +5403,18 @@ void WINAPI vkGetPartitionedAccelerationStructuresBuildSizesNV(VkDevice device, 
     assert(!status && "vkGetPartitionedAccelerationStructuresBuildSizesNV");
 }
 
+VkResult WINAPI vkGetPastPresentationTimingEXT(VkDevice device, const VkPastPresentationTimingInfoEXT *pPastPresentationTimingInfo, VkPastPresentationTimingPropertiesEXT *pPastPresentationTimingProperties)
+{
+    struct vkGetPastPresentationTimingEXT_params params;
+    NTSTATUS status;
+    params.device = device;
+    params.pPastPresentationTimingInfo = pPastPresentationTimingInfo;
+    params.pPastPresentationTimingProperties = pPastPresentationTimingProperties;
+    status = UNIX_CALL(vkGetPastPresentationTimingEXT, &params);
+    assert(!status && "vkGetPastPresentationTimingEXT");
+    return params.result;
+}
+
 VkResult WINAPI vkGetPerformanceParameterINTEL(VkDevice device, VkPerformanceParameterTypeINTEL parameter, VkPerformanceValueINTEL *pValue)
 {
     struct vkGetPerformanceParameterINTEL_params params;
@@ -6434,6 +6446,32 @@ VkResult WINAPI vkGetSwapchainImagesKHR(VkDevice device, VkSwapchainKHR swapchai
     return params.result;
 }
 
+VkResult WINAPI vkGetSwapchainTimeDomainPropertiesEXT(VkDevice device, VkSwapchainKHR swapchain, VkSwapchainTimeDomainPropertiesEXT *pSwapchainTimeDomainProperties, uint64_t *pTimeDomainsCounter)
+{
+    struct vkGetSwapchainTimeDomainPropertiesEXT_params params;
+    NTSTATUS status;
+    params.device = device;
+    params.swapchain = swapchain;
+    params.pSwapchainTimeDomainProperties = pSwapchainTimeDomainProperties;
+    params.pTimeDomainsCounter = pTimeDomainsCounter;
+    status = UNIX_CALL(vkGetSwapchainTimeDomainPropertiesEXT, &params);
+    assert(!status && "vkGetSwapchainTimeDomainPropertiesEXT");
+    return params.result;
+}
+
+VkResult WINAPI vkGetSwapchainTimingPropertiesEXT(VkDevice device, VkSwapchainKHR swapchain, VkSwapchainTimingPropertiesEXT *pSwapchainTimingProperties, uint64_t *pSwapchainTimingPropertiesCounter)
+{
+    struct vkGetSwapchainTimingPropertiesEXT_params params;
+    NTSTATUS status;
+    params.device = device;
+    params.swapchain = swapchain;
+    params.pSwapchainTimingProperties = pSwapchainTimingProperties;
+    params.pSwapchainTimingPropertiesCounter = pSwapchainTimingPropertiesCounter;
+    status = UNIX_CALL(vkGetSwapchainTimingPropertiesEXT, &params);
+    assert(!status && "vkGetSwapchainTimingPropertiesEXT");
+    return params.result;
+}
+
 void WINAPI vkGetTensorMemoryRequirementsARM(VkDevice device, const VkTensorMemoryRequirementsInfoARM *pInfo, VkMemoryRequirements2 *pMemoryRequirements)
 {
     struct vkGetTensorMemoryRequirementsARM_params params;
@@ -7006,6 +7044,18 @@ VkResult WINAPI vkSetPrivateDataEXT(VkDevice device, VkObjectType objectType, ui
     params.data = data;
     status = UNIX_CALL(vkSetPrivateDataEXT, &params);
     assert(!status && "vkSetPrivateDataEXT");
+    return params.result;
+}
+
+VkResult WINAPI vkSetSwapchainPresentTimingQueueSizeEXT(VkDevice device, VkSwapchainKHR swapchain, uint32_t size)
+{
+    struct vkSetSwapchainPresentTimingQueueSizeEXT_params params;
+    NTSTATUS status;
+    params.device = device;
+    params.swapchain = swapchain;
+    params.size = size;
+    status = UNIX_CALL(vkSetSwapchainPresentTimingQueueSizeEXT, &params);
+    assert(!status && "vkSetSwapchainPresentTimingQueueSizeEXT");
     return params.result;
 }
 
@@ -7831,6 +7881,7 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkGetMemoryWin32HandlePropertiesKHR", vkGetMemoryWin32HandlePropertiesKHR},
     {"vkGetMicromapBuildSizesEXT", vkGetMicromapBuildSizesEXT},
     {"vkGetPartitionedAccelerationStructuresBuildSizesNV", vkGetPartitionedAccelerationStructuresBuildSizesNV},
+    {"vkGetPastPresentationTimingEXT", vkGetPastPresentationTimingEXT},
     {"vkGetPerformanceParameterINTEL", vkGetPerformanceParameterINTEL},
     {"vkGetPipelineBinaryDataKHR", vkGetPipelineBinaryDataKHR},
     {"vkGetPipelineCacheData", vkGetPipelineCacheData},
@@ -7862,6 +7913,8 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkGetShaderModuleCreateInfoIdentifierEXT", vkGetShaderModuleCreateInfoIdentifierEXT},
     {"vkGetShaderModuleIdentifierEXT", vkGetShaderModuleIdentifierEXT},
     {"vkGetSwapchainImagesKHR", vkGetSwapchainImagesKHR},
+    {"vkGetSwapchainTimeDomainPropertiesEXT", vkGetSwapchainTimeDomainPropertiesEXT},
+    {"vkGetSwapchainTimingPropertiesEXT", vkGetSwapchainTimingPropertiesEXT},
     {"vkGetTensorMemoryRequirementsARM", vkGetTensorMemoryRequirementsARM},
     {"vkGetTensorOpaqueCaptureDataARM", vkGetTensorOpaqueCaptureDataARM},
     {"vkGetTensorOpaqueCaptureDescriptorDataARM", vkGetTensorOpaqueCaptureDescriptorDataARM},
@@ -7911,6 +7964,7 @@ static const struct vulkan_func vk_device_dispatch_table[] =
     {"vkSetLatencySleepModeNV", vkSetLatencySleepModeNV},
     {"vkSetPrivateData", vkSetPrivateData},
     {"vkSetPrivateDataEXT", vkSetPrivateDataEXT},
+    {"vkSetSwapchainPresentTimingQueueSizeEXT", vkSetSwapchainPresentTimingQueueSizeEXT},
     {"vkSignalSemaphore", vkSignalSemaphore},
     {"vkSignalSemaphoreKHR", vkSignalSemaphoreKHR},
     {"vkTransitionImageLayout", vkTransitionImageLayout},

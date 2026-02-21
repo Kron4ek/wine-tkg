@@ -3267,7 +3267,10 @@ static void tpf_write_signature(struct tpf_compiler *tpf, const struct shader_si
     put_u32(&buffer, 8); /* unknown */
 
     if (!(sorted_elements = vkd3d_calloc(signature->element_count, sizeof(*sorted_elements))))
+    {
+        vkd3d_bytecode_buffer_cleanup(&buffer);
         return;
+    }
     for (i = 0; i < signature->element_count; ++i)
         sorted_elements[i] = &signature->elements[i];
     qsort(sorted_elements, signature->element_count, sizeof(*sorted_elements), signature_element_pointer_compare);

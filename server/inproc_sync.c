@@ -48,7 +48,13 @@
 int get_inproc_device_fd(void)
 {
     static int fd = -2;
-    if (fd == -2) fd = open( "/dev/ntsync", O_CLOEXEC | O_RDONLY );
+    if (fd == -2) {
+        fd = open( "/dev/ntsync", O_CLOEXEC | O_RDONLY );
+
+        if ( fd >= 0 ) {
+            fprintf( stderr, "wineserver: NTSync up and running!\n" );
+        }
+    }
     return fd;
 }
 

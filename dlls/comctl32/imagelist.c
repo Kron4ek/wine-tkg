@@ -721,6 +721,7 @@ ImageList_Copy (HIMAGELIST himlDst, INT iDst,	HIMAGELIST himlSrc,
                       hdcBmp, 0, 0, SRCCOPY);
 
         /* image */
+        SelectObject (hdcBmp, hbmTempImage);
         BitBlt       (himlSrc->hdcImage, ptSrc.x, ptSrc.y, himlSrc->cx, himlSrc->cy,
                       hdcBmp, 0, 0, SRCCOPY);
         /* delete temporary bitmaps */

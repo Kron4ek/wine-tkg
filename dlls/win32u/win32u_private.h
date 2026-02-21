@@ -93,6 +93,7 @@ extern void unregister_imm_window( HWND hwnd );
 /* input.c */
 extern BOOL grab_pointer;
 extern BOOL grab_fullscreen;
+extern BOOL is_mouse_in_pointer_enabled( HWND hwnd );
 extern HWND get_active_window(void);
 extern HWND get_capture(void);
 extern HWND get_focus(void);
@@ -312,6 +313,7 @@ extern HWND get_shell_window(void);
 extern HWND get_progman_window(void);
 extern HWND get_taskman_window(void);
 extern BOOL is_client_surface_window( struct client_surface *surface, HWND hwnd );
+extern void add_window_client_surface( HWND hwnd, struct client_surface *surface );
 extern HICON get_window_icon_info( HWND hwnd, UINT type, HICON icon, ICONINFO *ret );
 extern void init_startup_info(void);
 

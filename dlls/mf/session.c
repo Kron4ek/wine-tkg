@@ -235,6 +235,7 @@ enum presentation_flags
     SESSION_FLAG_PENDING_RATE_CHANGE = 0x20,
     SESSION_FLAG_RESTARTING = 0x40,
     SESSION_FLAG_PRESENTATION_ENDING = 0x80,
+    SESSION_FLAG_SINKS_SUBSCRIBED = 0x100,
 };
 
 struct media_session
@@ -1015,6 +1016,29 @@ static HRESULT session_subscribe_sources(struct media_session *session)
     return hr;
 }
 
+static void session_subscribe_sinks(struct media_session *session)
+{
+    struct topo_node *node;
+    HRESULT hr;
+
+    if (session->presentation.flags & SESSION_FLAG_SINKS_SUBSCRIBED)
+        return;
+
+    LIST_FOR_EACH_ENTRY(node, &session->presentation.nodes, struct topo_node, entry)
+    {
+        if (node->type != MF_TOPOLOGY_OUTPUT_NODE)
+            continue;
+
+        if (FAILED(hr = IMFStreamSink_BeginGetEvent(node->object.sink_stream, &session->events_callback,
+                        node->object.object)))
+        {
+            WARN("Failed to subscribe to stream sink events, hr %#lx.\n", hr);
+        }
+    }
+
+    session->presentation.flags |= SESSION_FLAG_SINKS_SUBSCRIBED;
+}
+
 static void session_flush_transforms(struct media_session *session)
 {
     struct topo_node *node;
@@ -1043,7 +1067,7 @@ static void session_flush_sinks(struct media_session *session)
         {
             if (node->u.sink.requests)
             {
-                node->u.sink.requests--;
+                node->u.sink.requests--; /* session_request_sample will increment this back */
                 session_request_sample(session, node->object.sink_stream);
             }
             IMFStreamSink_Flush(node->object.sink_stream);
@@ -1497,18 +1521,6 @@ static void session_set_presentation_clock(struct media_session *session)
 
         if (FAILED(hr))
             WARN("Failed to set time source, hr %#lx.\n", hr);
-
-        LIST_FOR_EACH_ENTRY(node, &session->presentation.nodes, struct topo_node, entry)
-        {
-            if (node->type != MF_TOPOLOGY_OUTPUT_NODE)
-                continue;
-
-            if (FAILED(hr = IMFStreamSink_BeginGetEvent(node->object.sink_stream, &session->events_callback,
-                    node->object.object)))
-            {
-                WARN("Failed to subscribe to stream sink events, hr %#lx.\n", hr);
-            }
-        }
 
         /* Set clock for all topology nodes. */
         LIST_FOR_EACH_ENTRY(source, &session->presentation.sources, struct media_source, entry)
@@ -3210,9 +3222,11 @@ static void session_set_source_object_state(struct media_session *session, IUnkn
                 }
             }
 
+            session_subscribe_sinks(session);
             session_set_presentation_clock(session);
 
-            if ((session->presentation.flags & SESSION_FLAG_NEEDS_PREROLL) && session_is_output_nodes_state(session, OBJ_STATE_STOPPED))
+            if (session->presentation.rate != 0.0f && (session->presentation.flags & SESSION_FLAG_NEEDS_PREROLL)
+                    && session_is_output_nodes_state(session, OBJ_STATE_STOPPED))
             {
                 MFTIME preroll_time = 0;
 
@@ -3907,7 +3921,11 @@ static void session_deliver_sample_to_node(struct media_session *session, struct
             {
                 if (sample)
                 {
-                    if (FAILED(hr = IMFStreamSink_ProcessSample(topo_node->object.sink_stream, sample)))
+                    if (SUCCEEDED(hr = IMFStreamSink_ProcessSample(topo_node->object.sink_stream, sample)))
+                    {
+                        topo_node->u.sink.requests--;
+                    }
+                    else
                     {
                         WARN("Stream sink failed to process sample, hr %#lx.\n", hr);
                         IMFMediaEventQueue_QueueEventParamVar(session->event_queue, MEError, &GUID_NULL, hr, NULL);
@@ -3918,7 +3936,6 @@ static void session_deliver_sample_to_node(struct media_session *session, struct
                 {
                     WARN("Failed to place sink marker, hr %#lx.\n", hr);
                 }
-                topo_node->u.sink.requests--;
             }
             break;
         case MF_TOPOLOGY_TRANSFORM_NODE:

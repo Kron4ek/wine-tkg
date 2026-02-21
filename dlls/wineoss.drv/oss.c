@@ -599,6 +599,12 @@ static NTSTATUS oss_create_stream(void *args)
     stream->period = params->period;
     stream->period_frames = muldiv(params->fmt->nSamplesPerSec, params->period, 10000000);
 
+    if (stream->period_frames == 0)
+    {
+        params->result = E_INVALIDARG;
+        goto exit;
+    }
+
     stream->bufsize_frames = muldiv(params->duration, params->fmt->nSamplesPerSec, 10000000);
     if(params->share == AUDCLNT_SHAREMODE_EXCLUSIVE)
         stream->bufsize_frames -= stream->bufsize_frames % stream->period_frames;

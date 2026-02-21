@@ -901,6 +901,48 @@ static void test_LockBits(void)
     stat = GdipBitmapSetPixel(bm, 2, 8, 0xff480000);
     expect(Ok, stat);
 
+    /* no read/write flags, no conversion */
+    stat = GdipBitmapLockBits(bm, &rect, 0, PixelFormat24bppRGB, &bd);
+    expect(Ok, stat);
+
+    if (stat == Ok) {
+        expect(0xc3, ((BYTE*)bd.Scan0)[2]);
+        expect(0x48, ((BYTE*)bd.Scan0)[2 + bd.Stride * 5]);
+
+        ((char*)bd.Scan0)[2] = 0xfd;
+
+        stat = GdipBitmapUnlockBits(bm, &bd);
+        expect(Ok, stat);
+    }
+
+    stat = GdipBitmapGetPixel(bm, 2, 3, &color);
+    expect(Ok, stat);
+    expect(0xfffd0000, color);
+
+    stat = GdipBitmapSetPixel(bm, 2, 3, 0xffc30000);
+    expect(Ok, stat);
+
+    /* no read/write flags, conversion */
+    stat = GdipBitmapLockBits(bm, &rect, 0, PixelFormat32bppARGB, &bd);
+    expect(Ok, stat);
+
+    if (stat == Ok) {
+        /* bits appear to be uninitialized */
+
+        ((char*)bd.Scan0)[2] = 0xfe;
+
+        stat = GdipBitmapUnlockBits(bm, &bd);
+        expect(Ok, stat);
+    }
+
+    /* writes do not work if there was a conversion */
+    stat = GdipBitmapGetPixel(bm, 2, 3, &color);
+    expect(Ok, stat);
+    expect(0xffc30000, color);
+
+    stat = GdipBitmapSetPixel(bm, 2, 3, 0xffc30000);
+    expect(Ok, stat);
+
     /* read-only */
     stat = GdipBitmapLockBits(bm, &rect, ImageLockModeRead, PixelFormat24bppRGB, &bd);
     expect(Ok, stat);
@@ -1141,6 +1183,24 @@ static void test_LockBits_UserBuf(void)
     bd.PixelFormat = PixelFormat32bppARGB;
     bd.Scan0 = &bits[2+3*WIDTH];
     bd.Reserved = 0xaaaaaaaa;
+
+    /* no read/write flags */
+    stat = GdipBitmapLockBits(bm, &rect, ImageLockModeUserInputBuf, PixelFormat32bppARGB, &bd);
+    expect(Ok, stat);
+
+    expect(0xaaaaaaaa, bits[0]);
+    expect(0xaaaaaaaa, bits[2+3*WIDTH]);
+
+    bits[2+3*WIDTH] = 0xdeadbeef;
+
+    if (stat == Ok) {
+        stat = GdipBitmapUnlockBits(bm, &bd);
+        expect(Ok, stat);
+    }
+
+    stat = GdipBitmapGetPixel(bm, 2, 3, &color);
+    expect(Ok, stat);
+    expect(0, color);
 
     /* read-only */
     stat = GdipBitmapLockBits(bm, &rect, ImageLockModeRead|ImageLockModeUserInputBuf, PixelFormat32bppARGB, &bd);
@@ -2777,6 +2837,10 @@ static void test_colormatrix(void)
 
     stat = GdipSetImageAttributesColorMatrix(imageattr, ColorAdjustTypeDefault,
         TRUE, &colormatrix, &graymatrix, 3);
+    expect(InvalidParameter, stat);
+
+    stat = GdipSetImageAttributesColorMatrix(imageattr, ColorAdjustTypeDefault,
+        TRUE, &colormatrix, &graymatrix, (ColorMatrixFlags)-1);
     expect(InvalidParameter, stat);
 
     stat = GdipSetImageAttributesColorMatrix(imageattr, ColorAdjustTypeCount,

@@ -544,6 +544,7 @@ enum unix_call
     unix_vkGetMemoryWin32HandlePropertiesKHR,
     unix_vkGetMicromapBuildSizesEXT,
     unix_vkGetPartitionedAccelerationStructuresBuildSizesNV,
+    unix_vkGetPastPresentationTimingEXT,
     unix_vkGetPerformanceParameterINTEL,
     unix_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT,
     unix_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR,
@@ -630,6 +631,8 @@ enum unix_call
     unix_vkGetShaderModuleCreateInfoIdentifierEXT,
     unix_vkGetShaderModuleIdentifierEXT,
     unix_vkGetSwapchainImagesKHR,
+    unix_vkGetSwapchainTimeDomainPropertiesEXT,
+    unix_vkGetSwapchainTimingPropertiesEXT,
     unix_vkGetTensorMemoryRequirementsARM,
     unix_vkGetTensorOpaqueCaptureDataARM,
     unix_vkGetTensorOpaqueCaptureDescriptorDataARM,
@@ -679,6 +682,7 @@ enum unix_call
     unix_vkSetLatencySleepModeNV,
     unix_vkSetPrivateData,
     unix_vkSetPrivateDataEXT,
+    unix_vkSetSwapchainPresentTimingQueueSizeEXT,
     unix_vkSignalSemaphore,
     unix_vkSignalSemaphoreKHR,
     unix_vkSubmitDebugUtilsMessageEXT,
@@ -4695,6 +4699,14 @@ struct vkGetPartitionedAccelerationStructuresBuildSizesNV_params
     VkAccelerationStructureBuildSizesInfoKHR *pSizeInfo;
 };
 
+struct vkGetPastPresentationTimingEXT_params
+{
+    VkDevice device;
+    const VkPastPresentationTimingInfoEXT *pPastPresentationTimingInfo;
+    VkPastPresentationTimingPropertiesEXT *pPastPresentationTimingProperties;
+    VkResult result;
+};
+
 struct vkGetPerformanceParameterINTEL_params
 {
     VkDevice device;
@@ -5382,6 +5394,24 @@ struct vkGetSwapchainImagesKHR_params
     VkResult result;
 };
 
+struct vkGetSwapchainTimeDomainPropertiesEXT_params
+{
+    VkDevice device;
+    VkSwapchainKHR DECLSPEC_ALIGN(8) swapchain;
+    VkSwapchainTimeDomainPropertiesEXT *pSwapchainTimeDomainProperties;
+    uint64_t *pTimeDomainsCounter;
+    VkResult result;
+};
+
+struct vkGetSwapchainTimingPropertiesEXT_params
+{
+    VkDevice device;
+    VkSwapchainKHR DECLSPEC_ALIGN(8) swapchain;
+    VkSwapchainTimingPropertiesEXT *pSwapchainTimingProperties;
+    uint64_t *pSwapchainTimingPropertiesCounter;
+    VkResult result;
+};
+
 struct vkGetTensorMemoryRequirementsARM_params
 {
     VkDevice device;
@@ -5758,6 +5788,14 @@ struct vkSetPrivateDataEXT_params
     uint64_t DECLSPEC_ALIGN(8) objectHandle;
     VkPrivateDataSlot DECLSPEC_ALIGN(8) privateDataSlot;
     uint64_t DECLSPEC_ALIGN(8) data;
+    VkResult result;
+};
+
+struct vkSetSwapchainPresentTimingQueueSizeEXT_params
+{
+    VkDevice device;
+    VkSwapchainKHR DECLSPEC_ALIGN(8) swapchain;
+    uint32_t size;
     VkResult result;
 };
 

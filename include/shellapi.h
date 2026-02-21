@@ -696,6 +696,9 @@ WINSHELLAPI HINSTANCE   WINAPI FindExecutableA(LPCSTR,LPCSTR,LPSTR);
 WINSHELLAPI HINSTANCE   WINAPI FindExecutableW(LPCWSTR,LPCWSTR,LPWSTR);
 #define                        FindExecutable WINELIB_NAME_AW(FindExecutable)
 WINSHELLAPI BOOL        WINAPI InitNetworkAddressControl(void);
+WINSHELLAPI BOOL        WINAPI IsLFNDriveA(LPCSTR);
+WINSHELLAPI BOOL        WINAPI IsLFNDriveW(LPCWSTR);
+#define                        IsLFNDrive WINELIB_NAME_AW(IsLFNDrive)
 WINSHELLAPI BOOL        WINAPI ShellAboutA(HWND,LPCSTR,LPCSTR,HICON);
 WINSHELLAPI BOOL        WINAPI ShellAboutW(HWND,LPCWSTR,LPCWSTR,HICON);
 #define                        ShellAbout WINELIB_NAME_AW(ShellAbout)

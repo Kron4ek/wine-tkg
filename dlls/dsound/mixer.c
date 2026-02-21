@@ -50,6 +50,13 @@ void DSOUND_RecalcVolPan(PDSVOLUMEPAN volpan)
 	TRACE("Vol=%ld Pan=%ld\n", volpan->lVolume, volpan->lPan);
 	/* the AmpFactors are expressed in 16.16 fixed point */
 
+	if (volpan->lVolume == DSBVOLUME_MIN)
+	{
+		for (unsigned int i = 0; i < DS_MAX_CHANNELS; i++)
+			volpan->dwTotalAmpFactor[i] = 0;
+		TRACE("setting all channel volumes to 0\n");
+		return;
+	}
 	/* FIXME: use calculated vol and pan ampfactors */
 	temp = (double) (volpan->lVolume - (volpan->lPan > 0 ? volpan->lPan : 0));
 	volpan->dwTotalAmpFactor[0] = (ULONG) (pow(2.0, temp / 600.0) * 0xffff);
@@ -849,8 +856,10 @@ static void DSOUND_PerformMix(DirectSoundDevice *device)
 DWORD CALLBACK DSOUND_mixthread(void *p)
 {
 	DirectSoundDevice *dev = p;
+
 	TRACE("(%p)\n", dev);
 	SetThreadDescription(GetCurrentThread(), L"wine_dsound_mixer");
+        _controlfp_s(NULL, _DN_FLUSH, _MCW_DN);
 
 	while (dev->ref) {
 		DWORD ret;

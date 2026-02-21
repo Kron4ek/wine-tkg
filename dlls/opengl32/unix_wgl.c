@@ -1528,7 +1528,13 @@ HGLRC wrap_wglCreateContextAttribsARB( TEB *teb, HDC hdc, HGLRC client_shared, c
 
 HGLRC wrap_wglCreateContext( TEB *teb, HDC hdc, HGLRC client_context )
 {
-    return wrap_wglCreateContextAttribsARB( teb, hdc, NULL, NULL, client_context );
+    static const int attribs[] =
+    {
+        WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB,
+        0, 0,
+    };
+
+    return wrap_wglCreateContextAttribsARB( teb, hdc, NULL, attribs, client_context );
 }
 
 BOOL wrap_wglMakeContextCurrentARB( TEB *teb, HDC draw_hdc, HDC read_hdc, HGLRC client_context )
@@ -1674,8 +1680,8 @@ void pop_default_fbo( TEB *teb )
     RECT rect;
 
     if (!(ctx = get_current_context( teb, &draw, &read ))) return;
-    if (!ctx->draw_fbo && draw->draw_fbo) funcs->p_glBindFramebuffer( GL_DRAW_FRAMEBUFFER, draw->draw_fbo );
-    if (!ctx->read_fbo && read->read_fbo) funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, read->read_fbo );
+    if (!ctx->draw_fbo) funcs->p_glBindFramebuffer( GL_DRAW_FRAMEBUFFER, draw->draw_fbo );
+    if (!ctx->read_fbo) funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, read->read_fbo );
     if (!ctx->has_viewport && draw->draw_fbo && draw->client)
     {
         NtUserGetClientRect( draw->client->hwnd, &rect, NtUserGetDpiForWindow( draw->client->hwnd ) );

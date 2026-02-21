@@ -200,6 +200,7 @@ static void debug_usage(void)
 /* initialize all options at startup */
 static void init_options(void)
 {
+    const char default_debug[] = "-all";
     char *wine_debug = getenv("WINEDEBUG");
     const char *app_name, *p;
     struct stat st1, st2;
@@ -214,7 +215,7 @@ static void init_options(void)
         default_flags = 0;
         return;
     }
-    if (!wine_debug) return;
+    if (!wine_debug) wine_debug = default_debug;
     if (!strcmp( wine_debug, "help" )) debug_usage();
 
     app_name = main_argv[1];

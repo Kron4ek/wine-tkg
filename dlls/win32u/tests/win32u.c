@@ -2029,26 +2029,20 @@ static void test_NtUserEnableMouseInPointer( const char *arg )
     ok( !ret, "NtUserIsMouseInPointerEnabled returned %u, error %lu\n", ret, GetLastError() );
 
     ret = NtUserEnableMouseInPointer( enable );
-    todo_wine
     ok( ret, "NtUserEnableMouseInPointer failed, error %lu\n", GetLastError() );
     ret = NtUserIsMouseInPointerEnabled();
-    todo_wine_if(enable)
     ok( ret == enable, "NtUserIsMouseInPointerEnabled returned %u, error %lu\n", ret, GetLastError() );
 
     SetLastError( 0xdeadbeef );
     ret = NtUserEnableMouseInPointer( !enable );
     ok( !ret, "NtUserEnableMouseInPointer succeeded\n" );
-    todo_wine
     ok( GetLastError() == ERROR_ACCESS_DENIED, "got error %lu\n", GetLastError() );
     ret = NtUserIsMouseInPointerEnabled();
-    todo_wine_if(enable)
     ok( ret == enable, "NtUserIsMouseInPointerEnabled returned %u, error %lu\n", ret, GetLastError() );
 
     ret = NtUserEnableMouseInPointer( enable );
-    todo_wine
     ok( ret, "NtUserEnableMouseInPointer failed, error %lu\n", GetLastError() );
     ret = NtUserIsMouseInPointerEnabled();
-    todo_wine_if(enable)
     ok( ret == enable, "NtUserIsMouseInPointerEnabled returned %u, error %lu\n", ret, GetLastError() );
 
     test_NtUserGetPointerInfoList( enable );

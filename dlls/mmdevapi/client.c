@@ -43,13 +43,6 @@ typedef struct tagLANGANDCODEPAGE
     WORD wCodePage;
 } LANGANDCODEPAGE;
 
-extern void sessions_lock(void);
-extern void sessions_unlock(void);
-
-extern HRESULT get_audio_session(const GUID *sessionguid, IMMDevice *device, UINT channels,
-                                 struct audio_session **out);
-extern struct audio_session_wrapper *session_wrapper_create(struct audio_client *client);
-
 static HANDLE main_loop_thread;
 
 void main_loop_stop(void)
@@ -387,6 +380,9 @@ static HRESULT validate_wfx(const WAVEFORMATEX *fmt, AUDCLNT_SHAREMODE share_mod
 
     if (FAILED(ret))
         return ret;
+
+    if (fmt->nSamplesPerSec == 0 || fmt->nBlockAlign == 0)
+        ret = E_INVALIDARG;
 
     switch (fmt->wFormatTag) {
         case WAVE_FORMAT_EXTENSIBLE:

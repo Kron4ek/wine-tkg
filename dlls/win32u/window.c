@@ -326,10 +326,7 @@ void *client_surface_create( UINT size, const struct client_surface_funcs *funcs
     surface->funcs = funcs;
     surface->ref = 1;
     surface->hwnd = hwnd;
-
-    pthread_mutex_lock( &surfaces_lock );
-    list_add_tail( &client_surfaces, &surface->entry );
-    pthread_mutex_unlock( &surfaces_lock );
+    list_init( &surface->entry );
 
     TRACE( "created %s\n", debugstr_client_surface( surface ) );
     return surface;
@@ -380,6 +377,17 @@ void client_surface_update( struct client_surface *surface )
 {
     pthread_mutex_lock( &surfaces_lock );
     if (surface->hwnd) surface->funcs->update( surface );
+    pthread_mutex_unlock( &surfaces_lock );
+}
+
+void add_window_client_surface( HWND hwnd, struct client_surface *surface )
+{
+    pthread_mutex_lock( &surfaces_lock );
+
+    surface->hwnd = hwnd;
+    list_add_tail( &client_surfaces, &surface->entry );
+    surface->funcs->update( surface );
+
     pthread_mutex_unlock( &surfaces_lock );
 }
 
@@ -1592,6 +1600,7 @@ LONG_PTR WINAPI NtUserSetWindowLongPtr( HWND hwnd, INT offset, LONG_PTR newval, 
 BOOL set_window_pixel_format( HWND hwnd, int format, BOOL internal )
 {
     WND *win = get_win_ptr( hwnd );
+    BOOL changed = FALSE;
 
     if (!win || win == WND_DESKTOP || win == WND_OTHER_PROCESS)
     {
@@ -1600,10 +1609,10 @@ BOOL set_window_pixel_format( HWND hwnd, int format, BOOL internal )
         return FALSE;
     }
     if (!internal) win->pixel_format = format;
-    if (format) win->clip_clients = TRUE;
+    if (format && !win->clip_clients) changed = win->clip_clients = TRUE;
     release_win_ptr( win );
 
-    update_window_state( hwnd );
+    if (changed) update_window_state( hwnd );
     return TRUE;
 }
 
@@ -2272,7 +2281,6 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, stru
         {
             MONITORINFO monitor_info = monitor_info_from_rect( new_rects->window, dpi );
             struct window_rects rects = { monitor_info.rcMonitor, monitor_info.rcMonitor, monitor_info.rcMonitor };
-            OffsetRect( &rects.client, -rects.client.left, -rects.client.top );
             swp_flags |= WINE_SWP_FULLSCREEN;
             swp_flags &= ~WINE_SWP_RESIZABLE;
             monitor_rects = map_window_rects_virt_to_raw( rects, dpi );

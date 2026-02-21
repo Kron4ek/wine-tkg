@@ -3125,6 +3125,7 @@ static void test_StretchBlt(void)
     BITMAPINFO biDst, biSrc;
     UINT32 expected[256];
     RGBQUAD colors[2];
+    COLORREF color;
 
     memset(&biDst, 0, sizeof(BITMAPINFO));
     biDst.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -3433,6 +3434,34 @@ static void test_StretchBlt(void)
     SelectObject(hdcDst, oldDst);
     DeleteObject(bmpDst);
     DeleteDC(hdcDst);
+
+    /* Test blitting from 32-bit bitmap to a mono bitmap when the 32-bit bitmap has 0xffffff as the
+     * background color and the pixel data is 0xffffffff. This shows that the raw pixel value is
+     * compared with the background color when calculating the destination mono bitmap pixel value */
+    hdcDst = CreateCompatibleDC( hdcScreen );
+    bmpDst = CreateBitmap( 1, 1, 1, 1, 0 );
+    oldDst = SelectObject( hdcDst, bmpDst );
+    hdcSrc = CreateCompatibleDC( hdcDst );
+    biSrc.bmiHeader.biWidth = 1;
+    biSrc.bmiHeader.biHeight = 1;
+    biSrc.bmiHeader.biBitCount = 32;
+    bmpSrc = CreateDIBSection( hdcSrc, &biSrc, DIB_RGB_COLORS, (void **)&srcBuffer, NULL, 0 );
+    oldSrc = SelectObject( hdcSrc, bmpSrc );
+
+    srcBuffer[0] = 0xfffffff;
+    SetBkColor( hdcSrc, RGB(0xff, 0xff, 0xff) );
+    StretchBlt( hdcDst, 0, 0, 1, 1, hdcSrc, 0, 0, 1, 1, SRCCOPY );
+    SetBkColor( hdcSrc, RGB(0xff, 0x0, 0x0) );
+    StretchBlt( hdcSrc, 0, 0, 1, 1, hdcDst, 0, 0, 1, 1, SRCCOPY );
+    color = GetPixel( hdcSrc, 0, 0 );
+    ok( color == 0, "Got unexpected color %#lx\n", color );
+
+    SelectObject( hdcSrc, oldSrc );
+    SelectObject( hdcDst, oldDst );
+    DeleteObject( bmpSrc );
+    DeleteObject( bmpDst );
+    DeleteDC( hdcDst );
+    DeleteDC( hdcSrc );
 
     DeleteDC(hdcScreen);
 }
@@ -6314,6 +6343,48 @@ todo_wine_if (y == 25 || x == 40)
     DeleteDC( dc );
 }
 
+static void test_GdiTransparentBlt(void)
+{
+    HBITMAP bmp_dst, bmp_src, old_dst, old_src;
+    HDC hdc_screen, hdc_dst, hdc_src;
+    UINT32 *dst_buffer, *src_buffer;
+    BITMAPINFO bmi;
+    BOOL ret;
+
+    hdc_screen = CreateCompatibleDC( 0 );
+    hdc_dst = CreateCompatibleDC( hdc_screen );
+    hdc_src = CreateCompatibleDC( hdc_dst );
+
+    memset( &bmi, 0, sizeof(BITMAPINFO) );
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = 1;
+    bmi.bmiHeader.biHeight = 1;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    /* Test when the source pixel is 0xffffffff and the transparent color is 0xffffff. The alpha
+     * channel of the source pixel should be ignored for DIB bitmaps */
+    bmp_dst = CreateDIBSection( hdc_screen, &bmi, DIB_RGB_COLORS, (void **)&dst_buffer, NULL, 0 );
+    old_dst = SelectObject( hdc_dst, bmp_dst );
+    bmp_src = CreateDIBSection( hdc_screen, &bmi, DIB_RGB_COLORS, (void **)&src_buffer, NULL, 0 );
+    old_src = SelectObject( hdc_src, bmp_src );
+
+    dst_buffer[0] = 0x00123456;
+    src_buffer[0] = 0xffffffff;
+    ret = GdiTransparentBlt( hdc_dst, 0, 0, 1, 1, hdc_src, 0, 0, 1, 1, RGB(0xff, 0xff, 0xff) );
+    ok( ret, "GdiTransparentBlt failed, error %lu.\n", GetLastError() );
+    ok( dst_buffer[0] == 0x123456, "Got unexpected color %#x.\n", dst_buffer[0] );
+
+    SelectObject( hdc_src, old_src );
+    SelectObject( hdc_dst, old_dst );
+    DeleteObject( bmp_src );
+    DeleteObject( bmp_dst );
+    DeleteDC( hdc_src );
+    DeleteDC( hdc_dst );
+    DeleteDC( hdc_screen );
+}
+
 START_TEST(bitmap)
 {
     HMODULE hdll;
@@ -6342,6 +6413,7 @@ START_TEST(bitmap)
     test_CreateBitmap();
     test_BitBlt();
     test_StretchBlt();
+    test_GdiTransparentBlt();
     test_StretchDIBits();
     test_GdiAlphaBlend();
     test_GdiGradientFill();

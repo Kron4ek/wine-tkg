@@ -260,9 +260,10 @@ sub assign_sources_to_makefiles(@)
         my $make = $makefiles{"$dir/Makefile.in"};
         my $name = substr( $file, length($dir) + 1 );
 
-        if ($name =~ /\.h$/)
+        if ($name =~ /(.*\/)?(.*\.h)$/)
         {
-            next unless defined $global_includes{$name};
+            my $basename = $2;
+            next unless defined $global_includes{$name} || defined $global_includes{$basename};
         }
         elsif ($name =~ /\.idl$/)
         {

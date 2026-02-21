@@ -4853,6 +4853,17 @@ NTSTATUS WINAPI wow64_NtUserSystemParametersInfo( UINT *args )
             return TRUE;
         }
         break;
+
+    case SPI_GETDEFAULTINPUTLANG:
+        if (ptr)
+        {
+            HKL hkl = 0;
+
+            if (!NtUserSystemParametersInfo( action, val, &hkl, winini )) return FALSE;
+            *(ULONG *)ptr = PtrToUlong( hkl );
+            return TRUE;
+        }
+        break;
     }
 
     return NtUserSystemParametersInfo( action, val, ptr, winini );

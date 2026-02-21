@@ -56,57 +56,44 @@ HRESULT WINAPI BluetoothGATTGetServices( HANDLE le_device, USHORT count, BTH_LE_
                                          USHORT *actual, ULONG flags )
 {
     struct winebth_le_device_get_gatt_services_params *services;
-    SIZE_T services_count = 1;
+    DWORD size, bytes;
 
     TRACE( "(%p, %u, %p, %p, %#lx)\n", le_device, count, buf, actual, flags );
+
+    if (flags)
+        FIXME( "Unsupported flags: %#lx\n", flags );
 
     if (!actual)
         return E_POINTER;
 
-    if ((!buf && count) || (buf && !count))
+    if (!!buf != !!count)
         return E_INVALIDARG;
 
-    for (;;)
+    size = offsetof( struct winebth_le_device_get_gatt_services_params, services[count] );
+    if (!(services = calloc( 1, size )))
+        return HRESULT_FROM_WIN32( ERROR_NO_SYSTEM_RESOURCES );
+    if (!DeviceIoControl( le_device, IOCTL_WINEBTH_LE_DEVICE_GET_GATT_SERVICES, NULL, 0, services, size, &bytes,
+                          NULL ) && GetLastError() != ERROR_MORE_DATA)
     {
-        DWORD size, bytes;
-
-        size = offsetof( struct winebth_le_device_get_gatt_services_params, services[services_count] );
-        services = calloc( 1, size );
-        if (!services)
-            return HRESULT_FROM_WIN32( ERROR_NO_SYSTEM_RESOURCES );
-        if (!DeviceIoControl( le_device, IOCTL_WINEBTH_LE_DEVICE_GET_GATT_SERVICES, NULL, 0, services, size, &bytes, NULL )
-            && GetLastError() != ERROR_MORE_DATA)
-        {
-            free( services );
-            return HRESULT_FROM_WIN32( GetLastError() );
-        }
-        if (!services->count)
-        {
-            *actual = 0;
-            free( services );
-            return S_OK;
-        }
-        if (services_count != services->count)
-        {
-            services_count = services->count;
-            free( services );
-            continue;
-        }
-        break;
+        free( services );
+        return HRESULT_FROM_WIN32( GetLastError() );
     }
 
-    *actual = services_count;
+    *actual = services->count;
+    if (!services->count)
+    {
+        free( services );
+        return S_OK;
+    }
     if (!buf)
     {
         free( services );
         return HRESULT_FROM_WIN32( ERROR_MORE_DATA );
     }
-
-    memcpy( buf, services->services, min( services_count, count ) * sizeof( *buf ) );
+    memcpy( buf, services->services, min( count, services->count ) * sizeof( *buf ) );
     free( services );
-    if (count < services_count)
+    if (count < *actual)
         return HRESULT_FROM_WIN32( ERROR_INVALID_USER_BUFFER );
-
     return S_OK;
 }
 

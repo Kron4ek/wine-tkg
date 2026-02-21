@@ -230,11 +230,9 @@ struct hlsl_type
      * If type is HLSL_CLASS_STRUCT or HLSL_CLASS_ARRAY, the reg_size of their elements and padding
      *   (which varies according to the backend) is also included. */
     unsigned int reg_size[HLSL_REGSET_LAST + 1];
-    /* Offset where the type's description starts in the output bytecode, in bytes. */
-    size_t bytecode_offset;
 
-    /* Offset where the type's packed description starts in the output bytecode, in bytes. */
-    size_t packed_bytecode_offset;
+    /* ID used for indexing auxiliary data. */
+    size_t type_id;
 
     bool is_typedef;
 
@@ -615,6 +613,11 @@ struct hlsl_func_parameters
     struct hlsl_ir_var **vars;
     size_t count, capacity;
 };
+
+static inline void hlsl_func_parameters_cleanup(struct hlsl_func_parameters *p)
+{
+    vkd3d_free(p->vars);
+}
 
 struct hlsl_ir_function
 {
@@ -1155,6 +1158,7 @@ struct hlsl_ctx
     /* List containing all created hlsl_types, except builtin_types; linked by the hlsl_type.entry
      *   fields. */
     struct list types;
+    size_t type_count;
     /* Tree map for the declared functions, using hlsl_ir_function.name as key.
      * The functions are attached through the hlsl_ir_function.entry fields. */
     struct rb_tree functions;

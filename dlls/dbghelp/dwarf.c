@@ -2449,7 +2449,7 @@ static struct symt* dwarf2_parse_subprogram(dwarf2_debug_info_t* di)
         return NULL;
     }
 
-    subpgm.top_func = symt_new_function(di->unit_ctx->module_ctx->module, di->unit_ctx->compiland,
+    subpgm.top_func = symt_new_function(di->unit_ctx->module_ctx->module, symt_ptr_to_symref(&di->unit_ctx->compiland->symt),
                                         dwarf2_get_cpp_name(di, name.u.string),
                                         addr_ranges[0].low, addr_ranges[0].high - addr_ranges[0].low,
                                         symt_ptr_to_symref(dwarf2_parse_subroutine_type(di)), 0);

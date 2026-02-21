@@ -405,7 +405,7 @@ static inline int __cdecl wscanf(FILE *file, const wchar_t *format, ...)
     va_list args;
 
     va_start(args, format);
-    ret = __stdio_common_vfwscanf(_CRT_INTERNAL_LOCAL_SCANF_OPTIONS, stdin, format, NULL, args);
+    ret = __stdio_common_vfwscanf(_CRT_INTERNAL_LOCAL_SCANF_OPTIONS, file, format, NULL, args);
     va_end(args);
     return ret;
 }
@@ -416,7 +416,7 @@ static inline int __cdecl wscanf_s(FILE *file, const wchar_t *format, ...)
     va_list args;
 
     va_start(args, format);
-    ret = __stdio_common_vfwscanf(_CRT_INTERNAL_LOCAL_SCANF_OPTIONS | _CRT_INTERNAL_SCANF_SECURECRT, stdin, format, NULL, args);
+    ret = __stdio_common_vfwscanf(_CRT_INTERNAL_LOCAL_SCANF_OPTIONS | _CRT_INTERNAL_SCANF_SECURECRT, file, format, NULL, args);
     va_end(args);
     return ret;
 }

@@ -107,16 +107,6 @@ AC_CHECK_TOOL(CPPBIN,cpp,cpp)
 AC_DEFINE_UNQUOTED(EXEEXT,["$ac_exeext"],[Define to the file extension for executables.])
 AC_CHECK_TOOL(LD,ld)
 
-case $host in
-  *-darwin*)
-    with_fontconfig=${with_fontconfig:-no}
-    ;;
-  *-mingw32*|*-cygwin*)
-    enable_win16=${enable_win16:-no}
-    with_mingw=${with_mingw:-no}
-    ;;
-esac
-
 AC_SUBST(TARGETFLAGS)
 case $host in
   x86_64*|amd64*)
@@ -185,6 +175,25 @@ case "$host_cpu" in
 esac
 m4_set_add_all([_AC_SUBST_VARS],[HOST_ARCH]m4_foreach([cpu],[aarch64,arm,arm64ec,i386,x86_64],
                                 [m4_foreach([var],[CC,CFLAGS,EXTRACFLAGS,LDFLAGS,DEBUG,TARGET,STRIP,DELAYLOADFLAG,DISABLED_SUBDIRS],[,cpu[_]var])]))
+
+case $host_os in
+  darwin*)
+    with_fontconfig=${with_fontconfig:-no}
+    ;;
+  mingw32*|cygwin*)
+    enable_archs=${enable_archs:-$HOST_ARCH}
+    AS_VAR_SET(${HOST_ARCH}_CC,$CC)
+    dnl Disable modules that can't be used on Windows
+    enable_loader=${enable_loader:-no}
+    enable_server=${enable_server:-no}
+    enable_wine=${enable_wine:-no}
+    enable_win16=${enable_win16:-no}
+    dnl Disable dependencies that are not useful on Windows
+    with_x=${with_x:-no}
+    with_pthread=${with_pthread:-no}
+    with_mingw=${with_mingw:-no}
+    ;;
+esac
 
 AC_SUBST(toolsdir,[$with_wine_tools])
 AC_MSG_CHECKING([for the directory containing the Wine tools])
@@ -540,9 +549,7 @@ This is an error since --enable-archs=$wine_arch was requested.])])
 
     AS_VAR_IF([wine_arch],[$extra_arch],[],[AS_VAR_APPEND([PE_ARCHS],[" $wine_arch"])])
 
-    case "$target" in
-      *-windows) wine_compiler_rt_libs="compiler-rt" ;;
-    esac
+    wine_compiler_rt_libs="compiler-rt"
 
     WINE_TRY_PE_CFLAGS([-fno-strict-aliasing])
     dnl clang needs to be told to fail on unknown options
@@ -581,10 +588,12 @@ This is an error since --enable-archs=$wine_arch was requested.])])
     case $wine_arch in
       i386) WINE_TRY_PE_CFLAGS([-fno-omit-frame-pointer])
             WINE_TRY_PE_CFLAGS([-mpreferred-stack-boundary=2])
+            WINE_TRY_PE_CFLAGS([-mlong-double-64])
             WINE_TRY_PE_CFLAGS([-Wl,--disable-stdcall-fixup],
                                [AS_VAR_APPEND([${wine_arch}_LDFLAGS],[" -Wl,--disable-stdcall-fixup"])]) ;;
       x86_64) WINE_TRY_PE_CFLAGS([-Wformat-overflow])
               WINE_TRY_PE_CFLAGS([-Wnonnull])
+              WINE_TRY_PE_CFLAGS([-mlong-double-64])
               WINE_TRY_PE_CFLAGS([-mcx16])
               WINE_TRY_PE_CFLAGS([-mcmodel=small]) ;;
     esac
@@ -913,14 +922,6 @@ case $host_os in
   cygwin*|mingw32*)
     LIBEXT="dll"
     DLLEXT=""
-    EXTRACFLAGS="-D__WINE_PE_BUILD"
-    dnl Disable modules that can't be used on Windows
-    enable_loader=${enable_loader:-no}
-    enable_server=${enable_server:-no}
-    enable_wine=${enable_wine:-no}
-    dnl Disable dependencies that are not useful on Windows
-    with_x=${with_x:-no}
-    with_pthread=${with_pthread:-no}
     ;;
 
   darwin*)
@@ -2019,6 +2020,7 @@ then
     mingw32*)  dnl Check for delayload linker support
        WINE_TRY_CFLAGS([-Wl,-delayload,autoconftest.dll],[AC_SUBST(DELAYLOADFLAG,["-Wl,-delayload,"])]) ;;
     *) MSVCRTFLAGS="-D_WIN32"
+       WINE_TRY_CFLAGS([-mlong-double-64],[MSVCRTFLAGS="$MSVCRTFLAGS -mlong-double-64"])
        WINE_TRY_CFLAGS([-fno-builtin],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-builtin"])
        WINE_TRY_CFLAGS([-fshort-wchar],[MSVCRTFLAGS="$MSVCRTFLAGS -fshort-wchar"])
        WINE_TRY_CFLAGS([-Wno-format],[MSVCRTFLAGS="$MSVCRTFLAGS -Wno-format"]) ;;
@@ -2469,6 +2471,7 @@ WINE_CONFIG_MAKEFILE(dlls/advapi32)
 WINE_CONFIG_MAKEFILE(dlls/advapi32/tests)
 WINE_CONFIG_MAKEFILE(dlls/advpack)
 WINE_CONFIG_MAKEFILE(dlls/advpack/tests)
+WINE_CONFIG_MAKEFILE(dlls/aero.msstyles)
 WINE_CONFIG_MAKEFILE(dlls/amsi)
 WINE_CONFIG_MAKEFILE(dlls/amstream)
 WINE_CONFIG_MAKEFILE(dlls/amstream/tests)
@@ -2513,6 +2516,7 @@ WINE_CONFIG_MAKEFILE(dlls/cdosys)
 WINE_CONFIG_MAKEFILE(dlls/cfgmgr32)
 WINE_CONFIG_MAKEFILE(dlls/cfgmgr32/tests)
 WINE_CONFIG_MAKEFILE(dlls/chakra)
+WINE_CONFIG_MAKEFILE(dlls/cldapi)
 WINE_CONFIG_MAKEFILE(dlls/clusapi)
 WINE_CONFIG_MAKEFILE(dlls/cng.sys)
 WINE_CONFIG_MAKEFILE(dlls/colorcnv)
@@ -2845,7 +2849,6 @@ WINE_CONFIG_MAKEFILE(dlls/ksuser)
 WINE_CONFIG_MAKEFILE(dlls/ktmw32)
 WINE_CONFIG_MAKEFILE(dlls/l3codeca.acm)
 WINE_CONFIG_MAKEFILE(dlls/l3codecx.ax)
-WINE_CONFIG_MAKEFILE(dlls/light.msstyles)
 WINE_CONFIG_MAKEFILE(dlls/loadperf)
 WINE_CONFIG_MAKEFILE(dlls/localspl)
 WINE_CONFIG_MAKEFILE(dlls/localspl/tests)
@@ -3530,6 +3533,7 @@ WINE_CONFIG_MAKEFILE(libs/musl)
 WINE_CONFIG_MAKEFILE(libs/png)
 WINE_CONFIG_MAKEFILE(libs/strmbase)
 WINE_CONFIG_MAKEFILE(libs/strmiids)
+WINE_CONFIG_MAKEFILE(libs/strsafe)
 WINE_CONFIG_MAKEFILE(libs/tiff)
 WINE_CONFIG_MAKEFILE(libs/tomcrypt)
 WINE_CONFIG_MAKEFILE(libs/uuid)
@@ -3780,7 +3784,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-11.2.r0.g497d4578\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-11.3.r0.g0e629ceb\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 dlls/wineandroid.drv/wine-debug.apk: dlls/wineandroid.drv/build.gradle ${wine_srcdir}dlls/wineandroid.drv/AndroidManifest.xml ${wine_srcdir}dlls/wineandroid.drv/WineActivity.java ${wine_srcdir}dlls/wineandroid.drv/wine.svg
