@@ -18,7 +18,9 @@
 
 LanguageNames=(ENU=0x409:winerr)
 SeverityNames=(CoError=0x2:STATUS_SEVERITY_COERROR)
-FacilityNames=(Trust=0xb:FACILITY_CERT)
+FacilityNames=(Trust=0xb:FACILITY_CERT
+    Security=0x9:FACILITY_SECURITY
+)
 
 MessageId=0
 SymbolicName=ERROR_SUCCESS
@@ -3804,6 +3806,13 @@ MessageId=11004
 SymbolicName=WSANO_DATA
 Language=ENU
 Name valid, no data record.
+.
+MessageId=0x2009
+Severity=CoError
+Facility=Security
+SymbolicName=CRYPT_E_NO_MATCH
+Language=ENU
+Unable to find matching object.
 .
 MessageId=0x100
 Severity=CoError

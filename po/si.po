@@ -4278,3047 +4278,3053 @@ msgstr ""
 msgid "Armenian"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:28
+#: dlls/kernelbase/winerror.mc:30
 msgid "Success.\n"
 msgstr "සාර්ථකත්වය.\n"
 
-#: dlls/kernelbase/winerror.mc:33
+#: dlls/kernelbase/winerror.mc:35
 msgid "Invalid function.\n"
 msgstr "අවලංගු ශ්රිතය.\n"
 
-#: dlls/kernelbase/winerror.mc:38
+#: dlls/kernelbase/winerror.mc:40
 msgid "File not found.\n"
 msgstr "ගොනුව හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:43
+#: dlls/kernelbase/winerror.mc:45
 msgid "Path not found.\n"
 msgstr "පෙත හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:48 dlls/kernelbase/winerror.mc:3773
+#: dlls/kernelbase/winerror.mc:50 dlls/kernelbase/winerror.mc:3775
 msgid "Too many open files.\n"
 msgstr "විවෘත කරපු ගොනු වැඩි.\n"
 
-#: dlls/kernelbase/winerror.mc:53 dlls/kernelbase/winerror.mc:3758
+#: dlls/kernelbase/winerror.mc:55 dlls/kernelbase/winerror.mc:3760
 msgid "Access denied.\n"
 msgstr "ප්‍රවේශය අත්හිටුවා ඇත.\n"
 
-#: dlls/kernelbase/winerror.mc:58
+#: dlls/kernelbase/winerror.mc:60
 msgid "Invalid handle.\n"
 msgstr "අවලංගු හසුරුවක්.\n"
 
-#: dlls/kernelbase/winerror.mc:63
+#: dlls/kernelbase/winerror.mc:65
 #, fuzzy
 msgid "Memory trashed.\n"
 msgstr "මතක.\n"
 
-#: dlls/kernelbase/winerror.mc:68
+#: dlls/kernelbase/winerror.mc:70
 msgid "Not enough memory.\n"
 msgstr "මතක මදි.\n"
 
-#: dlls/kernelbase/winerror.mc:73
+#: dlls/kernelbase/winerror.mc:75
 msgid "Invalid block.\n"
 msgstr "අවලංගු බ්ලොක් එකක්.\n"
 
-#: dlls/kernelbase/winerror.mc:78
+#: dlls/kernelbase/winerror.mc:80
 msgid "Bad environment.\n"
 msgstr "හොඳ නැති වටපිටාව.\n"
 
-#: dlls/kernelbase/winerror.mc:83
+#: dlls/kernelbase/winerror.mc:85
 msgid "Bad format.\n"
 msgstr "හොඳ නැති හැඩතලයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:88
+#: dlls/kernelbase/winerror.mc:90
 msgid "Invalid access.\n"
 msgstr "අවලංගු ප්‍රවේශය.\n"
 
-#: dlls/kernelbase/winerror.mc:93
+#: dlls/kernelbase/winerror.mc:95
 msgid "Invalid data.\n"
 msgstr "අවලංගු දත්ත.\n"
 
-#: dlls/kernelbase/winerror.mc:98
+#: dlls/kernelbase/winerror.mc:100
 msgid "Out of memory.\n"
 msgstr "මතක ඉවරයි.\n"
 
-#: dlls/kernelbase/winerror.mc:103
+#: dlls/kernelbase/winerror.mc:105
 msgid "Invalid drive.\n"
 msgstr "අවලංගු ධාවකය.\n"
 
-#: dlls/kernelbase/winerror.mc:108
+#: dlls/kernelbase/winerror.mc:110
 msgid "Can't delete current directory.\n"
 msgstr "වත්මන් ඩිරෙක්ටරිය මකන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:113
+#: dlls/kernelbase/winerror.mc:115
 msgid "Not same device.\n"
 msgstr "එකම ආම්පන්නය නොවේ.\n"
 
-#: dlls/kernelbase/winerror.mc:118
+#: dlls/kernelbase/winerror.mc:120
 msgid "No more files.\n"
 msgstr "තව ගොනු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:123
+#: dlls/kernelbase/winerror.mc:125
 msgid "Write protected.\n"
 msgstr "ලිවීම ඇවුරූයි.\n"
 
-#: dlls/kernelbase/winerror.mc:128
+#: dlls/kernelbase/winerror.mc:130
 msgid "Bad unit.\n"
 msgstr "හොඳ නැති ඒකකය.\n"
 
-#: dlls/kernelbase/winerror.mc:133
+#: dlls/kernelbase/winerror.mc:135
 msgid "Not ready.\n"
 msgstr "ලෑස්ති නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:138
+#: dlls/kernelbase/winerror.mc:140
 msgid "Bad command.\n"
 msgstr "හොඳ නැති විධානය.\n"
 
-#: dlls/kernelbase/winerror.mc:143
+#: dlls/kernelbase/winerror.mc:145
 msgid "CRC error.\n"
 msgstr "CRC දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:148
+#: dlls/kernelbase/winerror.mc:150
 msgid "Bad length.\n"
 msgstr "හොඳ නැති දිගක්.\n"
 
-#: dlls/kernelbase/winerror.mc:153 dlls/kernelbase/winerror.mc:528
+#: dlls/kernelbase/winerror.mc:155 dlls/kernelbase/winerror.mc:530
 msgid "Seek error.\n"
 msgstr "සෙවීමේ දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:158
+#: dlls/kernelbase/winerror.mc:160
 msgid "Not DOS disk.\n"
 msgstr "DOS ඩිස්කයක් නෙමේ.\n"
 
-#: dlls/kernelbase/winerror.mc:163
+#: dlls/kernelbase/winerror.mc:165
 msgid "Sector not found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:168
+#: dlls/kernelbase/winerror.mc:170
 msgid "Out of paper.\n"
 msgstr "කඩදාසි ඉවරයි.\n"
 
-#: dlls/kernelbase/winerror.mc:173
+#: dlls/kernelbase/winerror.mc:175
 msgid "Write fault.\n"
 msgstr "ලියවීමේ දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:178
+#: dlls/kernelbase/winerror.mc:180
 msgid "Read fault.\n"
 msgstr "කියවීමේ දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:183
+#: dlls/kernelbase/winerror.mc:185
 msgid "General failure.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:188
+#: dlls/kernelbase/winerror.mc:190
 msgid "Sharing violation.\n"
 msgstr "බෙදාහදා ගැනීම උල්ලංඝනයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:193
+#: dlls/kernelbase/winerror.mc:195
 msgid "Lock violation.\n"
 msgstr "අගුල උල්ලංඝනයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:198
+#: dlls/kernelbase/winerror.mc:200
 msgid "Wrong disk.\n"
 msgstr "වැරදි ඩිස්කය.\n"
 
-#: dlls/kernelbase/winerror.mc:203
+#: dlls/kernelbase/winerror.mc:205
 msgid "Sharing buffer exceeded.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:208
+#: dlls/kernelbase/winerror.mc:210
 msgid "End of file.\n"
 msgstr "ගොනුවේ අවසානය.\n"
 
-#: dlls/kernelbase/winerror.mc:213 dlls/kernelbase/winerror.mc:438
+#: dlls/kernelbase/winerror.mc:215 dlls/kernelbase/winerror.mc:440
 msgid "Disk full.\n"
 msgstr "ඩිස්කය පිරිලා.\n"
 
-#: dlls/kernelbase/winerror.mc:218
+#: dlls/kernelbase/winerror.mc:220
 msgid "Request not supported.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:223
+#: dlls/kernelbase/winerror.mc:225
 msgid "Remote machine not listening.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:228
+#: dlls/kernelbase/winerror.mc:230
 msgid "Duplicate network name.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:233
+#: dlls/kernelbase/winerror.mc:235
 msgid "Bad network path.\n"
 msgstr "හොඳ නැති ජාලය පෙත.\n"
 
-#: dlls/kernelbase/winerror.mc:238
+#: dlls/kernelbase/winerror.mc:240
 msgid "Network busy.\n"
 msgstr "ජාලය කාර්යබහුලයි.\n"
 
-#: dlls/kernelbase/winerror.mc:243
+#: dlls/kernelbase/winerror.mc:245
 msgid "Device does not exist.\n"
 msgstr "ධාවකය තියෙන්නේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:248
+#: dlls/kernelbase/winerror.mc:250
 msgid "Too many commands.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:253
+#: dlls/kernelbase/winerror.mc:255
 msgid "Adapter hardware error.\n"
 msgstr "ඇඩැප්ටරය දෘඩාංග දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:258
+#: dlls/kernelbase/winerror.mc:260
 msgid "Bad network response.\n"
 msgstr "හොඳ නැති ජාලය ප්‍රතිචාරය.\n"
 
-#: dlls/kernelbase/winerror.mc:263
+#: dlls/kernelbase/winerror.mc:265
 msgid "Unexpected network error.\n"
 msgstr "අපේක්ෂා කර නැති ජාලේ දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:268
+#: dlls/kernelbase/winerror.mc:270
 msgid "Bad remote adapter.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:273
+#: dlls/kernelbase/winerror.mc:275
 msgid "Print queue full.\n"
 msgstr "මුද්‍රණ පෝලිම පිරිලා.\n"
 
-#: dlls/kernelbase/winerror.mc:278
+#: dlls/kernelbase/winerror.mc:280
 msgid "No spool space.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:283
+#: dlls/kernelbase/winerror.mc:285
 msgid "Print canceled.\n"
 msgstr "මුද්‍රණය අවලංගු කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:288
+#: dlls/kernelbase/winerror.mc:290
 msgid "Network name deleted.\n"
 msgstr "ජාලයේ නම මකලා.\n"
 
-#: dlls/kernelbase/winerror.mc:293
+#: dlls/kernelbase/winerror.mc:295
 msgid "Network access denied.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:298
+#: dlls/kernelbase/winerror.mc:300
 msgid "Bad device type.\n"
 msgstr "හොඳ නැති ආම්පන්නය වර්ගය.\n"
 
-#: dlls/kernelbase/winerror.mc:303
+#: dlls/kernelbase/winerror.mc:305
 msgid "Bad network name.\n"
 msgstr "හොඳ නැති ජාලය නම.\n"
 
-#: dlls/kernelbase/winerror.mc:308
+#: dlls/kernelbase/winerror.mc:310
 msgid "Too many network names.\n"
 msgstr "ජාල නම් වැඩි.\n"
 
-#: dlls/kernelbase/winerror.mc:313
+#: dlls/kernelbase/winerror.mc:315
 msgid "Too many network sessions.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:318
+#: dlls/kernelbase/winerror.mc:320
 msgid "Sharing paused.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:323
+#: dlls/kernelbase/winerror.mc:325
 msgid "Request not accepted.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:328
+#: dlls/kernelbase/winerror.mc:330
 msgid "Redirector paused.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:333
+#: dlls/kernelbase/winerror.mc:335
 msgid "File exists.\n"
 msgstr "ගොනුව පවතිනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:338
+#: dlls/kernelbase/winerror.mc:340
 msgid "Cannot create.\n"
 msgstr "හදන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:343
+#: dlls/kernelbase/winerror.mc:345
 msgid "Int24 failure.\n"
 msgstr "Int24 දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:348
+#: dlls/kernelbase/winerror.mc:350
 msgid "Out of structures.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:353
+#: dlls/kernelbase/winerror.mc:355
 msgid "Already assigned.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:358 dlls/kernelbase/winerror.mc:1713
+#: dlls/kernelbase/winerror.mc:360 dlls/kernelbase/winerror.mc:1715
 msgid "Invalid password.\n"
 msgstr "අවලංගු මුර පදයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:363
+#: dlls/kernelbase/winerror.mc:365
 msgid "Invalid parameter.\n"
 msgstr "අවලංගු පරාමිතියක්.\n"
 
-#: dlls/kernelbase/winerror.mc:368
+#: dlls/kernelbase/winerror.mc:370
 msgid "Net write fault.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:373
+#: dlls/kernelbase/winerror.mc:375
 msgid "No process slots.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:378
+#: dlls/kernelbase/winerror.mc:380
 msgid "Too many semaphores.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:383
+#: dlls/kernelbase/winerror.mc:385
 msgid "Exclusive semaphore already owned.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:388
+#: dlls/kernelbase/winerror.mc:390
 msgid "Semaphore is set.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:393
+#: dlls/kernelbase/winerror.mc:395
 msgid "Too many semaphore requests.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:398
+#: dlls/kernelbase/winerror.mc:400
 #, fuzzy
 msgid "Invalid at interrupt time.\n"
 msgstr "අවලංගු"
 
-#: dlls/kernelbase/winerror.mc:403
+#: dlls/kernelbase/winerror.mc:405
 msgid "Semaphore owner died.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:408
+#: dlls/kernelbase/winerror.mc:410
 msgid "Semaphore user limit.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:413
+#: dlls/kernelbase/winerror.mc:415
 msgid "Insert disk for drive %1.\n"
 msgstr "%1 ධාවකයට ඩිස්කයක් ඇතුලට දාන්න.\n"
 
-#: dlls/kernelbase/winerror.mc:418
+#: dlls/kernelbase/winerror.mc:420
 msgid "Drive locked.\n"
 msgstr "ධාවකය අගුලු කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:423
+#: dlls/kernelbase/winerror.mc:425
 msgid "Broken pipe.\n"
 msgstr "කැඩිච්ච බටයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:428
+#: dlls/kernelbase/winerror.mc:430
 msgid "Open failed.\n"
 msgstr "විවෘත කිරීම බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:433
+#: dlls/kernelbase/winerror.mc:435
 msgid "Buffer overflow.\n"
 msgstr "බෆරය එකමත එක යාම.\n"
 
-#: dlls/kernelbase/winerror.mc:443
+#: dlls/kernelbase/winerror.mc:445
 msgid "No more search handles.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:448
+#: dlls/kernelbase/winerror.mc:450
 msgid "Invalid target handle.\n"
 msgstr "අවලංගු ඉලක්ක හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:453
+#: dlls/kernelbase/winerror.mc:455
 msgid "Invalid IOCTL.\n"
 msgstr "අවලංගු IOCTL.\n"
 
-#: dlls/kernelbase/winerror.mc:458
+#: dlls/kernelbase/winerror.mc:460
 msgid "Invalid verify switch.\n"
 msgstr "අවලංගු verify ස්විචය.\n"
 
-#: dlls/kernelbase/winerror.mc:463
+#: dlls/kernelbase/winerror.mc:465
 msgid "Bad driver level.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:468
+#: dlls/kernelbase/winerror.mc:470
 msgid "Call not implemented.\n"
 msgstr "කෝල් එක හදල නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:473
+#: dlls/kernelbase/winerror.mc:475
 msgid "Semaphore timeout.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:478
+#: dlls/kernelbase/winerror.mc:480
 msgid "Insufficient buffer.\n"
 msgstr "බෆරය මදි.\n"
 
-#: dlls/kernelbase/winerror.mc:483 dlls/mferror/mferror.mc:109
+#: dlls/kernelbase/winerror.mc:485 dlls/mferror/mferror.mc:109
 msgid "Invalid name.\n"
 msgstr "අවලංගු නමක්.\n"
 
-#: dlls/kernelbase/winerror.mc:488
+#: dlls/kernelbase/winerror.mc:490
 msgid "Invalid level.\n"
 msgstr "අවලංගු මට්ටමක්.\n"
 
-#: dlls/kernelbase/winerror.mc:493
+#: dlls/kernelbase/winerror.mc:495
 msgid "No volume label.\n"
 msgstr "වෙළුමේ ලේබලයක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:498
+#: dlls/kernelbase/winerror.mc:500
 msgid "Module not found.\n"
 msgstr "මොඩියුලය හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:503
+#: dlls/kernelbase/winerror.mc:505
 msgid "Procedure not found.\n"
 msgstr "පටිපාටිය හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:508
+#: dlls/kernelbase/winerror.mc:510
 msgid "No children to wait for.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:513
+#: dlls/kernelbase/winerror.mc:515
 msgid "Child process has not completed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:518
+#: dlls/kernelbase/winerror.mc:520
 #, fuzzy
 msgid "Invalid use of direct access handle.\n"
 msgstr "අවලංගු හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:523
+#: dlls/kernelbase/winerror.mc:525
 msgid "Negative seek.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:533
+#: dlls/kernelbase/winerror.mc:535
 #, fuzzy
 msgid "Drive is a JOIN target.\n"
 msgstr "ධාවකය"
 
-#: dlls/kernelbase/winerror.mc:538
+#: dlls/kernelbase/winerror.mc:540
 msgid "Drive is already JOINed.\n"
 msgstr "ධාවකය දැනටමත් JOIN කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:543
+#: dlls/kernelbase/winerror.mc:545
 msgid "Drive is already SUBSTed.\n"
 msgstr "ධාවකය දැනටමත් SUBST කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:548
+#: dlls/kernelbase/winerror.mc:550
 msgid "Drive is not JOINed.\n"
 msgstr "ධාවකය JOIN කරලා නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:553
+#: dlls/kernelbase/winerror.mc:555
 msgid "Drive is not SUBSTed.\n"
 msgstr "ධාවකය SUBST කරලා නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:558
+#: dlls/kernelbase/winerror.mc:560
 msgid "Attempt to JOIN onto a JOINed drive.\n"
 msgstr "JOIN කරපු ධාවකයකකට JOIN කරන්නට උත්සාහයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:563
+#: dlls/kernelbase/winerror.mc:565
 msgid "Attempt to SUBST onto a SUBSTed drive.\n"
 msgstr "SUBST කරපු ධාවකයකකට SUBST කරන්නට උත්සාහයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:568
+#: dlls/kernelbase/winerror.mc:570
 msgid "Attempt to JOIN to a SUBSTed drive.\n"
 msgstr "SUBST කරපු ධාවකයකකට JOIN කරන්නට උත්සාහයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:573
+#: dlls/kernelbase/winerror.mc:575
 msgid "Attempt to SUBST to a JOINed drive.\n"
 msgstr "JOIN කරපු ධාවකයකකට SUBST කරන්නට උත්සාහයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:578
+#: dlls/kernelbase/winerror.mc:580
 msgid "Drive is busy.\n"
 msgstr "ධාවකය කාර්යබහුලයි.\n"
 
-#: dlls/kernelbase/winerror.mc:583
+#: dlls/kernelbase/winerror.mc:585
 msgid "Same drive.\n"
 msgstr "එකම ධාවකය.\n"
 
-#: dlls/kernelbase/winerror.mc:588
+#: dlls/kernelbase/winerror.mc:590
 msgid "Not top-level directory.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:593
+#: dlls/kernelbase/winerror.mc:595
 msgid "Directory is not empty.\n"
 msgstr "ඩිරෙක්ටරිය හිස් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:598
+#: dlls/kernelbase/winerror.mc:600
 msgid "Path is in use as a SUBST.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:603
+#: dlls/kernelbase/winerror.mc:605
 msgid "Path is in use as a JOIN.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:608
+#: dlls/kernelbase/winerror.mc:610
 msgid "Path is busy.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:613
+#: dlls/kernelbase/winerror.mc:615
 msgid "Already a SUBST target.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:618
+#: dlls/kernelbase/winerror.mc:620
 msgid "System trace not specified or disallowed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:623
+#: dlls/kernelbase/winerror.mc:625
 msgid "Event count for DosMuxSemWait incorrect.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:628
+#: dlls/kernelbase/winerror.mc:630
 msgid "Too many waiters for DosMuxSemWait.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:633
+#: dlls/kernelbase/winerror.mc:635
 msgid "DosSemMuxWait list invalid.\n"
 msgstr "DosSemMuxWait ලිස්තුව වලංගු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:638
+#: dlls/kernelbase/winerror.mc:640
 msgid "Volume label too long.\n"
 msgstr "වෙළුමේ ලේබලය දිග වැඩි.\n"
 
-#: dlls/kernelbase/winerror.mc:643
+#: dlls/kernelbase/winerror.mc:645
 msgid "Too many TCBs.\n"
 msgstr "TCBs වැඩි.\n"
 
-#: dlls/kernelbase/winerror.mc:648
+#: dlls/kernelbase/winerror.mc:650
 msgid "Signal refused.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:653
+#: dlls/kernelbase/winerror.mc:655
 msgid "Segment discarded.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:658
+#: dlls/kernelbase/winerror.mc:660
 msgid "Segment not locked.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:663
+#: dlls/kernelbase/winerror.mc:665
 msgid "Bad thread ID address.\n"
 msgstr "හොඳ නැති පොට ID ලිපිනයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:668
+#: dlls/kernelbase/winerror.mc:670
 msgid "Bad arguments to DosExecPgm.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:673
+#: dlls/kernelbase/winerror.mc:675
 msgid "Path is invalid.\n"
 msgstr "පෙත වලංගු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:678
+#: dlls/kernelbase/winerror.mc:680
 msgid "Signal pending.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:683
+#: dlls/kernelbase/winerror.mc:685
 msgid "Max system-wide thread count reached.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:688
+#: dlls/kernelbase/winerror.mc:690
 msgid "Lock failed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:693
+#: dlls/kernelbase/winerror.mc:695
 msgid "Resource in use.\n"
 msgstr "සම්පතය පාවිච්චි වෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:698
+#: dlls/kernelbase/winerror.mc:700
 msgid "Cancel violation.\n"
 msgstr "අවලංගු කිරීමේ උල්ලංඝනයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:703
+#: dlls/kernelbase/winerror.mc:705
 msgid "Atomic locks not supported.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:708
+#: dlls/kernelbase/winerror.mc:710
 msgid "Invalid segment number.\n"
 msgstr "අවලංගු ඛණ්ඩය නොම්බරය.\n"
 
-#: dlls/kernelbase/winerror.mc:713
+#: dlls/kernelbase/winerror.mc:715
 msgid "Invalid ordinal for %1.\n"
 msgstr "අවලංගු ක්‍රමසංඛ්‍යාව %1 ට.\n"
 
-#: dlls/kernelbase/winerror.mc:718
+#: dlls/kernelbase/winerror.mc:720
 msgid "File already exists.\n"
 msgstr "ගොනුව දැනටමත් පවතිනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:723
+#: dlls/kernelbase/winerror.mc:725
 msgid "Invalid flag number.\n"
 msgstr "අවලංගු සලකුණ නොම්බරය.\n"
 
-#: dlls/kernelbase/winerror.mc:728
+#: dlls/kernelbase/winerror.mc:730
 msgid "Semaphore name not found.\n"
 msgstr "Semaphore එකේ නම හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:733
+#: dlls/kernelbase/winerror.mc:735
 msgid "Invalid starting code segment for %1.\n"
 msgstr "අවලංගු පටන්ගන කේත ඛණ්ඩයක් %1 ට.\n"
 
-#: dlls/kernelbase/winerror.mc:738
+#: dlls/kernelbase/winerror.mc:740
 msgid "Invalid starting stack segment for %1.\n"
 msgstr "අවලංගු පටන්ගන දත්ත ඛණ්ඩයක් %1 ට.\n"
 
-#: dlls/kernelbase/winerror.mc:743
+#: dlls/kernelbase/winerror.mc:745
 msgid "Invalid module type for %1.\n"
 msgstr "අවලංගු මොඩියුල වර්ගය %1 ට.\n"
 
-#: dlls/kernelbase/winerror.mc:748
+#: dlls/kernelbase/winerror.mc:750
 msgid "Invalid EXE signature in %1.\n"
 msgstr "අවලංගු EXE අත්සනක් %1 ඇතුලේ.\n"
 
-#: dlls/kernelbase/winerror.mc:753
+#: dlls/kernelbase/winerror.mc:755
 msgid "EXE %1 is marked invalid.\n"
 msgstr "EXE %1 වලංගු නැහැ කියල සලකුණු කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:758
+#: dlls/kernelbase/winerror.mc:760
 msgid "Bad EXE format for %1.\n"
 msgstr "හොඳ නැති EXE ආකෘතියක් %1 ට.\n"
 
-#: dlls/kernelbase/winerror.mc:763
+#: dlls/kernelbase/winerror.mc:765
 msgid "Iterated data exceeds 64k in %1.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:768
+#: dlls/kernelbase/winerror.mc:770
 msgid "Invalid MinAllocSize in %1.\n"
 msgstr "අවලංගු MinAllocSize %1 ඇතුලෙ.\n"
 
-#: dlls/kernelbase/winerror.mc:773
+#: dlls/kernelbase/winerror.mc:775
 msgid "Dynlink from invalid ring.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:778
+#: dlls/kernelbase/winerror.mc:780
 msgid "IOPL not enabled.\n"
 msgstr "IOPL සබල කරල නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:783
+#: dlls/kernelbase/winerror.mc:785
 msgid "Invalid SEGDPL in %1.\n"
 msgstr "අවලංගු SEGDPL %1 ඇතුලෙ.\n"
 
-#: dlls/kernelbase/winerror.mc:788
+#: dlls/kernelbase/winerror.mc:790
 msgid "Auto data segment exceeds 64k.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:793
+#: dlls/kernelbase/winerror.mc:795
 msgid "Ring 2 segment must be movable.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:798
+#: dlls/kernelbase/winerror.mc:800
 msgid "Relocation chain exceeds segment limit in %1.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:803
+#: dlls/kernelbase/winerror.mc:805
 msgid "Infinite loop in relocation chain in %1.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:808
+#: dlls/kernelbase/winerror.mc:810
 msgid "Environment variable not found.\n"
 msgstr "පරිසරය විචල්‍යය හම්බු වෙලා නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:813
+#: dlls/kernelbase/winerror.mc:815
 msgid "No signal sent.\n"
 msgstr "සංඥාවක් යැවුවේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:818 programs/cmd/cmd.rc:406
+#: dlls/kernelbase/winerror.mc:820 programs/cmd/cmd.rc:406
 msgid "File name is too long.\n"
 msgstr "ගොනුවේ නම දිග වැඩි.\n"
 
-#: dlls/kernelbase/winerror.mc:823
+#: dlls/kernelbase/winerror.mc:825
 msgid "Ring 2 stack in use.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:828
+#: dlls/kernelbase/winerror.mc:830
 msgid "Error in use of filename wildcards.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:833
+#: dlls/kernelbase/winerror.mc:835
 msgid "Invalid signal number.\n"
 msgstr "අවලංගු සංඥාව අංකය.\n"
 
-#: dlls/kernelbase/winerror.mc:838
+#: dlls/kernelbase/winerror.mc:840
 msgid "Error setting signal handler.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:843
+#: dlls/kernelbase/winerror.mc:845
 msgid "Segment locked.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:848
+#: dlls/kernelbase/winerror.mc:850
 msgid "Too many modules.\n"
 msgstr "මොඩියුල වැඩි.\n"
 
-#: dlls/kernelbase/winerror.mc:853
+#: dlls/kernelbase/winerror.mc:855
 msgid "Nesting LoadModule calls not allowed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:858
+#: dlls/kernelbase/winerror.mc:860
 msgid "Machine type mismatch.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:863
+#: dlls/kernelbase/winerror.mc:865
 msgid "Bad pipe.\n"
 msgstr "හොඳ නැති බටයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:868
+#: dlls/kernelbase/winerror.mc:870
 msgid "Pipe busy.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:873
+#: dlls/kernelbase/winerror.mc:875
 msgid "Pipe closed.\n"
 msgstr "බටය වහලා.\n"
 
-#: dlls/kernelbase/winerror.mc:878
+#: dlls/kernelbase/winerror.mc:880
 msgid "Pipe not connected.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:883
+#: dlls/kernelbase/winerror.mc:885
 msgid "More data available.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:888
+#: dlls/kernelbase/winerror.mc:890
 msgid "Session canceled.\n"
 msgstr "සැසිය අවලංගු කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:893
+#: dlls/kernelbase/winerror.mc:895
 #, fuzzy
 msgid "Invalid extended attribute name.\n"
 msgstr "අවලංගු"
 
-#: dlls/kernelbase/winerror.mc:898
+#: dlls/kernelbase/winerror.mc:900
 msgid "Extended attribute list inconsistent.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:903
+#: dlls/kernelbase/winerror.mc:905
 msgid "No more data available.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:908
+#: dlls/kernelbase/winerror.mc:910
 msgid "Cannot use Copy API.\n"
 msgstr "පිටපත් කරන API එක පාවිච්චි කරන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:913
+#: dlls/kernelbase/winerror.mc:915
 msgid "Directory name invalid.\n"
 msgstr "ඩිරෙක්ටරියෙ නම වලංගු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:918
+#: dlls/kernelbase/winerror.mc:920
 msgid "Extended attributes didn't fit.\n"
 msgstr "විස්තෘත උපලක්‍ෂණ ගැලපුනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:923
+#: dlls/kernelbase/winerror.mc:925
 msgid "Extended attribute file corrupt.\n"
 msgstr "විස්තෘත උපලක්‍ෂණ ගොනුව සදොස් වෙලා.\n"
 
-#: dlls/kernelbase/winerror.mc:928
+#: dlls/kernelbase/winerror.mc:930
 msgid "Extended attribute table full.\n"
 msgstr "විස්තෘත උපලක්‍ෂණ වගුව පිරිලා.\n"
 
-#: dlls/kernelbase/winerror.mc:933
+#: dlls/kernelbase/winerror.mc:935
 msgid "Invalid extended attribute handle.\n"
 msgstr "අවලංගු විස්තෘත උපලක්‍ෂණය හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:938
+#: dlls/kernelbase/winerror.mc:940
 msgid "Extended attributes not supported.\n"
 msgstr "විස්තෘත උපලක්‍ෂණ සහාය නොදක්වයි.\n"
 
-#: dlls/kernelbase/winerror.mc:943
+#: dlls/kernelbase/winerror.mc:945
 msgid "Mutex not owned by caller.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:948
+#: dlls/kernelbase/winerror.mc:950
 msgid "Too many posts to semaphore.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:953
+#: dlls/kernelbase/winerror.mc:955
 msgid "Read/WriteProcessMemory partially completed.\n"
 msgstr "Read/WriteProcessMemory අර්ධ වශයෙන් ඉවර වෙලා.\n"
 
-#: dlls/kernelbase/winerror.mc:958
+#: dlls/kernelbase/winerror.mc:960
 msgid "The oplock wasn't granted.\n"
 msgstr "Oplock එක දුන්නේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:963
+#: dlls/kernelbase/winerror.mc:965
 msgid "Invalid oplock message received.\n"
 msgstr "අවලංගු oplock පණිවිඩයක් හම්බු උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:968
+#: dlls/kernelbase/winerror.mc:970
 msgid "Message 0x%1 not found in file %2.\n"
 msgstr "පණිවිඩය 0x%1 හම්බු උනේ නැහැ ගොනුව %2 ඇතුලේ.\n"
 
-#: dlls/kernelbase/winerror.mc:973
+#: dlls/kernelbase/winerror.mc:975
 msgid "Invalid address.\n"
 msgstr "අවලංගු යොමුව.\n"
 
-#: dlls/kernelbase/winerror.mc:978
+#: dlls/kernelbase/winerror.mc:980
 msgid "Arithmetic overflow.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:983
+#: dlls/kernelbase/winerror.mc:985
 msgid "Pipe connected.\n"
 msgstr "බටය සබැඳි.\n"
 
-#: dlls/kernelbase/winerror.mc:988
+#: dlls/kernelbase/winerror.mc:990
 msgid "Pipe listening.\n"
 msgstr "බටය අහගෙන ඉන්නවා.\n"
 
-#: dlls/kernelbase/winerror.mc:993
+#: dlls/kernelbase/winerror.mc:995
 msgid "Extended attribute access denied.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:998
+#: dlls/kernelbase/winerror.mc:1000
 msgid "I/O operation aborted.\n"
 msgstr "I/O මෙහෙයුම අහෝසි කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:1003
+#: dlls/kernelbase/winerror.mc:1005
 msgid "Overlapped I/O incomplete.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1008
+#: dlls/kernelbase/winerror.mc:1010
 msgid "Overlapped I/O pending.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1013
+#: dlls/kernelbase/winerror.mc:1015
 msgid "No access to memory location.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1018
+#: dlls/kernelbase/winerror.mc:1020
 msgid "Swap error.\n"
 msgstr "ප්‍රතිහරණ දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1023
+#: dlls/kernelbase/winerror.mc:1025
 msgid "Stack overflow.\n"
 msgstr "දත්ත එකමත එක යාම.\n"
 
-#: dlls/kernelbase/winerror.mc:1028
+#: dlls/kernelbase/winerror.mc:1030
 msgid "Invalid message.\n"
 msgstr "අවලංගු පණිවිඩය.\n"
 
-#: dlls/kernelbase/winerror.mc:1033
+#: dlls/kernelbase/winerror.mc:1035
 msgid "Cannot complete.\n"
 msgstr "ඉවර කරන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1038
+#: dlls/kernelbase/winerror.mc:1040
 msgid "Invalid flags.\n"
 msgstr "අවලංගු සලකුණු.\n"
 
-#: dlls/kernelbase/winerror.mc:1043
+#: dlls/kernelbase/winerror.mc:1045
 msgid "Unrecognized volume.\n"
 msgstr "හඳුනගත්තු නැති පංගුවක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1048
+#: dlls/kernelbase/winerror.mc:1050
 msgid "File invalid.\n"
 msgstr "ගොනුව වලංගු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1053
+#: dlls/kernelbase/winerror.mc:1055
 msgid "Cannot run full-screen.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1058
+#: dlls/kernelbase/winerror.mc:1060
 msgid "Nonexistent token.\n"
 msgstr "තියෙන්නේ නැති ටෝකනයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1063
+#: dlls/kernelbase/winerror.mc:1065
 msgid "Registry corrupt.\n"
 msgstr "රෙජිස්තරය සදොස් වෙලා.\n"
 
-#: dlls/kernelbase/winerror.mc:1068
+#: dlls/kernelbase/winerror.mc:1070
 msgid "Invalid key.\n"
 msgstr "අවලංගු යතුරක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1073
+#: dlls/kernelbase/winerror.mc:1075
 msgid "Can't open registry key.\n"
 msgstr "රෙජිස්තරයේ යතුර විවෘත කරන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1078
+#: dlls/kernelbase/winerror.mc:1080
 msgid "Can't read registry key.\n"
 msgstr "රෙජිස්තරයේ යතුර කියවන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1083
+#: dlls/kernelbase/winerror.mc:1085
 msgid "Can't write registry key.\n"
 msgstr "රෙජිස්තරයේ යතුර ලියන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1088
+#: dlls/kernelbase/winerror.mc:1090
 msgid "Registry has been recovered.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1093
+#: dlls/kernelbase/winerror.mc:1095
 msgid "Registry is corrupt.\n"
 msgstr "රෙජිස්තරය සදොස් වෙලා.\n"
 
-#: dlls/kernelbase/winerror.mc:1098
+#: dlls/kernelbase/winerror.mc:1100
 msgid "I/O to registry failed.\n"
 msgstr "රෙජිස්තරයට I/O අසාර්ථක උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:1103
+#: dlls/kernelbase/winerror.mc:1105
 msgid "Not registry file.\n"
 msgstr "රෙජිස්තරයේ ගොනුවක් නෙමේ.\n"
 
-#: dlls/kernelbase/winerror.mc:1108
+#: dlls/kernelbase/winerror.mc:1110
 msgid "Key deleted.\n"
 msgstr "යතුර මකලා.\n"
 
-#: dlls/kernelbase/winerror.mc:1113
+#: dlls/kernelbase/winerror.mc:1115
 msgid "No registry log space.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1118
+#: dlls/kernelbase/winerror.mc:1120
 msgid "Registry key has subkeys.\n"
 msgstr "රෙජිස්තරයෙ යතුරට යට යතුරු තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:1123
+#: dlls/kernelbase/winerror.mc:1125
 msgid "Subkey must be volatile.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1128
+#: dlls/kernelbase/winerror.mc:1130
 msgid "Notify change request in progress.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1133
+#: dlls/kernelbase/winerror.mc:1135
 msgid "Dependent services are running.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1138
+#: dlls/kernelbase/winerror.mc:1140
 msgid "Invalid service control.\n"
 msgstr "අවලංගු සේවාව පාලකය.\n"
 
-#: dlls/kernelbase/winerror.mc:1143
+#: dlls/kernelbase/winerror.mc:1145
 msgid "Service request timeout.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1148
+#: dlls/kernelbase/winerror.mc:1150
 msgid "Cannot create service thread.\n"
 msgstr "සේවාව පොට හදන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1153
+#: dlls/kernelbase/winerror.mc:1155
 msgid "Service database locked.\n"
 msgstr "සේවාවේ දත්ත සමුදාය අගුලු කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:1158
+#: dlls/kernelbase/winerror.mc:1160
 msgid "Service already running.\n"
 msgstr "සේවාව දැනටමත් ධාවන කරනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:1163
+#: dlls/kernelbase/winerror.mc:1165
 msgid "Invalid service account.\n"
 msgstr "අවලංගු සේවාව ගිණුම.\n"
 
-#: dlls/kernelbase/winerror.mc:1168
+#: dlls/kernelbase/winerror.mc:1170
 msgid "Service is disabled.\n"
 msgstr "සේවාව අක්‍රිය කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:1173
+#: dlls/kernelbase/winerror.mc:1175
 msgid "Circular dependency.\n"
 msgstr "වෘත්තාකාර පරායත්තතාවක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1178
+#: dlls/kernelbase/winerror.mc:1180
 msgid "Service does not exist.\n"
 msgstr "සේවාව තියෙන්නේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1183
+#: dlls/kernelbase/winerror.mc:1185
 msgid "Service cannot accept control message.\n"
 msgstr "සේවාවට පාලක පණිවිඩය පිළිගන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1188
+#: dlls/kernelbase/winerror.mc:1190
 msgid "Service not active.\n"
 msgstr "සේවාව සක්‍රිය නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1193
+#: dlls/kernelbase/winerror.mc:1195
 #, fuzzy
 msgid "Service controller connect failed.\n"
 msgstr "සේවාව"
 
-#: dlls/kernelbase/winerror.mc:1198
+#: dlls/kernelbase/winerror.mc:1200
 msgid "Exception in service.\n"
 msgstr "සේවාව ඇතුලේ ව්‍යතිරේකක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1203
+#: dlls/kernelbase/winerror.mc:1205
 msgid "Database does not exist.\n"
 msgstr "දත්ත සමුදාය තියෙන්නේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1208
+#: dlls/kernelbase/winerror.mc:1210
 msgid "Service-specific error.\n"
 msgstr "සේවාවක විතරක් තියෙන දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1213
+#: dlls/kernelbase/winerror.mc:1215
 msgid "Process aborted.\n"
 msgstr "සැකසුම අහෝසි කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:1218
+#: dlls/kernelbase/winerror.mc:1220
 msgid "Service dependency failed.\n"
 msgstr "සේවාව පරායත්තයේ දෝෂයක් උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:1223
+#: dlls/kernelbase/winerror.mc:1225
 msgid "Service login failed.\n"
 msgstr "සේවාව පුරන්න බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:1228
+#: dlls/kernelbase/winerror.mc:1230
 msgid "Service start-hang.\n"
 msgstr "සේවාව start-hang.\n"
 
-#: dlls/kernelbase/winerror.mc:1233
+#: dlls/kernelbase/winerror.mc:1235
 msgid "Invalid service lock.\n"
 msgstr "අවලංගු සේවාව අගුල.\n"
 
-#: dlls/kernelbase/winerror.mc:1238
+#: dlls/kernelbase/winerror.mc:1240
 msgid "Service marked for delete.\n"
 msgstr "සේවාව සලකුණු කරලා මැකීමට.\n"
 
-#: dlls/kernelbase/winerror.mc:1243
+#: dlls/kernelbase/winerror.mc:1245
 msgid "Service exists.\n"
 msgstr "සේවාව තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:1248
+#: dlls/kernelbase/winerror.mc:1250
 msgid "System running last-known-good config.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1253
+#: dlls/kernelbase/winerror.mc:1255
 msgid "Service dependency deleted.\n"
 msgstr "සේවාවේ පරායත්තතාව මකලා.\n"
 
-#: dlls/kernelbase/winerror.mc:1258
+#: dlls/kernelbase/winerror.mc:1260
 msgid "Boot already accepted as last-good config.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1263
+#: dlls/kernelbase/winerror.mc:1265
 msgid "Service not started since last boot.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1268
+#: dlls/kernelbase/winerror.mc:1270
 msgid "Duplicate service name.\n"
 msgstr "අනුපිටපත් සේවාව නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1273
+#: dlls/kernelbase/winerror.mc:1275
 msgid "Different service account.\n"
 msgstr "වෙන සේවාව ගිණුමක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1278
+#: dlls/kernelbase/winerror.mc:1280
 msgid "Driver failure cannot be detected.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1283
+#: dlls/kernelbase/winerror.mc:1285
 msgid "Process abort cannot be detected.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1288
+#: dlls/kernelbase/winerror.mc:1290
 msgid "No recovery program for service.\n"
 msgstr "ප්‍රතිසාධන ක්‍රමලේඛයක් සේවාවට නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1293
+#: dlls/kernelbase/winerror.mc:1295
 msgid "Service not implemented by exe.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1298
+#: dlls/kernelbase/winerror.mc:1300
 msgid "End of media.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1303
+#: dlls/kernelbase/winerror.mc:1305
 msgid "Filemark detected.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1308
+#: dlls/kernelbase/winerror.mc:1310
 msgid "Beginning of media.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1313
+#: dlls/kernelbase/winerror.mc:1315
 msgid "Setmark detected.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1318
+#: dlls/kernelbase/winerror.mc:1320
 msgid "No data detected.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1323
+#: dlls/kernelbase/winerror.mc:1325
 msgid "Partition failure.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1328
+#: dlls/kernelbase/winerror.mc:1330
 #, fuzzy
 msgid "Invalid block length.\n"
 msgstr "අවලංගු"
 
-#: dlls/kernelbase/winerror.mc:1333
+#: dlls/kernelbase/winerror.mc:1335
 msgid "Device not partitioned.\n"
 msgstr "ආම්පන්නය කොටස් කරලා නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1338
+#: dlls/kernelbase/winerror.mc:1340
 msgid "Unable to lock media.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1343
+#: dlls/kernelbase/winerror.mc:1345
 msgid "Unable to unload media.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1348
+#: dlls/kernelbase/winerror.mc:1350
 msgid "Media changed.\n"
 msgstr "මාධ්‍ය වෙනස් කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:1353
+#: dlls/kernelbase/winerror.mc:1355
 msgid "I/O bus reset.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1358
+#: dlls/kernelbase/winerror.mc:1360
 msgid "No media in drive.\n"
 msgstr "මාධ්‍යයක් ධාවකය ඇතුලේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1363
+#: dlls/kernelbase/winerror.mc:1365
 msgid "No Unicode translation.\n"
 msgstr "යුනිකෝඩ් පරිවර්තනයක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1368
+#: dlls/kernelbase/winerror.mc:1370
 msgid "DLL initialization failed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1373
+#: dlls/kernelbase/winerror.mc:1375
 msgid "Shutdown in progress.\n"
 msgstr "වැහීමක් වෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:1378
+#: dlls/kernelbase/winerror.mc:1380
 msgid "No shutdown in progress.\n"
 msgstr "වැහීමක් වෙන්නේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1383
+#: dlls/kernelbase/winerror.mc:1385
 msgid "I/O device error.\n"
 msgstr "I/O ආම්පන්නයේ දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1388
+#: dlls/kernelbase/winerror.mc:1390
 msgid "No serial devices found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1393
+#: dlls/kernelbase/winerror.mc:1395
 msgid "Shared IRQ busy.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1398
+#: dlls/kernelbase/winerror.mc:1400
 msgid "Serial I/O completed.\n"
 msgstr "අනුක්‍රමික I/O ඉවරයි.\n"
 
-#: dlls/kernelbase/winerror.mc:1403
+#: dlls/kernelbase/winerror.mc:1405
 msgid "Serial I/O counter timeout.\n"
 msgstr "අනුක්‍රමික I/O counter timeout.\n"
 
-#: dlls/kernelbase/winerror.mc:1408
+#: dlls/kernelbase/winerror.mc:1410
 msgid "Floppy ID address mark not found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1413
+#: dlls/kernelbase/winerror.mc:1415
 msgid "Floppy reports wrong cylinder.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1418
+#: dlls/kernelbase/winerror.mc:1420
 msgid "Unknown floppy error.\n"
 msgstr "දන්නේ නැති නම්‍ය දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1423
+#: dlls/kernelbase/winerror.mc:1425
 msgid "Floppy registers inconsistent.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1428
+#: dlls/kernelbase/winerror.mc:1430
 msgid "Hard disk recalibrate failed.\n"
 msgstr "දෘඩ තැටිය ආයෙත් ක්රමාංකණය කිරීම බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:1433
+#: dlls/kernelbase/winerror.mc:1435
 msgid "Hard disk operation failed.\n"
 msgstr "දෘඩ තැටිය මෙහෙයුම බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:1438
+#: dlls/kernelbase/winerror.mc:1440
 msgid "Hard disk reset failed.\n"
 msgstr "දෘඩ තැටිය නැවත සකසන්න බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:1443
+#: dlls/kernelbase/winerror.mc:1445
 msgid "End of tape media.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1448
+#: dlls/kernelbase/winerror.mc:1450
 msgid "Not enough server memory.\n"
 msgstr "සේවාදායකයේ මතක මදි.\n"
 
-#: dlls/kernelbase/winerror.mc:1453
+#: dlls/kernelbase/winerror.mc:1455
 msgid "Possible deadlock.\n"
 msgstr "අවහිරතාවක් තියෙනවා ඇති.\n"
 
-#: dlls/kernelbase/winerror.mc:1458
+#: dlls/kernelbase/winerror.mc:1460
 msgid "Incorrect alignment.\n"
 msgstr "වැරදි පෙළගැස්වීම.\n"
 
-#: dlls/kernelbase/winerror.mc:1463
+#: dlls/kernelbase/winerror.mc:1465
 msgid "Set-power-state vetoed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1468
+#: dlls/kernelbase/winerror.mc:1470
 msgid "Set-power-state failed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1473
+#: dlls/kernelbase/winerror.mc:1475
 msgid "Too many links.\n"
 msgstr "සබැඳි වැඩි.\n"
 
-#: dlls/kernelbase/winerror.mc:1478
+#: dlls/kernelbase/winerror.mc:1480
 msgid "Newer Windows version needed.\n"
 msgstr "අලුත් Windows අනුවාදයක් අවශ්යයි.\n"
 
-#: dlls/kernelbase/winerror.mc:1483
+#: dlls/kernelbase/winerror.mc:1485
 msgid "Wrong operating system.\n"
 msgstr "මෙහෙයුම් පද්ධතිය වැරදි.\n"
 
-#: dlls/kernelbase/winerror.mc:1488
+#: dlls/kernelbase/winerror.mc:1490
 msgid "Single-instance application.\n"
 msgstr "එක අවස්ථාව යෙදුම.\n"
 
-#: dlls/kernelbase/winerror.mc:1493
+#: dlls/kernelbase/winerror.mc:1495
 msgid "Real-mode application.\n"
 msgstr "තාත්වික ප්‍රකාරය යෙදුම.\n"
 
-#: dlls/kernelbase/winerror.mc:1498
+#: dlls/kernelbase/winerror.mc:1500
 msgid "Invalid DLL.\n"
 msgstr "අවලංගු DLL එකක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1503
+#: dlls/kernelbase/winerror.mc:1505
 msgid "No associated application.\n"
 msgstr "සබැඳි යෙදුමක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1508
+#: dlls/kernelbase/winerror.mc:1510
 msgid "DDE failure.\n"
 msgstr "DDE දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1513
+#: dlls/kernelbase/winerror.mc:1515
 msgid "DLL not found.\n"
 msgstr "DLL එක හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1518
+#: dlls/kernelbase/winerror.mc:1520
 msgid "Out of user handles.\n"
 msgstr "පරිශීලකයන්ගේ හසුරු ඉවරයි.\n"
 
-#: dlls/kernelbase/winerror.mc:1523
+#: dlls/kernelbase/winerror.mc:1525
 msgid "Message can only be used in synchronous calls.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1528
+#: dlls/kernelbase/winerror.mc:1530
 msgid "The source element is empty.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1533
+#: dlls/kernelbase/winerror.mc:1535
 msgid "The destination element is full.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1538
+#: dlls/kernelbase/winerror.mc:1540
 msgid "The element address is invalid.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1543
+#: dlls/kernelbase/winerror.mc:1545
 msgid "The magazine is not present.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1548
+#: dlls/kernelbase/winerror.mc:1550
 msgid "The device needs reinitialization.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1553
+#: dlls/kernelbase/winerror.mc:1555
 msgid "The device requires cleaning.\n"
 msgstr "ආම්පන්නය සුද්ද කරන්න ඕනේ.\n"
 
-#: dlls/kernelbase/winerror.mc:1558
+#: dlls/kernelbase/winerror.mc:1560
 msgid "The device door is open.\n"
 msgstr "ආම්පන්නයේ දොර ඇරලා තියෙන්නේ.\n"
 
-#: dlls/kernelbase/winerror.mc:1563
+#: dlls/kernelbase/winerror.mc:1565
 msgid "The device is not connected.\n"
 msgstr "ආම්පන්නය සබැඳි කරලා නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1568
+#: dlls/kernelbase/winerror.mc:1570
 msgid "Element not found.\n"
 msgstr "මූලාංගය හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1573
+#: dlls/kernelbase/winerror.mc:1575
 msgid "No match found.\n"
 msgstr "ගැළපුම‍ක් හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1578
+#: dlls/kernelbase/winerror.mc:1580
 msgid "Property set not found.\n"
 msgstr "ගුණාංග සිටුවම හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1583
+#: dlls/kernelbase/winerror.mc:1585
 msgid "Point not found.\n"
 msgstr "පොයින්ටය හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1588
+#: dlls/kernelbase/winerror.mc:1590
 msgid "No running tracking service.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1593
+#: dlls/kernelbase/winerror.mc:1595
 msgid "No such volume ID.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1598
+#: dlls/kernelbase/winerror.mc:1600
 msgid "Unable to remove the file to be replaced.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1603
+#: dlls/kernelbase/winerror.mc:1605
 msgid "Unable to move the replacement file into place.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1608
+#: dlls/kernelbase/winerror.mc:1610
 msgid "Moving the replacement file failed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1613
+#: dlls/kernelbase/winerror.mc:1615
 msgid "The journal is being deleted.\n"
 msgstr "ජර්නලය දැන් මකනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:1618
+#: dlls/kernelbase/winerror.mc:1620
 msgid "The journal is not active.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1623
+#: dlls/kernelbase/winerror.mc:1625
 msgid "Potential matching file found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1628
+#: dlls/kernelbase/winerror.mc:1630
 msgid "The journal entry was deleted.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1633
+#: dlls/kernelbase/winerror.mc:1635
 msgid "Invalid device name.\n"
 msgstr "අවලංගු ආම්පන්නය නාමය.\n"
 
-#: dlls/kernelbase/winerror.mc:1638
+#: dlls/kernelbase/winerror.mc:1640
 msgid "Connection unavailable.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1643
+#: dlls/kernelbase/winerror.mc:1645
 msgid "Device already remembered.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1648
+#: dlls/kernelbase/winerror.mc:1650
 msgid "No network or bad path.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1653
+#: dlls/kernelbase/winerror.mc:1655
 msgid "Invalid network provider name.\n"
 msgstr "අවලංගු ජාල සපයන්නා නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1658
+#: dlls/kernelbase/winerror.mc:1660
 msgid "Cannot open network connection profile.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1663
+#: dlls/kernelbase/winerror.mc:1665
 msgid "Corrupt network connection profile.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1668
+#: dlls/kernelbase/winerror.mc:1670
 msgid "Not a container.\n"
 msgstr "බහලුවක් නෙමෙයි.\n"
 
-#: dlls/kernelbase/winerror.mc:1673
+#: dlls/kernelbase/winerror.mc:1675
 msgid "Extended error.\n"
 msgstr "විස්තෘත දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1678
+#: dlls/kernelbase/winerror.mc:1680
 msgid "Invalid group name.\n"
 msgstr "අවලංගු සමූහය නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1683
+#: dlls/kernelbase/winerror.mc:1685
 msgid "Invalid computer name.\n"
 msgstr "අවලංගු පරිගණක නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1688
+#: dlls/kernelbase/winerror.mc:1690
 msgid "Invalid event name.\n"
 msgstr "අවලංගු සිද්ධිය නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1693
+#: dlls/kernelbase/winerror.mc:1695
 msgid "Invalid domain name.\n"
 msgstr "අවලංගු වසම් නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1698
+#: dlls/kernelbase/winerror.mc:1700
 msgid "Invalid service name.\n"
 msgstr "අවලංගු සේවාව නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1703
+#: dlls/kernelbase/winerror.mc:1705
 msgid "Invalid network name.\n"
 msgstr "අවලංගු ජාල නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1708
+#: dlls/kernelbase/winerror.mc:1710
 msgid "Invalid share name.\n"
 msgstr "අවලංගු හවුල නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1718
+#: dlls/kernelbase/winerror.mc:1720
 msgid "Invalid message name.\n"
 msgstr "අවලංගු පණිවිඩයේ නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1723
+#: dlls/kernelbase/winerror.mc:1725
 msgid "Invalid message destination.\n"
 msgstr "අවලංගු පණිවිඩයෙ ගමනාන්තය.\n"
 
-#: dlls/kernelbase/winerror.mc:1728
+#: dlls/kernelbase/winerror.mc:1730
 msgid "Session credential conflict.\n"
 msgstr "සැසියෙ අක්තපත්‍ර ගැටීමක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1733
+#: dlls/kernelbase/winerror.mc:1735
 msgid "Remote session limit exceeded.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1738
+#: dlls/kernelbase/winerror.mc:1740
 msgid "Duplicate domain or workgroup name.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1743
+#: dlls/kernelbase/winerror.mc:1745
 msgid "No network.\n"
 msgstr "ජාලයක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1748
+#: dlls/kernelbase/winerror.mc:1750
 msgid "Operation canceled by user.\n"
 msgstr "පරිශිලකයා මෙහෙයුම අවලංගු කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:1753
+#: dlls/kernelbase/winerror.mc:1755
 msgid "File has a user-mapped section.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1758 dlls/kernelbase/winerror.mc:3788
+#: dlls/kernelbase/winerror.mc:1760 dlls/kernelbase/winerror.mc:3790
 msgid "Connection refused.\n"
 msgstr "සබැඳුම ප්‍රතික්ෂේප කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:1763
+#: dlls/kernelbase/winerror.mc:1765
 msgid "Connection gracefully closed.\n"
 msgstr "සබැඳුම හොඳට වැහුවා.\n"
 
-#: dlls/kernelbase/winerror.mc:1768
+#: dlls/kernelbase/winerror.mc:1770
 msgid "Address already associated with transport endpoint.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1773
+#: dlls/kernelbase/winerror.mc:1775
 msgid "Address not associated with transport endpoint.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1778
+#: dlls/kernelbase/winerror.mc:1780
 msgid "Connection invalid.\n"
 msgstr "සබැඳුම වලංගු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1783
+#: dlls/kernelbase/winerror.mc:1785
 msgid "Connection is active.\n"
 msgstr "සබැඳුම සක්‍රියයි.\n"
 
-#: dlls/kernelbase/winerror.mc:1788
+#: dlls/kernelbase/winerror.mc:1790
 msgid "Network unreachable.\n"
 msgstr "ජාලයට ලඟාවිය නොහැකිය.\n"
 
-#: dlls/kernelbase/winerror.mc:1793
+#: dlls/kernelbase/winerror.mc:1795
 msgid "Host unreachable.\n"
 msgstr "සත්කාරකයට ලඟාවිය නොහැකිය.\n"
 
-#: dlls/kernelbase/winerror.mc:1798
+#: dlls/kernelbase/winerror.mc:1800
 msgid "Protocol unreachable.\n"
 msgstr "ප්‍රොටෝකෝලයට ලඟාවිය නොහැකිය.\n"
 
-#: dlls/kernelbase/winerror.mc:1803
+#: dlls/kernelbase/winerror.mc:1805
 msgid "Port unreachable.\n"
 msgstr "තොට ලඟාවිය නොහැකිය.\n"
 
-#: dlls/kernelbase/winerror.mc:1808
+#: dlls/kernelbase/winerror.mc:1810
 msgid "Request aborted.\n"
 msgstr "ඉල්ලීම අහෝසි කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:1813
+#: dlls/kernelbase/winerror.mc:1815
 msgid "Connection aborted.\n"
 msgstr "සබැඳුම් අහෝසි කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:1818
+#: dlls/kernelbase/winerror.mc:1820
 msgid "Please retry operation.\n"
 msgstr "කරුණාකරලා අයෙත් මෙහෙයුම කරන්න හදන්න.\n"
 
-#: dlls/kernelbase/winerror.mc:1823
+#: dlls/kernelbase/winerror.mc:1825
 msgid "Connection count limit reached.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1828
+#: dlls/kernelbase/winerror.mc:1830
 msgid "Login time restriction.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1833
+#: dlls/kernelbase/winerror.mc:1835
 msgid "Login workstation restriction.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1838
+#: dlls/kernelbase/winerror.mc:1840
 msgid "Incorrect network address.\n"
 msgstr "වැරදි ජාල ලිපිනය.\n"
 
-#: dlls/kernelbase/winerror.mc:1843
+#: dlls/kernelbase/winerror.mc:1845
 msgid "Service already registered.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1848
+#: dlls/kernelbase/winerror.mc:1850
 msgid "Service not found.\n"
 msgstr "සේවාව හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1853
+#: dlls/kernelbase/winerror.mc:1855
 msgid "User not authenticated.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1858
+#: dlls/kernelbase/winerror.mc:1860
 msgid "User not logged on.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1863
+#: dlls/kernelbase/winerror.mc:1865
 msgid "Continue work in progress.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1868
+#: dlls/kernelbase/winerror.mc:1870
 msgid "Already initialized.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1873
+#: dlls/kernelbase/winerror.mc:1875
 msgid "No more local devices.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1878
+#: dlls/kernelbase/winerror.mc:1880
 msgid "The site does not exist.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1883
+#: dlls/kernelbase/winerror.mc:1885
 msgid "The domain controller already exists.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1888
+#: dlls/kernelbase/winerror.mc:1890
 msgid "Supported only when connected.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1893
+#: dlls/kernelbase/winerror.mc:1895
 msgid "Perform operation even when nothing changed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1898
+#: dlls/kernelbase/winerror.mc:1900
 msgid "The user profile is invalid.\n"
 msgstr "පරිශීලක පැතිකඩය වලංගු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1903
+#: dlls/kernelbase/winerror.mc:1905
 msgid "Not supported on Small Business Server.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1908
+#: dlls/kernelbase/winerror.mc:1910
 msgid "Not all privileges assigned.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1913
+#: dlls/kernelbase/winerror.mc:1915
 msgid "Some security IDs not mapped.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1918
+#: dlls/kernelbase/winerror.mc:1920
 msgid "No quotas for account.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1923
+#: dlls/kernelbase/winerror.mc:1925
 msgid "Local user session key.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1928
+#: dlls/kernelbase/winerror.mc:1930
 msgid "Password too complex for LM.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1933
+#: dlls/kernelbase/winerror.mc:1935
 msgid "Unknown revision.\n"
 msgstr "දන්නෙ නැති ප්‍රතිශෝධනයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:1938
+#: dlls/kernelbase/winerror.mc:1940
 msgid "Incompatible revision levels.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1943
+#: dlls/kernelbase/winerror.mc:1945
 msgid "Invalid owner.\n"
 msgstr "අවලංගු හිමිකරු.\n"
 
-#: dlls/kernelbase/winerror.mc:1948
+#: dlls/kernelbase/winerror.mc:1950
 msgid "Invalid primary group.\n"
 msgstr "අවලංගු මූලික සමූහය.\n"
 
-#: dlls/kernelbase/winerror.mc:1953
+#: dlls/kernelbase/winerror.mc:1955
 msgid "No impersonation token.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1958
+#: dlls/kernelbase/winerror.mc:1960
 msgid "Can't disable mandatory group.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1963
+#: dlls/kernelbase/winerror.mc:1965
 msgid "No logon servers available.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1968
+#: dlls/kernelbase/winerror.mc:1970
 msgid "No such logon session.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1973
+#: dlls/kernelbase/winerror.mc:1975
 msgid "No such privilege.\n"
 msgstr "මෙහෙම වරප්‍රසාදයක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1978
+#: dlls/kernelbase/winerror.mc:1980
 msgid "Privilege not held.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1983
+#: dlls/kernelbase/winerror.mc:1985
 msgid "Invalid account name.\n"
 msgstr "අවලංගු ගිණුම් නම.\n"
 
-#: dlls/kernelbase/winerror.mc:1988
+#: dlls/kernelbase/winerror.mc:1990
 msgid "User already exists.\n"
 msgstr "පරිශීලකය දැනටමත් තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:1993
+#: dlls/kernelbase/winerror.mc:1995
 msgid "No such user.\n"
 msgstr "මෙහෙම පරිශීලකයෙක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:1998
+#: dlls/kernelbase/winerror.mc:2000
 msgid "Group already exists.\n"
 msgstr "සමූහය දැනටමත් තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2003
+#: dlls/kernelbase/winerror.mc:2005
 msgid "No such group.\n"
 msgstr "මෙහෙම සමූහයක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2008
+#: dlls/kernelbase/winerror.mc:2010
 msgid "User already in group.\n"
 msgstr "පරිශීලකය දැනටමත් සමූහය ඇතුලේ ඉන්නවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2013
+#: dlls/kernelbase/winerror.mc:2015
 msgid "User not in group.\n"
 msgstr "පරිශීලකය සමූහය ඇතුලේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2018
+#: dlls/kernelbase/winerror.mc:2020
 msgid "Can't delete last admin user.\n"
 msgstr "අන්තිම පරිපාලක පරිශීලකයව මකන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2023
+#: dlls/kernelbase/winerror.mc:2025
 msgid "Wrong password.\n"
 msgstr "වැරදි මුර පදය.\n"
 
-#: dlls/kernelbase/winerror.mc:2028
+#: dlls/kernelbase/winerror.mc:2030
 msgid "Ill-formed password.\n"
 msgstr "මුර පදය හොඳට හදල නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2033
+#: dlls/kernelbase/winerror.mc:2035
 msgid "Password restriction.\n"
 msgstr "මුර පදය සීමාකිරීමක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2038
+#: dlls/kernelbase/winerror.mc:2040
 msgid "Logon failure.\n"
 msgstr "යොමුකය අසාර්ථකයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2043
+#: dlls/kernelbase/winerror.mc:2045
 msgid "Account restriction.\n"
 msgstr "ගිණුම සීමාකිරීමක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2048
+#: dlls/kernelbase/winerror.mc:2050
 msgid "Invalid logon hours.\n"
 msgstr "අවලංගු යොමුකය පැය.\n"
 
-#: dlls/kernelbase/winerror.mc:2053
+#: dlls/kernelbase/winerror.mc:2055
 msgid "Invalid workstation.\n"
 msgstr "අවලංගු සේවාස්ථානය.\n"
 
-#: dlls/kernelbase/winerror.mc:2058
+#: dlls/kernelbase/winerror.mc:2060
 msgid "Password expired.\n"
 msgstr "මුර පදය ඉකුත් වෙලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2063
+#: dlls/kernelbase/winerror.mc:2065
 msgid "Account disabled.\n"
 msgstr "ගිණුම අක්‍රිය කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2068
+#: dlls/kernelbase/winerror.mc:2070
 msgid "No security ID mapped.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2073
+#: dlls/kernelbase/winerror.mc:2075
 msgid "Too many LUIDs requested.\n"
 msgstr "LUIDs වැඩියෙන් ඉල්ලලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2078
+#: dlls/kernelbase/winerror.mc:2080
 msgid "LUIDs exhausted.\n"
 msgstr "LUIDs ඉවරයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2083
+#: dlls/kernelbase/winerror.mc:2085
 msgid "Invalid sub authority.\n"
 msgstr "අවලංගු යට අධිකාරිය.\n"
 
-#: dlls/kernelbase/winerror.mc:2088
+#: dlls/kernelbase/winerror.mc:2090
 msgid "Invalid ACL.\n"
 msgstr "අවලංගු ACL එකක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2093
+#: dlls/kernelbase/winerror.mc:2095
 msgid "Invalid SID.\n"
 msgstr "අවලංගු SID එකක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2098
+#: dlls/kernelbase/winerror.mc:2100
 msgid "Invalid security descriptor.\n"
 msgstr "අවලංගු ආරක්ෂණය සූචකයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2103
+#: dlls/kernelbase/winerror.mc:2105
 msgid "Bad inherited ACL.\n"
 msgstr "හොඳ නැති උරුම වී තිබෙන්නේ ACL එකක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2108
+#: dlls/kernelbase/winerror.mc:2110
 msgid "Server disabled.\n"
 msgstr "සේවාදායකය අක්‍රිය කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2113
+#: dlls/kernelbase/winerror.mc:2115
 msgid "Server not disabled.\n"
 msgstr "සේවාදායකය අක්‍රිය කරලා නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2118
+#: dlls/kernelbase/winerror.mc:2120
 msgid "Invalid ID authority.\n"
 msgstr "අවලංගු ID අධිකාරිය.\n"
 
-#: dlls/kernelbase/winerror.mc:2123
+#: dlls/kernelbase/winerror.mc:2125
 msgid "Allotted space exceeded.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2128
+#: dlls/kernelbase/winerror.mc:2130
 msgid "Invalid group attributes.\n"
 msgstr "අවලංගු සමූහය ගුණාංග.\n"
 
-#: dlls/kernelbase/winerror.mc:2133
+#: dlls/kernelbase/winerror.mc:2135
 msgid "Bad impersonation level.\n"
 msgstr "හොඳ නැති සමාරෝපනය මට්ටම.\n"
 
-#: dlls/kernelbase/winerror.mc:2138
+#: dlls/kernelbase/winerror.mc:2140
 msgid "Can't open anonymous security token.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2143
+#: dlls/kernelbase/winerror.mc:2145
 msgid "Bad validation class.\n"
 msgstr "හොඳ නැති වලංගුකරණ පන්තියක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2148
+#: dlls/kernelbase/winerror.mc:2150
 msgid "Bad token type.\n"
 msgstr "හොඳ නැති සංකේතය වර්ගය.\n"
 
-#: dlls/kernelbase/winerror.mc:2153
+#: dlls/kernelbase/winerror.mc:2155
 msgid "No security on object.\n"
 msgstr "වස්තුවට ආරක්ෂණය නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2158
+#: dlls/kernelbase/winerror.mc:2160
 msgid "Can't access domain information.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2163
+#: dlls/kernelbase/winerror.mc:2165
 msgid "Invalid server state.\n"
 msgstr "අවලංගු සේවාදායකය තත්වය.\n"
 
-#: dlls/kernelbase/winerror.mc:2168
+#: dlls/kernelbase/winerror.mc:2170
 msgid "Invalid domain state.\n"
 msgstr "අවලංගු වසම තත්වය.\n"
 
-#: dlls/kernelbase/winerror.mc:2173
+#: dlls/kernelbase/winerror.mc:2175
 msgid "Invalid domain role.\n"
 msgstr "අවලංගු වසම භූමිකාව.\n"
 
-#: dlls/kernelbase/winerror.mc:2178
+#: dlls/kernelbase/winerror.mc:2180
 msgid "No such domain.\n"
 msgstr "මෙහෙම වසමක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2183
+#: dlls/kernelbase/winerror.mc:2185
 msgid "Domain already exists.\n"
 msgstr "වසම දැනටමත් පවතිනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2188
+#: dlls/kernelbase/winerror.mc:2190
 msgid "Domain limit exceeded.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2193
+#: dlls/kernelbase/winerror.mc:2195
 msgid "Internal database corruption.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2198
+#: dlls/kernelbase/winerror.mc:2200
 msgid "Internal error.\n"
 msgstr "ඇතුලේ දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2203
+#: dlls/kernelbase/winerror.mc:2205
 msgid "Generic access types not mapped.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2208
+#: dlls/kernelbase/winerror.mc:2210
 msgid "Bad descriptor format.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2213
+#: dlls/kernelbase/winerror.mc:2215
 msgid "Not a logon process.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2218
+#: dlls/kernelbase/winerror.mc:2220
 msgid "Logon session ID exists.\n"
 msgstr "යොමුකය සැසියෙ ID එක තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2223
+#: dlls/kernelbase/winerror.mc:2225
 msgid "Unknown authentication package.\n"
 msgstr "දන්නෙ නැති සත්‍යාපන පැකේජයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2228
+#: dlls/kernelbase/winerror.mc:2230
 msgid "Bad logon session state.\n"
 msgstr "හොඳ නැති යොමුකය සැසියෙ තත්වය.\n"
 
-#: dlls/kernelbase/winerror.mc:2233
+#: dlls/kernelbase/winerror.mc:2235
 msgid "Logon session ID collision.\n"
 msgstr "යොමුකය සැසියෙ ID එකේ ගැටීමක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2238
+#: dlls/kernelbase/winerror.mc:2240
 msgid "Invalid logon type.\n"
 msgstr "අවලංගු යොමුකය වර්ගය.\n"
 
-#: dlls/kernelbase/winerror.mc:2243
+#: dlls/kernelbase/winerror.mc:2245
 msgid "Cannot impersonate.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2248
+#: dlls/kernelbase/winerror.mc:2250
 msgid "Invalid transaction state.\n"
 msgstr "අවලංගු ක්‍රියා සමුදාය තත්වය.\n"
 
-#: dlls/kernelbase/winerror.mc:2253
+#: dlls/kernelbase/winerror.mc:2255
 msgid "Security DB commit failure.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2258
+#: dlls/kernelbase/winerror.mc:2260
 msgid "Account is built-in.\n"
 msgstr "ගිණුම ඇතුලේ හදල තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2263
+#: dlls/kernelbase/winerror.mc:2265
 msgid "Group is built-in.\n"
 msgstr "සමූහය ඇතුලේ හදල තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2268
+#: dlls/kernelbase/winerror.mc:2270
 msgid "User is built-in.\n"
 msgstr "පරිශිලකය ඇතුලේ හදල තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2273
+#: dlls/kernelbase/winerror.mc:2275
 msgid "Group is primary for user.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2278
+#: dlls/kernelbase/winerror.mc:2280
 msgid "Token already in use.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2283
+#: dlls/kernelbase/winerror.mc:2285
 msgid "No such local group.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2288
+#: dlls/kernelbase/winerror.mc:2290
 msgid "User not in local group.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2293
+#: dlls/kernelbase/winerror.mc:2295
 msgid "User already in local group.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2298
+#: dlls/kernelbase/winerror.mc:2300
 msgid "Local group already exists.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2303 dlls/kernelbase/winerror.mc:2328
+#: dlls/kernelbase/winerror.mc:2305 dlls/kernelbase/winerror.mc:2330
 msgid "Logon type not granted.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2308
+#: dlls/kernelbase/winerror.mc:2310
 msgid "Too many secrets.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2313
+#: dlls/kernelbase/winerror.mc:2315
 msgid "Secret too long.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2318
+#: dlls/kernelbase/winerror.mc:2320
 msgid "Internal security DB error.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2323
+#: dlls/kernelbase/winerror.mc:2325
 msgid "Too many context IDs.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2333
+#: dlls/kernelbase/winerror.mc:2335
 msgid "Cross-encrypted NT password required.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2338
+#: dlls/kernelbase/winerror.mc:2340
 msgid "No such member.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2343
+#: dlls/kernelbase/winerror.mc:2345
 msgid "Invalid member.\n"
 msgstr "අවලංගු සාමාජිකයා.\n"
 
-#: dlls/kernelbase/winerror.mc:2348
+#: dlls/kernelbase/winerror.mc:2350
 msgid "Too many SIDs.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2353
+#: dlls/kernelbase/winerror.mc:2355
 msgid "Cross-encrypted LM password required.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2358
+#: dlls/kernelbase/winerror.mc:2360
 msgid "No inheritable components.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2363
+#: dlls/kernelbase/winerror.mc:2365
 msgid "File or directory corrupt.\n"
 msgstr "ගොනුව හෝ ඩිරෙක්ටරිය සදොස් වෙලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2368
+#: dlls/kernelbase/winerror.mc:2370
 msgid "Disk is corrupt.\n"
 msgstr "ඩිස්කය සදොස් වෙලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2373
+#: dlls/kernelbase/winerror.mc:2375
 msgid "No user session key.\n"
 msgstr "පරිශිලකය සැසිය යතුර නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2378
+#: dlls/kernelbase/winerror.mc:2380
 msgid "License quota exceeded.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2383
+#: dlls/kernelbase/winerror.mc:2385
 msgid "Wrong target name.\n"
 msgstr "වැරදි ඉලක්කය නම.\n"
 
-#: dlls/kernelbase/winerror.mc:2388
+#: dlls/kernelbase/winerror.mc:2390
 msgid "Mutual authentication failed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2393
+#: dlls/kernelbase/winerror.mc:2395
 msgid "Time skew between client and server.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2398
+#: dlls/kernelbase/winerror.mc:2400
 msgid "Invalid window handle.\n"
 msgstr "අවලංගු කවුළුවේ හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:2403
+#: dlls/kernelbase/winerror.mc:2405
 msgid "Invalid menu handle.\n"
 msgstr "අවලංගු මෙනුවේ හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:2408
+#: dlls/kernelbase/winerror.mc:2410
 msgid "Invalid cursor handle.\n"
 msgstr "අවලංගු කර්සරයේ හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:2413
+#: dlls/kernelbase/winerror.mc:2415
 msgid "Invalid accelerator table handle.\n"
 msgstr "අවලංගු ත්වරක වගුව හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:2418
+#: dlls/kernelbase/winerror.mc:2420
 msgid "Invalid hook handle.\n"
 msgstr "අවලංගු කොක්ක හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:2423
+#: dlls/kernelbase/winerror.mc:2425
 msgid "Invalid DWP handle.\n"
 msgstr "අවලංගු DWP හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:2428
+#: dlls/kernelbase/winerror.mc:2430
 msgid "Can't create top-level child window.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2433
+#: dlls/kernelbase/winerror.mc:2435
 msgid "Can't find window class.\n"
 msgstr "කවුළු පන්තිය හොයාගන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2438
+#: dlls/kernelbase/winerror.mc:2440
 msgid "Window owned by another thread.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2443
+#: dlls/kernelbase/winerror.mc:2445
 msgid "Hotkey already registered.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2448
+#: dlls/kernelbase/winerror.mc:2450
 msgid "Class already exists.\n"
 msgstr "පන්තිය දැනටමත් තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2453
+#: dlls/kernelbase/winerror.mc:2455
 msgid "Class does not exist.\n"
 msgstr "පන්තිය තියෙන්නෙ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2458
+#: dlls/kernelbase/winerror.mc:2460
 msgid "Class has open windows.\n"
 msgstr "පන්තියේ ඇරපු කවුළු තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2463 dlls/mferror/mferror.mc:130
+#: dlls/kernelbase/winerror.mc:2465 dlls/mferror/mferror.mc:130
 msgid "Invalid index.\n"
 msgstr "අවලංගු සූචිය.\n"
 
-#: dlls/kernelbase/winerror.mc:2468
+#: dlls/kernelbase/winerror.mc:2470
 msgid "Invalid icon handle.\n"
 msgstr "අවලංගු අයිකන හසුරුවක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2473
+#: dlls/kernelbase/winerror.mc:2475
 msgid "Private dialog index.\n"
 msgstr "පෞද්ගලික සංවාද සූචිය.\n"
 
-#: dlls/kernelbase/winerror.mc:2478
+#: dlls/kernelbase/winerror.mc:2480
 msgid "List box ID not found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2483
+#: dlls/kernelbase/winerror.mc:2485
 msgid "No wildcard characters.\n"
 msgstr "ආදේශක ලකුණු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2488
+#: dlls/kernelbase/winerror.mc:2490
 msgid "Clipboard not open.\n"
 msgstr "පසුරු පුවරුව විවෘත නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2493
+#: dlls/kernelbase/winerror.mc:2495
 msgid "Hotkey not registered.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2498
+#: dlls/kernelbase/winerror.mc:2500
 msgid "Not a dialog window.\n"
 msgstr "සංවාද කවුළුවක් නෙමෙයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2503
+#: dlls/kernelbase/winerror.mc:2505
 msgid "Control ID not found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2508
+#: dlls/kernelbase/winerror.mc:2510
 msgid "Invalid combo box message.\n"
 msgstr "අවලංගු සංයුක්ත කොටුවේ පණිවිඩය.\n"
 
-#: dlls/kernelbase/winerror.mc:2513
+#: dlls/kernelbase/winerror.mc:2515
 msgid "Not a combo box window.\n"
 msgstr "සංයුක්ත කොටු කවුළුවක් නෙමෙයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2518
+#: dlls/kernelbase/winerror.mc:2520
 msgid "Invalid edit height.\n"
 msgstr "අවලංගු edit උස.\n"
 
-#: dlls/kernelbase/winerror.mc:2523
+#: dlls/kernelbase/winerror.mc:2525
 msgid "DC not found.\n"
 msgstr "DC හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2528
+#: dlls/kernelbase/winerror.mc:2530
 msgid "Invalid hook filter.\n"
 msgstr "අවලංගු කොක්ක පෙරහන.\n"
 
-#: dlls/kernelbase/winerror.mc:2533
+#: dlls/kernelbase/winerror.mc:2535
 msgid "Invalid filter procedure.\n"
 msgstr "අවලංගු පෙරහන පටිපාටිය.\n"
 
-#: dlls/kernelbase/winerror.mc:2538
+#: dlls/kernelbase/winerror.mc:2540
 msgid "Hook procedure needs module handle.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2543
+#: dlls/kernelbase/winerror.mc:2545
 msgid "Global-only hook procedure.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2548
+#: dlls/kernelbase/winerror.mc:2550
 msgid "Journal hook already set.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2553
+#: dlls/kernelbase/winerror.mc:2555
 msgid "Hook procedure not installed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2558
+#: dlls/kernelbase/winerror.mc:2560
 msgid "Invalid list box message.\n"
 msgstr "අවලංගු ලැයිස්තු කොටුව පණිවිඩය.\n"
 
-#: dlls/kernelbase/winerror.mc:2563
+#: dlls/kernelbase/winerror.mc:2565
 msgid "Invalid LB_SETCOUNT sent.\n"
 msgstr "අවලංගු LB_SETCOUNT එකක් යවලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2568
+#: dlls/kernelbase/winerror.mc:2570
 msgid "No tab stops on this list box.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2573
+#: dlls/kernelbase/winerror.mc:2575
 msgid "Can't destroy object owned by another thread.\n"
 msgstr "වෙන පොටක වස්තුවක් විනාශ කරන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2578
+#: dlls/kernelbase/winerror.mc:2580
 msgid "Child window menus not allowed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2583
+#: dlls/kernelbase/winerror.mc:2585
 msgid "Window has no system menu.\n"
 msgstr "කවුළුවට පද්දතිය මෙනුවක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2588
+#: dlls/kernelbase/winerror.mc:2590
 msgid "Invalid message box style.\n"
 msgstr "අවලංගු පණිවිඩ කොටුව විලාසය.\n"
 
-#: dlls/kernelbase/winerror.mc:2593
+#: dlls/kernelbase/winerror.mc:2595
 msgid "Invalid SPI parameter.\n"
 msgstr "අවලංගු SPI පරාමිතියක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2598
+#: dlls/kernelbase/winerror.mc:2600
 msgid "Screen already locked.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2603
+#: dlls/kernelbase/winerror.mc:2605
 msgid "Window handles have different parents.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2608
+#: dlls/kernelbase/winerror.mc:2610
 msgid "Not a child window.\n"
 msgstr "ළමා කවුළුවක් නෙමෙයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2613
+#: dlls/kernelbase/winerror.mc:2615
 msgid "Invalid GW command.\n"
 msgstr "අවලංගු GW විධානය.\n"
 
-#: dlls/kernelbase/winerror.mc:2618
+#: dlls/kernelbase/winerror.mc:2620
 msgid "Invalid thread ID.\n"
 msgstr "අවලංගු පොට ID එකක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2623
+#: dlls/kernelbase/winerror.mc:2625
 msgid "Not an MDI child window.\n"
 msgstr "MDI ළමා කවුළුවක් නෙමෙයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2628
+#: dlls/kernelbase/winerror.mc:2630
 msgid "Popup menu already active.\n"
 msgstr "උත්පතන මෙනුව දැනටමත් සක්‍රියයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2633
+#: dlls/kernelbase/winerror.mc:2635
 msgid "No scrollbars.\n"
 msgstr "අනුචලන තීරු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2638
+#: dlls/kernelbase/winerror.mc:2640
 msgid "Invalid scrollbar range.\n"
 msgstr "අවලංගු අනුචලන තීරුවේ පරාසය.\n"
 
-#: dlls/kernelbase/winerror.mc:2643
+#: dlls/kernelbase/winerror.mc:2645
 msgid "Invalid ShowWin command.\n"
 msgstr "අවලංගු ShowWin විධානය.\n"
 
-#: dlls/kernelbase/winerror.mc:2648
+#: dlls/kernelbase/winerror.mc:2650
 msgid "No system resources.\n"
 msgstr "පද්ධති සම්පත් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2653
+#: dlls/kernelbase/winerror.mc:2655
 msgid "No non-paged system resources.\n"
 msgstr "නොන්-පේජ්ඩ් පද්ධති සම්පත් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2658
+#: dlls/kernelbase/winerror.mc:2660
 msgid "No paged system resources.\n"
 msgstr "පිටුගත කළ පද්ධති සම්පත් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2663
+#: dlls/kernelbase/winerror.mc:2665
 msgid "No working set quota.\n"
 msgstr "Working set කෝටාවක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2668
+#: dlls/kernelbase/winerror.mc:2670
 msgid "No page file quota.\n"
 msgstr "ප්‍රතිහරණ ගොනුව කෝටාවක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2673
+#: dlls/kernelbase/winerror.mc:2675
 msgid "Exceeded commitment limit.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2678
+#: dlls/kernelbase/winerror.mc:2680
 msgid "Menu item not found.\n"
 msgstr "මෙනුවෙ අයිතමය හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2683
+#: dlls/kernelbase/winerror.mc:2685
 msgid "Invalid keyboard handle.\n"
 msgstr "අවලංගු යතුරුපුවරුව හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:2688
+#: dlls/kernelbase/winerror.mc:2690
 msgid "Hook type not allowed.\n"
 msgstr "කොක්ක වර්ගයට ඉඩ දෙන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2693
+#: dlls/kernelbase/winerror.mc:2695
 msgid "Interactive window station required.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2698
+#: dlls/kernelbase/winerror.mc:2700
 msgid "Timeout.\n"
 msgstr "කාලඡේදනය.\n"
 
-#: dlls/kernelbase/winerror.mc:2703
+#: dlls/kernelbase/winerror.mc:2705
 msgid "Invalid monitor handle.\n"
 msgstr "අවලංගු මොනිටරය හසුරුව.\n"
 
-#: dlls/kernelbase/winerror.mc:2708
+#: dlls/kernelbase/winerror.mc:2710
 msgid "Event log file corrupt.\n"
 msgstr "සිද්ධි ලොගය ගොනුව සදොස් වෙලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2713
+#: dlls/kernelbase/winerror.mc:2715
 msgid "Event log can't start.\n"
 msgstr "සිද්ධි ලොගය පටන් ගන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2718
+#: dlls/kernelbase/winerror.mc:2720
 msgid "Event log file full.\n"
 msgstr "සිද්ධි ලොගය ගොනුව පිරිලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2723
+#: dlls/kernelbase/winerror.mc:2725
 msgid "Event log file changed.\n"
 msgstr "සිද්ධි ලොගය ගොනුව වෙනස් වෙලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2728
+#: dlls/kernelbase/winerror.mc:2730
 msgid "Installer service failed.\n"
 msgstr "ස්ථාපකය සේවාව අසාර්ථකයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2733
+#: dlls/kernelbase/winerror.mc:2735
 msgid "Installation aborted by user.\n"
 msgstr "ස්ථාපනය අහෝසි කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:2738
+#: dlls/kernelbase/winerror.mc:2740
 msgid "Installation failure.\n"
 msgstr "ස්ථාපනය අසාර්ථකයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2743
+#: dlls/kernelbase/winerror.mc:2745
 msgid "Installation suspended.\n"
 msgstr "ස්ථාපනය අත්හිටුවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2748
+#: dlls/kernelbase/winerror.mc:2750
 msgid "Unknown product.\n"
 msgstr "දන්නේ නැති නිෂ්පාදිතයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2753
+#: dlls/kernelbase/winerror.mc:2755
 msgid "Unknown feature.\n"
 msgstr "දන්නේ නැති වි‍ශේෂාංගයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2758
+#: dlls/kernelbase/winerror.mc:2760
 msgid "Unknown component.\n"
 msgstr "දන්නේ නැති සංරචකයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2763
+#: dlls/kernelbase/winerror.mc:2765
 msgid "Unknown property.\n"
 msgstr "දන්නේ නැති ගුණාංගයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2768
+#: dlls/kernelbase/winerror.mc:2770
 msgid "Invalid handle state.\n"
 msgstr "අවලංගු හසුරුව තත්වය.\n"
 
-#: dlls/kernelbase/winerror.mc:2773
+#: dlls/kernelbase/winerror.mc:2775
 msgid "Bad configuration.\n"
 msgstr "හොඳ නැති වින්‍යාසයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2778
+#: dlls/kernelbase/winerror.mc:2780
 msgid "Index is missing.\n"
 msgstr "සූචිය නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2783
+#: dlls/kernelbase/winerror.mc:2785
 msgid "Installation source is missing.\n"
 msgstr "ස්ථාපනය මූලය නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2788
+#: dlls/kernelbase/winerror.mc:2790
 msgid "Wrong installation package version.\n"
 msgstr "වැරදි ස්ථාපන පැකේජය අනුවාදය.\n"
 
-#: dlls/kernelbase/winerror.mc:2793
+#: dlls/kernelbase/winerror.mc:2795
 msgid "Product uninstalled.\n"
 msgstr "නිෂ්පාදිතය අස්ථාපනය කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:2798
+#: dlls/kernelbase/winerror.mc:2800
 msgid "Invalid query syntax.\n"
 msgstr "අවලංගු විමසුම රීතිය.\n"
 
-#: dlls/kernelbase/winerror.mc:2803
+#: dlls/kernelbase/winerror.mc:2805
 msgid "Invalid field.\n"
 msgstr "ක්ෂේත්රය වලංගු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2808
+#: dlls/kernelbase/winerror.mc:2810
 msgid "Device removed.\n"
 msgstr "ආම්පන්නය ඉවත් කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:2813
+#: dlls/kernelbase/winerror.mc:2815
 msgid "Installation already running.\n"
 msgstr "ස්ථාපනය දැනටමත් වෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2818
+#: dlls/kernelbase/winerror.mc:2820
 msgid "Installation package failed to open.\n"
 msgstr "ස්ථාපන පැකේජය ඇරෙන්න බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:2823
+#: dlls/kernelbase/winerror.mc:2825
 msgid "Installation package is invalid.\n"
 msgstr "ස්ථාපන පැකේජය වලංගු නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2828
+#: dlls/kernelbase/winerror.mc:2830
 msgid "Installer user interface failed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2833
+#: dlls/kernelbase/winerror.mc:2835
 msgid "Failed to open installation log file.\n"
 msgstr "ස්ථාපනය ලොග ගොනුව විවෘත කරන්න බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:2838
+#: dlls/kernelbase/winerror.mc:2840
 msgid "Installation language not supported.\n"
 msgstr "ස්ථාපනය භාෂාව සහාය නොදක්වයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2843
+#: dlls/kernelbase/winerror.mc:2845
 msgid "Installation transform failed to apply.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2848
+#: dlls/kernelbase/winerror.mc:2850
 msgid "Installation package rejected.\n"
 msgstr "ස්ථාපන පැකේජය ප්‍රතික්ෂේප කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:2853
+#: dlls/kernelbase/winerror.mc:2855
 msgid "Function could not be called.\n"
 msgstr "ශ්‍රිතය කෝල් කරන්න බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:2858
+#: dlls/kernelbase/winerror.mc:2860
 msgid "Function failed.\n"
 msgstr "ශ්‍රිතය අසාර්ථකයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2863
+#: dlls/kernelbase/winerror.mc:2865
 msgid "Invalid table.\n"
 msgstr "අවලංගු වගුවක්.\n"
 
-#: dlls/kernelbase/winerror.mc:2868
+#: dlls/kernelbase/winerror.mc:2870
 msgid "Data type mismatch.\n"
 msgstr "දත්ත වර්ගය ගැලපෙන්නේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2873 dlls/kernelbase/winerror.mc:3083
+#: dlls/kernelbase/winerror.mc:2875 dlls/kernelbase/winerror.mc:3085
 msgid "Unsupported type.\n"
 msgstr "වර්ගය සහාය නොදක්වයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2878
+#: dlls/kernelbase/winerror.mc:2880
 msgid "Creation failed.\n"
 msgstr "හැදීම අසාර්ථකයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2883
+#: dlls/kernelbase/winerror.mc:2885
 msgid "Temporary directory not writable.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2888
+#: dlls/kernelbase/winerror.mc:2890
 msgid "Installation platform not supported.\n"
 msgstr "ස්ථාපනය වේදිකාව සහාය නොදක්වයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2893
+#: dlls/kernelbase/winerror.mc:2895
 msgid "Installer not used.\n"
 msgstr "ස්ථාපකය පාවිච්චි කරලා නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2898
+#: dlls/kernelbase/winerror.mc:2900
 msgid "Failed to open the patch package.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2903
+#: dlls/kernelbase/winerror.mc:2905
 msgid "Invalid patch package.\n"
 msgstr "අවලංගු සිදුර පැකේජය.\n"
 
-#: dlls/kernelbase/winerror.mc:2908
+#: dlls/kernelbase/winerror.mc:2910
 msgid "Unsupported patch package.\n"
 msgstr "සිදුර පැකේජය සිදුර පැකේජය.\n"
 
-#: dlls/kernelbase/winerror.mc:2913
+#: dlls/kernelbase/winerror.mc:2915
 msgid "Another version is installed.\n"
 msgstr "වෙන අනුවාදයක් ස්ථාපන කරලා තියෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:2918
+#: dlls/kernelbase/winerror.mc:2920
 msgid "Invalid command line.\n"
 msgstr "අවලංගු විධාන පේළිය.\n"
 
-#: dlls/kernelbase/winerror.mc:2923
+#: dlls/kernelbase/winerror.mc:2925
 msgid "Remote installation not allowed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2928
+#: dlls/kernelbase/winerror.mc:2930
 msgid "Reboot initiated after successful install.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2933
+#: dlls/kernelbase/winerror.mc:2935
 msgid "Invalid string binding.\n"
 msgstr "අවලංගු අනුලකුණු වැල බැඳීම.\n"
 
-#: dlls/kernelbase/winerror.mc:2938
+#: dlls/kernelbase/winerror.mc:2940
 msgid "Wrong kind of binding.\n"
 msgstr "වැරදි බැඳීම වර්ගය.\n"
 
-#: dlls/kernelbase/winerror.mc:2943
+#: dlls/kernelbase/winerror.mc:2945
 msgid "Invalid binding.\n"
 msgstr "අවලංගු බැඳීම.\n"
 
-#: dlls/kernelbase/winerror.mc:2948
+#: dlls/kernelbase/winerror.mc:2950
 msgid "RPC protocol sequence not supported.\n"
 msgstr "RPC ප්‍රොටෝකෝලයෙ පටිපාටිය නොදක්වයි.\n"
 
-#: dlls/kernelbase/winerror.mc:2953
+#: dlls/kernelbase/winerror.mc:2955
 msgid "Invalid RPC protocol sequence.\n"
 msgstr "අවලංගු RPC ප්‍රොටෝකෝලයෙ පටිපාටිය.\n"
 
-#: dlls/kernelbase/winerror.mc:2958
+#: dlls/kernelbase/winerror.mc:2960
 msgid "Invalid string UUID.\n"
 msgstr "අවලංගු අනුලකුණු වැල UUID.\n"
 
-#: dlls/kernelbase/winerror.mc:2963
+#: dlls/kernelbase/winerror.mc:2965
 msgid "Invalid endpoint format.\n"
 msgstr "අවලංගු අවසන් ලක්ෂ්‍යය ආකෘතිය.\n"
 
-#: dlls/kernelbase/winerror.mc:2968
+#: dlls/kernelbase/winerror.mc:2970
 msgid "Invalid network address.\n"
 msgstr "අවලංගු ජාල ලිපිනය.\n"
 
-#: dlls/kernelbase/winerror.mc:2973
+#: dlls/kernelbase/winerror.mc:2975
 msgid "No endpoint found.\n"
 msgstr "අවසන් ලක්ෂ්‍යයක් හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:2978
+#: dlls/kernelbase/winerror.mc:2980
 msgid "Invalid timeout value.\n"
 msgstr "අවලංගු කාලඡේදනය අගය.\n"
 
-#: dlls/kernelbase/winerror.mc:2983
+#: dlls/kernelbase/winerror.mc:2985
 msgid "Object UUID not found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:2988
+#: dlls/kernelbase/winerror.mc:2990
 msgid "UUID already registered.\n"
 msgstr "UUID එක දැනටමත් ලියාපදිංච කරලා තියෙන්නේ.\n"
 
-#: dlls/kernelbase/winerror.mc:2993
+#: dlls/kernelbase/winerror.mc:2995
 msgid "UUID type already registered.\n"
 msgstr "UUID වර්ගය දැනටමත් ලියාපදිංච කරලා තියෙන්නේ.\n"
 
-#: dlls/kernelbase/winerror.mc:2998
+#: dlls/kernelbase/winerror.mc:3000
 msgid "Server already listening.\n"
 msgstr "සේවාදායකය දැනටමත් අහගෙන ඉන්නවා.\n"
 
-#: dlls/kernelbase/winerror.mc:3003
+#: dlls/kernelbase/winerror.mc:3005
 msgid "No protocol sequences registered.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3008
+#: dlls/kernelbase/winerror.mc:3010
 msgid "RPC server not listening.\n"
 msgstr "RPC සේවාදායකය අහගෙන ඉන්නෙ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3013
+#: dlls/kernelbase/winerror.mc:3015
 msgid "Unknown manager type.\n"
 msgstr "දන්නෙ නැති කළමනාකරු වර්ගයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3018
+#: dlls/kernelbase/winerror.mc:3020
 msgid "Unknown interface.\n"
 msgstr "දන්නෙ නැති අතුරුමුහුණතක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3023
+#: dlls/kernelbase/winerror.mc:3025
 msgid "No bindings.\n"
 msgstr "බැඳිම් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3028
+#: dlls/kernelbase/winerror.mc:3030
 msgid "No protocol sequences.\n"
 msgstr "ප්‍රොටෝකෝල පටිපාටි නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3033
+#: dlls/kernelbase/winerror.mc:3035
 msgid "Can't create endpoint.\n"
 msgstr "අවසන් ලක්ෂ්‍යය හදන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3038
+#: dlls/kernelbase/winerror.mc:3040
 msgid "Out of resources.\n"
 msgstr "සම්පත් ඉවරයි.\n"
 
-#: dlls/kernelbase/winerror.mc:3043
+#: dlls/kernelbase/winerror.mc:3045
 msgid "RPC server unavailable.\n"
 msgstr "RPC සේවාදායකය ලද නොහැකි.\n"
 
-#: dlls/kernelbase/winerror.mc:3048
+#: dlls/kernelbase/winerror.mc:3050
 msgid "RPC server too busy.\n"
 msgstr "RPC සේවාදායකය කාර්යබහුල වැඩි.\n"
 
-#: dlls/kernelbase/winerror.mc:3053
+#: dlls/kernelbase/winerror.mc:3055
 msgid "Invalid network options.\n"
 msgstr "අවලංගු ජාල විකල්ප.\n"
 
-#: dlls/kernelbase/winerror.mc:3058
+#: dlls/kernelbase/winerror.mc:3060
 msgid "No RPC call active.\n"
 msgstr "සක්‍රිය RPC කෝල් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3063
+#: dlls/kernelbase/winerror.mc:3065
 msgid "RPC call failed.\n"
 msgstr "RPC කෝල් එක බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:3068
+#: dlls/kernelbase/winerror.mc:3070
 #, fuzzy
 msgid "RPC call failed and didn't execute.\n"
 msgstr "RPC කෝල් එක බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:3073
+#: dlls/kernelbase/winerror.mc:3075
 msgid "RPC protocol error.\n"
 msgstr "RPC ප්‍රොටොකෝලයේ දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3078
+#: dlls/kernelbase/winerror.mc:3080
 msgid "Unsupported transfer syntax.\n"
 msgstr "මාරුව රීති සහාය නොදක්වයි.\n"
 
-#: dlls/kernelbase/winerror.mc:3088
+#: dlls/kernelbase/winerror.mc:3090
 msgid "Invalid tag.\n"
 msgstr "අවලංගු ටැගය.\n"
 
-#: dlls/kernelbase/winerror.mc:3093
+#: dlls/kernelbase/winerror.mc:3095
 msgid "Invalid array bounds.\n"
 msgstr "අවලංගු ආරාව සීමාවෙන්.\n"
 
-#: dlls/kernelbase/winerror.mc:3098
+#: dlls/kernelbase/winerror.mc:3100
 msgid "No entry name.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3103
+#: dlls/kernelbase/winerror.mc:3105
 msgid "Invalid name syntax.\n"
 msgstr "අවලංගු නමේ රීතිය.\n"
 
-#: dlls/kernelbase/winerror.mc:3108
+#: dlls/kernelbase/winerror.mc:3110
 msgid "Unsupported name syntax.\n"
 msgstr "නම රීති සහාය නොදක්වයි.\n"
 
-#: dlls/kernelbase/winerror.mc:3113
+#: dlls/kernelbase/winerror.mc:3115
 msgid "No network address.\n"
 msgstr "ජාල ලිපිනය නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3118
+#: dlls/kernelbase/winerror.mc:3120
 msgid "Duplicate endpoint.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3123
+#: dlls/kernelbase/winerror.mc:3125
 msgid "Unknown authentication type.\n"
 msgstr "දන්නේ නැති සත්‍යාපනය වර්ගයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3128
+#: dlls/kernelbase/winerror.mc:3130
 msgid "Maximum calls too low.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3133
+#: dlls/kernelbase/winerror.mc:3135
 msgid "String too long.\n"
 msgstr "අනුලකුණු වැලේ දිග වැඩි.\n"
 
-#: dlls/kernelbase/winerror.mc:3138
+#: dlls/kernelbase/winerror.mc:3140
 msgid "Protocol sequence not found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3143
+#: dlls/kernelbase/winerror.mc:3145
 msgid "Procedure number out of range.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3148
+#: dlls/kernelbase/winerror.mc:3150
 msgid "Binding has no authentication data.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3153
+#: dlls/kernelbase/winerror.mc:3155
 msgid "Unknown authentication service.\n"
 msgstr "දන්නෙ නැති සත්‍යාපනය සේවාව.\n"
 
-#: dlls/kernelbase/winerror.mc:3158
+#: dlls/kernelbase/winerror.mc:3160
 msgid "Unknown authentication level.\n"
 msgstr "දන්නෙ නැති සත්‍යාපනය මට්ටම.\n"
 
-#: dlls/kernelbase/winerror.mc:3163
+#: dlls/kernelbase/winerror.mc:3165
 msgid "Invalid authentication identity.\n"
 msgstr "අවලංගු සත්‍යාපන අනන්‍යතාවය.\n"
 
-#: dlls/kernelbase/winerror.mc:3168
+#: dlls/kernelbase/winerror.mc:3170
 msgid "Unknown authorization service.\n"
 msgstr "දන්නේ නැති අනුමැතිය සේවාවක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3173
+#: dlls/kernelbase/winerror.mc:3175
 msgid "Invalid entry.\n"
 msgstr "අවලංගු සටහනක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3178
+#: dlls/kernelbase/winerror.mc:3180
 msgid "Can't perform operation.\n"
 msgstr "මෙහෙයුම කරන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3183
+#: dlls/kernelbase/winerror.mc:3185
 msgid "Endpoints not registered.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3188
+#: dlls/kernelbase/winerror.mc:3190
 msgid "Nothing to export.\n"
 msgstr "නිර්යාත කරන්නට මොකක්වත් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3193
+#: dlls/kernelbase/winerror.mc:3195
 msgid "Incomplete name.\n"
 msgstr "අසම්පුර්ණ නම.\n"
 
-#: dlls/kernelbase/winerror.mc:3198
+#: dlls/kernelbase/winerror.mc:3200
 msgid "Invalid version option.\n"
 msgstr "අවලංගු අනුවාදය විකල්පය.\n"
 
-#: dlls/kernelbase/winerror.mc:3203
+#: dlls/kernelbase/winerror.mc:3205
 msgid "No more members.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3208
+#: dlls/kernelbase/winerror.mc:3210
 msgid "Not all objects unexported.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3213
+#: dlls/kernelbase/winerror.mc:3215
 msgid "Interface not found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3218
+#: dlls/kernelbase/winerror.mc:3220
 msgid "Entry already exists.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3223
+#: dlls/kernelbase/winerror.mc:3225
 msgid "Entry not found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3228
+#: dlls/kernelbase/winerror.mc:3230
 msgid "Name service unavailable.\n"
 msgstr "නම සේවාව ලද නොහැකි.\n"
 
-#: dlls/kernelbase/winerror.mc:3233
+#: dlls/kernelbase/winerror.mc:3235
 msgid "Invalid network address family.\n"
 msgstr "අවලංගු ජාල ලිපිනය පවුල.\n"
 
-#: dlls/kernelbase/winerror.mc:3238
+#: dlls/kernelbase/winerror.mc:3240
 msgid "Operation not supported.\n"
 msgstr "මෙහෙයුම සහාය නොදක්වයි.\n"
 
-#: dlls/kernelbase/winerror.mc:3243
+#: dlls/kernelbase/winerror.mc:3245
 msgid "No security context available.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3248
+#: dlls/kernelbase/winerror.mc:3250
 msgid "RPCInternal error.\n"
 msgstr "RPCInternal දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3253
+#: dlls/kernelbase/winerror.mc:3255
 msgid "RPC divide-by-zero.\n"
 msgstr "RPC ශුන්ය-ලෙස-බෙදීම.\n"
 
-#: dlls/kernelbase/winerror.mc:3258
+#: dlls/kernelbase/winerror.mc:3260
 msgid "Address error.\n"
 msgstr "ලිපින දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3263
+#: dlls/kernelbase/winerror.mc:3265
 msgid "Floating-point divide-by-zero.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3268
+#: dlls/kernelbase/winerror.mc:3270
 msgid "Floating-point underflow.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3273
+#: dlls/kernelbase/winerror.mc:3275
 msgid "Floating-point overflow.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3278
+#: dlls/kernelbase/winerror.mc:3280
 msgid "No more entries.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3283
+#: dlls/kernelbase/winerror.mc:3285
 msgid "Character translation table open failed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3288
+#: dlls/kernelbase/winerror.mc:3290
 msgid "Character translation table file too small.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3293
+#: dlls/kernelbase/winerror.mc:3295
 msgid "Null context handle.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3298
+#: dlls/kernelbase/winerror.mc:3300
 msgid "Context handle damaged.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3303
+#: dlls/kernelbase/winerror.mc:3305
 msgid "Binding handle mismatch.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3308
+#: dlls/kernelbase/winerror.mc:3310
 msgid "Cannot get call handle.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3313
+#: dlls/kernelbase/winerror.mc:3315
 msgid "Null reference pointer.\n"
 msgstr "අභිශුන්‍යය පරිශීලන සුමකය.\n"
 
-#: dlls/kernelbase/winerror.mc:3318
+#: dlls/kernelbase/winerror.mc:3320
 msgid "Enumeration value out of range.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3323
+#: dlls/kernelbase/winerror.mc:3325
 msgid "Byte count too small.\n"
 msgstr "බයිට ගණන පොඩි වැඩි.\n"
 
-#: dlls/kernelbase/winerror.mc:3328
+#: dlls/kernelbase/winerror.mc:3330
 msgid "Bad stub data.\n"
 msgstr "හොඳ නැති ස්ටබ් දත්ත.\n"
 
-#: dlls/kernelbase/winerror.mc:3333
+#: dlls/kernelbase/winerror.mc:3335
 msgid "Invalid user buffer.\n"
 msgstr "අවලංගු පරිශීලක බෆරය.\n"
 
-#: dlls/kernelbase/winerror.mc:3338
+#: dlls/kernelbase/winerror.mc:3340
 msgid "Unrecognized media.\n"
 msgstr "මාධ්‍ය අඳුරගන්න බැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3343
+#: dlls/kernelbase/winerror.mc:3345
 msgid "No trust secret.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3348
+#: dlls/kernelbase/winerror.mc:3350
 msgid "No trust SAM account.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3353
+#: dlls/kernelbase/winerror.mc:3355
 msgid "Trusted domain failure.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3358
+#: dlls/kernelbase/winerror.mc:3360
 msgid "Trusted relationship failure.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3363
+#: dlls/kernelbase/winerror.mc:3365
 msgid "Trust logon failure.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3368
+#: dlls/kernelbase/winerror.mc:3370
 msgid "RPC call already in progress.\n"
 msgstr "RPC කෝල් එක දැනටමත් වෙනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:3373
+#: dlls/kernelbase/winerror.mc:3375
 msgid "NETLOGON is not started.\n"
 msgstr "NETLOGON ධාවන කරලා නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3378
+#: dlls/kernelbase/winerror.mc:3380
 msgid "Account expired.\n"
 msgstr "ගිණුම ඉකුත් වෙලා.\n"
 
-#: dlls/kernelbase/winerror.mc:3383
+#: dlls/kernelbase/winerror.mc:3385
 msgid "Redirector has open handles.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3388
+#: dlls/kernelbase/winerror.mc:3390
 msgid "Printer driver already installed.\n"
 msgstr "මුද්‍රකයේ ධාවකය දැනටමත් ස්ථාපන කරලා.\n"
 
-#: dlls/kernelbase/winerror.mc:3393
+#: dlls/kernelbase/winerror.mc:3395
 msgid "Unknown port.\n"
 msgstr "දන්නේ නැති තොට.\n"
 
-#: dlls/kernelbase/winerror.mc:3398
+#: dlls/kernelbase/winerror.mc:3400
 msgid "Unknown printer driver.\n"
 msgstr "දන්නේ නැති මුද්‍රකයේ ධාවකය.\n"
 
-#: dlls/kernelbase/winerror.mc:3403
+#: dlls/kernelbase/winerror.mc:3405
 msgid "Unknown print processor.\n"
 msgstr "දන්නේ නැති මුද්‍රණ සකසුව.\n"
 
-#: dlls/kernelbase/winerror.mc:3408
+#: dlls/kernelbase/winerror.mc:3410
 msgid "Invalid separator file.\n"
 msgstr "අවලංගු වෙන්කරණ ගොනුව.\n"
 
-#: dlls/kernelbase/winerror.mc:3413
+#: dlls/kernelbase/winerror.mc:3415
 msgid "Invalid priority.\n"
 msgstr "අවලංගු ප්‍රමුඛතාවය.\n"
 
-#: dlls/kernelbase/winerror.mc:3418
+#: dlls/kernelbase/winerror.mc:3420
 msgid "Invalid printer name.\n"
 msgstr "අවලංගු මුද්‍රකයේ නම.\n"
 
-#: dlls/kernelbase/winerror.mc:3423
+#: dlls/kernelbase/winerror.mc:3425
 msgid "Printer already exists.\n"
 msgstr "මුද්‍රකය දැනටමත් පවතිනවා.\n"
 
-#: dlls/kernelbase/winerror.mc:3428
+#: dlls/kernelbase/winerror.mc:3430
 msgid "Invalid printer command.\n"
 msgstr "අවලංගු මුද්‍රකය විධානය.\n"
 
-#: dlls/kernelbase/winerror.mc:3433
+#: dlls/kernelbase/winerror.mc:3435
 msgid "Invalid data type.\n"
 msgstr "අවලංගු දත්ත වර්ගය.\n"
 
-#: dlls/kernelbase/winerror.mc:3438
+#: dlls/kernelbase/winerror.mc:3440
 msgid "Invalid environment.\n"
 msgstr "අවලංගු වටපිටාව.\n"
 
-#: dlls/kernelbase/winerror.mc:3443
+#: dlls/kernelbase/winerror.mc:3445
 msgid "No more bindings.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3448
+#: dlls/kernelbase/winerror.mc:3450
 msgid "Can't log on with inter-domain trust account.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3453
+#: dlls/kernelbase/winerror.mc:3455
 msgid "Can't log on with workstation trust account.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3458
+#: dlls/kernelbase/winerror.mc:3460
 msgid "Can't log on with server trust account.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3463
+#: dlls/kernelbase/winerror.mc:3465
 msgid "Domain trust information inconsistent.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3468
+#: dlls/kernelbase/winerror.mc:3470
 msgid "Server has open handles.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3473
+#: dlls/kernelbase/winerror.mc:3475
 msgid "Resource data not found.\n"
 msgstr "සම්පත දත්ත හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3478
+#: dlls/kernelbase/winerror.mc:3480
 msgid "Resource type not found.\n"
 msgstr "සම්පත වර්ගය හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3483
+#: dlls/kernelbase/winerror.mc:3485
 msgid "Resource name not found.\n"
 msgstr "සම්පත නම හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3488
+#: dlls/kernelbase/winerror.mc:3490
 msgid "Resource language not found.\n"
 msgstr "සම්පත භාෂාව හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3493
+#: dlls/kernelbase/winerror.mc:3495
 msgid "Not enough quota.\n"
 msgstr "කෝටාව මදි.\n"
 
-#: dlls/kernelbase/winerror.mc:3498
+#: dlls/kernelbase/winerror.mc:3500
 msgid "No interfaces.\n"
 msgstr "අතුරුමුහුණත් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3503
+#: dlls/kernelbase/winerror.mc:3505
 msgid "RPC call canceled.\n"
 msgstr "RPC කෝල් එක අවලංගු කරා.\n"
 
-#: dlls/kernelbase/winerror.mc:3508
+#: dlls/kernelbase/winerror.mc:3510
 msgid "Binding incomplete.\n"
 msgstr "බැඳීම ඉවර නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3513
+#: dlls/kernelbase/winerror.mc:3515
 msgid "RPC comm failure.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3518
+#: dlls/kernelbase/winerror.mc:3520
 msgid "Unsupported authorization level.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3523
+#: dlls/kernelbase/winerror.mc:3525
 msgid "No principal name registered.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3528
+#: dlls/kernelbase/winerror.mc:3530
 msgid "Not an RPC error.\n"
 msgstr "RPC දෝෂයක් නොවේ.\n"
 
-#: dlls/kernelbase/winerror.mc:3533
+#: dlls/kernelbase/winerror.mc:3535
 msgid "UUID is local only.\n"
 msgstr "UUID පෙදෙසි විතරයි.\n"
 
-#: dlls/kernelbase/winerror.mc:3538
+#: dlls/kernelbase/winerror.mc:3540
 msgid "Security package error.\n"
 msgstr "ආරක්ෂණ පැකේජය දෝෂයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3543
+#: dlls/kernelbase/winerror.mc:3545
 msgid "Thread not canceled.\n"
 msgstr "පොට අවලංගු කරල නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3548
+#: dlls/kernelbase/winerror.mc:3550
 msgid "Invalid handle operation.\n"
 msgstr "අවලංගු හසුරුව මෙහෙයුම.\n"
 
-#: dlls/kernelbase/winerror.mc:3553
+#: dlls/kernelbase/winerror.mc:3555
 msgid "Wrong serializing package version.\n"
 msgstr "වැරදි අනුක්‍රමගත කිරීමට පැකේජය අනුවාදය.\n"
 
-#: dlls/kernelbase/winerror.mc:3558
+#: dlls/kernelbase/winerror.mc:3560
 msgid "Wrong stub version.\n"
 msgstr "වැරදි ස්ටබ් අනුවාදය.\n"
 
-#: dlls/kernelbase/winerror.mc:3563
+#: dlls/kernelbase/winerror.mc:3565
 msgid "Invalid pipe object.\n"
 msgstr "අවලංගු බටය වස්තුව.\n"
 
-#: dlls/kernelbase/winerror.mc:3568
+#: dlls/kernelbase/winerror.mc:3570
 msgid "Wrong pipe order.\n"
 msgstr "වැරදි බට අනුපිළිවෙළ.\n"
 
-#: dlls/kernelbase/winerror.mc:3573
+#: dlls/kernelbase/winerror.mc:3575
 msgid "Wrong pipe version.\n"
 msgstr "වැරදි බටය අනුවාදය.\n"
 
-#: dlls/kernelbase/winerror.mc:3578
+#: dlls/kernelbase/winerror.mc:3580
 msgid "Group member not found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3583
+#: dlls/kernelbase/winerror.mc:3585
 msgid "Can't create endpoint mapper DB.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3588
+#: dlls/kernelbase/winerror.mc:3590
 msgid "Invalid object.\n"
 msgstr "අවලංගු වස්තුව.\n"
 
-#: dlls/kernelbase/winerror.mc:3593
+#: dlls/kernelbase/winerror.mc:3595
 msgid "Invalid time.\n"
 msgstr "අවලංගු වෙලාව.\n"
 
-#: dlls/kernelbase/winerror.mc:3598
+#: dlls/kernelbase/winerror.mc:3600
 msgid "Invalid form name.\n"
 msgstr "අවලංගු පෝරමයේ නම.\n"
 
-#: dlls/kernelbase/winerror.mc:3603
+#: dlls/kernelbase/winerror.mc:3605
 msgid "Invalid form size.\n"
 msgstr "අවලංගු පෝරමයේ ප්‍රමාණය.\n"
 
-#: dlls/kernelbase/winerror.mc:3608
+#: dlls/kernelbase/winerror.mc:3610
 msgid "Already awaiting printer handle.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3613
+#: dlls/kernelbase/winerror.mc:3615
 msgid "Printer deleted.\n"
 msgstr "මුද්‍රකයව මකලා.\n"
 
-#: dlls/kernelbase/winerror.mc:3618
+#: dlls/kernelbase/winerror.mc:3620
 msgid "Invalid printer state.\n"
 msgstr "අවලංගු මුද්‍රකය තත්වය.\n"
 
-#: dlls/kernelbase/winerror.mc:3623
+#: dlls/kernelbase/winerror.mc:3625
 msgid "User must change password.\n"
 msgstr "පරිශීලකයට මුර පදය වෙනස් කරන්න ඕනේ.\n"
 
-#: dlls/kernelbase/winerror.mc:3628
+#: dlls/kernelbase/winerror.mc:3630
 msgid "Domain controller not found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3633
+#: dlls/kernelbase/winerror.mc:3635
 msgid "Account locked out.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3638
+#: dlls/kernelbase/winerror.mc:3640
 msgid "Invalid pixel format.\n"
 msgstr "අවලංගු පික්සල ආකෘතිය.\n"
 
-#: dlls/kernelbase/winerror.mc:3643
+#: dlls/kernelbase/winerror.mc:3645
 msgid "Invalid driver.\n"
 msgstr "අවලංගු ධාවකයක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3648
+#: dlls/kernelbase/winerror.mc:3650
 #, fuzzy
 msgid "Invalid object resolver set.\n"
 msgstr "අවලංගු"
 
-#: dlls/kernelbase/winerror.mc:3653
+#: dlls/kernelbase/winerror.mc:3655
 msgid "Incomplete RPC send.\n"
 msgstr "RPC යැවීම ඉවර නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3658
+#: dlls/kernelbase/winerror.mc:3660
 msgid "Invalid asynchronous RPC handle.\n"
 msgstr "අවලංගු අසමමුහුර්ත RPC හසුරුවක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3663
+#: dlls/kernelbase/winerror.mc:3665
 msgid "Invalid asynchronous RPC call.\n"
 msgstr "අවලංගු අසමමුහුර්ත RPC කෝල් එකක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3668
+#: dlls/kernelbase/winerror.mc:3670
 msgid "RPC pipe closed.\n"
 msgstr "RPC බටය වහලා.\n"
 
-#: dlls/kernelbase/winerror.mc:3673
+#: dlls/kernelbase/winerror.mc:3675
 msgid "Discipline error on RPC pipe.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3678
+#: dlls/kernelbase/winerror.mc:3680
 msgid "No data on RPC pipe.\n"
 msgstr "RPC බටයේ දත්ත නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3683
+#: dlls/kernelbase/winerror.mc:3685
 msgid "No site name available.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3688
+#: dlls/kernelbase/winerror.mc:3690
 msgid "The file cannot be accessed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3693
+#: dlls/kernelbase/winerror.mc:3695
 msgid "The filename cannot be resolved.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3698
+#: dlls/kernelbase/winerror.mc:3700
 msgid "RPC entry type mismatch.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3703
+#: dlls/kernelbase/winerror.mc:3705
 msgid "Not all objects could be exported.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3708
+#: dlls/kernelbase/winerror.mc:3710
 msgid "The interface could not be exported.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3713
+#: dlls/kernelbase/winerror.mc:3715
 msgid "The profile could not be added.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3718
+#: dlls/kernelbase/winerror.mc:3720
 msgid "The profile element could not be added.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3723
+#: dlls/kernelbase/winerror.mc:3725
 msgid "The profile element could not be removed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3728
+#: dlls/kernelbase/winerror.mc:3730
 msgid "The group element could not be added.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3733
+#: dlls/kernelbase/winerror.mc:3735
 msgid "The group element could not be removed.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3738
+#: dlls/kernelbase/winerror.mc:3740
 msgid "The username could not be found.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3743
+#: dlls/kernelbase/winerror.mc:3745
 msgid "This network connection does not exist.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3748
+#: dlls/kernelbase/winerror.mc:3750
 #, fuzzy
 msgid "Call interrupted.\n"
 msgstr "අවලංගු"
 
-#: dlls/kernelbase/winerror.mc:3753
+#: dlls/kernelbase/winerror.mc:3755
 #, fuzzy
 #| msgid "Invalid handle.\n"
 msgid "Invalid file handle.\n"
 msgstr "අවලංගු හසුරුවක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3763
+#: dlls/kernelbase/winerror.mc:3765
 #, fuzzy
 #| msgid "Invalid network address.\n"
 msgid "Invalid pointer address.\n"
 msgstr "අවලංගු ජාල ලිපිනය.\n"
 
-#: dlls/kernelbase/winerror.mc:3768
+#: dlls/kernelbase/winerror.mc:3770
 #, fuzzy
 #| msgid "Invalid name.\n"
 msgid "Invalid argument.\n"
 msgstr "අවලංගු නමක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3778
+#: dlls/kernelbase/winerror.mc:3780
 msgid "Cannot assign requested address.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3783
+#: dlls/kernelbase/winerror.mc:3785
 msgid "Connection reset by peer.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3793
+#: dlls/kernelbase/winerror.mc:3795
 #, fuzzy
 #| msgid "Point not found.\n"
 msgid "Host not found.\n"
 msgstr "පොයින්ටය හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3798
+#: dlls/kernelbase/winerror.mc:3800
 #, fuzzy
 #| msgid "Attribute is not found.\n"
 msgid "Nonauthoritative host not found.\n"
 msgstr "උපලක්ෂණය හම්බු උනේ නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3803
+#: dlls/kernelbase/winerror.mc:3805
 #, fuzzy
 #| msgid "Unrecoverable error occurred.\n"
 msgid "Nonrecoverable error.\n"
 msgstr "ප්‍රතිසාධනය කළ නොහැකි දෝෂයක් සිදු විය.\n"
 
-#: dlls/kernelbase/winerror.mc:3808
+#: dlls/kernelbase/winerror.mc:3810
 msgid "Name valid, no data record.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3822
+#: dlls/kernelbase/winerror.mc:3831
 #, fuzzy
 #| msgid "Not implemented"
 msgid "Not implemented.\n"
 msgstr "හදල නැහැ"
 
-#: dlls/kernelbase/winerror.mc:3843
+#: dlls/kernelbase/winerror.mc:3852
 #, fuzzy
 #| msgid "RPC call failed.\n"
 msgid "Call failed.\n"
 msgstr "RPC කෝල් එක බැරි උනා.\n"
 
-#: dlls/kernelbase/winerror.mc:3815
+#: dlls/kernelbase/winerror.mc:3817
+#, fuzzy
+#| msgid "Invalid pipe object.\n"
+msgid "Unable to find matching object.\n"
+msgstr "අවලංගු බටය වස්තුව.\n"
+
+#: dlls/kernelbase/winerror.mc:3824
 msgid "No Signature found in file.\n"
 msgstr "ගොනුවේ අත්සනයක් නැහැ.\n"
 
-#: dlls/kernelbase/winerror.mc:3829
+#: dlls/kernelbase/winerror.mc:3838
 #, fuzzy
 #| msgid "Invalid level.\n"
 msgid "Invalid call.\n"
 msgstr "අවලංගු මට්ටමක්.\n"
 
-#: dlls/kernelbase/winerror.mc:3836
+#: dlls/kernelbase/winerror.mc:3845
 #, fuzzy
 #| msgid "Value is not available.\n"
 msgid "Resource is not currently available.\n"
@@ -8991,6 +8997,228 @@ msgstr "මුළු රාමු (සම්පීඩණය කරපු නැ�
 #: dlls/msvidc32/msvidc32.rc:29
 msgid "Wine Video 1 video codec"
 msgstr "Wine වීඩියෝ 1 වීඩියෝ කොඩෙක්"
+
+#: dlls/msxml3/msxml.mc:31
+#, fuzzy
+#| msgid "Undefined Type"
+msgid "Undefined reference\n"
+msgstr "නිර්ණය නොකළ වර්ගයක්"
+
+#: dlls/msxml3/msxml.mc:38
+msgid "Found self-referential entity\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:45
+msgid "Unparsed entity reference\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:52
+msgid "Name text contains colon ':'\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:59
+msgid "Namespace prefix hasn't been declared\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:66
+#, fuzzy
+#| msgid "Expected '='"
+msgid "Expected '=' character\n"
+msgstr "අපේක්ෂා කරේ '='"
+
+#: dlls/msxml3/msxml.mc:73
+#, fuzzy
+#| msgid "Expected an operator.\n"
+msgid "Expected a quote character\n"
+msgstr "අපේක්ෂා කරේ මෙහෙයුම්කාරකයක්.\n"
+
+#: dlls/msxml3/msxml.mc:80
+msgid "Malformed comment\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:87
+#, fuzzy
+#| msgid "Invalid character"
+msgid "Invalid name start character\n"
+msgstr "අවලංගු අනුලකුණක්"
+
+#: dlls/msxml3/msxml.mc:94
+#, fuzzy
+#| msgid "Invalid character"
+msgid "Invalid name character\n"
+msgstr "අවලංගු අනුලකුණක්"
+
+#: dlls/msxml3/msxml.mc:101
+msgid "The '<' character found in attribute value\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:108
+#, fuzzy
+#| msgid "Expected an operator.\n"
+msgid "Expected whitespace character\n"
+msgstr "අපේක්ෂා කරේ මෙහෙයුම්කාරකයක්.\n"
+
+#: dlls/msxml3/msxml.mc:115
+#, fuzzy
+#| msgid "Expected an operator.\n"
+msgid "Expected end tag character '>'\n"
+msgstr "අපේක්ෂා කරේ මෙහෙයුම්කාරකයක්.\n"
+
+#: dlls/msxml3/msxml.mc:122
+#, fuzzy
+#| msgid "Invalid character(s) in path"
+msgid "Invalid character in DTD content\n"
+msgstr "පෙතේ වලංගු නැති අනුලකුණක් (අනුලකුණු) තියෙනවා"
+
+#: dlls/msxml3/msxml.mc:129
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected ';' character\n"
+msgstr "අපේක්ෂා කරේ ';'"
+
+#: dlls/msxml3/msxml.mc:136
+#, fuzzy
+#| msgid "Invalid character(s) in path"
+msgid "Invalid character in entity reference\n"
+msgstr "පෙතේ වලංගු නැති අනුලකුණක් (අනුලකුණු) තියෙනවා"
+
+#: dlls/msxml3/msxml.mc:143
+#, fuzzy
+#| msgid "Invalid character(s) in path"
+msgid "Invalid character in mixed DTD content\n"
+msgstr "පෙතේ වලංගු නැති අනුලකුණක් (අනුලකුණු) තියෙනවා"
+
+#: dlls/msxml3/msxml.mc:150
+#, fuzzy
+#| msgid "Expected an operator.\n"
+msgid "Expected '*' character\n"
+msgstr "අපේක්ෂා කරේ මෙහෙයුම්කාරකයක්.\n"
+
+#: dlls/msxml3/msxml.mc:157
+#, fuzzy
+#| msgid "Expected an operator.\n"
+msgid "Expected parenthesis character\n"
+msgstr "අපේක්ෂා කරේ මෙහෙයුම්කාරකයක්.\n"
+
+#: dlls/msxml3/msxml.mc:164
+#, fuzzy
+#| msgid "Invalid character(s) in path"
+msgid "Invalid character in DTD enumeration\n"
+msgstr "පෙතේ වලංගු නැති අනුලකුණක් (අනුලකුණු) තියෙනවා"
+
+#: dlls/msxml3/msxml.mc:171
+#, fuzzy
+#| msgid "Invalid name syntax.\n"
+msgid "Invalid PI syntax\n"
+msgstr "අවලංගු නමේ රීතිය.\n"
+
+#: dlls/msxml3/msxml.mc:178
+#, fuzzy
+#| msgid "Expected an operator.\n"
+msgid "Expected closing quote character\n"
+msgstr "අපේක්ෂා කරේ මෙහෙයුම්කාරකයක්.\n"
+
+#: dlls/msxml3/msxml.mc:185
+msgid "Multiple colon character found\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:192
+#, fuzzy
+#| msgid "Invalid character"
+msgid "Invalid Unicode character\n"
+msgstr "අවලංගු අනුලකුණක්"
+
+#: dlls/msxml3/msxml.mc:199
+msgid "Expected whitespace or '?' character\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:206
+msgid "Unexpected end tag '>' character\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:213
+#, fuzzy
+#| msgid "Invalid group attributes.\n"
+msgid "Found duplicate attribute\n"
+msgstr "අවලංගු සමූහය ගුණාංග.\n"
+
+#: dlls/msxml3/msxml.mc:220
+#, fuzzy
+#| msgid "Key is invalid.\n"
+msgid "Document root is invalid\n"
+msgstr "යතුර වලංගු නැහැ.\n"
+
+#: dlls/msxml3/msxml.mc:227
+#, fuzzy
+#| msgid "Invalid handle operation.\n"
+msgid "Invalid xml declaration\n"
+msgstr "අවලංගු හසුරුව මෙහෙයුම.\n"
+
+#: dlls/msxml3/msxml.mc:234
+#, fuzzy
+#| msgid "Source is missing.\n"
+msgid "Document root is missing\n"
+msgstr "මූලය නැහැ.\n"
+
+#: dlls/msxml3/msxml.mc:241
+msgid "Unexpected end of input data stream\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:248
+msgid "Found unexpected CDATA closing markup ']]>'\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:255
+msgid "Found unterminated PI declaration\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:262
+msgid "Found unterminated end tag\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:269
+msgid "Found unterminated CDATA block\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:276
+msgid "Use namespace prefix is reserved\n"
+msgstr ""
+
+#: dlls/msxml3/msxml.mc:283
+#, fuzzy
+#| msgid "The passwords do not match."
+msgid "End tag does not match\n"
+msgstr "මුර පද ගැලපෙන්නේ නැහැ."
+
+#: dlls/msxml3/msxml.mc:290
+#, fuzzy
+#| msgid "Invalid domain name.\n"
+msgid "Invalid encoding name\n"
+msgstr "අවලංගු වසම් නම.\n"
+
+#: dlls/msxml3/msxml.mc:297
+#, fuzzy
+#| msgid "Invalid media type.\n"
+msgid "Invalid model in DTD contentspec\n"
+msgstr "අවලංගු මාධ්‍ය වර්ගය.\n"
+
+#: dlls/msxml3/msxml.mc:304
+#, fuzzy
+#| msgid "Invalid group attributes.\n"
+msgid "Invalid DTD attribute type\n"
+msgstr "අවලංගු සමූහය ගුණාංග.\n"
+
+#: dlls/msxml3/msxml.mc:311
+#, fuzzy
+#| msgid "Invalid handle operation.\n"
+msgid "Invalid standalone declaration\n"
+msgstr "අවලංගු හසුරුව මෙහෙයුම.\n"
+
+#: dlls/msxml3/msxml.mc:318
+#, fuzzy
+#| msgid "Invalid version option.\n"
+msgid "Invalid xml version\n"
+msgstr "අවලංගු අනුවාදය විකල්පය.\n"
 
 #: dlls/oleacc/oleacc.rc:31
 msgid "unknown object"

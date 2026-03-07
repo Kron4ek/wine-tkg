@@ -111,16 +111,17 @@ HRESULT WINAPI BluetoothGATTGetCharacteristics( HANDLE device, BTH_LE_GATT_SERVI
     if (!actual)
         return E_POINTER;
 
-    if ((buf && !count) || !service)
-        return E_INVALIDARG;
+     if (buf && !count)
+          return E_INVALIDARG;
 
-    size = offsetof( struct winebth_le_device_get_gatt_characteristics_params, characteristics[count] );
-    chars = calloc( 1, size );
-    if (!chars)
-        return HRESULT_FROM_WIN32( ERROR_NO_SYSTEM_RESOURCES );
-    chars->service = *service;
-    if (!DeviceIoControl( device, IOCTL_WINEBTH_LE_DEVICE_GET_GATT_CHARACTERISTICS, chars, size, chars,
-                               size, &bytes, NULL ) && GetLastError() != ERROR_MORE_DATA)
+     size = offsetof( struct winebth_le_device_get_gatt_characteristics_params, characteristics[count] );
+     chars = calloc( 1, size );
+     if (!chars)
+         return HRESULT_FROM_WIN32( ERROR_NO_SYSTEM_RESOURCES );
+     if (service)
+         chars->service = *service;
+     if (!DeviceIoControl( device, IOCTL_WINEBTH_LE_DEVICE_GET_GATT_CHARACTERISTICS, chars, size, chars,
+                           size, &bytes, NULL ) && GetLastError() != ERROR_MORE_DATA)
     {
         free( chars );
         return HRESULT_FROM_WIN32( GetLastError() );

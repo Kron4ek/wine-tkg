@@ -140,7 +140,7 @@ sub parse_makefile($)
         while (/\\$/) { chop; $_ .= <MAKE>; chomp; }  # merge continued lines
         next if (/^\s*$/);
 
-        if (/^\s*(MODULE|IMPORTLIB|TESTDLL|STATICLIB|EXTLIB|UNIXLIB|PARENTSRC|EXTRADLLFLAGS)\s*=\s*(.*)/)
+        if (/^\s*(MODULE|IMPORTLIB|TESTDLL|STATICLIB|UNIXLIB|PARENTSRC|EXTRADLLFLAGS)\s*=\s*(.*)/)
         {
             my $var = $1;
             $make{$var} = $2;
@@ -321,8 +321,8 @@ sub update_makefiles(@)
         my %make = %{$makefiles{$file}};
         (my $dir = $file) =~ s/^(.*)\/Makefile\.in/$1/;
 
-        die "Only one of MODULE, STATICLIB, EXTLIB, or TESTDLL must be specified in $file"
-            if defined($make{TESTDLL}) + defined($make{STATICLIB}) + defined($make{EXTLIB}) + defined($make{MODULE}) > 1;
+        die "Only one of MODULE, STATICLIB, or TESTDLL must be specified in $file"
+            if defined($make{TESTDLL}) + defined($make{STATICLIB}) + defined($make{MODULE}) > 1;
 
         if (defined($make{"TESTDLL"}))  # test
         {
@@ -331,11 +331,7 @@ sub update_makefiles(@)
         elsif (defined($make{"STATICLIB"}))
         {
             die "invalid STATICLIB name" unless $make{"STATICLIB"} =~ /\.a$/;
-        }
-        elsif (defined($make{"EXTLIB"}))
-        {
-            die "EXTLIB should not be defined in $file" unless $file =~ /^libs\//;
-            die "invalid EXTLIB name" unless $make{"EXTLIB"} =~ /\.a$/;
+            die "STATICLIB should not be defined in $file" unless $file =~ /^libs\//;
         }
         elsif (defined($make{"MODULE"}))  # dll or program
         {

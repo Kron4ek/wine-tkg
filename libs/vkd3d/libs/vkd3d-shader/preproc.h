@@ -64,7 +64,7 @@ struct preproc_expansion
     struct preproc_text *arg_values;
     /* Back-pointer to the macro, if this expansion a macro body. This is
      * necessary so that argument tokens can be correctly replaced. */
-    struct preproc_macro *macro;
+    const struct preproc_macro *macro;
 };
 
 struct preproc_macro
@@ -109,7 +109,7 @@ struct preproc_ctx
      */
     struct preproc_func_state
     {
-        struct preproc_macro *macro;
+        const struct preproc_macro *macro;
         size_t arg_count;
         enum
         {

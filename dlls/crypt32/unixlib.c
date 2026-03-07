@@ -37,7 +37,6 @@
 #endif
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
@@ -51,12 +50,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(crypt);
 
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
-/* Not present in gnutls version < 3.0 */
-int gnutls_pkcs12_simple_parse(gnutls_pkcs12_t p12, const char *password,
-    gnutls_x509_privkey_t *key, gnutls_x509_crt_t **chain, unsigned int *chain_len,
-    gnutls_x509_crt_t **extra_certs, unsigned int *extra_certs_len,
-    gnutls_x509_crl_t * crl, unsigned int flags);
-
 int gnutls_x509_privkey_get_pk_algorithm2(gnutls_x509_privkey_t, unsigned int*);
 
 static void *libgnutls_handle;
@@ -66,13 +59,26 @@ MAKE_FUNCPTR(gnutls_global_init);
 MAKE_FUNCPTR(gnutls_global_set_log_function);
 MAKE_FUNCPTR(gnutls_global_set_log_level);
 MAKE_FUNCPTR(gnutls_perror);
+MAKE_FUNCPTR(gnutls_pkcs12_bag_decrypt);
+MAKE_FUNCPTR(gnutls_pkcs12_bag_deinit);
+MAKE_FUNCPTR(gnutls_pkcs12_bag_get_count);
+MAKE_FUNCPTR(gnutls_pkcs12_bag_get_data);
+MAKE_FUNCPTR(gnutls_pkcs12_bag_get_type);
+MAKE_FUNCPTR(gnutls_pkcs12_bag_init);
 MAKE_FUNCPTR(gnutls_pkcs12_deinit);
+MAKE_FUNCPTR(gnutls_pkcs12_get_bag);
 MAKE_FUNCPTR(gnutls_pkcs12_import);
 MAKE_FUNCPTR(gnutls_pkcs12_init);
-MAKE_FUNCPTR(gnutls_pkcs12_simple_parse);
+MAKE_FUNCPTR(gnutls_pkcs12_verify_mac);
+MAKE_FUNCPTR(gnutls_x509_crt_deinit);
 MAKE_FUNCPTR(gnutls_x509_crt_export);
+MAKE_FUNCPTR(gnutls_x509_crt_import);
+MAKE_FUNCPTR(gnutls_x509_crt_init);
+MAKE_FUNCPTR(gnutls_x509_privkey_deinit);
 MAKE_FUNCPTR(gnutls_x509_privkey_export_rsa_raw2);
 MAKE_FUNCPTR(gnutls_x509_privkey_get_pk_algorithm2);
+MAKE_FUNCPTR(gnutls_x509_privkey_import_pkcs8);
+MAKE_FUNCPTR(gnutls_x509_privkey_init);
 #undef MAKE_FUNCPTR
 
 static void gnutls_log( int level, const char *msg )
@@ -113,13 +119,26 @@ static NTSTATUS process_attach( void *args )
     LOAD_FUNCPTR(gnutls_global_set_log_function)
     LOAD_FUNCPTR(gnutls_global_set_log_level)
     LOAD_FUNCPTR(gnutls_perror)
+    LOAD_FUNCPTR(gnutls_pkcs12_bag_decrypt)
+    LOAD_FUNCPTR(gnutls_pkcs12_bag_deinit)
+    LOAD_FUNCPTR(gnutls_pkcs12_bag_get_count)
+    LOAD_FUNCPTR(gnutls_pkcs12_bag_get_data)
+    LOAD_FUNCPTR(gnutls_pkcs12_bag_get_type)
+    LOAD_FUNCPTR(gnutls_pkcs12_bag_init)
     LOAD_FUNCPTR(gnutls_pkcs12_deinit)
+    LOAD_FUNCPTR(gnutls_pkcs12_get_bag)
     LOAD_FUNCPTR(gnutls_pkcs12_import)
     LOAD_FUNCPTR(gnutls_pkcs12_init)
-    LOAD_FUNCPTR(gnutls_pkcs12_simple_parse)
+    LOAD_FUNCPTR(gnutls_pkcs12_verify_mac)
+    LOAD_FUNCPTR(gnutls_x509_crt_deinit)
     LOAD_FUNCPTR(gnutls_x509_crt_export)
+    LOAD_FUNCPTR(gnutls_x509_crt_import)
+    LOAD_FUNCPTR(gnutls_x509_crt_init)
+    LOAD_FUNCPTR(gnutls_x509_privkey_deinit)
     LOAD_FUNCPTR(gnutls_x509_privkey_export_rsa_raw2)
     LOAD_FUNCPTR(gnutls_x509_privkey_get_pk_algorithm2)
+    LOAD_FUNCPTR(gnutls_x509_privkey_import_pkcs8)
+    LOAD_FUNCPTR(gnutls_x509_privkey_init)
 #undef LOAD_FUNCPTR
 
     if ((ret = pgnutls_global_init()) != GNUTLS_E_SUCCESS)
@@ -178,12 +197,15 @@ static NTSTATUS import_store_key( void *args )
     struct import_store_key_params *params = args;
     struct cert_store_data *data = get_store_data( params->data );
     int i, ret;
-    unsigned int bitlen = data->key_bitlen;
+    unsigned int bitlen;
     gnutls_datum_t m, e, d, p, q, u, e1, e2;
     BLOBHEADER *hdr;
     RSAPUBKEY *rsakey;
     BYTE *src, *dst;
     DWORD size;
+
+    if (!data->key) return STATUS_NOT_FOUND;
+    bitlen = data->key_bitlen;
 
     size = sizeof(*hdr) + sizeof(*rsakey) + (bitlen * 9 / 16);
     if (!params->buf || *params->buf_size < size)
@@ -272,16 +294,139 @@ static char *password_to_ascii( const WCHAR *str )
     return ret;
 }
 
+static int parse_bag_datum( gnutls_pkcs12_bag_t bag, unsigned int index, const char *pwd,
+        gnutls_x509_crt_t *certs, unsigned int *cert_count,
+        gnutls_x509_privkey_t *key )
+{
+    gnutls_datum_t data;
+    int type = pgnutls_pkcs12_bag_get_type( bag, index );
+
+    if (pgnutls_pkcs12_bag_get_data( bag, index, &data ) < 0) return -1;
+
+    switch (type)
+    {
+    case GNUTLS_BAG_CERTIFICATE:
+    {
+        gnutls_x509_crt_t crt;
+
+        if (pgnutls_x509_crt_init( &crt ) < 0) return -1;
+        if (pgnutls_x509_crt_import( crt, &data, GNUTLS_X509_FMT_DER ) < 0)
+        {
+            pgnutls_x509_crt_deinit( crt );
+            return -1;
+        }
+        certs[(*cert_count)++] = crt;
+        break;
+    }
+    case GNUTLS_BAG_PKCS8_ENCRYPTED_KEY:
+    case GNUTLS_BAG_PKCS8_KEY:
+        if (*key) break; /* already found a key */
+        if (pgnutls_x509_privkey_init( key ) < 0) return -1;
+        if (pgnutls_x509_privkey_import_pkcs8( *key, &data, GNUTLS_X509_FMT_DER, pwd,
+                type == GNUTLS_BAG_PKCS8_KEY ? GNUTLS_PKCS_PLAIN : 0 ) < 0)
+        {
+            pgnutls_x509_privkey_deinit( *key );
+            *key = NULL;
+            return -1;
+        }
+        break;
+    }
+    return 0;
+}
+
+static int parse_pkcs12_bag( gnutls_pkcs12_t p12, unsigned int index, const char *pwd,
+        gnutls_x509_crt_t *certs, unsigned int *cert_count,
+        gnutls_x509_privkey_t *key )
+{
+    gnutls_pkcs12_bag_t bag;
+    unsigned int j, bag_count;
+    int ret = -1;
+
+    if (pgnutls_pkcs12_bag_init( &bag ) < 0) return -1;
+    if (pgnutls_pkcs12_get_bag( p12, index, bag ) < 0) goto done;
+
+    if (pgnutls_pkcs12_bag_get_type( bag, 0 ) == GNUTLS_BAG_ENCRYPTED
+        && pgnutls_pkcs12_bag_decrypt( bag, pwd ) < 0)
+        goto done;
+
+    bag_count = pgnutls_pkcs12_bag_get_count( bag );
+    for (j = 0; j < bag_count; j++)
+        if (parse_bag_datum( bag, j, pwd, certs, cert_count, key ) < 0) goto done;
+
+    ret = 0;
+done:
+    pgnutls_pkcs12_bag_deinit( bag );
+    return ret;
+}
+
+static NTSTATUS parse_pkcs12_bags( gnutls_pkcs12_t p12, const char *pwd,
+        gnutls_x509_crt_t **certs_ret, unsigned int *cert_count_ret,
+        gnutls_x509_privkey_t *key_ret )
+{
+    gnutls_x509_privkey_t key = NULL;
+    gnutls_x509_crt_t *certs = NULL;
+    unsigned int i, bag_count, total_items = 0, cert_count = 0;
+    NTSTATUS status = STATUS_INVALID_PARAMETER;
+
+    for (i = 0; ; i++)
+    {
+        gnutls_pkcs12_bag_t bag;
+        int count;
+
+        if (pgnutls_pkcs12_bag_init( &bag ) < 0) goto error;
+        if (pgnutls_pkcs12_get_bag( p12, i, bag ) < 0)
+        {
+            pgnutls_pkcs12_bag_deinit( bag );
+            break;
+        }
+        if (pgnutls_pkcs12_bag_get_type( bag, 0 ) == GNUTLS_BAG_ENCRYPTED
+            && pgnutls_pkcs12_bag_decrypt( bag, pwd ) < 0)
+        {
+            pgnutls_pkcs12_bag_deinit( bag );
+            goto error;
+        }
+
+        count = pgnutls_pkcs12_bag_get_count( bag );
+        pgnutls_pkcs12_bag_deinit( bag );
+        if (count < 0) goto error;
+        total_items += count;
+    }
+    bag_count = i;
+
+    if (!total_items) goto error;
+    if (!(certs = malloc( total_items * sizeof(*certs) )))
+    {
+        status = STATUS_NO_MEMORY;
+        goto error;
+    }
+
+    for (i = 0; i < bag_count; i++)
+        if (parse_pkcs12_bag( p12, i, pwd, certs, &cert_count, &key ) < 0) goto error;
+
+    if (!cert_count) goto error;
+
+    *certs_ret = certs;
+    *cert_count_ret = cert_count;
+    *key_ret = key;
+    return STATUS_SUCCESS;
+
+error:
+    for (i = 0; i < cert_count; i++) pgnutls_x509_crt_deinit( certs[i] );
+    free( certs );
+    if (key) pgnutls_x509_privkey_deinit( key );
+    return status;
+}
+
 static NTSTATUS open_cert_store( void *args )
 {
     struct open_cert_store_params *params = args;
-    gnutls_pkcs12_t p12;
+    gnutls_pkcs12_t p12 = NULL;
     gnutls_datum_t pfx_data;
-    gnutls_x509_privkey_t key;
-    gnutls_x509_crt_t *chain;
-    unsigned int chain_len;
-    unsigned int bitlen;
+    gnutls_x509_privkey_t key = NULL;
+    gnutls_x509_crt_t *certs = NULL;
+    unsigned int i, cert_count = 0, bitlen;
     char *pwd = NULL;
+    NTSTATUS status;
     int ret;
     struct cert_store_data *store_data;
 
@@ -293,36 +438,46 @@ static NTSTATUS open_cert_store( void *args )
     pfx_data.data = params->pfx->pbData;
     pfx_data.size = params->pfx->cbData;
     if ((ret = pgnutls_pkcs12_import( p12, &pfx_data, GNUTLS_X509_FMT_DER, 0 )) < 0) goto error;
+    if ((ret = pgnutls_pkcs12_verify_mac( p12, pwd ? pwd : "" )) < 0) goto error;
 
-    if ((ret = pgnutls_pkcs12_simple_parse( p12, pwd ? pwd : "", &key, &chain, &chain_len, NULL, NULL, NULL, 0 )) < 0)
-        goto error;
+    status = parse_pkcs12_bags( p12, pwd ? pwd : "", &certs, &cert_count, &key );
+    if (status)
+        goto done;
 
-    if ((ret = pgnutls_x509_privkey_get_pk_algorithm2( key, &bitlen )) < 0)
-        goto error;
-
-    free( pwd );
-
-    if (ret != GNUTLS_PK_RSA)
+    if (key)
     {
-        FIXME( "key algorithm %u not supported\n", ret );
-        pgnutls_pkcs12_deinit( p12 );
-        return STATUS_INVALID_PARAMETER;
+        if ((ret = pgnutls_x509_privkey_get_pk_algorithm2( key, &bitlen )) < 0) goto error;
+
+        if (ret != GNUTLS_PK_RSA)
+        {
+            FIXME( "key algorithm %u not supported\n", ret );
+            status = STATUS_INVALID_PARAMETER;
+            goto done;
+        }
     }
 
     store_data = malloc( sizeof(*store_data) );
     store_data->p12 = p12;
     store_data->key = key;
-    store_data->chain = chain;
-    store_data->key_bitlen = bitlen;
-    store_data->chain_len = chain_len;
+    store_data->chain = certs;
+    store_data->key_bitlen = key ? bitlen : 0;
+    store_data->chain_len = cert_count;
+
+    free( pwd );
     *params->data_ret = (ULONG_PTR)store_data;
+    *params->key_count_ret = key ? 1 : 0;
     return STATUS_SUCCESS;
 
 error:
     pgnutls_perror( ret );
-    pgnutls_pkcs12_deinit( p12 );
+    status = STATUS_INVALID_PARAMETER;
+done:
+    for (i = 0; i < cert_count; i++) pgnutls_x509_crt_deinit( certs[i] );
+    free( certs );
+    if (key) pgnutls_x509_privkey_deinit( key );
+    if (p12) pgnutls_pkcs12_deinit( p12 );
     free( pwd );
-    return STATUS_INVALID_PARAMETER;
+    return status;
 }
 
 static NTSTATUS import_store_cert( void *args )
@@ -355,6 +510,11 @@ static NTSTATUS close_cert_store( void *args )
 
     if (params->data)
     {
+        unsigned int i;
+        for (i = 0; i < data->chain_len; i++)
+            pgnutls_x509_crt_deinit( data->chain[i] );
+        free( data->chain );
+        if (data->key) pgnutls_x509_privkey_deinit( data->key );
         pgnutls_pkcs12_deinit( data->p12 );
         free( data );
     }
@@ -721,6 +881,7 @@ static NTSTATUS wow64_open_cert_store( void *args )
         PTR32 pfx;
         PTR32 password;
         PTR32 data_ret;
+        PTR32 key_count_ret;
     } const *params32 = args;
 
     const CRYPT_DATA_BLOB32 *pfx32 = ULongToPtr( params32->pfx );
@@ -729,7 +890,8 @@ static NTSTATUS wow64_open_cert_store( void *args )
     {
         &pfx,
         ULongToPtr( params32->password ),
-        ULongToPtr( params32->data_ret )
+        ULongToPtr( params32->data_ret ),
+        ULongToPtr( params32->key_count_ret )
     };
 
     return open_cert_store( &params );

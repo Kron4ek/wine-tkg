@@ -22,4 +22,5 @@ SOURCES = \
 	register.c \
 	setjmp.c \
 	stub.c \
+	tls.c \
 	unix_lib.c

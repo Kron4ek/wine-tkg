@@ -1148,6 +1148,9 @@ static void shader_sm1_read_semantic(struct vkd3d_shader_sm1_parser *sm1,
         d3dbc_add_combined_sampler_descriptor(sm1, range->first, semantic->resource_type);
         sm1->texture_descriptors |= (1u << range->first);
     }
+
+    if (semantic->usage == VKD3D_DECL_USAGE_PSIZE)
+        sm1->program->has_point_size = true;
 }
 
 static void shader_sm1_read_immconst(struct vkd3d_shader_sm1_parser *sm1, const uint32_t **ptr,
@@ -2019,6 +2022,30 @@ static void d3dbc_write_vsir_def(struct d3dbc_compiler *d3dbc, const struct vkd3
         put_f32(buffer, ins->src[0].reg.u.immconst_f32[x]);
 }
 
+static void d3dbc_write_vsir_defi(struct d3dbc_compiler *d3dbc, const struct vkd3d_shader_instruction *ins)
+{
+    const struct vkd3d_shader_version *version = &d3dbc->program->shader_version;
+    struct vkd3d_bytecode_buffer *buffer = &d3dbc->buffer;
+    uint32_t token;
+
+    const struct vsir_dst_operand reg =
+    {
+        .reg.type = VKD3DSPR_CONSTINT,
+        .write_mask = VKD3DSP_WRITEMASK_ALL,
+        .reg.idx[0].offset = ins->dst[0].reg.idx[0].offset,
+        .reg.idx_count = 1,
+    };
+
+    token = VKD3D_SM1_OP_DEFI;
+    if (version->major > 1)
+        token |= 5 << VKD3D_SM1_INSTRUCTION_LENGTH_SHIFT;
+    put_u32(buffer, token);
+
+    write_sm1_dst_register(buffer, &reg);
+    for (unsigned int x = 0; x < 4; ++x)
+        put_u32(buffer, ins->src[0].reg.u.immconst_u32[x]);
+}
+
 static void d3dbc_write_vsir_sampler_dcl(struct d3dbc_compiler *d3dbc,
         unsigned int reg_id, enum vkd3d_sm1_resource_type res_type)
 {
@@ -2098,6 +2125,10 @@ static void d3dbc_write_vsir_instruction(struct d3dbc_compiler *d3dbc, const str
             d3dbc_write_vsir_def(d3dbc, ins);
             break;
 
+        case VSIR_OP_DEFI:
+            d3dbc_write_vsir_defi(d3dbc, ins);
+            break;
+
         case VSIR_OP_DCL:
             d3dbc_write_vsir_dcl(d3dbc, ins);
             break;
@@ -2108,6 +2139,7 @@ static void d3dbc_write_vsir_instruction(struct d3dbc_compiler *d3dbc, const str
 
         case VSIR_OP_ABS:
         case VSIR_OP_ADD:
+        case VSIR_OP_BREAK:
         case VSIR_OP_CMP:
         case VSIR_OP_DP2ADD:
         case VSIR_OP_DP3:
@@ -2116,6 +2148,7 @@ static void d3dbc_write_vsir_instruction(struct d3dbc_compiler *d3dbc, const str
         case VSIR_OP_DSY:
         case VSIR_OP_ELSE:
         case VSIR_OP_ENDIF:
+        case VSIR_OP_ENDREP:
         case VSIR_OP_FRC:
         case VSIR_OP_IFC:
         case VSIR_OP_MAD:
@@ -2124,6 +2157,7 @@ static void d3dbc_write_vsir_instruction(struct d3dbc_compiler *d3dbc, const str
         case VSIR_OP_MOV:
         case VSIR_OP_MOVA:
         case VSIR_OP_MUL:
+        case VSIR_OP_REP:
         case VSIR_OP_SINCOS:
         case VSIR_OP_SLT:
         case VSIR_OP_TEXLD:

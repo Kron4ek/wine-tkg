@@ -29,7 +29,6 @@
 #include <unistd.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "ntgdi_private.h"
 #include "win32u_private.h"
 #include "ntuser_private.h"
@@ -1429,7 +1428,7 @@ static struct opengl_drawable *get_window_unused_drawable( HWND hwnd, int format
 
 static void set_dc_opengl_drawable( HDC hdc, struct opengl_drawable *new_drawable )
 {
-    void *old_drawable = NULL;
+    struct opengl_drawable *old_drawable = NULL;
     DC *dc;
 
     TRACE( "hdc %p, new_drawable %s\n", hdc, debugstr_opengl_drawable( new_drawable ) );
@@ -1437,7 +1436,12 @@ static void set_dc_opengl_drawable( HDC hdc, struct opengl_drawable *new_drawabl
     if ((dc = get_dc_ptr( hdc )))
     {
         old_drawable = dc->opengl_drawable;
-        if ((dc->opengl_drawable = new_drawable)) opengl_drawable_add_ref( new_drawable );
+        if ((dc->opengl_drawable = new_drawable))
+        {
+            new_drawable->owner_hdc = hdc;
+            opengl_drawable_add_ref( new_drawable );
+        }
+        if (old_drawable) old_drawable->owner_hdc = 0;
         release_dc_ptr( dc );
     }
 
@@ -1806,6 +1810,7 @@ static struct opengl_drawable *get_updated_drawable( HDC hdc, int format, struct
     }
 
     /* retrieve D3D internal drawables from the DCs if they have any */
+    if (!hdc && drawable) hdc = drawable->owner_hdc;
     if (hdc && (drawable = get_dc_opengl_drawable( hdc ))) return drawable;
 
     /* get an updated drawable with the desired format */

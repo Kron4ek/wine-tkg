@@ -82,7 +82,6 @@
 #endif
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winnt.h"
 #include "winbase.h"
@@ -2017,7 +2016,6 @@ static jstring wine_init_jni( JNIEnv *env, jobject obj, jobjectArray cmdline, jo
     main_argv = argv;
 
     init_paths();
-    virtual_init();
     init_environment();
 
 #ifdef __i386__
@@ -2044,6 +2042,8 @@ jint JNI_OnLoad( JavaVM *vm, void *reserved )
 
     JNIEnv *env;
     jclass class;
+
+    virtual_init();
 
     java_vm = vm;
     if ((*vm)->AttachCurrentThread( vm, &env, NULL ) != JNI_OK) return JNI_ERR;

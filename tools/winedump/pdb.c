@@ -707,14 +707,14 @@ static void pdb_dump_symbols(struct pdb_reader* reader)
         while (imp < (const PDB_SYMBOL_IMPORT*)last)
         {
             ptr = (const char*)imp + sizeof(*imp) + strlen(imp->filename);
-            printf("\tImport: %lx\n"
+            printf("\tImport: %x\n"
                    "\t\tUnknown1:      %08x\n"
                    "\t\tUnknown2:      %08x\n"
                    "\t\tTimeDateStamp: %08x\n"
                    "\t\tAge:           %08u\n"
                    "\t\tfile1:         %s\n"
                    "\t\tfile2:         %s\n",
-                   (ULONG_PTR)((const char*)imp - first),
+                   (int)((const char*)imp - first),
                    imp->unknown1,
                    imp->unknown2,
                    imp->TimeDateStamp,

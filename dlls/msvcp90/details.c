@@ -1055,8 +1055,7 @@ static void WINAPI threadpool_callback(PTP_CALLBACK_INSTANCE instance, void *con
 {
     _Threadpool_chore *chore = context;
     TRACE("calling chore callback: %p\n", chore);
-    if (chore->callback)
-        chore->callback(chore->arg);
+    chore->callback(chore->arg);
 }
 
 /* ?_Schedule_chore@details@Concurrency@@YAHPAU_Threadpool_chore@12@@Z */

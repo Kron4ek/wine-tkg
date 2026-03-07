@@ -872,7 +872,7 @@ enum vsir_global_flags
     VKD3DSGF_SKIP_OPTIMIZATION                 = 0x10,
     VKD3DSGF_ENABLE_MINIMUM_PRECISION          = 0x20,
     VKD3DSGF_ENABLE_11_1_DOUBLE_EXTENSIONS     = 0x40,
-    VKD3DSGF_ENABLE_SHADER_EXTENSIONS          = 0x80, /* never emitted? */
+    VKD3DSGF_ENABLE_11_1_SHADER_EXTENSIONS     = 0x80,
     VKD3DSGF_BIND_FOR_DURATION                 =     0x100,
     VKD3DSGF_ENABLE_VP_AND_RT_ARRAY_INDEX      =     0x200,
     VKD3DSGF_ENABLE_INNER_COVERAGE             =     0x400,
@@ -888,7 +888,7 @@ enum vsir_global_flags
     VKD3DSGF_ENABLE_INT64                      =  0x100000,
     VKD3DSGF_ENABLE_VIEWID                     =  0x200000,
     VKD3DSGF_ENABLE_BARYCENTRICS               =  0x400000,
-    VKD3DSGF_FORCE_NATIVE_LOW_PRECISION        =  0x800000,
+    VKD3DSGF_ENABLE_NATIVE_LOW_PRECISION       =  0x800000,
     VKD3DSGF_ENABLE_SHADINGRATE                = 0x1000000,
     VKD3DSGF_ENABLE_RAYTRACING_TIER_1_1        = 0x2000000,
     VKD3DSGF_ENABLE_SAMPLER_FEEDBACK           = 0x4000000,
@@ -1841,6 +1841,7 @@ void vkd3d_string_buffer_cache_cleanup(struct vkd3d_string_buffer_cache *list);
 void vkd3d_string_buffer_cache_init(struct vkd3d_string_buffer_cache *list);
 void vkd3d_string_buffer_clear(struct vkd3d_string_buffer *buffer);
 void vkd3d_string_buffer_truncate(struct vkd3d_string_buffer *buffer, size_t size);
+int vkd3d_string_buffer_print_f16(struct vkd3d_string_buffer *buffer, uint16_t f);
 int vkd3d_string_buffer_print_f32(struct vkd3d_string_buffer *buffer, float f);
 int vkd3d_string_buffer_print_f64(struct vkd3d_string_buffer *buffer, double d);
 int vkd3d_string_buffer_print_string_escaped(struct vkd3d_string_buffer *buffer, const char *s, size_t len);

@@ -549,8 +549,6 @@ This is an error since --enable-archs=$wine_arch was requested.])])
 
     AS_VAR_IF([wine_arch],[$extra_arch],[],[AS_VAR_APPEND([PE_ARCHS],[" $wine_arch"])])
 
-    wine_compiler_rt_libs="compiler-rt"
-
     WINE_TRY_PE_CFLAGS([-fno-strict-aliasing])
     dnl clang needs to be told to fail on unknown options
     WINE_TRY_PE_CFLAGS([-Werror=unknown-warning-option],[CFLAGS="$CFLAGS -Werror=unknown-warning-option"])
@@ -692,6 +690,7 @@ AC_CHECK_HEADERS(\
 	linux/input.h \
 	linux/ioctl.h \
 	linux/major.h \
+	linux/memfd.h \
 	linux/ntsync.h \
 	linux/param.h \
 	linux/seccomp.h \
@@ -922,6 +921,7 @@ case $host_os in
   cygwin*|mingw32*)
     LIBEXT="dll"
     DLLEXT=""
+    WINE_TRY_CFLAGS([-Wl,-delayload,autoconftest.dll],[AC_SUBST(DELAYLOADFLAG,["-Wl,-delayload,"])])
     ;;
 
   darwin*)
@@ -1004,6 +1004,7 @@ case $host_os in
     WINE_TRY_CFLAGS([-Wl,-z,defs],[UNIXLDFLAGS="$UNIXLDFLAGS -Wl,-z,defs"])
     WINE_TRY_CFLAGS([-fPIC -Wl,--export-dynamic],[WINELOADER_LDFLAGS="-Wl,--export-dynamic"])
     WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"
+    WINE_TRY_CFLAGS([-Wl,--rosegment], [WINEPRELOADER_LDFLAGS="$WINEPRELOADER_LDFLAGS -Wl,--rosegment"])
 
     WINE_CHECK_SONAME(GLESv2,glFlush)
 
@@ -1208,7 +1209,6 @@ then
 fi
 
 WINE_EXTLIB_FLAGS(CAPSTONE, capstone, capstone, "-I\$(top_srcdir)/libs/capstone/include")
-WINE_EXTLIB_FLAGS(COMPILER_RT, compiler-rt, "$wine_compiler_rt_libs")
 WINE_EXTLIB_FLAGS(FAUDIO, faudio, "faudio mfplat mfreadwrite mfuuid propsys", "-I\$(top_srcdir)/libs/faudio/include")
 WINE_EXTLIB_FLAGS(FLUIDSYNTH, fluidsynth, "fluidsynth", "-I\$(top_srcdir)/libs/fluidsynth/include")
 WINE_EXTLIB_FLAGS(GSM, gsm, gsm, "-I\$(top_srcdir)/libs/gsm/inc")
@@ -2014,40 +2014,31 @@ then
     WINE_TRY_CFLAGS([-gdwarf-4])
   fi
 
-  dnl Disable gcc builtins except for Mingw
-  AC_SUBST(MSVCRTFLAGS,"")
-  case $host_os in
-    mingw32*)  dnl Check for delayload linker support
-       WINE_TRY_CFLAGS([-Wl,-delayload,autoconftest.dll],[AC_SUBST(DELAYLOADFLAG,["-Wl,-delayload,"])]) ;;
-    *) MSVCRTFLAGS="-D_WIN32"
-       WINE_TRY_CFLAGS([-mlong-double-64],[MSVCRTFLAGS="$MSVCRTFLAGS -mlong-double-64"])
-       WINE_TRY_CFLAGS([-fno-builtin],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-builtin"])
-       WINE_TRY_CFLAGS([-fshort-wchar],[MSVCRTFLAGS="$MSVCRTFLAGS -fshort-wchar"])
-       WINE_TRY_CFLAGS([-Wno-format],[MSVCRTFLAGS="$MSVCRTFLAGS -Wno-format"]) ;;
-  esac
-
-  case $HOST_ARCH in
-    dnl gcc-4.6+ omits frame pointers by default, breaking some copy protections
-    i386) WINE_TRY_CFLAGS([-fno-omit-frame-pointer],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-omit-frame-pointer"]) ;;
-    x86_64)
-      case $host_os in
-        dnl Mingw uses Windows 64-bit types, not Unix ones
-        cygwin*|mingw32*) WINE_TRY_CFLAGS([-Wno-format]) ;;
-        dnl Default to ms_abi on 64-bit
-        *) AC_CACHE_CHECK([for working -mabi=ms], ac_cv_mabi_ms,
-               [CFLAGS="$CFLAGS -mabi=ms"
-                AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdarg.h>
+  if test -n "$DLLEXT"
+  then
+    AC_SUBST(MSVCRTFLAGS,"-D_WIN32")
+    WINE_TRY_CFLAGS([-mlong-double-64],[MSVCRTFLAGS="$MSVCRTFLAGS -mlong-double-64"])
+    WINE_TRY_CFLAGS([-fno-builtin],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-builtin"])
+    WINE_TRY_CFLAGS([-fshort-wchar],[MSVCRTFLAGS="$MSVCRTFLAGS -fshort-wchar"])
+    WINE_TRY_CFLAGS([-Wno-format],[MSVCRTFLAGS="$MSVCRTFLAGS -Wno-format"])
+    if test "$HOST_ARCH" = i386
+    then
+      dnl gcc-4.6+ omits frame pointers by default, breaking some copy protections
+      WINE_TRY_CFLAGS([-fno-omit-frame-pointer],[MSVCRTFLAGS="$MSVCRTFLAGS -fno-omit-frame-pointer"])
+    else
+      dnl Default to ms_abi on 64-bit
+      AC_CACHE_CHECK([for working -mabi=ms], ac_cv_mabi_ms,
+             [CFLAGS="$CFLAGS -mabi=ms"
+              AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <stdarg.h>
 void a(int b, ...) { __builtin_ms_va_list list; __builtin_ms_va_start(list,b); }]])],
-                   [ac_cv_mabi_ms=yes],[ac_cv_mabi_ms=no])
-                CFLAGS=$saved_CFLAGS])
-           AS_VAR_IF([ac_cv_mabi_ms],[yes],
-                     [MSVCRTFLAGS="$MSVCRTFLAGS -mabi=ms"],
-                     [test -n "$PE_ARCHS" || AC_MSG_ERROR([The compiler doesn't support -mabi=ms. Use gcc instead of clang, or install mingw-w64.])
-                      DLLEXT=""]) ;;
-      esac ;;
-    arm)
-      WINE_TRY_CFLAGS([-Wincompatible-function-pointer-types],[EXTRACFLAGS="$EXTRACFLAGS -Wno-error=incompatible-function-pointer-types"]) ;;
-  esac
+                 [ac_cv_mabi_ms=yes],[ac_cv_mabi_ms=no])
+              CFLAGS=$saved_CFLAGS])
+      AS_VAR_IF([ac_cv_mabi_ms],[yes],
+                [MSVCRTFLAGS="$MSVCRTFLAGS -mabi=ms"],
+                [test -n "$PE_ARCHS" || AC_MSG_ERROR([The compiler doesn't support -mabi=ms. Use gcc instead of clang, or install mingw-w64.])
+                 DLLEXT=""])
+    fi
+  fi
 
   CFLAGS=$saved_CFLAGS
 
@@ -2136,6 +2127,7 @@ AC_CHECK_FUNCS(\
 	getifaddrs \
 	getrandom \
 	kqueue \
+	memfd_create \
 	pipe2 \
 	port_create \
 	posix_fadvise \
@@ -3327,6 +3319,8 @@ WINE_CONFIG_MAKEFILE(dlls/windows.gaming.ui.gamebar)
 WINE_CONFIG_MAKEFILE(dlls/windows.gaming.ui.gamebar/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.globalization)
 WINE_CONFIG_MAKEFILE(dlls/windows.globalization/tests)
+WINE_CONFIG_MAKEFILE(dlls/windows.graphics)
+WINE_CONFIG_MAKEFILE(dlls/windows.graphics/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.devices)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.devices/tests)
 WINE_CONFIG_MAKEFILE(dlls/windows.media.mediacontrol)
@@ -3375,7 +3369,6 @@ WINE_CONFIG_MAKEFILE(dlls/wineandroid.drv)
 WINE_CONFIG_MAKEFILE(dlls/winebth.sys)
 WINE_CONFIG_MAKEFILE(dlls/winebus.sys)
 WINE_CONFIG_MAKEFILE(dlls/winecoreaudio.drv)
-WINE_CONFIG_MAKEFILE(dlls/winecrt0)
 WINE_CONFIG_MAKEFILE(dlls/wined3d)
 WINE_CONFIG_MAKEFILE(dlls/winedmo)
 WINE_CONFIG_MAKEFILE(dlls/winegstreamer)
@@ -3539,6 +3532,7 @@ WINE_CONFIG_MAKEFILE(libs/tomcrypt)
 WINE_CONFIG_MAKEFILE(libs/uuid)
 WINE_CONFIG_MAKEFILE(libs/vkd3d)
 WINE_CONFIG_MAKEFILE(libs/wbemuuid)
+WINE_CONFIG_MAKEFILE(libs/winecrt0)
 WINE_CONFIG_MAKEFILE(libs/wmcodecdspuuid)
 WINE_CONFIG_MAKEFILE(libs/xml2)
 WINE_CONFIG_MAKEFILE(libs/xslt)
@@ -3692,7 +3686,7 @@ WINE_CONFIG_MAKEFILE(tools/wmc)
 WINE_CONFIG_MAKEFILE(tools/wrc)
 dnl End of auto-generated output commands
 
-dnl Main ignore file
+WINE_EXTERNAL(libs/compiler-rt)
 
 WINE_IGNORE_FILE(TAGS)
 WINE_IGNORE_FILE(tags)
@@ -3784,7 +3778,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-11.3.r0.g0e629ceb\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-11.4.r0.gf17c9eab\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 dlls/wineandroid.drv/wine-debug.apk: dlls/wineandroid.drv/build.gradle ${wine_srcdir}dlls/wineandroid.drv/AndroidManifest.xml ${wine_srcdir}dlls/wineandroid.drv/WineActivity.java ${wine_srcdir}dlls/wineandroid.drv/wine.svg
@@ -3793,6 +3787,7 @@ dlls/wineandroid.drv/wine-debug.apk: dlls/wineandroid.drv/build.gradle ${wine_sr
 
 dnl Misc rules
 
+AC_SUBST([EXTERNAL_SUBDIRS],["_AC_EXTERNAL_SUBDIRS"])
 AC_SUBST(TAGSFLAGS,["--langmap='c:+.idl.l.rh,make:(Make*.in)'"])
 WINE_APPEND_RULE(
 [TAGS etags:

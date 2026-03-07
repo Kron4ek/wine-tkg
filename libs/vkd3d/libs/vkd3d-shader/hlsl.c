@@ -1023,6 +1023,10 @@ struct hlsl_type *hlsl_get_element_type_from_path_index(struct hlsl_ctx *ctx, co
             return type->e.record.fields[c->value.u[0].u].type;
         }
 
+        case HLSL_CLASS_TEXTURE:
+        case HLSL_CLASS_UAV:
+            return type->e.resource.format;
+
         default:
             vkd3d_unreachable();
     }
@@ -2009,7 +2013,8 @@ static struct hlsl_ir_node *hlsl_new_error_expr(struct hlsl_ctx *ctx)
 }
 
 struct hlsl_ir_node *hlsl_new_if(struct hlsl_ctx *ctx, struct hlsl_ir_node *condition, struct hlsl_block *then_block,
-        struct hlsl_block *else_block, enum hlsl_if_flatten_type flatten_type, const struct vkd3d_shader_location *loc)
+        struct hlsl_block *else_block, enum hlsl_if_flatten_type flatten_type, bool is_loop_condition,
+        const struct vkd3d_shader_location *loc)
 {
     struct hlsl_ir_if *iff;
 
@@ -2023,14 +2028,16 @@ struct hlsl_ir_node *hlsl_new_if(struct hlsl_ctx *ctx, struct hlsl_ir_node *cond
     hlsl_block_init(&iff->else_block);
     if (else_block)
         hlsl_block_add_block(&iff->else_block, else_block);
+    iff->is_loop_conditional = is_loop_condition;
     return &iff->node;
 }
 
 void hlsl_block_add_if(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_ir_node *condition, struct hlsl_block *then_block, struct hlsl_block *else_block,
-        enum hlsl_if_flatten_type flatten_type, const struct vkd3d_shader_location *loc)
+        enum hlsl_if_flatten_type flatten_type, bool is_loop_condition, const struct vkd3d_shader_location *loc)
 {
-    struct hlsl_ir_node *instr = hlsl_new_if(ctx, condition, then_block, else_block, flatten_type, loc);
+    struct hlsl_ir_node *instr = hlsl_new_if(ctx, condition, then_block,
+            else_block, flatten_type, is_loop_condition, loc);
 
     if (instr)
     {
@@ -2239,8 +2246,8 @@ static struct hlsl_ir_node *hlsl_new_resource_store(struct hlsl_ctx *ctx, enum h
 {
     struct hlsl_ir_resource_store *store;
 
-    if (type != HLSL_RESOURCE_STORE
-            || hlsl_deref_get_type(ctx, resource)->sampler_dim != HLSL_SAMPLER_DIM_STRUCTURED_BUFFER)
+    if (type != HLSL_RESOURCE_STORE || (!resource->var->is_tgsm
+            && hlsl_deref_get_type(ctx, resource)->sampler_dim != HLSL_SAMPLER_DIM_STRUCTURED_BUFFER))
         VKD3D_ASSERT(!byte_offset);
 
     if (!(store = hlsl_alloc(ctx, sizeof(*store))))
@@ -2751,8 +2758,8 @@ static struct hlsl_ir_node *clone_if(struct hlsl_ctx *ctx, struct clone_instr_ma
         return NULL;
     }
 
-    if (!(dst = hlsl_new_if(ctx, map_instr(map, src->condition.node),
-            &then_block, &else_block, src->flatten_type, &src->node.loc)))
+    if (!(dst = hlsl_new_if(ctx, map_instr(map, src->condition.node), &then_block,
+            &else_block, src->flatten_type, src->is_loop_conditional, &src->node.loc)))
     {
         hlsl_block_cleanup(&then_block);
         hlsl_block_cleanup(&else_block);
@@ -2804,6 +2811,9 @@ static struct hlsl_ir_node *clone_loop(struct hlsl_ctx *ctx, struct clone_instr_
         hlsl_block_cleanup(&body);
         return NULL;
     }
+
+    hlsl_ir_loop(dst)->limiter = src->limiter;
+    hlsl_ir_loop(dst)->limiter_component = src->limiter_component;
     return dst;
 }
 
@@ -3869,7 +3879,10 @@ static void dump_ir_if(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer,
 {
     vkd3d_string_buffer_printf(buffer, "if (");
     dump_src(buffer, &if_node->condition);
-    vkd3d_string_buffer_printf(buffer, ") {\n");
+    vkd3d_string_buffer_printf(buffer, ") {");
+    if (if_node->is_loop_conditional)
+        vkd3d_string_buffer_printf(buffer, " // loop conditional.");
+    vkd3d_string_buffer_printf(buffer, "\n");
     dump_block(ctx, buffer, &if_node->then_block);
     vkd3d_string_buffer_printf(buffer, "      %10s   } else {\n", "");
     dump_block(ctx, buffer, &if_node->else_block);
@@ -3915,7 +3928,10 @@ static void dump_ir_jump(struct vkd3d_string_buffer *buffer, const struct hlsl_i
 
 static void dump_ir_loop(struct hlsl_ctx *ctx, struct vkd3d_string_buffer *buffer, const struct hlsl_ir_loop *loop)
 {
-    vkd3d_string_buffer_printf(buffer, "for (;;) {\n");
+    vkd3d_string_buffer_printf(buffer, "for (;;) {");
+    if (loop->limiter)
+        vkd3d_string_buffer_printf(buffer, " // limiter: %s[%u]", loop->limiter->name, loop->limiter_component);
+    vkd3d_string_buffer_printf(buffer, "\n");
     dump_block(ctx, buffer, &loop->body);
     vkd3d_string_buffer_printf(buffer, "      %10s   }", "");
 }

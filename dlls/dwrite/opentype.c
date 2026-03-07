@@ -21,6 +21,7 @@
 #define COBJMACROS
 
 #include <stdint.h>
+#include <intrin.h>
 #include "dwrite_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dwrite);
@@ -3520,17 +3521,6 @@ static unsigned int opentype_layout_is_glyph_covered(const struct dwrite_fonttab
     return -1;
 }
 
-static inline unsigned int dwrite_popcount(unsigned int x)
-{
-#if defined(__MINGW32__)
-    return __builtin_popcount(x);
-#else
-    x -= x >> 1 & 0x55555555;
-    x = (x & 0x33333333) + (x >> 2 & 0x33333333);
-    return ((x + (x >> 4)) & 0x0f0f0f0f) * 0x01010101 >> 24;
-#endif
-}
-
 static float opentype_scale_gpos_be_value(WORD value, float emsize, UINT16 upem)
 {
     return (short)GET_BE_WORD(value) * emsize / upem;
@@ -3909,7 +3899,7 @@ static BOOL opentype_layout_apply_gpos_single_adjustment(struct scriptshaping_co
 
     coverage = table_read_be_word(table, subtable_offset + FIELD_OFFSET(struct ot_gpos_singlepos_format1, coverage));
     value_format = table_read_be_word(table, subtable_offset + FIELD_OFFSET(struct ot_gpos_singlepos_format1, value_format));
-    value_len = dwrite_popcount(value_format);
+    value_len = __popcnt(value_format);
 
     glyph = context->u.pos.glyphs[context->cur];
 
@@ -4018,8 +4008,8 @@ static BOOL opentype_layout_apply_gpos_pair_adjustment(struct scriptshaping_cont
         value_format1 = GET_BE_WORD(format1->value_format1) & 0xff;
         value_format2 = GET_BE_WORD(format1->value_format2) & 0xff;
 
-        value_len1 = dwrite_popcount(value_format1);
-        value_len2 = dwrite_popcount(value_format2);
+        value_len1 = __popcnt(value_format1);
+        value_len2 = __popcnt(value_format2);
         pairvalue_len = FIELD_OFFSET(struct ot_gpos_pairvalue, data) + value_len1 * sizeof(WORD) +
                 value_len2 * sizeof(WORD);
 
@@ -4057,8 +4047,8 @@ static BOOL opentype_layout_apply_gpos_pair_adjustment(struct scriptshaping_cont
         class1_count = table_read_be_word(table, subtable_offset + FIELD_OFFSET(struct ot_gpos_pairpos_format2, class1_count));
         class2_count = table_read_be_word(table, subtable_offset + FIELD_OFFSET(struct ot_gpos_pairpos_format2, class2_count));
 
-        value_len1 = dwrite_popcount(value_format1);
-        value_len2 = dwrite_popcount(value_format2);
+        value_len1 = __popcnt(value_format1);
+        value_len2 = __popcnt(value_format2);
 
         format2 = table_read_ensure(table, subtable_offset, FIELD_OFFSET(struct ot_gpos_pairpos_format2,
                 values[class1_count * class2_count * (value_len1 + value_len2)]));

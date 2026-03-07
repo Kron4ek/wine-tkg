@@ -142,6 +142,12 @@ CPPFLAGS=$ac_save_CPPFLAGS])
 AS_VAR_POPDEF([ac_libs])dnl
 AS_VAR_POPDEF([ac_cflags])])dnl
 
+dnl **** Mark a directory as an external lib ****
+dnl
+dnl Usage: WINE_EXTERNAL(dir)
+dnl
+AC_DEFUN([WINE_EXTERNAL],[m4_append_uniq([_AC_EXTERNAL_SUBDIRS],[$1],[ ])])
+
 dnl **** Get flags for an external lib program ****
 dnl
 dnl Usage: WINE_EXTLIB_FLAGS(var,pkg-name,default-libs,default-cflags)
@@ -150,6 +156,7 @@ AC_DEFUN([WINE_EXTLIB_FLAGS],
 [AS_VAR_PUSHDEF([ac_cflags],[[$1]_PE_CFLAGS])dnl
 AS_VAR_PUSHDEF([ac_libs],[[$1]_PE_LIBS])dnl
 AS_VAR_PUSHDEF([ac_enable],[enable_[$2]])dnl
+WINE_EXTERNAL(libs/$2)dnl
 AC_ARG_VAR(ac_cflags, [C compiler flags for the PE $2, overriding the bundled version])dnl
 AC_ARG_VAR(ac_libs, [Linker flags for the PE $2, overriding the bundled version])dnl
 AS_VAR_IF([ac_libs],[],

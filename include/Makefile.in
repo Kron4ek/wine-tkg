@@ -524,6 +524,7 @@ SOURCES = \
 	msvcrt/corecrt.h \
 	msvcrt/corecrt_io.h \
 	msvcrt/corecrt_malloc.h \
+	msvcrt/corecrt_math_defines.h \
 	msvcrt/corecrt_startup.h \
 	msvcrt/corecrt_stdio_config.h \
 	msvcrt/corecrt_wctype.h \
@@ -556,6 +557,7 @@ SOURCES = \
 	msvcrt/mbctype.h \
 	msvcrt/mbstring.h \
 	msvcrt/memory.h \
+	msvcrt/new.h \
 	msvcrt/process.h \
 	msvcrt/search.h \
 	msvcrt/setjmp.h \
@@ -578,6 +580,9 @@ SOURCES = \
 	msvcrt/uchar.h \
 	msvcrt/unistd.h \
 	msvcrt/vadefs.h \
+	msvcrt/vcruntime_exception.h \
+	msvcrt/vcruntime_new.h \
+	msvcrt/vcruntime_typeinfo.h \
 	msvcrt/wchar.h \
 	msvcrt/wctype.h \
 	mswsock.h \
@@ -907,6 +912,7 @@ SOURCES = \
 	windows.graphics.capture.interop.idl \
 	windows.graphics.directx.direct3d11.idl \
 	windows.graphics.directx.idl \
+	windows.graphics.display.idl \
 	windows.graphics.effects.idl \
 	windows.graphics.holographic.idl \
 	windows.graphics.idl \
@@ -957,6 +963,8 @@ SOURCES = \
 	windows.ui.idl \
 	windows.ui.input.idl \
 	windows.ui.notifications.idl \
+	windows.ui.text.core.idl \
+	windows.ui.text.idl \
 	windows.ui.viewmanagement.core.idl \
 	windows.ui.viewmanagement.idl \
 	windows.ui.windowmanagement.idl \

@@ -8424,11 +8424,27 @@ static void test_get_ownerDocument(void)
     doc = create_document(&IID_IXMLDOMDocument2);
     cache = create_cache(&IID_IXMLDOMSchemaCollection);
 
+    hr = IXMLDOMDocument2_get_ownerDocument(doc, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    doc1 = (void *)0xdead;
+    hr = IXMLDOMDocument2_get_ownerDocument(doc, &doc1);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    ok(!doc1, "Unexpected pointer.\n");
+
     VariantInit(&var);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(complete4A), &b);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(b == VARIANT_TRUE, "failed to load XML string\n");
+
+    hr = IXMLDOMDocument2_get_ownerDocument(doc, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    doc1 = (void *)0xdead;
+    hr = IXMLDOMDocument2_get_ownerDocument(doc, &doc1);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    ok(!doc1, "Unexpected pointer.\n");
 
     check_default_props(doc);
 
@@ -14696,6 +14712,26 @@ static DWORD WINAPI new_thread(void *arg)
     return 0;
 }
 
+static void test_get_parentNode(void)
+{
+    IXMLDOMDocument *doc;
+    IXMLDOMNode *node;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_DOMDocument2, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument, (void **)&doc);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument_get_parentNode(doc, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    node = (void *)0x1;
+    hr = IXMLDOMDocument_get_parentNode(doc, &node);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    ok(!node, "Unexpected node %p.\n", node);
+
+    IXMLDOMDocument_Release(doc);
+}
+
 START_TEST(domdoc)
 {
     HRESULT hr;
@@ -14788,6 +14824,7 @@ START_TEST(domdoc)
     test_xsltext();
     test_max_element_depth_values();
     test_embedded_xml_declaration();
+    test_get_parentNode();
 
     if (is_clsid_supported(&CLSID_MXNamespaceManager40, &IID_IMXNamespaceManager))
     {

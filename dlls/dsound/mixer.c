@@ -287,9 +287,10 @@ static inline float get_current_sample(const IDirectSoundBufferImpl *dsb,
     return dsb->get(dsb, buffer + (mixpos % buflen), channel);
 }
 
-static UINT cp_fields_noresample(IDirectSoundBufferImpl *dsb, bitsputfunc put, UINT ostride, UINT count)
+static UINT cp_fields_noresample(IDirectSoundBufferImpl *dsb, UINT count)
 {
     UINT istride = dsb->pwfx->nBlockAlign;
+    UINT ostride = dsb->device->pwfx->nChannels * sizeof(float);
     UINT committed_samples = 0;
     DWORD channel, i;
 
@@ -308,56 +309,76 @@ static UINT cp_fields_noresample(IDirectSoundBufferImpl *dsb, bitsputfunc put, U
 
     for (; i < count; i++)
         for (channel = 0; channel < dsb->mix_channels; channel++)
-            put(dsb, i * ostride, channel, get_current_sample(dsb, dsb->buffer->memory,
+            dsb->put(dsb, i * ostride, channel, get_current_sample(dsb, dsb->buffer->memory,
                 dsb->buflen, dsb->sec_mixpos + i * istride, channel));
+
     return count;
 }
 
-static UINT cp_fields_resample_lq(IDirectSoundBufferImpl *dsb, bitsputfunc put,
-                                  UINT ostride, UINT count, LONG64 *freqAccNum)
+static void downsample(LONG64 freq_adjust_num, LONG64 freq_adjust_den, LONG64 freq_acc_start,
+        UINT dsbfirstep, float firgain, UINT count, float *input, float *output)
 {
-    UINT i, channel;
-    UINT istride = dsb->pwfx->nBlockAlign;
-    UINT channels = dsb->mix_channels;
+    UINT i;
 
-    LONG64 freqAcc_start = *freqAccNum;
-    LONG64 freqAcc_end = freqAcc_start + count * dsb->freqAdjustNum;
-    UINT max_ipos = freqAcc_end / dsb->freqAdjustDen;
+    for(i = 0; i < count; ++i) {
+        LONG64 ipos_num = freq_acc_start + i * freq_adjust_num;
+        UINT ipos = ipos_num / freq_adjust_den;
 
-    for (i = 0; i < count; ++i) {
-        float cur_freqAcc = (freqAcc_start + i * dsb->freqAdjustNum) / (float)dsb->freqAdjustDen;
-        float cur_freqAcc2;
-        UINT ipos = cur_freqAcc;
-        UINT idx = dsb->sec_mixpos + ipos * istride;
-        cur_freqAcc -= (int)cur_freqAcc;
-        cur_freqAcc2 = 1.0f - cur_freqAcc;
-        for (channel = 0; channel < channels; channel++) {
-            /**
-             * Generally we cannot cache the result of get_current_sample().
-             * Consider the case of resampling from 192000 Hz to 44100 Hz -
-             * none of the values will get reused for the next value of i.
-             * OTOH, for resampling from 44100 Hz to 192000 Hz both values
-             * will likely be reused.
-             *
-             * So far, this possibility of saving calls to
-             * get_current_sample() is ignored.
-             */
-            float s1 = get_current_sample(dsb, dsb->buffer->memory, dsb->buflen, idx, channel);
-            float s2 = get_current_sample(dsb, dsb->buffer->memory, dsb->buflen, idx + istride, channel);
-            float result = s1 * cur_freqAcc2 + s2 * cur_freqAcc;
-            put(dsb, i * ostride, channel, result);
-        }
+        UINT idx_num = ipos_num % freq_adjust_den * dsbfirstep;
+        UINT idx = dsbfirstep - 1 - idx_num / freq_adjust_den;
+        float rem = 1.0f - idx_num % freq_adjust_den / (float)freq_adjust_den;
+
+        int fir_used = (fir_len - 1 - idx + dsbfirstep - 1) / dsbfirstep;
+
+        int j;
+        float sum = 0.0;
+        float* cache = &input[ipos];
+
+        for (j = 0; j < fir_used; j++)
+            sum += (fir[idx + j * dsbfirstep] * (1.0f - rem) + fir[idx + j * dsbfirstep + 1] * rem) * cache[j];
+        output[i] = sum * firgain;
     }
-
-    *freqAccNum = freqAcc_end % dsb->freqAdjustDen;
-    return max_ipos;
 }
 
-static UINT cp_fields_resample_hq(IDirectSoundBufferImpl *dsb, bitsputfunc put,
-                                  UINT ostride, UINT count, LONG64 *freqAccNum)
+static void upsample(LONG64 freq_adjust_num, LONG64 freq_adjust_den, LONG64 freq_acc_start,
+        UINT count, float *input, float *output)
+{
+    UINT i;
+
+    for(i = 0; i < count; ++i) {
+        LONG64 ipos_num = freq_acc_start + i * freq_adjust_num;
+        UINT ipos = ipos_num / freq_adjust_den;
+
+        UINT idx_num = ipos_num % freq_adjust_den * fir_step;
+        UINT idx = fir_step - 1 - idx_num / freq_adjust_den;
+        float rem_inv = idx_num % freq_adjust_den / (float)freq_adjust_den;
+        float rem = 1.0f - rem_inv;
+
+        int j;
+        float sum = 0.0;
+        float* cache = &input[ipos];
+
+        for (j = 0; j < fir_width; j++)
+            sum += (fir[idx + j * fir_step] * rem_inv + fir[idx + j * fir_step + 1] * rem) * cache[j];
+        output[i] = sum;
+    }
+}
+
+static void resample(LONG64 freq_adjust_num, LONG64 freq_adjust_den, LONG64 freq_acc_start,
+        UINT dsbfirstep, float firgain, UINT count, float *input, float *output)
+{
+    if (freq_adjust_num > freq_adjust_den)
+        downsample(freq_adjust_num, freq_adjust_den, freq_acc_start, dsbfirstep, firgain, count,
+                input, output);
+    else
+        upsample(freq_adjust_num, freq_adjust_den, freq_acc_start, count, input, output);
+}
+
+static UINT cp_fields_resample(IDirectSoundBufferImpl *dsb, UINT count, LONG64 *freqAccNum)
 {
     UINT i, channel;
     UINT istride = dsb->pwfx->nBlockAlign;
+    UINT ostride = dsb->device->pwfx->nChannels * sizeof(float);
     UINT committed_samples = 0;
 
     LONG64 freqAcc_start = *freqAccNum;
@@ -368,10 +389,10 @@ static UINT cp_fields_resample_hq(IDirectSoundBufferImpl *dsb, bitsputfunc put,
 
     UINT fir_cachesize = (fir_len + dsbfirstep - 2) / dsbfirstep;
     UINT required_input = max_ipos + fir_cachesize;
-    float *intermediate, *fir_copy, *itmp;
+    float *intermediate, *output, *itmp;
 
     DWORD len = required_input * channels;
-    len += fir_cachesize;
+    len += count * channels;
     len *= sizeof(float);
 
     *freqAccNum = freqAcc_end % dsb->freqAdjustDen;
@@ -387,8 +408,8 @@ static UINT cp_fields_resample_hq(IDirectSoundBufferImpl *dsb, bitsputfunc put,
         dsb->device->cp_buffer_len = len;
     }
 
-    fir_copy = dsb->device->cp_buffer;
-    intermediate = fir_copy + fir_cachesize;
+    intermediate = dsb->device->cp_buffer;
+    output = intermediate + required_input * channels;
 
     if(dsb->use_committed) {
         committed_samples = (dsb->writelead - dsb->committed_mixpos) / istride;
@@ -409,47 +430,25 @@ static UINT cp_fields_resample_hq(IDirectSoundBufferImpl *dsb, bitsputfunc put,
                     dsb->buflen, dsb->sec_mixpos + i * istride, channel);
     }
 
-    for(i = 0; i < count; ++i) {
-        UINT int_fir_steps = (freqAcc_start + i * dsb->freqAdjustNum) * dsbfirstep / dsb->freqAdjustDen;
-        float total_fir_steps = (freqAcc_start + i * dsb->freqAdjustNum) * dsbfirstep / (float)dsb->freqAdjustDen;
-        UINT ipos = int_fir_steps / dsbfirstep;
+    for (channel = 0; channel < channels; channel++)
+        resample(dsb->freqAdjustNum, dsb->freqAdjustDen, freqAcc_start, dsbfirstep, dsb->firgain,
+                count, intermediate + channel * required_input, output + channel * count);
 
-        UINT idx = (ipos + 1) * dsbfirstep - int_fir_steps - 1;
-        float rem = int_fir_steps + 1.0 - total_fir_steps;
-
-        int fir_used = 0;
-        while (idx < fir_len - 1) {
-            fir_copy[fir_used++] = fir[idx] * (1.0 - rem) + fir[idx + 1] * rem;
-            idx += dsb->firstep;
-        }
-
-        assert(fir_used <= fir_cachesize);
-        assert(ipos + fir_used <= required_input);
-
-        for (channel = 0; channel < dsb->mix_channels; channel++) {
-            int j;
-            float sum = 0.0;
-            float* cache = &intermediate[channel * required_input + ipos];
-            for (j = 0; j < fir_used; j++)
-                sum += fir_copy[j] * cache[j];
-            put(dsb, i * ostride, channel, sum * dsb->firgain);
-        }
-    }
+    for(i = 0; i < count; ++i)
+        for (channel = 0; channel < channels; channel++)
+            dsb->put(dsb, i * ostride, channel, output[channel * count + i]);
 
     return max_ipos;
 }
 
-static void cp_fields(IDirectSoundBufferImpl *dsb, bitsputfunc put,
-                      UINT ostride, UINT count, LONG64 *freqAccNum)
+static void cp_fields(IDirectSoundBufferImpl *dsb, UINT count, LONG64 *freqAccNum)
 {
     DWORD ipos, adv;
 
     if (dsb->freqAdjustNum == dsb->freqAdjustDen)
-        adv = cp_fields_noresample(dsb, put, ostride, count); /* *freqAcc is unmodified */
-    else if (dsb->device->nrofbuffers > ds_hq_buffers_max)
-        adv = cp_fields_resample_lq(dsb, put, ostride, count, freqAccNum);
+        adv = cp_fields_noresample(dsb, count); /* *freqAccNum is unmodified */
     else
-        adv = cp_fields_resample_hq(dsb, put, ostride, count, freqAccNum);
+        adv = cp_fields_resample(dsb, count, freqAccNum);
 
     ipos = dsb->sec_mixpos + adv * dsb->pwfx->nBlockAlign;
     if (ipos >= dsb->buflen) {
@@ -485,21 +484,6 @@ static inline DWORD DSOUND_BufPtrDiff(DWORD buflen, DWORD ptr1, DWORD ptr2)
 		return buflen + ptr1 - ptr2;
 	}
 }
-
-static float getieee32_dsp(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel)
-{
-    const BYTE *buf = (BYTE *)dsb->device->dsp_buffer;
-    const float *fbuf = (const float*)(buf + pos + sizeof(float) * channel);
-    return *fbuf;
-}
-
-static void putieee32_dsp(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value)
-{
-    BYTE *buf = (BYTE *)dsb->device->dsp_buffer;
-    float *fbuf = (float*)(buf + pos + sizeof(float) * channel);
-    *fbuf = value;
-}
-
 /**
  * Mix at most the given amount of data into the allocated temporary buffer
  * of the given secondary buffer, starting from the dsb's first currently
@@ -515,64 +499,31 @@ static void putieee32_dsp(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD ch
  */
 static void DSOUND_MixToTemporary(IDirectSoundBufferImpl *dsb, DWORD frames)
 {
-    BOOL using_filters = dsb->num_filters > 0 || dsb->device->eax.using_eax;
-    UINT istride, ostride, size_bytes;
-    DWORD channel, i;
-    bitsputfunc put;
+	UINT size_bytes = frames * sizeof(float) * dsb->device->pwfx->nChannels;
 	HRESULT hr;
+	int i;
 
-    put = dsb->put;
-    ostride = dsb->device->pwfx->nChannels * sizeof(float);
-    size_bytes = frames * ostride;
+	if (dsb->device->tmp_buffer_len < size_bytes || !dsb->device->tmp_buffer)
+	{
+		dsb->device->tmp_buffer_len = size_bytes;
+		dsb->device->tmp_buffer = realloc(dsb->device->tmp_buffer, size_bytes);
+	}
+	if(dsb->put_aux == putieee32_sum)
+		memset(dsb->device->tmp_buffer, 0, dsb->device->tmp_buffer_len);
 
-    if (dsb->device->tmp_buffer_len < size_bytes || !dsb->device->tmp_buffer)
-    {
-        dsb->device->tmp_buffer_len = size_bytes;
-        dsb->device->tmp_buffer = realloc(dsb->device->tmp_buffer, size_bytes);
-    }
-    if(dsb->put_aux == putieee32_sum)
-        memset(dsb->device->tmp_buffer, 0, dsb->device->tmp_buffer_len);
+	cp_fields(dsb, frames, &dsb->freqAccNum);
 
-    if (using_filters) {
-        put = putieee32_dsp;
-        ostride = dsb->mix_channels * sizeof(float);
-        size_bytes = frames * ostride;
+	if (size_bytes > 0) {
+		for (i = 0; i < dsb->num_filters; i++) {
+			if (dsb->filters[i].inplace) {
+				hr = IMediaObjectInPlace_Process(dsb->filters[i].inplace, size_bytes, (BYTE*)dsb->device->tmp_buffer, 0, DMO_INPLACE_NORMAL);
 
-        if (dsb->device->dsp_buffer_len < size_bytes || !dsb->device->dsp_buffer) {
-            if (dsb->device->dsp_buffer)
-                dsb->device->dsp_buffer = HeapReAlloc(GetProcessHeap(), 0, dsb->device->dsp_buffer, size_bytes);
-            else
-                dsb->device->dsp_buffer = HeapAlloc(GetProcessHeap(), 0, size_bytes);
-            dsb->device->dsp_buffer_len = size_bytes;
-        }
-    }
-
-    cp_fields(dsb, put, ostride, frames, &dsb->freqAccNum);
-
-    if (using_filters) {
-        if (frames > 0) {
-            for (i = 0; i < dsb->num_filters; i++) {
-                if (dsb->filters[i].inplace) {
-                    hr = IMediaObjectInPlace_Process(dsb->filters[i].inplace, frames * sizeof(float) * dsb->mix_channels,
-                                                     (BYTE *)dsb->device->dsp_buffer, 0, DMO_INPLACE_NORMAL);
-                    if (FAILED(hr))
-                        WARN("IMediaObjectInPlace_Process failed for filter %lu\n", i);
-                } else
-                    WARN("filter %lu has no inplace object - unsupported\n", i);
-            }
-        }
-
-        if (dsb->device->eax.using_eax)
-            process_eax_buffer(dsb, dsb->device->dsp_buffer, frames * dsb->mix_channels);
-
-        istride = ostride;
-        ostride = dsb->device->pwfx->nChannels * sizeof(float);
-        for (i = 0; i < frames; i++) {
-            for (channel = 0; channel < dsb->mix_channels; channel++) {
-                dsb->put(dsb, i * ostride, channel, getieee32_dsp(dsb, i * istride, channel));
-            }
-        }
-    }
+				if (FAILED(hr))
+					WARN("IMediaObjectInPlace_Process failed for filter %u\n", i);
+			} else
+				WARN("filter %u has no inplace object - unsupported\n", i);
+		}
+	}
 }
 
 static void DSOUND_MixerVol(const IDirectSoundBufferImpl *dsb, INT frames)

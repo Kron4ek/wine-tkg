@@ -29,15 +29,12 @@
 #include "mediaobj.h"
 #include "mmsystem.h"
 #include "uuids.h"
-#include "dsound_eax.h"
 
 #include "wine/list.h"
 
 #define DS_MAX_CHANNELS 6
 
 extern int ds_hel_buflen;
-extern int ds_hq_buffers_max;
-extern BOOL ds_eax_enabled;
 
 /*****************************************************************************
  * Predeclare the interface implementation structures
@@ -91,15 +88,13 @@ struct DirectSoundDevice
     int                         speaker_num[DS_MAX_CHANNELS];
     int                         num_speakers;
     int                         lfe_channel;
-    float *tmp_buffer, *cp_buffer, *dsp_buffer;
-    DWORD                       tmp_buffer_len, cp_buffer_len, dsp_buffer_len;
+    float *tmp_buffer, *cp_buffer;
+    DWORD                       tmp_buffer_len, cp_buffer_len;
     CO_MTA_USAGE_COOKIE         mta_cookie;
 
     DSVOLUMEPAN                 volpan;
 
     normfunc normfunction;
-
-    eax_info                    eax;
 
     /* DirectSound3DListener fields */
     DS3DLISTENER                ds3dl;
@@ -151,7 +146,6 @@ struct IDirectSoundBufferImpl
     DSVOLUMEPAN                 volpan;
     DSBUFFERDESC                dsbd;
     /* used for frequency conversion (PerfectPitch) */
-    ULONG                       freqneeded;
     DWORD                       firstep;
     float                       firgain;
     LONG64                      freqAdjustNum,freqAdjustDen;
@@ -178,8 +172,6 @@ struct IDirectSoundBufferImpl
     bitsputfunc put, put_aux;
     int                         num_filters;
     DSFilter*                   filters;
-
-    eax_buffer_info             eax;
 
     struct list entry;
 };
@@ -234,19 +226,6 @@ LONG capped_refcount_dec(LONG *ref);
 /* duplex.c */
 
 HRESULT DSOUND_FullDuplexCreate(REFIID riid, void **ppv);
-
-/* eax.c */
-BOOL WINAPI EAX_QuerySupport(REFGUID guidPropSet, ULONG dwPropID, ULONG *pTypeSupport);
-HRESULT WINAPI EAX_Get(IDirectSoundBufferImpl *buf, REFGUID guidPropSet,
-        ULONG dwPropID, void *pInstanceData, ULONG cbInstanceData, void *pPropData,
-        ULONG cbPropData, ULONG *pcbReturned);
-HRESULT WINAPI EAX_Set(IDirectSoundBufferImpl *buf, REFGUID guidPropSet,
-        ULONG dwPropID, void *pInstanceData, ULONG cbInstanceData, void *pPropData,
-        ULONG cbPropData);
-void init_eax_device(DirectSoundDevice *dev);
-void free_eax_buffer(IDirectSoundBufferImpl *dsb);
-void init_eax_buffer(IDirectSoundBufferImpl *dsb);
-void process_eax_buffer(IDirectSoundBufferImpl *dsb, float *buf, DWORD count);
 
 /* mixer.c */
 void DSOUND_CheckEvent(const IDirectSoundBufferImpl *dsb, DWORD playpos, int len);

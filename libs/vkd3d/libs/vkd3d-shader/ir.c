@@ -3481,6 +3481,43 @@ static enum vkd3d_result vsir_program_normalise_ps1_output(struct vsir_program *
     return VKD3D_OK;
 }
 
+/* In vs_3_0, the point size output is a normal output register declared with dcl_psize.
+ * Remap writes to that register to the point size system value register. */
+static enum vkd3d_result vsir_program_normalise_vs3_point_size_output(struct vsir_program *program,
+        struct vsir_transformation_context *ctx)
+{
+    struct vsir_program_iterator it = vsir_program_iterator(&program->instructions);
+    struct vkd3d_shader_instruction *ins;
+    const struct signature_element *e;
+
+    if (!program->has_point_size)
+        return VKD3D_OK;
+
+    e = vsir_signature_find_element_by_name(&program->output_signature, "PSIZE", 0);
+    VKD3D_ASSERT(e);
+
+    for (ins = vsir_program_iterator_head(&it); ins; ins = vsir_program_iterator_next(&it))
+    {
+        if (vsir_instruction_is_dcl(ins))
+            continue;
+
+        for (size_t j = 0; j < ins->dst_count; ++j)
+        {
+            struct vkd3d_shader_register *reg = &ins->dst[j].reg;
+
+            /* Remap the PSIZE output register to the point size sysval register. */
+            if (reg->type == VKD3DSPR_OUTPUT && reg->idx[0].offset == e->register_index)
+            {
+                reg->type = VKD3DSPR_RASTOUT;
+                reg->idx[0].offset = VSIR_RASTOUT_POINT_SIZE;
+                reg->idx_count = 1;
+            }
+        }
+    }
+
+    return VKD3D_OK;
+}
+
 static struct signature_element *add_signature_element(struct shader_signature *signature,
         const char *semantic_name, uint32_t semantic_index, uint32_t mask, uint32_t register_index,
         enum vkd3d_shader_interpolation_mode interpolation_mode)
@@ -3756,6 +3793,8 @@ static enum vkd3d_result vsir_program_remap_output_signature(struct vsir_program
                 map->input_register_index, map->input_mask);
         e = &signature->elements[signature->element_count++];
         memset(e, 0, sizeof(*e));
+        if (!(e->semantic_name = vkd3d_strdup("$unused")))
+            return VKD3D_ERROR_OUT_OF_MEMORY;
         e->sysval_semantic = VKD3D_SHADER_SV_NONE;
         e->component_type = VKD3D_SHADER_COMPONENT_FLOAT;
         e->register_count = 1;
@@ -12922,28 +12961,42 @@ static const char * const signature_type_names[] =
 #define DS_BIT (1u << VKD3D_SHADER_TYPE_DOMAIN)
 #define CS_BIT (1u << VKD3D_SHADER_TYPE_COMPUTE)
 
+#define FLOAT_BIT (1u << VKD3D_SHADER_COMPONENT_FLOAT)
+#define INT_BIT (1u << VKD3D_SHADER_COMPONENT_INT)
+#define UINT_BIT (1u << VKD3D_SHADER_COMPONENT_UINT)
+#define FLOAT16_BIT (1u << VKD3D_SHADER_COMPONENT_FLOAT16)
+#define INT16_BIT (1u << VKD3D_SHADER_COMPONENT_INT16)
+#define UINT16_BIT (1u << VKD3D_SHADER_COMPONENT_UINT16)
+
 static const struct sysval_validation_data_element
 {
     unsigned int input;
     unsigned int output;
     unsigned int patch_constant;
-    enum vkd3d_shader_component_type data_type;
+    unsigned int data_mask;
     unsigned int component_count;
 }
 sysval_validation_data[] =
 {
-    [VKD3D_SHADER_SV_POSITION] = {PS_BIT | GS_BIT | HS_BIT | DS_BIT, VS_BIT | GS_BIT | HS_BIT | DS_BIT, 0,
-            VKD3D_SHADER_COMPONENT_FLOAT, 4},
-    [VKD3D_SHADER_SV_CLIP_DISTANCE] = {PS_BIT | GS_BIT | HS_BIT | DS_BIT, PS_BIT | VS_BIT | GS_BIT | HS_BIT | DS_BIT, 0,
-            VKD3D_SHADER_COMPONENT_FLOAT, 4},
-    [VKD3D_SHADER_SV_CULL_DISTANCE] = {PS_BIT | GS_BIT | HS_BIT | DS_BIT, PS_BIT | VS_BIT | GS_BIT | HS_BIT | DS_BIT, 0,
-            VKD3D_SHADER_COMPONENT_FLOAT, 4},
-    [VKD3D_SHADER_SV_TESS_FACTOR_QUADEDGE] = {0, 0, HS_BIT | DS_BIT, VKD3D_SHADER_COMPONENT_FLOAT, 1},
-    [VKD3D_SHADER_SV_TESS_FACTOR_QUADINT] = {0, 0, HS_BIT | DS_BIT, VKD3D_SHADER_COMPONENT_FLOAT, 1},
-    [VKD3D_SHADER_SV_TESS_FACTOR_TRIEDGE] = {0, 0, HS_BIT | DS_BIT, VKD3D_SHADER_COMPONENT_FLOAT, 1},
-    [VKD3D_SHADER_SV_TESS_FACTOR_TRIINT] = {0, 0, HS_BIT | DS_BIT, VKD3D_SHADER_COMPONENT_FLOAT, 1},
-    [VKD3D_SHADER_SV_TESS_FACTOR_LINEDET] = {0, 0, HS_BIT | DS_BIT, VKD3D_SHADER_COMPONENT_FLOAT, 1},
-    [VKD3D_SHADER_SV_TESS_FACTOR_LINEDEN] = {0, 0, HS_BIT | DS_BIT, VKD3D_SHADER_COMPONENT_FLOAT, 1},
+    [VKD3D_SHADER_SV_POSITION] = {PS_BIT | GS_BIT | HS_BIT | DS_BIT,
+            VS_BIT | GS_BIT | HS_BIT | DS_BIT, 0, FLOAT_BIT, 4},
+    [VKD3D_SHADER_SV_CLIP_DISTANCE] = {PS_BIT | GS_BIT | HS_BIT | DS_BIT,
+            PS_BIT | VS_BIT | GS_BIT | HS_BIT | DS_BIT, 0, FLOAT_BIT, 4},
+    [VKD3D_SHADER_SV_CULL_DISTANCE] = {PS_BIT | GS_BIT | HS_BIT | DS_BIT,
+            PS_BIT | VS_BIT | GS_BIT | HS_BIT | DS_BIT, 0, FLOAT_BIT, 4},
+    [VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX] = {HS_BIT | DS_BIT | GS_BIT | PS_BIT,
+            VS_BIT | HS_BIT | DS_BIT | GS_BIT, 0, UINT_BIT, 1},
+    [VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX] = {HS_BIT | DS_BIT | GS_BIT | PS_BIT,
+            VS_BIT | HS_BIT | DS_BIT | GS_BIT, 0, UINT_BIT, 1},
+    [VKD3D_SHADER_SV_VERTEX_ID] = {VS_BIT, 0, 0, UINT_BIT, 1},
+    [VKD3D_SHADER_SV_TARGET] = {0, PS_BIT, 0,
+            FLOAT_BIT | UINT_BIT | INT_BIT | FLOAT16_BIT | UINT16_BIT | INT16_BIT, 4},
+    [VKD3D_SHADER_SV_TESS_FACTOR_QUADEDGE] = {0, 0, HS_BIT | DS_BIT, FLOAT_BIT, 1},
+    [VKD3D_SHADER_SV_TESS_FACTOR_QUADINT] = {0, 0, HS_BIT | DS_BIT, FLOAT_BIT, 1},
+    [VKD3D_SHADER_SV_TESS_FACTOR_TRIEDGE] = {0, 0, HS_BIT | DS_BIT, FLOAT_BIT, 1},
+    [VKD3D_SHADER_SV_TESS_FACTOR_TRIINT] = {0, 0, HS_BIT | DS_BIT, FLOAT_BIT, 1},
+    [VKD3D_SHADER_SV_TESS_FACTOR_LINEDET] = {0, 0, HS_BIT | DS_BIT, FLOAT_BIT, 1},
+    [VKD3D_SHADER_SV_TESS_FACTOR_LINEDEN] = {0, 0, HS_BIT | DS_BIT, FLOAT_BIT, 1},
 };
 
 static void vsir_validate_signature_element(struct validation_context *ctx,
@@ -13135,7 +13188,7 @@ static void vsir_validate_signature_element(struct validation_context *ctx,
 
         if (data->component_count != 0)
         {
-            if (element->component_type != data->data_type)
+            if (!((1u << element->component_type) & data->data_mask))
                 validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
                         "element %u of %s signature: Invalid data type %#x for system value semantic %#x.",
                         idx, signature_type_name, element->component_type, element->sysval_semantic);
@@ -15671,6 +15724,9 @@ enum vkd3d_result vsir_program_lower_d3dbc(struct vsir_program *program, uint64_
 
         vsir_transform(&ctx, vsir_program_normalise_ps1_output);
     }
+
+    if (program->shader_version.major == 3 && program->shader_version.type == VKD3D_SHADER_TYPE_VERTEX)
+        vsir_transform(&ctx, vsir_program_normalise_vs3_point_size_output);
 
     if (TRACE_ON() && ctx.result >= 0)
         vsir_program_trace(program);

@@ -289,12 +289,19 @@ static const union {
 #define FP_ILOGB0 (-0x7fffffff - _C2)
 #define FP_ILOGBNAN 0x7fffffff
 
+#define _FP_LT  1
+#define _FP_EQ  2
+#define _FP_GT  4
+
 _ACRTIMP short __cdecl _dtest(double*);
 _ACRTIMP short __cdecl _ldtest(long double*);
 _ACRTIMP short __cdecl _fdtest(float*);
 _ACRTIMP int   __cdecl _dsign(double);
 _ACRTIMP int   __cdecl _ldsign(long double);
 _ACRTIMP int   __cdecl _fdsign(float);
+_ACRTIMP int   __cdecl _dpcomp(double, double);
+_ACRTIMP int   __cdecl _ldpcomp(long double, long double);
+_ACRTIMP int   __cdecl _fdpcomp(float, float);
 
 _ACRTIMP double __cdecl nan(const char *);
 _ACRTIMP float __cdecl nanf(const char *);
@@ -308,10 +315,22 @@ inline int fpclassify(long double x) throw() { return _ldtest(&x); }
 inline bool signbit(float x) throw() { return _fdsign(x) != 0; }
 inline bool signbit(double x) throw() { return _dsign(x) != 0; }
 inline bool signbit(long double x) throw() { return _ldsign(x) != 0; }
+inline int _fpcomp(float x, float y) throw() { return _fdpcomp(x, y); }
+inline int _fpcomp(double x, double y) throw() { return _dpcomp(x, y); }
+inline int _fpcomp(long double x, long double y) throw() { return _ldpcomp(x, y); }
+inline float abs(float x) throw() { return ::fabsf(x); }
+inline double abs(double x) throw() { return ::fabs(x); }
+inline long double abs(long double x) throw() { return ::fabs((double)x); }
 template <class T> inline bool isfinite(T x) throw() { return fpclassify(x) <= 0; }
 template <class T> inline bool isinf(T x) throw() { return fpclassify(x) == FP_INFINITE; }
 template <class T> inline bool isnan(T x) throw() { return fpclassify(x) == FP_NAN; }
 template <class T> inline bool isnormal(T x) throw() { return fpclassify(x) == FP_NORMAL; }
+template <class T1, class T2> inline bool isgreater(T1 x, T2 y) throw() { return (_fpcomp(x, y) & _FP_GT) != 0; }
+template <class T1, class T2> inline bool isgreaterequal(T1 x, T2 y) throw() { return (_fpcomp(x, y) & (_FP_EQ | _FP_GT)) != 0; }
+template <class T1, class T2> inline bool isless(T1 x, T2 y) throw() { return (_fpcomp(x, y) & _FP_LT) != 0; }
+template <class T1, class T2> inline bool islessequal(T1 x, T2 y) throw() { return (_fpcomp(x, y) & (_FP_LT | _FP_EQ)) != 0; }
+template <class T1, class T2> inline bool islessgreater(T1 x, T2 y) throw() { return (_fpcomp(x, y) & (_FP_LT | _FP_GT)) != 0; }
+template <class T1, class T2> inline bool isunordered(T1 x, T2 y) throw() { return _fpcomp(x, y) == 0; }
 } /* extern "C++" */
 
 #elif _MSVCR_VER >= 120
@@ -325,13 +344,6 @@ _ACRTIMP short __cdecl _fdclass(float);
 #define isnan(x)      (fpclassify(x) == FP_NAN)
 #define isnormal(x)   (fpclassify(x) == FP_NORMAL)
 #define isfinite(x)   (fpclassify(x) <= 0)
-
- _ACRTIMP int __cdecl _dpcomp(double, double);
- _ACRTIMP int __cdecl _fdpcomp(float, float);
-
-#define _FP_LT  1
-#define _FP_EQ  2
-#define _FP_GT  4
 
 #else
 
@@ -412,23 +424,8 @@ static inline int __signbit(double x)
 #pragma pack(pop)
 
 #if !defined(__STRICT_ANSI__) || defined(_POSIX_C_SOURCE) || defined(_POSIX_SOURCE) || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE) || defined(_USE_MATH_DEFINES)
-#ifndef _MATH_DEFINES_DEFINED
-#define _MATH_DEFINES_DEFINED
-#define M_E         2.71828182845904523536
-#define M_LOG2E     1.44269504088896340736
-#define M_LOG10E    0.434294481903251827651
-#define M_LN2       0.693147180559945309417
-#define M_LN10      2.30258509299404568402
-#define M_PI        3.14159265358979323846
-#define M_PI_2      1.57079632679489661923
-#define M_PI_4      0.785398163397448309616
-#define M_1_PI      0.318309886183790671538
-#define M_2_PI      0.636619772367581343076
-#define M_2_SQRTPI  1.12837916709551257390
-#define M_SQRT2     1.41421356237309504880
-#define M_SQRT1_2   0.707106781186547524401
-#endif /* !_MATH_DEFINES_DEFINED */
-#endif /* _USE_MATH_DEFINES */
+#include <corecrt_math_defines.h>
+#endif
 
 static inline double hypot( double x, double y ) { return _hypot( x, y ); }
 static inline double j0( double x ) { return _j0( x ); }

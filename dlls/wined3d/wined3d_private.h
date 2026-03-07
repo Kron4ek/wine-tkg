@@ -30,12 +30,12 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include <math.h>
+#include <intrin.h>
 #include <limits.h>
 #include <float.h>
 #define LIBVKD3D_SHADER_SOURCE
 #include <vkd3d_shader.h>
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #define COBJMACROS
 #include "windef.h"
 #include "winbase.h"
@@ -434,13 +434,7 @@ static inline unsigned short float_32_to_16(const float *in)
 
 static inline unsigned int wined3d_popcount(unsigned int x)
 {
-#if defined(__MINGW32__)
-    return __builtin_popcount(x);
-#else
-    x -= x >> 1 & 0x55555555;
-    x = (x & 0x33333333) + (x >> 2 & 0x33333333);
-    return ((x + (x >> 4)) & 0x0f0f0f0f) * 0x01010101 >> 24;
-#endif
+    return __popcnt(x);
 }
 
 static inline int wined3d_uint32_compare(uint32_t x, uint32_t y)
@@ -2326,6 +2320,7 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_RTX3090TI   = 0x2203,
     CARD_NVIDIA_TESLA_T4            = 0x1eb8,
     CARD_NVIDIA_AMPERE_A10          = 0x2236,
+    CARD_NVIDIA_AMPERE_A10G         = 0x2237,
     CARD_NVIDIA_GEFORCE_RTX4060     = 0x2882,
     CARD_NVIDIA_GEFORCE_RTX4060M    = 0x28a0,
     CARD_NVIDIA_GEFORCE_RTX4060TI8G = 0x2803,

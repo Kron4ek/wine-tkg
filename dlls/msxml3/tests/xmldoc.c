@@ -1314,7 +1314,6 @@ static void test_xmldoc_version(void)
     SysFreeString(s);
 
     hr = load_document(doc, doc_data4, sizeof(doc_data4) - 1);
-    todo_wine
     ok(hr == XML_E_INVALID_VERSION, "Unexpected hr %#lx.\n", hr);
 
     IXMLDocument_Release(doc);

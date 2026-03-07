@@ -2020,6 +2020,11 @@ static void macdrv_surface_flush(struct opengl_drawable *base, UINT flags)
     if (!context) return;
     if (flags & GL_FLUSH_INTERVAL) set_swap_interval(context, base->interval);
     if (flags & GL_FLUSH_UPDATED) make_context_current(context, context->read_view == client->cocoa_view);
+    if (flags & GL_FLUSH_PRESENT)
+    {
+        macdrv_flush_opengl_context(context->context);
+        client_surface_present(base->client);
+    }
 }
 
 
@@ -2760,7 +2765,13 @@ static BOOL macdrv_surface_swap(struct opengl_drawable *base)
     TRACE("%s context %p/%p/%p\n", debugstr_opengl_drawable(base), context, (context ? context->context : NULL),
           (context ? context->cglcontext : NULL));
 
-    macdrv_flush_opengl_context(context->context);
+    if (context)
+    {
+        struct macdrv_client_surface *client = impl_from_client_surface(base->client);
+        make_context_current(context, context->read_view == client->cocoa_view);
+        macdrv_flush_opengl_context(context->context);
+    }
+    client_surface_present(base->client);
     return TRUE;
 }
 

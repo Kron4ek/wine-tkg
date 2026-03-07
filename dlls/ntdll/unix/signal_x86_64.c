@@ -85,7 +85,6 @@ extern void _thread_set_tsd_base(uint64_t);
 #endif
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 #include "ddk/wdm.h"
@@ -1200,6 +1199,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
     if (flags & CONTEXT_FLOATING_POINT)
     {
         frame->xsave = context->FltSave;
+        frame->xsave.MxCsr = context->MxCsr;
         frame->xstate.Mask |= XSTATE_MASK_LEGACY;
     }
     if (flags & CONTEXT_XSTATE)
@@ -2507,6 +2507,7 @@ static inline BOOL check_invalid_gsbase( ucontext_t *ucontext )
     ULONG_PTR cur_gsbase = 0;
 
     if (CS_sig(ucontext) != cs64_sel) return FALSE;
+    if (((ERROR_sig(ucontext) >> 1) & 0x09) == EXCEPTION_EXECUTE_FAULT) return FALSE;
 
 #ifdef __linux__
     if (user_shared_data->ProcessorFeatures[PF_RDWRFSGSBASE_AVAILABLE])

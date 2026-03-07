@@ -164,6 +164,27 @@ int vkd3d_string_buffer_printf(struct vkd3d_string_buffer *buffer, const char *f
     return ret;
 }
 
+int vkd3d_string_buffer_print_f16(struct vkd3d_string_buffer *buffer, uint16_t f)
+{
+    size_t idx = buffer->content_size + 1;
+    union
+    {
+        uint32_t u32;
+        float f32;
+    } v;
+    int ret;
+
+    v.u32 = vkd3d_f32_from_f16(f);
+    if (!(ret = vkd3d_string_buffer_printf(buffer, "%.4e", v.f32)) && isfinite(v.f32))
+    {
+        if (signbit(v.f32))
+            ++idx;
+        buffer->buffer[idx] = '.';
+    }
+
+    return ret;
+}
+
 int vkd3d_string_buffer_print_f32(struct vkd3d_string_buffer *buffer, float f)
 {
     size_t idx = buffer->content_size + 1;

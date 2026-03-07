@@ -84,7 +84,7 @@ STATIC_ASSERT(SM4_MAX_SRC_COUNT <= SPIRV_MAX_SRC_COUNT);
 #define VKD3D_SM4_INTERPOLATION_MODE_MASK     (0xfu << VKD3D_SM4_INTERPOLATION_MODE_SHIFT)
 
 #define VKD3D_SM4_GLOBAL_FLAGS_SHIFT          11
-#define VKD3D_SM4_GLOBAL_FLAGS_MASK           (0xffu << VKD3D_SM4_GLOBAL_FLAGS_SHIFT)
+#define VKD3D_SM4_GLOBAL_FLAGS_MASK           (0x1ffu << VKD3D_SM4_GLOBAL_FLAGS_SHIFT)
 
 #define VKD3D_SM5_PRECISE_SHIFT               19
 #define VKD3D_SM5_PRECISE_MASK                (0xfu << VKD3D_SM5_PRECISE_SHIFT)
@@ -3097,53 +3097,69 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
         {"sv_groupindex",               false, VKD3D_SHADER_TYPE_COMPUTE,   ~0u},
         {"sv_groupthreadid",            false, VKD3D_SHADER_TYPE_COMPUTE,   ~0u},
 
+        {"sv_clipdistance",             false, VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_NONE},
+        {"sv_culldistance",             false, VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_NONE},
         {"sv_domainlocation",           false, VKD3D_SHADER_TYPE_DOMAIN,    ~0u},
         {"sv_position",                 false, VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_NONE},
         {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_DOMAIN,    ~0u},
         {"sv_rendertargetarrayindex",   false, VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_NONE},
         {"sv_viewportarrayindex",       false, VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_NONE},
 
+        {"sv_clipdistance",             true,  VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_CLIP_DISTANCE},
+        {"sv_culldistance",             true,  VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_CULL_DISTANCE},
         {"sv_position",                 true,  VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_POSITION},
         {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
         {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_DOMAIN,    VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
 
-        {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_PRIMITIVE_ID},
+        {"sv_clipdistance",             false, VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_CLIP_DISTANCE},
+        {"sv_culldistance",             false, VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_CULL_DISTANCE},
         {"sv_gsinstanceid",             false, VKD3D_SHADER_TYPE_GEOMETRY,  ~0u},
+        {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_PRIMITIVE_ID},
 
         {"position",                    true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_POSITION},
+        {"sv_clipdistance",             true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_CLIP_DISTANCE},
+        {"sv_culldistance",             true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_CULL_DISTANCE},
+        {"sv_isfrontface",              true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_IS_FRONT_FACE},
         {"sv_position",                 true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_POSITION},
         {"sv_primitiveid",              true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_PRIMITIVE_ID},
-        {"sv_isfrontface",              true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_IS_FRONT_FACE},
         {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
         {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_GEOMETRY,  VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
 
+        {"sv_clipdistance",             false, VKD3D_SHADER_TYPE_HULL,      VKD3D_SHADER_SV_CLIP_DISTANCE},
+        {"sv_culldistance",             false, VKD3D_SHADER_TYPE_HULL,      VKD3D_SHADER_SV_CULL_DISTANCE},
         {"sv_outputcontrolpointid",     false, VKD3D_SHADER_TYPE_HULL,      ~0u},
         {"sv_position",                 false, VKD3D_SHADER_TYPE_HULL,      ~0u},
         {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_HULL,      ~0u},
 
+        {"sv_clipdistance",             true,  VKD3D_SHADER_TYPE_HULL,      VKD3D_SHADER_SV_CLIP_DISTANCE},
+        {"sv_culldistance",             true,  VKD3D_SHADER_TYPE_HULL,      VKD3D_SHADER_SV_CULL_DISTANCE},
         {"sv_position",                 true,  VKD3D_SHADER_TYPE_HULL,      VKD3D_SHADER_SV_POSITION},
         {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_HULL,      VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
         {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_HULL,      VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
 
         {"position",                    false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_POSITION},
+        {"sv_clipdistance",             false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_CLIP_DISTANCE},
+        {"sv_culldistance",             false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_CULL_DISTANCE},
+        {"sv_isfrontface",              false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_IS_FRONT_FACE},
         {"sv_position",                 false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_POSITION},
         {"sv_primitiveid",              false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_PRIMITIVE_ID},
-        {"sv_isfrontface",              false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_IS_FRONT_FACE},
         {"sv_rendertargetarrayindex",   false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
-        {"sv_viewportarrayindex",       false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
         {"sv_sampleindex",              false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_SAMPLE_INDEX},
+        {"sv_viewportarrayindex",       false, VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
 
         {"color",                       true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_TARGET},
         {"depth",                       true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_DEPTH},
-        {"sv_target",                   true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_TARGET},
-        {"sv_depth",                    true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_DEPTH},
         {"sv_coverage",                 true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_COVERAGE},
+        {"sv_depth",                    true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_DEPTH},
+        {"sv_target",                   true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_TARGET},
 
+        {"sv_instanceid",               false, VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_INSTANCE_ID},
         {"sv_position",                 false, VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_NONE},
         {"sv_vertexid",                 false, VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_VERTEX_ID},
-        {"sv_instanceid",               false, VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_INSTANCE_ID},
 
         {"position",                    true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_POSITION},
+        {"sv_clipdistance",             true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_CLIP_DISTANCE},
+        {"sv_culldistance",             true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_CULL_DISTANCE},
         {"sv_position",                 true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_POSITION},
         {"sv_rendertargetarrayindex",   true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX},
         {"sv_viewportarrayindex",       true,  VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX},
@@ -3161,6 +3177,10 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
             *sysval_semantic = VKD3D_SHADER_SV_RENDER_TARGET_ARRAY_INDEX;
         else if (!ascii_strcasecmp(semantic_name, "sv_viewportarrayindex"))
             *sysval_semantic = VKD3D_SHADER_SV_VIEWPORT_ARRAY_INDEX;
+        else if (!ascii_strcasecmp(semantic_name, "sv_clipdistance") && semantic_idx <= 1)
+            *sysval_semantic = VKD3D_SHADER_SV_CLIP_DISTANCE;
+        else if (!ascii_strcasecmp(semantic_name, "sv_culldistance") && semantic_idx <= 1)
+            *sysval_semantic = VKD3D_SHADER_SV_CULL_DISTANCE;
         else if (has_sv_prefix)
             return false;
         else
@@ -3206,6 +3226,8 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
                 && (semantic_compat_mapping || has_sv_prefix)
                 && version->type == semantics[i].shader_type)
         {
+            if (vsir_sysval_semantic_is_clip_cull(semantics[i].semantic) && semantic_idx > 1)
+                return false;
             if (is_patch_constant_func && output && semantics[i].semantic != ~0u)
                 *sysval_semantic = VKD3D_SHADER_SV_NONE;
             else

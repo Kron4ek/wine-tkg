@@ -917,222 +917,75 @@ static struct device *get_devnode_device(DEVINST devnode, HDEVINFO *set, SP_DEVI
 
 /***********************************************************************
  *              SetupDiBuildClassInfoList  (SETUPAPI.@)
- *
- * Returns a list of setup class GUIDs that identify the classes
- * that are installed on a local machine.
- *
- * PARAMS
- *   Flags [I] control exclusion of classes from the list.
- *   ClassGuidList [O] pointer to a GUID-typed array that receives a list of setup class GUIDs.
- *   ClassGuidListSize [I] The number of GUIDs in the array (ClassGuidList).
- *   RequiredSize [O] pointer, which receives the number of GUIDs that are returned.
- *
- * RETURNS
- *   Success: TRUE.
- *   Failure: FALSE.
  */
-BOOL WINAPI SetupDiBuildClassInfoList(
-        DWORD Flags,
-        LPGUID ClassGuidList,
-        DWORD ClassGuidListSize,
-        PDWORD RequiredSize)
+BOOL WINAPI SetupDiBuildClassInfoList(DWORD flags, GUID *guids, DWORD guids_size, DWORD *guid_count)
 {
-    TRACE("\n");
-    return SetupDiBuildClassInfoListExW(Flags, ClassGuidList,
-                                        ClassGuidListSize, RequiredSize,
-                                        NULL, NULL);
+    return SetupDiBuildClassInfoListExW(flags, guids, guids_size, guid_count, NULL, NULL);
 }
 
 /***********************************************************************
  *              SetupDiBuildClassInfoListExA  (SETUPAPI.@)
- *
- * Returns a list of setup class GUIDs that identify the classes
- * that are installed on a local or remote machine.
- *
- * PARAMS
- *   Flags [I] control exclusion of classes from the list.
- *   ClassGuidList [O] pointer to a GUID-typed array that receives a list of setup class GUIDs.
- *   ClassGuidListSize [I] The number of GUIDs in the array (ClassGuidList).
- *   RequiredSize [O] pointer, which receives the number of GUIDs that are returned.
- *   MachineName [I] name of a remote machine.
- *   Reserved [I] must be NULL.
- *
- * RETURNS
- *   Success: TRUE.
- *   Failure: FALSE.
  */
-BOOL WINAPI SetupDiBuildClassInfoListExA(
-        DWORD Flags,
-        LPGUID ClassGuidList,
-        DWORD ClassGuidListSize,
-        PDWORD RequiredSize,
-        LPCSTR MachineName,
-        PVOID Reserved)
+BOOL WINAPI SetupDiBuildClassInfoListExA(DWORD flags, GUID *guids, DWORD guids_size,
+        DWORD *guid_count, const char *machine_nameA, void *reserved)
 {
-    LPWSTR MachineNameW = NULL;
-    BOOL bResult;
+    WCHAR *machine_nameW = strdupAtoW(machine_nameA);
+    BOOL ret;
 
-    TRACE("\n");
+    TRACE("flags %#lx, guids %p, guids_size %#lx, guid_count %p, machine_nameA %s, reserved %p.\n",
+            flags, guids, guids_size, guid_count, debugstr_a(machine_nameA), reserved);
 
-    if (MachineName)
-    {
-        MachineNameW = MultiByteToUnicode(MachineName, CP_ACP);
-        if (MachineNameW == NULL) return FALSE;
-    }
-
-    bResult = SetupDiBuildClassInfoListExW(Flags, ClassGuidList,
-                                           ClassGuidListSize, RequiredSize,
-                                           MachineNameW, Reserved);
-
-    MyFree(MachineNameW);
-
-    return bResult;
+    ret = SetupDiBuildClassInfoListExW(flags, guids, guids_size, guid_count, machine_nameW, reserved);
+    free(machine_nameW);
+    return ret;
 }
 
 /***********************************************************************
  *              SetupDiBuildClassInfoListExW  (SETUPAPI.@)
- *
- * Returns a list of setup class GUIDs that identify the classes
- * that are installed on a local or remote machine.
- *
- * PARAMS
- *   Flags [I] control exclusion of classes from the list.
- *   ClassGuidList [O] pointer to a GUID-typed array that receives a list of setup class GUIDs.
- *   ClassGuidListSize [I] The number of GUIDs in the array (ClassGuidList).
- *   RequiredSize [O] pointer, which receives the number of GUIDs that are returned.
- *   MachineName [I] name of a remote machine.
- *   Reserved [I] must be NULL.
- *
- * RETURNS
- *   Success: TRUE.
- *   Failure: FALSE.
  */
-BOOL WINAPI SetupDiBuildClassInfoListExW(
-        DWORD Flags,
-        LPGUID ClassGuidList,
-        DWORD ClassGuidListSize,
-        PDWORD RequiredSize,
-        LPCWSTR MachineName,
-        PVOID Reserved)
+BOOL WINAPI SetupDiBuildClassInfoListExW(DWORD flags, GUID *guids, DWORD guids_size,
+        DWORD *guid_count, const WCHAR *machine_name, void *reserved)
 {
-    WCHAR szKeyName[40];
-    HKEY hClassesKey;
-    HKEY hClassKey;
-    DWORD dwLength;
-    DWORD dwIndex;
-    LONG lError;
-    DWORD dwGuidListIndex = 0;
+    DWORD guid_index = 0;
+    CONFIGRET ret;
+    GUID guid;
 
-    TRACE("\n");
+    TRACE("flags %#lx, guids %p, guids_size %#lx, guid_count %p, machine_name %s, reserved %p.\n",
+            flags, guids, guids_size, guid_count, debugstr_w(machine_name), reserved);
 
-    if (RequiredSize != NULL)
-	*RequiredSize = 0;
+    if (guid_count)
+        *guid_count = 0;
 
-    hClassesKey = SetupDiOpenClassRegKeyExW(NULL,
-                                            KEY_ALL_ACCESS,
-                                            DIOCR_INSTALLER,
-                                            MachineName,
-                                            Reserved);
-    if (hClassesKey == INVALID_HANDLE_VALUE)
+    for (UINT i = 0; !(ret = CM_Enumerate_Classes(i, &guid, CM_ENUMERATE_CLASSES_INSTALLER)); i++)
     {
-	return FALSE;
+        DEVPROPTYPE type;
+        ULONG size;
+        BYTE value;
+
+        size = sizeof(value);
+        if (!CM_Get_Class_PropertyW(&guid, &DEVPKEY_DeviceClass_NoUseClass, &type, &value, &size, 0) && value)
+            continue;
+
+        size = sizeof(value);
+        if ((flags & DIBCI_NOINSTALLCLASS) && !CM_Get_Class_PropertyW(&guid, &DEVPKEY_DeviceClass_NoInstallClass, &type, &value, &size, 0) && value)
+            continue;
+
+        size = sizeof(value);
+        if ((flags & DIBCI_NOINSTALLCLASS) && !CM_Get_Class_PropertyW(&guid, &DEVPKEY_DeviceClass_NoDisplayClass, &type, &value, &size, 0) && value)
+            continue;
+
+        if (guid_index < guids_size)
+            guids[guid_index] = guid;
+        guid_index++;
     }
 
-    for (dwIndex = 0; ; dwIndex++)
+    if (guid_count)
+        *guid_count = guid_index;
+
+    if (guids_size < guid_index)
     {
-	dwLength = 40;
-	lError = RegEnumKeyExW(hClassesKey,
-			       dwIndex,
-			       szKeyName,
-			       &dwLength,
-			       NULL,
-			       NULL,
-			       NULL,
-			       NULL);
-	TRACE("RegEnumKeyExW() returns %ld\n", lError);
-	if (lError == ERROR_SUCCESS || lError == ERROR_MORE_DATA)
-	{
-	    TRACE("Key name: %p\n", szKeyName);
-
-	    if (RegOpenKeyExW(hClassesKey,
-			      szKeyName,
-			      0,
-			      KEY_ALL_ACCESS,
-			      &hClassKey))
-	    {
-		RegCloseKey(hClassesKey);
-		return FALSE;
-	    }
-
-	    if (!RegQueryValueExW(hClassKey,
-				  L"NoUseClass",
-				  NULL,
-				  NULL,
-				  NULL,
-				  NULL))
-	    {
-		TRACE("'NoUseClass' value found!\n");
-		RegCloseKey(hClassKey);
-		continue;
-	    }
-
-	    if ((Flags & DIBCI_NOINSTALLCLASS) &&
-		(!RegQueryValueExW(hClassKey,
-				   L"NoInstallClass",
-				   NULL,
-				   NULL,
-				   NULL,
-				   NULL)))
-	    {
-		TRACE("'NoInstallClass' value found!\n");
-		RegCloseKey(hClassKey);
-		continue;
-	    }
-
-	    if ((Flags & DIBCI_NODISPLAYCLASS) &&
-		(!RegQueryValueExW(hClassKey,
-				   L"NoDisplayClass",
-				   NULL,
-				   NULL,
-				   NULL,
-				   NULL)))
-	    {
-		TRACE("'NoDisplayClass' value found!\n");
-		RegCloseKey(hClassKey);
-		continue;
-	    }
-
-	    RegCloseKey(hClassKey);
-
-	    TRACE("Guid: %p\n", szKeyName);
-	    if (dwGuidListIndex < ClassGuidListSize)
-	    {
-		if (szKeyName[0] == '{' && szKeyName[37] == '}')
-		{
-		    szKeyName[37] = 0;
-		}
-		TRACE("Guid: %p\n", &szKeyName[1]);
-
-		UuidFromStringW(&szKeyName[1],
-				&ClassGuidList[dwGuidListIndex]);
-	    }
-
-	    dwGuidListIndex++;
-	}
-
-	if (lError != ERROR_SUCCESS)
-	    break;
-    }
-
-    RegCloseKey(hClassesKey);
-
-    if (RequiredSize != NULL)
-	*RequiredSize = dwGuidListIndex;
-
-    if (ClassGuidListSize < dwGuidListIndex)
-    {
-	SetLastError(ERROR_INSUFFICIENT_BUFFER);
-	return FALSE;
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
     }
 
     return TRUE;
@@ -1141,176 +994,89 @@ BOOL WINAPI SetupDiBuildClassInfoListExW(
 /***********************************************************************
  *		SetupDiClassGuidsFromNameA  (SETUPAPI.@)
  */
-BOOL WINAPI SetupDiClassGuidsFromNameA(
-        LPCSTR ClassName,
-        LPGUID ClassGuidList,
-        DWORD ClassGuidListSize,
-        PDWORD RequiredSize)
+BOOL WINAPI SetupDiClassGuidsFromNameA(const char *class_name, GUID *guids, DWORD guids_size, DWORD *guid_count)
 {
-  return SetupDiClassGuidsFromNameExA(ClassName, ClassGuidList,
-                                      ClassGuidListSize, RequiredSize,
-                                      NULL, NULL);
+    return SetupDiClassGuidsFromNameExA(class_name, guids, guids_size, guid_count, NULL, NULL);
 }
 
 /***********************************************************************
  *		SetupDiClassGuidsFromNameW  (SETUPAPI.@)
  */
-BOOL WINAPI SetupDiClassGuidsFromNameW(
-        LPCWSTR ClassName,
-        LPGUID ClassGuidList,
-        DWORD ClassGuidListSize,
-        PDWORD RequiredSize)
+BOOL WINAPI SetupDiClassGuidsFromNameW(const WCHAR *class_name, GUID *guids, DWORD guids_size, DWORD *guid_count)
 {
-  return SetupDiClassGuidsFromNameExW(ClassName, ClassGuidList,
-                                      ClassGuidListSize, RequiredSize,
-                                      NULL, NULL);
+    return SetupDiClassGuidsFromNameExW(class_name, guids, guids_size, guid_count, NULL, NULL);
 }
 
 /***********************************************************************
  *		SetupDiClassGuidsFromNameExA  (SETUPAPI.@)
  */
-BOOL WINAPI SetupDiClassGuidsFromNameExA(
-        LPCSTR ClassName,
-        LPGUID ClassGuidList,
-        DWORD ClassGuidListSize,
-        PDWORD RequiredSize,
-        LPCSTR MachineName,
-        PVOID Reserved)
+BOOL WINAPI SetupDiClassGuidsFromNameExA(const char *class_nameA, GUID *guids, DWORD guids_size,
+        DWORD *guid_count, const char *machine_nameA, void *reserved)
 {
-    LPWSTR ClassNameW = NULL;
-    LPWSTR MachineNameW = NULL;
-    BOOL bResult;
+    WCHAR *class_nameW = strdupAtoW(class_nameA), *machine_nameW = strdupAtoW(machine_nameA);
+    BOOL ret;
 
-    ClassNameW = MultiByteToUnicode(ClassName, CP_ACP);
-    if (ClassNameW == NULL)
-        return FALSE;
+    TRACE("class_nameA %s, guids %p, guids_size %#lx, guid_count %p, machine_nameA %s, reserved %p.\n",
+            debugstr_a(class_nameA), guids, guids_size, guid_count, debugstr_a(machine_nameA), reserved);
 
-    if (MachineName)
-    {
-        MachineNameW = MultiByteToUnicode(MachineName, CP_ACP);
-        if (MachineNameW == NULL)
-        {
-            MyFree(ClassNameW);
-            return FALSE;
-        }
-    }
-
-    bResult = SetupDiClassGuidsFromNameExW(ClassNameW, ClassGuidList,
-                                           ClassGuidListSize, RequiredSize,
-                                           MachineNameW, Reserved);
-
-    MyFree(MachineNameW);
-    MyFree(ClassNameW);
-
-    return bResult;
+    ret = SetupDiClassGuidsFromNameExW(class_nameW, guids, guids_size, guid_count, machine_nameW, reserved);
+    free(class_nameW);
+    free(machine_nameW);
+    return ret;
 }
 
 /***********************************************************************
  *		SetupDiClassGuidsFromNameExW  (SETUPAPI.@)
  */
-BOOL WINAPI SetupDiClassGuidsFromNameExW(
-        LPCWSTR ClassName,
-        LPGUID ClassGuidList,
-        DWORD ClassGuidListSize,
-        PDWORD RequiredSize,
-        LPCWSTR MachineName,
-        PVOID Reserved)
+BOOL WINAPI SetupDiClassGuidsFromNameExW(const WCHAR *class_name, GUID *guids, DWORD guids_size,
+        DWORD *guid_count, const WCHAR *machine_name, void *reserved)
 {
-    WCHAR szKeyName[40];
-    WCHAR szClassName[256];
-    HKEY hClassesKey;
-    HKEY hClassKey;
-    DWORD dwLength;
-    DWORD dwIndex;
-    LONG lError;
-    DWORD dwGuidListIndex = 0;
+    DWORD guid_index = 0;
+    CONFIGRET ret;
+    GUID guid;
 
-    if (RequiredSize != NULL)
-	*RequiredSize = 0;
+    TRACE("class_name %s, guids %p, guids_size %#lx, guid_count %p, machine_name %s, reserved "
+          "%p.\n",
+            debugstr_w(class_name), guids, guids_size, guid_count, debugstr_w(machine_name), reserved);
 
-    hClassesKey = SetupDiOpenClassRegKeyExW(NULL,
-                                            KEY_ALL_ACCESS,
-                                            DIOCR_INSTALLER,
-                                            MachineName,
-                                            Reserved);
-    if (hClassesKey == INVALID_HANDLE_VALUE)
+    if (guid_count)
+        *guid_count = 0;
+
+    if (machine_name && *machine_name)
     {
-	return FALSE;
+        FIXME("Remote access not supported yet!\n");
+        SetLastError(ERROR_INVALID_MACHINENAME);
+        return FALSE;
     }
 
-    for (dwIndex = 0; ; dwIndex++)
+    for (UINT i = 0; !(ret = CM_Enumerate_Classes(i, &guid, CM_ENUMERATE_CLASSES_INSTALLER)); i++)
     {
-        dwLength = ARRAY_SIZE(szKeyName);
-	lError = RegEnumKeyExW(hClassesKey,
-			       dwIndex,
-			       szKeyName,
-			       &dwLength,
-			       NULL,
-			       NULL,
-			       NULL,
-			       NULL);
-	TRACE("RegEnumKeyExW() returns %ld\n", lError);
-	if (lError == ERROR_SUCCESS || lError == ERROR_MORE_DATA)
-	{
-	    TRACE("Key name: %p\n", szKeyName);
+        WCHAR buffer[MAX_CLASS_NAME_LEN];
+        ULONG size = sizeof(buffer);
+        DEVPROPTYPE type;
 
-	    if (RegOpenKeyExW(hClassesKey,
-			      szKeyName,
-			      0,
-			      KEY_ALL_ACCESS,
-			      &hClassKey))
-	    {
-		RegCloseKey(hClassesKey);
-		return FALSE;
-	    }
-
-	    dwLength = sizeof(szClassName);
-	    if (!RegQueryValueExW(hClassKey,
-				  L"Class",
-				  NULL,
-				  NULL,
-				  (LPBYTE)szClassName,
-				  &dwLength))
-	    {
-		TRACE("Class name: %p\n", szClassName);
-
-		if (wcsicmp(szClassName, ClassName) == 0)
-		{
-		    TRACE("Found matching class name\n");
-
-		    TRACE("Guid: %p\n", szKeyName);
-		    if (dwGuidListIndex < ClassGuidListSize)
-		    {
-			if (szKeyName[0] == '{' && szKeyName[37] == '}')
-			{
-			    szKeyName[37] = 0;
-			}
-			TRACE("Guid: %p\n", &szKeyName[1]);
-
-			UuidFromStringW(&szKeyName[1],
-					&ClassGuidList[dwGuidListIndex]);
-		    }
-
-		    dwGuidListIndex++;
-		}
-	    }
-
-	    RegCloseKey(hClassKey);
-	}
-
-	if (lError != ERROR_SUCCESS)
-	    break;
+        if ((ret = CM_Get_Class_PropertyW(&guid, &DEVPKEY_NAME, &type, (BYTE *)buffer, &size, 0)))
+            break;
+        if (!wcsicmp(buffer, class_name))
+        {
+            if (guid_index < guids_size)
+                guids[guid_index] = guid;
+            guid_index++;
+        }
+    }
+    if (ret && ret != CR_NO_SUCH_VALUE)
+    {
+        SetLastError(CM_MapCrToWin32Err(ret, ERROR_GEN_FAILURE));
+        return FALSE;
     }
 
-    RegCloseKey(hClassesKey);
+    if (guid_count)
+        *guid_count = guid_index;
 
-    if (RequiredSize != NULL)
-	*RequiredSize = dwGuidListIndex;
-
-    if (ClassGuidListSize < dwGuidListIndex)
+    if (guids_size < guid_index)
     {
-	SetLastError(ERROR_INSUFFICIENT_BUFFER);
-	return FALSE;
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
     }
 
     return TRUE;
@@ -3770,124 +3536,74 @@ BOOL WINAPI SetupDiInstallClassW(
 /***********************************************************************
  *		SetupDiOpenClassRegKey  (SETUPAPI.@)
  */
-HKEY WINAPI SetupDiOpenClassRegKey(
-        const GUID* ClassGuid,
-        REGSAM samDesired)
+HKEY WINAPI SetupDiOpenClassRegKey(const GUID *class, REGSAM access)
 {
-    return SetupDiOpenClassRegKeyExW(ClassGuid, samDesired,
-                                     DIOCR_INSTALLER, NULL, NULL);
+    return SetupDiOpenClassRegKeyExW(class, access, DIOCR_INSTALLER, NULL, NULL);
 }
 
 
 /***********************************************************************
  *		SetupDiOpenClassRegKeyExA  (SETUPAPI.@)
  */
-HKEY WINAPI SetupDiOpenClassRegKeyExA(
-        const GUID* ClassGuid,
-        REGSAM samDesired,
-        DWORD Flags,
-        PCSTR MachineName,
-        PVOID Reserved)
+HKEY WINAPI SetupDiOpenClassRegKeyExA(const GUID *class, REGSAM access, DWORD flags,
+        const char *machine_nameA, void *reserved)
 {
-    PWSTR MachineNameW = NULL;
-    HKEY hKey;
+    WCHAR *machine_nameW = strdupAtoW(machine_nameA);
+    HKEY hkey;
 
-    TRACE("\n");
+    TRACE("class %s, access %#lx, flags %#lx, machine_nameA %s, reserved %p.\n", debugstr_guid(class),
+            access, flags, debugstr_a(machine_nameA), reserved);
 
-    if (MachineName)
-    {
-        MachineNameW = MultiByteToUnicode(MachineName, CP_ACP);
-        if (MachineNameW == NULL)
-            return INVALID_HANDLE_VALUE;
-    }
-
-    hKey = SetupDiOpenClassRegKeyExW(ClassGuid, samDesired,
-                                     Flags, MachineNameW, Reserved);
-
-    MyFree(MachineNameW);
-
-    return hKey;
+    hkey = SetupDiOpenClassRegKeyExW(class, access, flags, machine_nameW, reserved);
+    free(machine_nameW);
+    return hkey;
 }
 
 
 /***********************************************************************
  *		SetupDiOpenClassRegKeyExW  (SETUPAPI.@)
  */
-HKEY WINAPI SetupDiOpenClassRegKeyExW(
-        const GUID* ClassGuid,
-        REGSAM samDesired,
-        DWORD Flags,
-        PCWSTR MachineName,
-        PVOID Reserved)
+HKEY WINAPI SetupDiOpenClassRegKeyExW(const GUID *class, REGSAM access, DWORD flags,
+        const WCHAR *machine_name, void *reserved)
 {
-    HKEY hClassesKey;
+    DWORD open_flags = 0;
+    GUID guid = {0};
+    CONFIGRET ret;
     HKEY key;
-    LPCWSTR lpKeyName;
-    LONG l;
 
-    if (MachineName && *MachineName)
+    TRACE("class %s, access %#lx, flags %#lx, machine_name %s, reserved %p.\n", debugstr_guid(class),
+            access, flags, debugstr_w(machine_name), reserved);
+
+    if (machine_name && *machine_name)
     {
         FIXME("Remote access not supported yet!\n");
         return INVALID_HANDLE_VALUE;
     }
 
-    if (Flags == DIOCR_INSTALLER)
-    {
-        lpKeyName = ControlClass;
-    }
-    else if (Flags == DIOCR_INTERFACE)
-    {
-        lpKeyName = DeviceClasses;
-    }
+    if (flags & DIOCR_INSTALLER)
+        open_flags = CM_OPEN_CLASS_KEY_INSTALLER;
+    else if (flags & DIOCR_INTERFACE)
+        open_flags = CM_OPEN_CLASS_KEY_INTERFACE;
     else
     {
-        ERR("Invalid Flags parameter!\n");
+        ERR("Invalid flags parameter!\n");
         SetLastError(ERROR_INVALID_PARAMETER);
         return INVALID_HANDLE_VALUE;
     }
 
-    if (!ClassGuid)
+    if (class)
     {
-        if ((l = RegOpenKeyExW(HKEY_LOCAL_MACHINE,
-                          lpKeyName,
-                          0,
-                          samDesired,
-                          &hClassesKey)))
-        {
-            SetLastError(l);
-            hClassesKey = INVALID_HANDLE_VALUE;
-        }
-        key = hClassesKey;
+        guid = *class;
+        class = &guid;
     }
-    else
+
+    if ((ret = CM_Open_Class_Key_ExW((GUID *)class, NULL, access,
+                 RegDisposition_OpenExisting, &key, open_flags, NULL)))
     {
-        WCHAR bracedGuidString[39];
-
-        SETUPDI_GuidToString(ClassGuid, bracedGuidString);
-
-        if (!(l = RegOpenKeyExW(HKEY_LOCAL_MACHINE,
-                          lpKeyName,
-                          0,
-                          samDesired,
-                          &hClassesKey)))
-        {
-            if ((l = RegOpenKeyExW(hClassesKey,
-                              bracedGuidString,
-                              0,
-                              samDesired,
-                              &key)))
-            {
-                SetLastError(l);
-                key = INVALID_HANDLE_VALUE;
-            }
-            RegCloseKey(hClassesKey);
-        }
-        else
-        {
-            SetLastError(l);
-            key = INVALID_HANDLE_VALUE;
-        }
+        SetLastError(CM_MapCrToWin32Err(ret, ERROR_INVALID_PARAMETER));
+        return INVALID_HANDLE_VALUE;
     }
+
     return key;
 }
 

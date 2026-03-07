@@ -1504,8 +1504,8 @@ static void test_info_classes(void)
         memset( &io, 0xcc, sizeof(io) );
         ret = NtQueryDirectoryFile( file, NULL, NULL, NULL, &io,
                 buffer, struct_size, tests[i].class, FALSE, NULL, TRUE );
-        todo_wine ok( ret == STATUS_PENDING, "got %#lx\n", ret );
-        ret = WaitForSingleObject( file, 100 );
+        if (ret == STATUS_PENDING)
+            ret = WaitForSingleObject( file, 100 );
         ok( !ret, "got %#lx\n", ret );
         ok( !io.Status, "got %#lx\n", io.Status );
         ok( io.Information == tests[i].size + sizeof(WCHAR),
@@ -1514,8 +1514,8 @@ static void test_info_classes(void)
         memset( &io, 0xcc, sizeof(io) );
         ret = NtQueryDirectoryFile( file, NULL, NULL, NULL, &io,
                 buffer, tests[i].size * 2 + (6 * sizeof(WCHAR)), tests[i].class, FALSE, NULL, TRUE );
-        todo_wine ok( ret == STATUS_PENDING, "got %#lx\n", ret );
-        ret = WaitForSingleObject( file, 100 );
+        if (ret == STATUS_PENDING)
+            ret = WaitForSingleObject( file, 100 );
         ok( !ret, "got %#lx\n", ret );
         ok( !io.Status, "got %#lx\n", io.Status );
         /* all classes start with the same few fields; test them here */
@@ -1532,8 +1532,8 @@ static void test_info_classes(void)
 
         ret = NtQueryDirectoryFile( file, NULL, NULL, NULL, &io,
                 buffer, tests[i].size * 2 + (6 * sizeof(WCHAR)), tests[i].class, FALSE, NULL, FALSE );
-        todo_wine ok( ret == STATUS_PENDING, "got %#lx\n", ret );
-        ret = WaitForSingleObject( file, 100 );
+        if (ret == STATUS_PENDING)
+            ret = WaitForSingleObject( file, 100 );
         ok( !ret, "got %#lx\n", ret );
         ok( !io.Status, "got %#lx\n", io.Status );
 
@@ -1634,8 +1634,8 @@ static void test_info_classes(void)
 
         ret = NtQueryDirectoryFile( file, NULL, NULL, NULL, &io,
                 buffer, tests[i].size * 2 + (6 * sizeof(WCHAR)), tests[i].class, FALSE, NULL, FALSE );
-        todo_wine ok( ret == STATUS_PENDING, "got %#lx\n", ret );
-        ret = WaitForSingleObject( file, 100 );
+        if (ret == STATUS_PENDING)
+            ret = WaitForSingleObject( file, 100 );
         ok( !ret, "got %#lx\n", ret );
         ok( !io.Status, "got %#lx\n", io.Status );
 

@@ -1253,15 +1253,16 @@ static HRESULT WINAPI domdoc_hasChildNodes(
 }
 
 
-static HRESULT WINAPI domdoc_get_ownerDocument(
-    IXMLDOMDocument3 *iface,
-    IXMLDOMDocument **doc)
+static HRESULT WINAPI domdoc_get_ownerDocument(IXMLDOMDocument3 *iface, IXMLDOMDocument **owner)
 {
-    domdoc *This = impl_from_IXMLDOMDocument3( iface );
-    TRACE("(%p)->(%p)\n", This, doc);
-    return node_get_owner_doc(&This->node, doc);
-}
+    TRACE("%p, %p.\n", iface, owner);
 
+    if (!owner)
+        return E_INVALIDARG;
+
+    *owner = NULL;
+    return S_FALSE;
+}
 
 static HRESULT WINAPI domdoc_cloneNode(
     IXMLDOMDocument3 *iface,

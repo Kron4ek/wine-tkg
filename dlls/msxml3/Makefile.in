@@ -21,6 +21,7 @@ SOURCES = \
 	factory.c \
 	httprequest.c \
 	main.c \
+	msxml.mc \
 	msxml3_v1.idl \
 	mxnamespace.c \
 	mxwriter.c \

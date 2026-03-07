@@ -2001,8 +2001,11 @@ HRESULT node_transform_node_params(const xmlnode *This, IXMLDOMNode *stylesheet,
     sheet = get_node_obj(stylesheet);
     if(!sheet) return E_FAIL;
 
-    if (FAILED(hr = IXMLDOMNode_get_ownerDocument(stylesheet, &owner_doc)))
-        return hr;
+    if (FAILED(IXMLDOMNode_QueryInterface(stylesheet, &IID_IXMLDOMDocument, (void **)&owner_doc)))
+    {
+        if (FAILED(hr = IXMLDOMNode_get_ownerDocument(stylesheet, &owner_doc)))
+            return hr;
+    }
 
     sheet_doc = xmlCopyDoc(sheet->node->doc, 1);
     xsltSS = xsltParseStylesheetDoc(sheet_doc);

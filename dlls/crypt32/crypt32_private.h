@@ -483,6 +483,7 @@ struct open_cert_store_params
     CRYPT_DATA_BLOB *pfx;
     const WCHAR *password;
     cert_store_data_t *data_ret;
+    unsigned int *key_count_ret;
 };
 
 struct import_store_key_params

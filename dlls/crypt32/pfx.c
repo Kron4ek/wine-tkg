@@ -19,7 +19,6 @@
 #include <stdarg.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "wincrypt.h"
@@ -141,10 +140,11 @@ static BOOL set_key_prov_info( const void *ctx, HCRYPTPROV prov )
 HCERTSTORE WINAPI PFXImportCertStore( CRYPT_DATA_BLOB *pfx, const WCHAR *password, DWORD flags )
 {
     DWORD i = 0, size;
+    unsigned int key_count = 0;
     HCERTSTORE store = NULL;
     HCRYPTPROV prov = 0;
     cert_store_data_t data = 0;
-    struct open_cert_store_params open_params = { pfx, password, &data };
+    struct open_cert_store_params open_params = { pfx, password, &data, &key_count };
     struct close_cert_store_params close_params;
 
     if (!pfx)
@@ -163,8 +163,11 @@ HCERTSTORE WINAPI PFXImportCertStore( CRYPT_DATA_BLOB *pfx, const WCHAR *passwor
     }
     if (CRYPT32_CALL( open_cert_store, &open_params )) return NULL;
 
-    prov = import_key( data, flags );
-    if (!prov) goto error;
+    if (key_count)
+    {
+        prov = import_key( data, flags );
+        if (!prov) goto error;
+    }
 
     if (!(store = CertOpenStore( CERT_STORE_PROV_MEMORY, 0, 0, 0, NULL )))
     {
@@ -188,20 +191,23 @@ HCERTSTORE WINAPI PFXImportCertStore( CRYPT_DATA_BLOB *pfx, const WCHAR *passwor
             WARN( "CertCreateContext failed %08lx\n", GetLastError() );
             goto error;
         }
-        if (flags & PKCS12_NO_PERSIST_KEY)
+        if (prov)
         {
-            if (!set_key_context( ctx, prov ))
+            if (flags & PKCS12_NO_PERSIST_KEY)
             {
-                WARN( "failed to set context property %08lx\n", GetLastError() );
+                if (!set_key_context( ctx, prov ))
+                {
+                    WARN( "failed to set context property %08lx\n", GetLastError() );
+                    CertFreeCertificateContext( ctx );
+                    goto error;
+                }
+            }
+            else if (!set_key_prov_info( ctx, prov ))
+            {
+                WARN( "failed to set provider info property %08lx\n", GetLastError() );
                 CertFreeCertificateContext( ctx );
                 goto error;
             }
-        }
-        else if (!set_key_prov_info( ctx, prov ))
-        {
-            WARN( "failed to set provider info property %08lx\n", GetLastError() );
-            CertFreeCertificateContext( ctx );
-            goto error;
         }
         if (!CertAddCertificateContextToStore( store, ctx, CERT_STORE_ADD_ALWAYS, NULL ))
         {
@@ -217,7 +223,7 @@ HCERTSTORE WINAPI PFXImportCertStore( CRYPT_DATA_BLOB *pfx, const WCHAR *passwor
     return store;
 
 error:
-    CryptReleaseContext( prov, 0 );
+    if (prov) CryptReleaseContext( prov, 0 );
     CertCloseStore( store, 0 );
     close_params.data = data;
     CRYPT32_CALL( close_cert_store, &close_params );

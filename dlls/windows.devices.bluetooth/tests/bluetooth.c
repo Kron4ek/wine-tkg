@@ -233,9 +233,11 @@ static void await_bluetoothledevice( int line, IAsyncOperation_BluetoothLEDevice
     ok_(__FILE__, line)( ret, "CloseHandle failed, error %lu\n", GetLastError() );
 }
 
+#define E_NOTFOUND HRESULT_FROM_WIN32( ERROR_NOT_FOUND )
+
 static void check_bluetoothledevice_async( int line, IAsyncOperation_BluetoothLEDevice *async,
                                            UINT32 expect_id, AsyncStatus expect_status,
-                                           HRESULT expect_hr, IBluetoothLEDevice **result )
+                                           HRESULT expect_hr, BOOL expect_not_found, IBluetoothLEDevice **result )
 {
     AsyncStatus async_status;
     IAsyncInfo *async_info;
@@ -255,14 +257,16 @@ static void check_bluetoothledevice_async( int line, IAsyncOperation_BluetoothLE
     hr = IAsyncInfo_get_Status( async_info, &async_status );
     if (expect_status < 4) ok_(__FILE__, line)( hr == S_OK, "get_Status returned %#lx\n", hr );
     else ok_(__FILE__, line)( hr == E_ILLEGAL_METHOD_CALL, "get_Status returned %#lx\n", hr );
-    ok_(__FILE__, line)( async_status == expect_status, "got status %u\n", async_status );
+    ok_(__FILE__, line)( async_status == expect_status || broken( expect_not_found && async_status == Error), /* w1064v1507 */
+                         "got status %u\n", async_status );
 
     async_hr = 0xdeadbeef;
     hr = IAsyncInfo_get_ErrorCode( async_info, &async_hr );
     if (expect_status < 4) ok_(__FILE__, line)( hr == S_OK, "get_ErrorCode returned %#lx\n", hr );
     else ok_(__FILE__, line)( hr == E_ILLEGAL_METHOD_CALL, "get_ErrorCode returned %#lx\n", hr );
     if (expect_status < 4) todo_wine_if( FAILED(expect_hr))
-    ok_(__FILE__, line)( async_hr == expect_hr, "got error %#lx\n", async_hr );
+    ok_(__FILE__, line)( async_hr == expect_hr || broken( expect_not_found && async_hr == E_NOTFOUND ), /* w1064v1507 */
+                         "got error %#lx\n", async_hr );
     else ok_(__FILE__, line)( async_hr == E_ILLEGAL_METHOD_CALL, "got error %#lx\n", async_hr );
 
     IAsyncInfo_Release( async_info );
@@ -273,7 +277,8 @@ static void check_bluetoothledevice_async( int line, IAsyncOperation_BluetoothLE
     case Completed:
     case Error:
         todo_wine_if( FAILED(expect_hr))
-        ok_(__FILE__, line)( hr == expect_hr, "GetResults returned %#lx\n", hr );
+        ok_(__FILE__, line)( hr == expect_hr || broken( expect_not_found && async_hr == E_NOTFOUND ), /* w1064v1507 */
+                             "GetResults returned %#lx\n", hr );
         break;
     case Canceled:
     case Started:
@@ -559,7 +564,7 @@ static void test_BluetoothLEDeviceStatics( void )
     if (hr == S_OK)
     {
         await_bluetoothledevice( __LINE__, async_op );
-        check_bluetoothledevice_async( __LINE__, async_op, 1, Completed, S_OK, &device );
+        check_bluetoothledevice_async( __LINE__, async_op, 1, Completed, S_OK, TRUE, &device );
         ok( !device, "got device %p != NULL\n", device );
         if (device) IBluetoothLEDevice_Release( device );
     }
@@ -829,7 +834,8 @@ static void test_BluetoothLEAdvertisementWatcher( void )
     span.Duration = 0;
     hr = IBluetoothLEAdvertisementWatcher_get_MinSamplingInterval( watcher, &span );
     ok( hr == S_OK, "got hr %#lx.\n", hr );
-    ok( span.Duration == 1000000, "got Duration %I64d.\n", span.Duration );
+    /* w1064v1809 may return 0. */
+    ok( span.Duration == 1000000 || broken( span.Duration == 0 ), "got Duration %I64d.\n", span.Duration );
 
     span.Duration = 0;
     hr = IBluetoothLEAdvertisementWatcher_get_MaxSamplingInterval( watcher, &span );

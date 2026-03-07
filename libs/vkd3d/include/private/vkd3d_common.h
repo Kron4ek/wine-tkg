@@ -395,6 +395,48 @@ static inline bool vkd3d_object_range_overflow(size_t start, size_t count, size_
     return (~(size_t)0 - start) / size < count;
 }
 
+/* Based on the implementation in the OpenGL Mathematics library. */
+static inline uint32_t vkd3d_f32_from_f16(uint16_t value)
+{
+    uint32_t s = (value & 0x8000u) << 16;
+    uint32_t e = (value >> 10) & 0x1fu;
+    uint32_t m = value & 0x3ffu;
+
+    if (!e)
+    {
+        if (!m)
+        {
+            /* Plus or minus zero. */
+            return s;
+        }
+        else
+        {
+            /* Denormalised number; renormalise it. */
+            while (!(m & 0x400u))
+            {
+                m <<= 1;
+                --e;
+            }
+
+            ++e;
+            m &= ~0x400u;
+        }
+    }
+    else if (e == 31u)
+    {
+        /* Positive or negative infinity for zero 'm'.
+         * NaN for non-zero 'm'; preserve sign and significand bits. */
+        return s | 0x7f800000u | (m << 13);
+    }
+
+    /* Normalised number. */
+    e += 127u - 15u;
+    m <<= 13;
+
+    /* Assemble s, e and m. */
+    return s | (e << 23) | m;
+}
+
 static inline uint16_t vkd3d_make_u16(uint8_t low, uint8_t high)
 {
     return low | ((uint16_t)high << 8);
