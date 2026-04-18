@@ -24,6 +24,8 @@
 #include <stdio.h>
 #include <math.h>
 
+VKD3D_DECLARE_DEBUG_CHANNEL(copyprop)
+
 /* The shift that corresponds to the D3D_SIF_TEXTURE_COMPONENTS mask. */
 #define VKD3D_SM4_SIF_TEXTURE_COMPONENTS_SHIFT 2
 
@@ -2355,7 +2357,7 @@ static void copy_propagation_invalidate_variable(struct hlsl_ctx *ctx, struct co
 {
     unsigned i;
 
-    TRACE("Invalidate variable %s[%u]%s.\n", var_def->var->name, comp, debug_hlsl_writemask(writemask));
+    TRACE_(copyprop)("Invalidate variable %s[%u]%s.\n", var_def->var->name, comp, debug_hlsl_writemask(writemask));
 
     for (i = 0; i < 4; ++i)
     {
@@ -2452,7 +2454,7 @@ static void copy_propagation_set_value(struct hlsl_ctx *ctx, struct copy_propaga
         {
             struct copy_propagation_component_trace *trace = &var_def->traces[comp + i];
 
-            TRACE("Variable %s[%u] is written by instruction %p%s.\n",
+            TRACE_(copyprop)("Variable %s[%u] is written by instruction %p%s.\n",
                     var_def->var->name, comp + i, instr, debug_hlsl_writemask(1u << i));
 
             copy_propagation_trace_record_value(ctx, trace, instr, j++, time);
@@ -2489,14 +2491,14 @@ static bool copy_propagation_replace_with_single_instr(struct hlsl_ctx *ctx,
         }
         else if (new_instr != value->node)
         {
-            TRACE("No single source for propagating load from %s[%u-%u]%s\n",
+            TRACE_(copyprop)("No single source for propagating load from %s[%u-%u]%s\n",
                     var->name, start, start + count, debug_hlsl_swizzle(swizzle, instr_component_count));
             return false;
         }
         hlsl_swizzle_set_component(&ret_swizzle, i, value->component);
     }
 
-    TRACE("Load from %s[%u-%u]%s propagated as instruction %p%s.\n",
+    TRACE_(copyprop)("Load from %s[%u-%u]%s propagated as instruction %p%s.\n",
             var->name, start, start + count, debug_hlsl_swizzle(swizzle, instr_component_count),
             new_instr, debug_hlsl_swizzle(ret_swizzle, instr_component_count));
 
@@ -2544,7 +2546,7 @@ static bool copy_propagation_replace_with_constant_vector(struct hlsl_ctx *ctx,
         return false;
     list_add_before(&instr->entry, &cons->entry);
 
-    TRACE("Load from %s[%u-%u]%s turned into a constant %p.\n",
+    TRACE_(copyprop)("Load from %s[%u-%u]%s turned into a constant %p.\n",
             var->name, start, start + count, debug_hlsl_swizzle(swizzle, instr_component_count), cons);
 
     hlsl_replace_node(instr, cons);
@@ -2728,7 +2730,7 @@ static bool copy_propagation_replace_with_deref(struct hlsl_ctx *ctx,
 
         if (hlsl_version_lt(ctx, 4, 0) && x->is_uniform && ctx->profile->type != VKD3D_SHADER_TYPE_VERTEX)
         {
-            TRACE("Skipping propagating non-constant deref to SM1 uniform %s.\n", var->name);
+            TRACE_(copyprop)("Skipping propagating non-constant deref to SM1 uniform %s.\n", var->name);
             goto done;
         }
 
@@ -2828,7 +2830,7 @@ static bool copy_propagation_replace_with_deref(struct hlsl_ctx *ctx,
     if (new_instr->data_type->class == HLSL_CLASS_SCALAR || new_instr->data_type->class == HLSL_CLASS_VECTOR)
         new_instr = hlsl_block_add_swizzle(ctx, &block, ret_swizzle, instr_component_count, new_instr, &instr->loc);
 
-    if (TRACE_ON())
+    if (TRACE_ON_(copyprop))
     {
         struct vkd3d_string_buffer buffer;
 
@@ -2854,7 +2856,7 @@ static bool copy_propagation_replace_with_deref(struct hlsl_ctx *ctx,
         vkd3d_string_buffer_printf(&buffer, "]%s (i = %p).\n",
                 debug_hlsl_swizzle(ret_swizzle, instr_component_count), index);
 
-        vkd3d_string_buffer_trace(&buffer);
+        TRACE_TEXT_(copyprop, buffer.buffer, buffer.content_size);
         vkd3d_string_buffer_cleanup(&buffer);
     }
 
@@ -2994,7 +2996,7 @@ static bool copy_propagation_transform_object_load(struct hlsl_ctx *ctx,
      */
     if (!load->src.var->is_uniform)
     {
-        TRACE("Ignoring load from non-uniform object variable %s\n", load->src.var->name);
+        TRACE_(copyprop)("Ignoring load from non-uniform object variable %s\n", load->src.var->name);
         return false;
     }
 
@@ -7600,6 +7602,7 @@ static void allocate_const_registers(struct hlsl_ctx *ctx, struct hlsl_block *bo
 
     hlsl_transform_ir(ctx, allocate_constint_registers_for_loops, body, &allocator_constint);
 
+    vkd3d_free(allocator_constint.allocations);
     vkd3d_free(allocator.allocations);
 }
 
@@ -9499,11 +9502,11 @@ static void generate_vsir_signature_entry(struct hlsl_ctx *ctx, struct vsir_prog
                 break;
         }
 
-        if (sysval == VKD3D_SHADER_SV_TARGET && !ascii_strcasecmp(name, "color"))
+        if (sysval == VKD3D_SHADER_SV_TARGET && ascii_strcasecmp(name, "SV_Target"))
             name = "SV_Target";
-        else if (sysval == VKD3D_SHADER_SV_DEPTH && !ascii_strcasecmp(name, "depth"))
-            name ="SV_Depth";
-        else if (sysval == VKD3D_SHADER_SV_POSITION && !ascii_strcasecmp(name, "position"))
+        else if (sysval == VKD3D_SHADER_SV_DEPTH && ascii_strcasecmp(name, "SV_Depth"))
+            name = "SV_Depth";
+        else if (sysval == VKD3D_SHADER_SV_POSITION && ascii_strcasecmp(name, "SV_Position"))
             name = "SV_Position";
     }
     else
@@ -16225,18 +16228,7 @@ int hlsl_emit_vsir(struct hlsl_ctx *ctx, const struct vkd3d_shader_compile_info 
     struct list semantic_vars, patch_semantic_vars;
     struct hlsl_ir_var *var;
 
-    ctx->domain = VKD3D_TESSELLATOR_DOMAIN_INVALID;
-    ctx->output_control_point_count = UINT_MAX;
-    ctx->output_primitive = 0;
-    ctx->partitioning = 0;
-    ctx->input_control_point_count = UINT_MAX;
-    ctx->max_vertex_count = 0;
-    ctx->input_primitive_type = VKD3D_PT_UNDEFINED;
-    ctx->output_topology_type = VKD3D_PT_UNDEFINED;
-
-    ctx->found_numthreads = 0;
-    memset(ctx->thread_count, 0, sizeof(ctx->thread_count));
-
+    hlsl_ctx_init_entry_function_attributes(ctx);
     parse_entry_function_attributes(ctx, entry_func);
     if (ctx->result)
         return ctx->result;

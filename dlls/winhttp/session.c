@@ -346,6 +346,15 @@ static BOOL session_set_option( struct object_header *hdr, DWORD option, void *b
         FIXME( "WINHTTP_OPTION_ENABLE_HTTP_PROTOCOL: %lx\n", *(DWORD *)buffer );
         return TRUE;
 
+    case WINHTTP_OPTION_IPV6_FAST_FALLBACK:
+        if (buflen != sizeof(BOOL))
+        {
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
+            return FALSE;
+        }
+        FIXME( "WINHTTP_OPTION_IPV6_FAST_FALLBACK: %d\n", *(BOOL *)buffer );
+        return TRUE;
+
     default:
         FIXME( "unimplemented option %lu\n", option );
         SetLastError( ERROR_WINHTTP_INVALID_OPTION );
@@ -1486,7 +1495,6 @@ HINTERNET WINAPI WinHttpOpenRequest( HINTERNET hconnect, const WCHAR *verb, cons
     request->websocket_receive_buffer_size = connect->session->websocket_receive_buffer_size;
     request->websocket_send_buffer_size = connect->session->websocket_send_buffer_size;
     request->websocket_set_send_buffer_size = request->websocket_send_buffer_size;
-    request->read_reply_status = ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
     request->netconn_stream.data_stream.vtbl = &netconn_stream_vtbl;
     request->data_stream = &request->netconn_stream.data_stream;
 
@@ -1558,6 +1566,26 @@ static BOOL query_option( struct object_header *hdr, DWORD option, void *buffer,
 
         *(DWORD_PTR *)buffer = hdr->context;
         *buflen = sizeof(DWORD_PTR);
+        return TRUE;
+    }
+    case WINHTTP_OPTION_HTTP_VERSION:
+    {
+        HTTP_VERSION_INFO *info = buffer;
+
+        FIXME( "WINHTTP_OPTION_HTTP_VERSION\n" );
+        if (!validate_buffer( buffer, buflen, sizeof(info) )) return FALSE;
+        info->dwMajorVersion = 1;
+        info->dwMinorVersion = 1;
+        *buflen = sizeof(info);
+        return TRUE;
+    }
+    case WINHTTP_OPTION_CONNECT_RETRIES:
+    {
+        FIXME( "WINHTTP_OPTION_CONNECT_RETRIES\n" );
+        if (!validate_buffer( buffer, buflen, sizeof(DWORD) )) return FALSE;
+
+        *(DWORD *)buffer = 0;
+        *buflen = sizeof(DWORD);
         return TRUE;
     }
     default:

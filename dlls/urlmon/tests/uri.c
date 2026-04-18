@@ -1252,6 +1252,84 @@ static const uri_properties uri_tests[] = {
             {URLZONE_INVALID,E_NOTIMPL,FALSE}
         }
     },
+    /* Make sure it normalizes partial IPv4 addresses correctly. */
+    {   "http://1/", 0, S_OK, FALSE, 0,
+        {
+            {"http://0.0.0.1/",S_OK,FALSE},
+            {"0.0.0.1",S_OK,FALSE},
+            {"http://0.0.0.1/",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"0.0.0.1",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"/",S_OK,FALSE},
+            {"/",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"http://1/",S_OK,FALSE},
+            {"http",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE}
+        },
+        {
+            {Uri_HOST_IPV4,S_OK,FALSE},
+            {80,S_OK,FALSE},
+            {URL_SCHEME_HTTP,S_OK,FALSE},
+            {URLZONE_INVALID,E_NOTIMPL,FALSE}
+        }
+    },
+    /* Make sure it normalizes partial IPv4 addresses correctly. */
+    {   "http://1.2/", 0, S_OK, FALSE, 0,
+        {
+            {"http://1.0.0.2/",S_OK,FALSE},
+            {"1.0.0.2",S_OK,FALSE},
+            {"http://1.0.0.2/",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"1.0.0.2",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"/",S_OK,FALSE},
+            {"/",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"http://1.2/",S_OK,FALSE},
+            {"http",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE}
+        },
+        {
+            {Uri_HOST_IPV4,S_OK,FALSE},
+            {80,S_OK,FALSE},
+            {URL_SCHEME_HTTP,S_OK,FALSE},
+            {URLZONE_INVALID,E_NOTIMPL,FALSE}
+        }
+    },
+    /* Make sure it normalizes partial IPv4 addresses correctly. */
+    {   "http://1.2.3/", 0, S_OK, FALSE, 0,
+        {
+            {"http://1.2.0.3/",S_OK,FALSE},
+            {"1.2.0.3",S_OK,FALSE},
+            {"http://1.2.0.3/",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"1.2.0.3",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"/",S_OK,FALSE},
+            {"/",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"http://1.2.3/",S_OK,FALSE},
+            {"http",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE}
+        },
+        {
+            {Uri_HOST_IPV4,S_OK,FALSE},
+            {80,S_OK,FALSE},
+            {URL_SCHEME_HTTP,S_OK,FALSE},
+            {URLZONE_INVALID,E_NOTIMPL,FALSE}
+        }
+    },
     /* UINT_MAX */
     {   "http://4294967295/", 0, S_OK, FALSE, 0,
         {
@@ -1820,6 +1898,58 @@ static const uri_properties uri_tests[] = {
             {Uri_HOST_DNS,S_OK,FALSE},
             {65535,S_OK,FALSE},
             {URL_SCHEME_HTTP,S_OK,FALSE},
+            {URLZONE_INVALID,E_NOTIMPL,FALSE}
+        }
+    },
+    /* Empty port with a known scheme */
+    {   "http://example.com:/", 0, S_OK, FALSE, 0,
+        {
+            {"http://example.com/",S_OK,FALSE},
+            {"example.com",S_OK,FALSE},
+            {"http://example.com/",S_OK,FALSE},
+            {"example.com",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"example.com",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"/",S_OK,FALSE},
+            {"/",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"http://example.com:/",S_OK,FALSE},
+            {"http",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE}
+        },
+        {
+            {Uri_HOST_DNS,S_OK,FALSE},
+            {80,S_OK,FALSE},
+            {URL_SCHEME_HTTP,S_OK,FALSE},
+            {URLZONE_INVALID,E_NOTIMPL,FALSE}
+        }
+    },
+    /* Empty port with an unknown scheme */
+    {   "unknown://example.com:/", 0, S_OK, FALSE, 0,
+        {
+            {"unknown://example.com:/",S_OK,FALSE},
+            {"example.com:",S_OK,FALSE},
+            {"unknown://example.com:/",S_OK,FALSE},
+            {"example.com:",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"example.com:",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"/",S_OK,FALSE},
+            {"/",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"unknown://example.com:/",S_OK,FALSE},
+            {"unknown",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE}
+        },
+        {
+            {Uri_HOST_DNS,S_OK,FALSE},
+            {0,S_FALSE,FALSE},
+            {URL_SCHEME_UNKNOWN,S_OK,FALSE},
             {URLZONE_INVALID,E_NOTIMPL,FALSE}
         }
     },
@@ -2430,6 +2560,32 @@ static const uri_properties uri_tests[] = {
         },
         {
             {Uri_HOST_IPV4,S_OK,FALSE},
+            {0,S_FALSE,FALSE},
+            {URL_SCHEME_UNKNOWN,S_OK,FALSE},
+            {URLZONE_INVALID,E_NOTIMPL,FALSE}
+        }
+    },
+    /* Forbidden characters are never encoded for unknown scheme types. */
+    {   "unknown://us er:pass word@exam ple.com/pa th?qu ery=val ue#frag ment", 0, S_OK, FALSE, 0,
+        {
+            {"unknown://us er:pass word@exam ple.com/pa th?qu ery=val ue#frag ment",S_OK,FALSE},
+            {"us er:pass word@exam ple.com",S_OK,FALSE},
+            {"unknown://us er:pass word@exam ple.com/pa th?qu ery=val ue#frag ment",S_OK,FALSE},
+            {"exam ple.com",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"#frag ment",S_OK,FALSE},
+            {"exam ple.com",S_OK,FALSE},
+            {"pass word",S_OK,FALSE},
+            {"/pa th",S_OK,FALSE},
+            {"/pa th?qu ery=val ue",S_OK,FALSE},
+            {"?qu ery=val ue",S_OK,FALSE},
+            {"unknown://us er:pass word@exam ple.com/pa th?qu ery=val ue#frag ment",S_OK,FALSE},
+            {"unknown",S_OK,FALSE},
+            {"us er:pass word",S_OK,FALSE},
+            {"us er",S_OK,FALSE}
+        },
+        {
+            {Uri_HOST_DNS,S_OK,FALSE},
             {0,S_FALSE,FALSE},
             {URL_SCHEME_UNKNOWN,S_OK,FALSE},
             {URLZONE_INVALID,E_NOTIMPL,FALSE}
@@ -3851,6 +4007,58 @@ static const uri_properties uri_tests[] = {
             {Uri_HOST_UNKNOWN,S_OK,FALSE},
             {0,S_FALSE,FALSE},
             {URL_SCHEME_FILE,S_OK,FALSE},
+            {URLZONE_INVALID,E_NOTIMPL,FALSE}
+        }
+    },
+    /* '\' are converted to '/' for known schemes */
+    {   "http://a\\b//c\\d?e\\f#g\\h", 0, S_OK, FALSE, 0,
+        {
+            {"http://a/b//c/d?e\\f#g\\h",S_OK,FALSE},
+            {"a",S_OK,FALSE},
+            {"http://a/b//c/d?e\\f#g\\h",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"#g\\h",S_OK,FALSE},
+            {"a",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"/b//c/d",S_OK,FALSE},
+            {"/b//c/d?e\\f",S_OK,FALSE},
+            {"?e\\f",S_OK,FALSE},
+            {"http://a\\b//c\\d?e\\f#g\\h",S_OK,FALSE},
+            {"http",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE}
+        },
+        {
+            {Uri_HOST_DNS,S_OK,FALSE},
+            {80,S_OK,FALSE},
+            {URL_SCHEME_HTTP,S_OK,FALSE},
+            {URLZONE_INVALID,E_NOTIMPL,FALSE}
+        }
+    },
+    /* '\' are not converted to '/' for unknown schemes */
+    {   "unknown://a\\b//c\\d?e\\f#g\\h", 0, S_OK, FALSE, 0,
+        {
+            {"unknown://a\\b//c\\d?e\\f#g\\h",S_OK,FALSE},
+            {"a\\b",S_OK,FALSE},
+            {"unknown://a\\b//c\\d?e\\f#g\\h",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"#g\\h",S_OK,FALSE},
+            {"a\\b",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"//c\\d",S_OK,FALSE},
+            {"//c\\d?e\\f",S_OK,FALSE},
+            {"?e\\f",S_OK,FALSE},
+            {"unknown://a\\b//c\\d?e\\f#g\\h",S_OK,FALSE},
+            {"unknown",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE}
+        },
+        {
+            {Uri_HOST_DNS,S_OK,FALSE},
+            {0,S_FALSE,FALSE},
+            {URL_SCHEME_UNKNOWN,S_OK,FALSE},
             {URLZONE_INVALID,E_NOTIMPL,FALSE}
         }
     },

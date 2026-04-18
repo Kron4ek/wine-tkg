@@ -33,16 +33,6 @@
 #include "wine/opengl_driver.h"
 #include "unix_thunks.h"
 
-struct registry_entry
-{
-    const char *name;      /* name of the extension */
-    const char *extension; /* name of the GL/WGL extension */
-    size_t offset;         /* offset in the opengl_funcs table */
-};
-
-extern const struct registry_entry extension_registry[];
-extern const int extension_registry_size;
-
 extern struct opengl_funcs null_opengl_funcs;
 
 static inline const struct opengl_funcs *get_dc_funcs( HDC hdc )

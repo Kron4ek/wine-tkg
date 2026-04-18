@@ -162,6 +162,7 @@ typedef struct _dim_list_t {
 
 typedef struct _dim_decl_t {
     const WCHAR *name;
+    unsigned loc;
     BOOL is_array;
     BOOL is_public; /* Used only for class members. */
     dim_list_t *dims;
@@ -203,6 +204,7 @@ typedef struct _function_decl_t {
     BOOL is_default;
     arg_decl_t *args;
     statement_t *body;
+    unsigned loc;
     struct _function_decl_t *next;
     struct _function_decl_t *next_prop_func;
 } function_decl_t;

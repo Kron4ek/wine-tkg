@@ -2265,6 +2265,15 @@ static int msl_generator_generate(struct msl_generator *gen, struct vkd3d_shader
         msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
                 "Internal compiler error: Unhandled global flags %#"PRIx64".", (uint64_t)gen->program->global_flags);
 
+    if (gen->program->f16_denormal_mode != VKD3D_SHADER_DENORMAL_MODE_ANY
+            || gen->program->f32_denormal_mode != VKD3D_SHADER_DENORMAL_MODE_ANY
+            || gen->program->f64_denormal_mode != VKD3D_SHADER_DENORMAL_MODE_ANY)
+    {
+        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_UNSUPPORTED,
+                "Cannot emit denormal modes. The target environment does not support float controls.");
+        return VKD3D_ERROR;
+    }
+
     vkd3d_string_buffer_printf(gen->buffer, "union vkd3d_scalar\n{\n");
     vkd3d_string_buffer_printf(gen->buffer, "    uint u;\n");
     vkd3d_string_buffer_printf(gen->buffer, "    int i;\n");

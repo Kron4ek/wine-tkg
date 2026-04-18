@@ -271,7 +271,7 @@ void info_win32_module(DWORD64 base, BOOL multi_machine)
 
     if (!dbg_curr_process)
     {
-        dbg_printf("Cannot get info on module while no process is loaded\n");
+        dbg_printf("Cannot proceed with 'info module' while no process is being debugged\n");
         return;
     }
 
@@ -397,6 +397,12 @@ void info_win32_class(HWND hWnd, const char* name)
     WNDCLASSEXA	wca;
     HINSTANCE   hInst = hWnd ? (HINSTANCE)GetWindowLongPtrW(hWnd, GWLP_HINSTANCE) : 0;
 
+    if (dbg_curr_process && !dbg_curr_process->active_debuggee)
+    {
+        dbg_printf("Cannot proceed with 'info class' while debugging a non active process\n");
+        return;
+    }
+
     if (!name)
     {
         struct class_walker cw;
@@ -474,6 +480,12 @@ void info_win32_window(HWND hWnd, BOOL detailed)
     RECT	clientRect;
     RECT	windowRect;
     WORD	w;
+
+    if (dbg_curr_process && !dbg_curr_process->active_debuggee)
+    {
+        dbg_printf("Cannot proceed with 'info window' while debugging a non active process\n");
+        return;
+    }
 
     if (!IsWindow(hWnd)) hWnd = GetDesktopWindow();
 
@@ -585,7 +597,7 @@ static void dump_proc_info(const struct dump_proc* dp, unsigned idx, unsigned de
     }
 }
 
-void info_win32_processes(void)
+static void info_win32_active_processes(void)
 {
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap != INVALID_HANDLE_VALUE)
@@ -639,6 +651,15 @@ void info_win32_processes(void)
     }
 }
 
+void info_win32_processes(void)
+{
+    if (!dbg_curr_process || dbg_curr_process->active_debuggee)
+        info_win32_active_processes();
+    else
+        /* FIXME we could do better */
+        dbg_printf("Cannot proceed with 'info proc' while debugging a non active process\n");
+}
+
 static BOOL get_process_name(DWORD pid, PROCESSENTRY32W* entry)
 {
     BOOL   ret = FALSE;
@@ -655,37 +676,60 @@ static BOOL get_process_name(DWORD pid, PROCESSENTRY32W* entry)
     return ret;
 }
 
-WCHAR* fetch_thread_description(DWORD tid)
+static void info_win32_active_threads(void)
 {
-    static HRESULT (WINAPI *my_GetThreadDescription)(HANDLE, PWSTR*) = NULL;
-    static BOOL resolved = FALSE;
-    HANDLE h;
-    WCHAR* desc = NULL;
-
-    if (!resolved)
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap != INVALID_HANDLE_VALUE)
     {
-        HMODULE kernelbase = GetModuleHandleA("kernelbase.dll");
-        if (kernelbase)
-            my_GetThreadDescription = (void *)GetProcAddress(kernelbase, "GetThreadDescription");
-        resolved = TRUE;
+        THREADENTRY32	entry;
+        BOOL 		ok;
+	DWORD		lastProcessId = 0;
+        struct dbg_process* p = NULL;
+        WCHAR *description;
+
+	entry.dwSize = sizeof(entry);
+	ok = Thread32First(snap, &entry);
+
+        dbg_printf("%-8.8s %-8.8s %s    %s (all IDs are in hex)\n",
+                   "process", "tid", "prio", "name");
+        while (ok)
+        {
+            if (entry.th32OwnerProcessID != GetCurrentProcessId())
+	    {
+		/* FIXME: this assumes that, in the snapshot, all threads of a same process are
+		 * listed sequentially, which is not specified in the doc (Wine's implementation
+		 * does it)
+		 */
+		if (entry.th32OwnerProcessID != lastProcessId)
+		{
+                    PROCESSENTRY32W pcs_entry;
+                    const WCHAR* exename;
+
+                    p = dbg_get_process(entry.th32OwnerProcessID);
+                    if (p)
+                        exename = p->imageName;
+                    else if (get_process_name(entry.th32OwnerProcessID, &pcs_entry))
+                        exename = pcs_entry.szExeFile;
+                    else
+                        exename = L"";
+
+		    dbg_printf("%08lx%s %ls\n",
+                               entry.th32OwnerProcessID, p ? " (D)" : "", exename);
+                    lastProcessId = entry.th32OwnerProcessID;
+		}
+                if (!dbg_fetch_active_thread_name(entry.th32ThreadID, &description))
+                    description = NULL;
+                dbg_printf("\t%08lx %4ld%s %ls\n",
+                           entry.th32ThreadID, entry.tpBasePri,
+                           (entry.th32ThreadID == dbg_curr_tid) ? " <==" : "    ",
+                           description ? description : L"");
+                free(description);
+	    }
+            ok = Thread32Next(snap, &entry);
+        }
+
+        CloseHandle(snap);
     }
-
-    if (!my_GetThreadDescription)
-        return NULL;
-
-    h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid);
-    if (!h)
-        return NULL;
-
-    my_GetThreadDescription(h, &desc);
-    CloseHandle(h);
-
-    if (desc && desc[0] == '\0')
-    {
-        LocalFree(desc);
-        return NULL;
-    }
-    return desc;
 }
 
 static BOOL read_process_memory(HANDLE process, const void *ptr, void *buffer, SIZE_T length)
@@ -764,94 +808,60 @@ static char *get_process_args(DWORD pid)
     if (cmdline.Length > 4096 || (cmdline.Length & 1))
         goto done;
 
-    if (!(tempW = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cmdline.Length + 2)))
+    if (!(tempW = calloc(1, cmdline.Length + 2)))
         goto done;
     if (!read_process_memory(process, cmdline.Buffer, tempW, cmdline.Length))
         goto done;
 
     if (!(len = WideCharToMultiByte(CP_ACP, 0, tempW, -1, NULL, 0, NULL, NULL)))
         goto done;
-    if (!(args = HeapAlloc(GetProcessHeap(), 0, len)))
+    if (!(args = malloc(len)))
         goto done;
     if (!WideCharToMultiByte(CP_ACP, 0, tempW, -1, args, len, NULL, NULL))
     {
-        HeapFree(GetProcessHeap(), 0, args);
+        free(args);
         args = NULL;
     }
 
 done:
-    HeapFree(GetProcessHeap(), 0, tempW);
+    free(tempW);
     CloseHandle(process);
     return args;
 }
 
 void info_win32_threads(void)
 {
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (snap != INVALID_HANDLE_VALUE)
+    if (!dbg_curr_process || dbg_curr_process->active_debuggee)
+        info_win32_active_threads();
+    else
     {
-        THREADENTRY32	entry;
-        BOOL 		ok;
-	DWORD		lastProcessId = 0;
-        struct dbg_process* p = NULL;
-        struct dbg_thread* t = NULL;
+        struct dbg_process *pcs;
+        struct dbg_thread *thread;
         WCHAR *description;
-
-	entry.dwSize = sizeof(entry);
-	ok = Thread32First(snap, &entry);
+        char *args;
 
         dbg_printf("%-8.8s %-8.8s %s    %s (all IDs are in hex)\n",
                    "process", "tid", "prio", "name");
-        while (ok)
+        LIST_FOR_EACH_ENTRY(pcs, &dbg_process_list, struct dbg_process, entry)
         {
-            if (entry.th32OwnerProcessID != GetCurrentProcessId())
-	    {
-		/* FIXME: this assumes that, in the snapshot, all threads of a same process are
-		 * listed sequentially, which is not specified in the doc (Wine's implementation
-		 * does it)
-		 */
-		if (entry.th32OwnerProcessID != lastProcessId)
-		{
-                    PROCESSENTRY32W pcs_entry;
-                    const WCHAR* exename;
-                    char *args;
+            dbg_printf("%08lx%s %ls\n", pcs->pid, " (D)", pcs->imageName);
+            args = get_process_args(pcs->pid);
+            if (args)
+            {
+                dbg_printf("\t[%s]\n", args);
+                free(args);
+            }
 
-                    p = dbg_get_process(entry.th32OwnerProcessID);
-                    if (p)
-                        exename = p->imageName;
-                    else if (get_process_name(entry.th32OwnerProcessID, &pcs_entry))
-                        exename = pcs_entry.szExeFile;
-                    else
-                        exename = L"";
-
-                    dbg_printf("%08lx%s %ls\n", entry.th32OwnerProcessID, p ? " (D)" : "", exename);
-                    args = get_process_args(entry.th32OwnerProcessID);
-                    if (args)
-                    {
-                        dbg_printf("\t[%s]\n", args);
-                        HeapFree(GetProcessHeap(), 0, args);
-                    }
-                    lastProcessId = entry.th32OwnerProcessID;
-		}
-                dbg_printf("\t%08lx %4ld%s ",
-                           entry.th32ThreadID, entry.tpBasePri,
-                           (entry.th32ThreadID == dbg_curr_tid) ? " <==" : "    ");
-
-                if ((description = fetch_thread_description(entry.th32ThreadID)))
-                {
-                    dbg_printf("%ls\n", description);
-                    LocalFree(description);
-                }
-                else
-                {
-                    t = dbg_get_thread(p, entry.th32ThreadID);
-                    dbg_printf("%s\n", t ? t->name : "");
-                }
-	    }
-            ok = Thread32Next(snap, &entry);
+            LIST_FOR_EACH_ENTRY(thread, &pcs->threads, struct dbg_thread, entry)
+            {
+                description = dbg_fetch_thread_name(thread);
+                /* FIXME thread prio is available from a minidump */
+                dbg_printf("\t%08lx %4s%s %ls\n",
+                           thread->tid, "?", (thread->tid == dbg_curr_tid) ? " <==" : "    ",
+                           description ? description : L"");
+                free(description);
+            }
         }
-
-        CloseHandle(snap);
     }
 }
 
@@ -867,7 +877,12 @@ void info_win32_frame_exceptions(DWORD tid)
 
     if (!dbg_curr_process || !dbg_curr_thread)
     {
-        dbg_printf("Cannot get info on exceptions while no process is loaded\n");
+        dbg_printf("Cannot proceed with 'info frame' while no process is being debugged\n");
+        return;
+    }
+    if (!dbg_curr_process->active_debuggee)
+    {
+        dbg_printf("Cannot proceed with 'info frame' while debugging a non active process\n");
         return;
     }
 
@@ -919,6 +934,11 @@ void info_win32_segments(DWORD start, int length)
     DWORD 	i;
     LDT_ENTRY	le;
 
+    if (dbg_curr_process && !dbg_curr_process->active_debuggee)
+    {
+        dbg_printf("Cannot proceed with 'info segments' while debugging a non active process\n");
+        return;
+    }
     if (length == -1) length = (8192 - start);
 
     for (i = start; i < start + length; i++)
@@ -958,11 +978,17 @@ void info_win32_virtual(DWORD pid)
     char                        prot[3+1];
     HANDLE                      hProc;
 
+    if (dbg_curr_process && !dbg_curr_process->active_debuggee)
+    {
+        dbg_printf("Cannot proceed with 'info maps' while debugging a non active process\n");
+        return;
+    }
+
     if (pid == dbg_curr_pid)
     {
         if (dbg_curr_process == NULL)
         {
-            dbg_printf("Cannot look at mapping of current process, while no process is loaded\n");
+            dbg_printf("Cannot proceed with 'info maps' while no process is being debugged\n");
             return;
         }
         hProc = dbg_curr_process->handle;
@@ -1032,7 +1058,12 @@ void info_wine_dbg_channel(BOOL turn_on, const char* cls, const char* name)
 
     if (!dbg_curr_process || !dbg_curr_thread)
     {
-        dbg_printf("Cannot set/get debug channels while no process is loaded\n");
+        dbg_printf("Cannot set/get debug channels while no process is being debugged\n");
+        return;
+    }
+    if (!dbg_curr_process->active_debuggee)
+    {
+        dbg_printf("Cannot set/get debug channels while debugging a non active process\n");
         return;
     }
     if (NtQueryInformationProcess(dbg_curr_process->handle, ProcessBasicInformation, &info, sizeof(info), NULL ))
@@ -1085,11 +1116,17 @@ void info_win32_exception(void)
     ADDRESS64                   addr;
     char                        hexbuf[MAX_OFFSET_TO_STR_LEN];
 
-    if (!dbg_curr_thread->in_exception)
+    if (!dbg_curr_thread)
     {
-        dbg_printf("Thread isn't in an exception\n");
+        dbg_printf("Cannot proceed with 'info exception' as there's no current thread\n");
         return;
     }
+    if (!dbg_curr_thread->in_exception)
+    {
+        dbg_printf("Cannot proceed with 'info exception' while current thread isn't inside an exception\n");
+        return;
+    }
+
     rec = &dbg_curr_thread->excpt_record;
     memory_get_current_pc(&addr);
 
@@ -1307,6 +1344,13 @@ void info_win32_system(void)
     {
         IMAGE_FILE_MACHINE_I386, IMAGE_FILE_MACHINE_ARM, IMAGE_FILE_MACHINE_ARMNT,
     };
+
+    if (dbg_curr_process && !dbg_curr_process->active_debuggee)
+    {
+        /* FIXME we could better for minidump */
+        dbg_printf("Cannot proceed with 'info system' while debugging a non active process\n");
+        return;
+    }
 
     wine_get_build_id = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_build_id");
     wine_get_host_version = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_host_version");

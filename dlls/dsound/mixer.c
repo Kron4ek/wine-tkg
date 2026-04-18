@@ -42,6 +42,9 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(dsound);
 
+#define FREQ_ADJUST_SHIFT 32
+#define FIXED_0_32_TO_FLOAT(x) ((int)((x) >> 1) * (1.0f / (1ll << 31)))
+
 void DSOUND_RecalcVolPan(PDSVOLUMEPAN volpan)
 {
 	double temp;
@@ -312,19 +315,41 @@ static UINT cp_fields_noresample(IDirectSoundBufferImpl *dsb, UINT count)
  * Note that this function will overwrite up to fir_width - 1 frames before and
  * after output[].
  */
-static void downsample(LONG64 freq_adjust_num, LONG64 freq_adjust_den, LONG64 freq_acc_start,
-        float firgain, UINT required_input, float *input, float *output)
+static void downsample(DWORD freq_adjust_den, DWORD freq_acc_start, float firgain,
+        UINT required_input, float *input, float *output)
 {
+    /* Both opos_num and rem are calculated in an incremental fashion,
+     * independently of each other. This improves performance a bit, presumably
+     * because it allows the CPU to do the calculation in parallel.
+     *
+     * However, the value of rem must still be kept in perfect sync with the
+     * lower part of opos_num. Otherwise, even a small divergence can cause them
+     * to wrap around on different iterations of the outer loop, which will
+     * produce artifacts.
+     *
+     * To prevent this, clear the lower bits of opos_num and opos_num_step so
+     * that rem can always represent the calculated value exactly. As rem is
+     * always less than 2, its exponent is less than or equal to zero. This
+     * means that in the worst case, rem has the same number of fractional bits
+     * as the significand, which is 23 for a single-precision floating point.
+     *
+     * Clearing the bits is safe as it has the same effect as rounding up the
+     * resampling ratio and the subsample position and doesn't affect the
+     * initial opos value. */
+    LONG64 opos_num_mask = ~0ull << (FREQ_ADJUST_SHIFT - 23 - fir_step_shift);
+    LONG64 opos_num = (freq_adjust_den - freq_acc_start + (1ll << FREQ_ADJUST_SHIFT) - 1) & opos_num_mask;
+    DWORD opos_num_step = freq_adjust_den & (DWORD)opos_num_mask;
+
+    /* Use XOR to invert the lower part of opos_num so that the lower bits
+     * remain cleared. */
+    float rem = FIXED_0_32_TO_FLOAT(((DWORD)opos_num ^ (DWORD)opos_num_mask) << fir_step_shift);
+    float rem_step = FIXED_0_32_TO_FLOAT(-opos_num_step << fir_step_shift);
     int j;
 
     for (j = 0; j < required_input; ++j) {
-        LONG64 opos_num = freq_adjust_den - freq_acc_start + j * freq_adjust_den + freq_adjust_num - 1;
         /* opos is in the range [-(fir_width - 1), count) */
-        int opos = opos_num / freq_adjust_num - fir_width;
-
-        UINT idx_num = (freq_adjust_num - 1 - opos_num % freq_adjust_num) * fir_step;
-        UINT idx = idx_num / freq_adjust_num * fir_width;
-        float rem = idx_num % freq_adjust_num / (float)freq_adjust_num;
+        int opos = (int)(opos_num >> FREQ_ADJUST_SHIFT) - fir_width;
+        UINT idx = ~(DWORD)opos_num >> (FREQ_ADJUST_SHIFT - fir_step_shift) << fir_width_shift;
 
         float input_value = input[j] * firgain;
         float input_value0 = (1.0f - rem) * input_value;
@@ -333,21 +358,46 @@ static void downsample(LONG64 freq_adjust_num, LONG64 freq_adjust_den, LONG64 fr
         int i;
         for (i = 0; i < fir_width; ++i)
             output[opos + i] += fir[idx + i] * input_value0 + fir[idx + fir_width + i] * input_value1;
+
+        rem += rem_step;
+        rem -= rem >= 1.0f ? 1.0f : 0.0f;
+
+        opos_num += opos_num_step;
     }
 }
 
-static void upsample(LONG64 freq_adjust_num, LONG64 freq_adjust_den, LONG64 freq_acc_start,
-        UINT count, float *input, float *output)
+static void upsample(DWORD freq_adjust_num, DWORD freq_acc_start, UINT count, float *input,
+        float *output)
 {
+    /* Both ipos_num and rem_inv are calculated in an incremental fashion,
+     * independently of each other. This improves performance a bit, presumably
+     * because it allows the CPU to do the calculation in parallel.
+     *
+     * However, the value of rem_inv must still be kept in perfect sync with the
+     * lower part of ipos_num. Otherwise, even a small divergence can cause them
+     * to wrap around on different iterations of the outer loop, which will
+     * produce artifacts.
+     *
+     * To prevent this, clear the lower bits of ipos_num and ipos_num_step so
+     * that rem_inv can always represent the calculated value exactly. As
+     * rem_inv is always less than 2, its exponent is less than or equal to
+     * zero. This means that in the worst case, rem_inv has the same number of
+     * fractional bits as the significand, which is 23 for a single-precision
+     * floating point.
+     *
+     * Clearing the bits is safe as it has the same effect as rounding down the
+     * resampling ratio and the subsample position. */
+    DWORD ipos_num_mask = ~0u << (FREQ_ADJUST_SHIFT - 23 - fir_step_shift);
+    LONG64 ipos_num = freq_acc_start & ipos_num_mask;
+    DWORD ipos_num_step = freq_adjust_num & ipos_num_mask;
+
+    float rem_inv = FIXED_0_32_TO_FLOAT((DWORD)ipos_num << fir_step_shift);
+    float rem_inv_step = FIXED_0_32_TO_FLOAT(ipos_num_step << fir_step_shift);
     UINT i;
 
     for(i = 0; i < count; ++i) {
-        LONG64 ipos_num = freq_acc_start + i * freq_adjust_num;
-        UINT ipos = ipos_num / freq_adjust_den;
-
-        UINT idx_num = ipos_num % freq_adjust_den * fir_step;
-        UINT idx = (fir_step - 1 - idx_num / freq_adjust_den) * fir_width;
-        float rem_inv = idx_num % freq_adjust_den / (float)freq_adjust_den;
+        UINT ipos = ipos_num >> FREQ_ADJUST_SHIFT;
+        UINT idx = ~(DWORD)ipos_num >> (FREQ_ADJUST_SHIFT - fir_step_shift) << fir_width_shift;
         float rem = 1.0f - rem_inv;
 
         int j;
@@ -357,6 +407,11 @@ static void upsample(LONG64 freq_adjust_num, LONG64 freq_adjust_den, LONG64 freq
         for (j = 0; j < fir_width; j++)
             sum += (fir[idx + j] * rem_inv + fir[idx + j + fir_width] * rem) * cache[j];
         output[i] = sum;
+
+        rem_inv += rem_inv_step;
+        rem_inv -= rem_inv >= 1.0f ? 1.0f : 0.0f;
+
+        ipos_num += ipos_num_step;
     }
 }
 
@@ -368,11 +423,26 @@ static void resample(LONG64 freq_adjust_num, LONG64 freq_adjust_den, LONG64 freq
         float firgain, UINT required_input, UINT count, float *input, float *output)
 {
     if (freq_adjust_num > freq_adjust_den) {
+        /* Take a reciprocal of the resampling ratio and convert it to a 0.32
+         * fixed point. Round down to prevent output buffer overflow. */
+        DWORD freq_adjust_fixed_den = (freq_adjust_den << FREQ_ADJUST_SHIFT) / freq_adjust_num;
+        /* Convert the subsample position to a 0.32 fixed point. Round up to
+         * prevent output buffer overflow. */
+        DWORD freq_acc_fixed_start = (freq_acc_start * freq_adjust_fixed_den + freq_adjust_den - 1)
+                / freq_adjust_den;
+
         memset(output, 0, count * sizeof(float));
-        downsample(freq_adjust_num, freq_adjust_den, freq_acc_start, firgain, required_input,
-                input, output);
+        downsample(freq_adjust_fixed_den, freq_acc_fixed_start, firgain, required_input, input,
+                output);
     } else {
-        upsample(freq_adjust_num, freq_adjust_den, freq_acc_start, count, input, output);
+        /* Convert the resampling ratio to a 0.32 fixed point. Round down to
+         * prevent input buffer overflow. */
+        DWORD freq_adjust_fixed_num = (freq_adjust_num << FREQ_ADJUST_SHIFT) / freq_adjust_den;
+        /* Convert the subsample position to a 0.32 fixed point. Round down to
+         * prevent input buffer overflow. */
+        DWORD freq_acc_fixed_start = (freq_acc_start << FREQ_ADJUST_SHIFT) / freq_adjust_den;
+
+        upsample(freq_adjust_fixed_num, freq_acc_fixed_start, count, input, output);
     }
 }
 

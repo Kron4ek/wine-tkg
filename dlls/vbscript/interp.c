@@ -25,6 +25,7 @@
 WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
 
 static DISPID propput_dispid = DISPID_PROPERTYPUT;
+static const unsigned max_call_depth = 1024;
 
 typedef struct _exec_ctx_t {
     vbscode_t *code;
@@ -84,7 +85,7 @@ typedef struct {
 static BOOL lookup_dynamic_vars(dynamic_var_t *var, const WCHAR *name, ref_t *ref)
 {
     while(var) {
-        if(!wcsicmp(var->name, name)) {
+        if(!vbs_wcsicmp(var->name, name)) {
             ref->type = var->is_const ? REF_CONST : REF_VAR;
             ref->u.v = &var->v;
             return TRUE;
@@ -98,31 +99,24 @@ static BOOL lookup_dynamic_vars(dynamic_var_t *var, const WCHAR *name, ref_t *re
 
 static BOOL lookup_global_vars(ScriptDisp *script, const WCHAR *name, ref_t *ref)
 {
-    dynamic_var_t **vars = script->global_vars;
-    size_t i, cnt = script->global_vars_cnt;
+    dynamic_var_t *var = script_disp_find_var(script, name);
 
-    for(i = 0; i < cnt; i++) {
-        if(!wcsicmp(vars[i]->name, name)) {
-            ref->type = vars[i]->is_const ? REF_CONST : REF_VAR;
-            ref->u.v = &vars[i]->v;
-            return TRUE;
-        }
-    }
+    if(!var)
+        return FALSE;
 
-    return FALSE;
+    ref->type = var->is_const ? REF_CONST : REF_VAR;
+    ref->u.v = &var->v;
+    return TRUE;
 }
 
 static BOOL lookup_global_funcs(ScriptDisp *script, const WCHAR *name, ref_t *ref)
 {
-    function_t **funcs = script->global_funcs;
-    size_t i, cnt = script->global_funcs_cnt;
+    function_t *func = script_disp_find_func(script, name);
 
-    for(i = 0; i < cnt; i++) {
-        if(!wcsicmp(funcs[i]->name, name)) {
-            ref->type = REF_FUNC;
-            ref->u.f = funcs[i];
-            return TRUE;
-        }
+    if(func) {
+        ref->type = REF_FUNC;
+        ref->u.f = func;
+        return TRUE;
     }
 
     return FALSE;
@@ -138,7 +132,7 @@ static HRESULT lookup_identifier(exec_ctx_t *ctx, BSTR name, vbdisp_invoke_type_
 
     if(invoke_type != VBDISP_CALLGET
        && (ctx->func->type == FUNC_FUNCTION || ctx->func->type == FUNC_PROPGET)
-       && !wcsicmp(name, ctx->func->name)) {
+       && !vbs_wcsicmp(name, ctx->func->name)) {
         ref->type = REF_VAR;
         ref->u.v = &ctx->ret_val;
         return S_OK;
@@ -146,7 +140,7 @@ static HRESULT lookup_identifier(exec_ctx_t *ctx, BSTR name, vbdisp_invoke_type_
 
     if(ctx->func->type != FUNC_GLOBAL) {
         for(i=0; i < ctx->func->var_cnt; i++) {
-            if(!wcsicmp(ctx->func->vars[i].name, name)) {
+            if(!vbs_wcsicmp(ctx->func->vars[i].name, name)) {
                 ref->type = REF_VAR;
                 ref->u.v = ctx->vars+i;
                 return S_OK;
@@ -154,7 +148,7 @@ static HRESULT lookup_identifier(exec_ctx_t *ctx, BSTR name, vbdisp_invoke_type_
         }
 
         for(i=0; i < ctx->func->arg_cnt; i++) {
-            if(!wcsicmp(ctx->func->args[i].name, name)) {
+            if(!vbs_wcsicmp(ctx->func->args[i].name, name)) {
                 ref->type = REF_VAR;
                 ref->u.v = ctx->args+i;
                 return S_OK;
@@ -167,7 +161,7 @@ static HRESULT lookup_identifier(exec_ctx_t *ctx, BSTR name, vbdisp_invoke_type_
         if(ctx->vbthis) {
             /* FIXME: Bind such identifier while generating bytecode. */
             for(i=0; i < ctx->vbthis->desc->prop_cnt; i++) {
-                if(!wcsicmp(ctx->vbthis->desc->props[i].name, name)) {
+                if(!vbs_wcsicmp(ctx->vbthis->desc->props[i].name, name)) {
                     ref->type = REF_VAR;
                     ref->u.v = ctx->vbthis->props+i;
                     return S_OK;
@@ -188,7 +182,7 @@ static HRESULT lookup_identifier(exec_ctx_t *ctx, BSTR name, vbdisp_invoke_type_
         exec_ctx_t *caller = ctx->caller;
 
         for(i=0; i < caller->func->var_cnt; i++) {
-            if(!wcsicmp(caller->func->vars[i].name, name)) {
+            if(!vbs_wcsicmp(caller->func->vars[i].name, name)) {
                 ref->type = REF_VAR;
                 ref->u.v = caller->vars+i;
                 return S_OK;
@@ -196,7 +190,7 @@ static HRESULT lookup_identifier(exec_ctx_t *ctx, BSTR name, vbdisp_invoke_type_
         }
 
         for(i=0; i < caller->func->arg_cnt; i++) {
-            if(!wcsicmp(caller->func->args[i].name, name)) {
+            if(!vbs_wcsicmp(caller->func->args[i].name, name)) {
                 ref->type = REF_VAR;
                 ref->u.v = caller->args+i;
                 return S_OK;
@@ -300,6 +294,10 @@ static HRESULT add_dynamic_var(exec_ctx_t *ctx, const WCHAR *name,
             script_obj->global_vars = new_vars;
             script_obj->global_vars_size = cnt * 2;
         }
+        {
+            new_var->index = script_obj->global_vars_cnt;
+            rb_put(&script_obj->var_tree, new_var->name, &new_var->entry);
+        }
         script_obj->global_vars[script_obj->global_vars_cnt++] = new_var;
     }else {
         new_var->next = ctx->dynamic_vars;
@@ -324,6 +322,37 @@ void clear_error_loc(script_ctx_t *ctx)
         release_vbscode(ctx->error_loc_code);
         ctx->error_loc_code = NULL;
     }
+}
+
+static HRESULT throw_error(script_ctx_t *ctx, HRESULT error, const WCHAR *identifier)
+{
+    BSTR desc, source;
+
+    desc = get_vbscript_string(HRESULT_CODE(error));
+    if(desc && identifier) {
+        unsigned desc_len = SysStringLen(desc);
+        unsigned ident_len = lstrlenW(identifier);
+        /* format: "Error text: 'identifier'" */
+        BSTR new_desc = SysAllocStringLen(NULL, desc_len + 3 + ident_len + 1);
+        if(new_desc) {
+            memcpy(new_desc, desc, desc_len * sizeof(WCHAR));
+            new_desc[desc_len] = ':';
+            new_desc[desc_len + 1] = ' ';
+            new_desc[desc_len + 2] = '\'';
+            memcpy(new_desc + desc_len + 3, identifier, ident_len * sizeof(WCHAR));
+            new_desc[desc_len + 3 + ident_len] = '\'';
+            SysFreeString(desc);
+            desc = new_desc;
+        }
+    }
+
+    source = get_vbscript_string(VBS_RUNTIME_ERROR);
+
+    clear_ei(&ctx->ei);
+    ctx->ei.scode = error;
+    ctx->ei.bstrDescription = desc;
+    ctx->ei.bstrSource = source;
+    return SCRIPT_E_RECORDED;
 }
 
 static inline VARIANT *stack_pop(exec_ctx_t *ctx)
@@ -442,24 +471,28 @@ static HRESULT stack_pop_bool(exec_ctx_t *ctx, BOOL *b)
 {
     variant_val_t val;
     HRESULT hres;
-    VARIANT v;
 
     hres = stack_pop_val(ctx, &val);
     if(FAILED(hres))
         return hres;
 
-    if (V_VT(val.v) == VT_NULL)
-    {
+    switch(V_VT(val.v)) {
+    case VT_BOOL:
+        *b = !!V_BOOL(val.v);
+        break;
+    case VT_NULL:
         *b = FALSE;
-    }
-    else
-    {
+        break;
+    default: {
+        VARIANT v;
         V_VT(&v) = VT_EMPTY;
-        if (SUCCEEDED(hres = VariantChangeType(&v, val.v, VARIANT_LOCALBOOL, VT_BOOL)))
+        hres = VariantChangeType(&v, val.v, VARIANT_LOCALBOOL, VT_BOOL);
+        if(SUCCEEDED(hres))
             *b = !!V_BOOL(&v);
+        release_val(&val);
+        break;
     }
-
-    release_val(&val);
+    }
 
     return hres;
 }
@@ -611,8 +644,8 @@ static HRESULT variant_call(exec_ctx_t *ctx, VARIANT *v, unsigned arg_cnt, VARIA
         stack_popn(ctx, arg_cnt);
         return hres;
     default:
-        FIXME("unsupported on %s\n", debugstr_variant(v));
-        return E_NOTIMPL;
+        WARN("unsupported on %s\n", debugstr_variant(v));
+        return DISP_E_TYPEMISMATCH;
     }
 
     if(!res) {
@@ -712,6 +745,8 @@ static HRESULT do_icall(exec_ctx_t *ctx, VARIANT *res, BSTR identifier, unsigned
             V_BYREF(res) = new;
             break;
         }
+        if(ctx->func->code_ctx->option_explicit)
+            return throw_error(ctx->script, MAKE_VBSERROR(VBSE_VARIABLE_UNDEFINED), identifier);
         FIXME("%s not found\n", debugstr_w(identifier));
         return DISP_E_UNKNOWNNAME;
     }
@@ -845,7 +880,7 @@ static HRESULT interp_ident(exec_ctx_t *ctx)
     TRACE("%s\n", debugstr_w(identifier));
 
     if((ctx->func->type == FUNC_FUNCTION || ctx->func->type == FUNC_PROPGET)
-       && !wcsicmp(identifier, ctx->func->name)) {
+       && !vbs_wcsicmp(identifier, ctx->func->name)) {
         V_VT(&v) = VT_BYREF|VT_VARIANT;
         V_BYREF(&v) = &ctx->ret_val;
         return stack_push(ctx, &v);
@@ -943,29 +978,28 @@ static HRESULT assign_ident(exec_ctx_t *ctx, BSTR name, WORD flags, DISPPARAMS *
         hres = disp_propput(ctx->script, ref.u.d.disp, ref.u.d.id, flags, dp);
         break;
     case REF_FUNC:
-        FIXME("functions not implemented\n");
-        return E_NOTIMPL;
+        WARN("assign to function %s\n", debugstr_w(name));
+        return MAKE_VBSERROR(VBSE_ILLEGAL_ASSIGNMENT);
     case REF_OBJ:
         FIXME("REF_OBJ\n");
         return E_NOTIMPL;
     case REF_CONST:
-        FIXME("REF_CONST\n");
-        return E_NOTIMPL;
-    case REF_NONE:
-        if(ctx->func->code_ctx->option_explicit) {
-            FIXME("throw exception\n");
-            hres = E_FAIL;
-        }else {
-            VARIANT *new_var;
+        WARN("assign to const %s\n", debugstr_w(name));
+        return MAKE_VBSERROR(VBSE_ILLEGAL_ASSIGNMENT);
+    case REF_NONE: {
+        VARIANT *new_var;
 
-            if(arg_cnt(dp))
-                return DISP_E_TYPEMISMATCH;
+        if(ctx->func->code_ctx->option_explicit)
+            return throw_error(ctx->script, MAKE_VBSERROR(VBSE_VARIABLE_UNDEFINED), name);
 
-            TRACE("creating variable %s\n", debugstr_w(name));
-            hres = add_dynamic_var(ctx, name, FALSE, &new_var);
-            if(SUCCEEDED(hres))
-                hres = assign_value(ctx, new_var, dp->rgvarg, flags);
-        }
+        if(arg_cnt(dp))
+            return DISP_E_TYPEMISMATCH;
+
+        TRACE("creating variable %s\n", debugstr_w(name));
+        hres = add_dynamic_var(ctx, name, FALSE, &new_var);
+        if(SUCCEEDED(hres))
+            hres = assign_value(ctx, new_var, dp->rgvarg, flags);
+    }
     }
 
     return hres;
@@ -1219,7 +1253,7 @@ static HRESULT interp_deref(exec_ctx_t *ctx)
 
 static HRESULT interp_new(exec_ctx_t *ctx)
 {
-    const WCHAR *arg = ctx->instr->arg1.bstr;
+    BSTR arg = ctx->instr->arg1.bstr;
     class_desc_t *class_desc = NULL;
     vbdisp_t *obj;
     VARIANT v;
@@ -1227,7 +1261,7 @@ static HRESULT interp_new(exec_ctx_t *ctx)
 
     TRACE("%s\n", debugstr_w(arg));
 
-    if(!wcsicmp(arg, L"regexp")) {
+    if(!vbs_wcsicmp(arg, L"regexp")) {
         V_VT(&v) = VT_DISPATCH;
         hres = create_regexp(&V_DISPATCH(&v));
         if(FAILED(hres))
@@ -1238,15 +1272,20 @@ static HRESULT interp_new(exec_ctx_t *ctx)
 
     if(ctx->code->named_item)
         for(class_desc = ctx->code->named_item->script_obj->classes; class_desc; class_desc = class_desc->next)
-            if(!wcsicmp(class_desc->name, arg))
+            if(!vbs_wcsicmp(class_desc->name, arg))
                 break;
     if(!class_desc)
         for(class_desc = ctx->script->script_obj->classes; class_desc; class_desc = class_desc->next)
-            if(!wcsicmp(class_desc->name, arg))
+            if(!vbs_wcsicmp(class_desc->name, arg))
                 break;
     if(!class_desc) {
-        FIXME("Class %s not found\n", debugstr_w(arg));
-        return E_FAIL;
+        ref_t ref;
+
+        hres = lookup_identifier(ctx, arg, VBDISP_ANY, &ref);
+        if(FAILED(hres))
+            return hres;
+        return MAKE_VBSERROR(ref.type == REF_NONE ? VBSE_VARIABLE_UNDEFINED
+                                                  : VBSE_CLASS_NOT_DEFINED);
     }
 
     hres = create_vbdisp(class_desc, &obj);
@@ -1273,14 +1312,10 @@ static HRESULT interp_dim(exec_ctx_t *ctx)
     assert(array_id < ctx->func->array_cnt);
 
     if(ctx->func->type == FUNC_GLOBAL) {
-        unsigned i;
-        for(i = 0; i < script_obj->global_vars_cnt; i++) {
-            if(!wcsicmp(script_obj->global_vars[i]->name, ident))
-                break;
-        }
-        assert(i < script_obj->global_vars_cnt);
-        v = &script_obj->global_vars[i]->v;
-        array_ref = &script_obj->global_vars[i]->array;
+        dynamic_var_t *var = script_disp_find_var(script_obj, ident);
+        assert(var != NULL);
+        v = &var->v;
+        array_ref = &var->array;
     }else {
         ref_t ref;
 
@@ -1548,14 +1583,24 @@ static HRESULT interp_step(exec_ctx_t *ctx)
 
     TRACE("%s\n", debugstr_w(ident));
 
-    if(V_VT(stack_top(ctx, 0)) == VT_EMPTY || V_VT(stack_top(ctx, 1)) == VT_EMPTY)
-        return MAKE_VBSERROR(VBSE_FOR_LOOP_NOT_INITIALIZED);
+    /* If to and step are VT_EMPTY, the For loop was not properly initialized
+     * (expression evaluation failed during On Error Resume Next). Set error 92
+     * and exit the loop. */
+    if(V_VT(stack_top(ctx, 0)) == VT_EMPTY && V_VT(stack_top(ctx, 1)) == VT_EMPTY) {
+        WARN("For loop not initialized\n");
+        clear_ei(&ctx->script->ei);
+        ctx->script->ei.scode = MAKE_VBSERROR(VBSE_FOR_LOOP_NOT_INITIALIZED);
+        map_vbs_exception(&ctx->script->ei);
+        stack_popn(ctx, 3);
+        instr_jmp(ctx, ctx->instr->arg1.uint);
+        return S_OK;
+    }
 
     V_VT(&zero) = VT_I2;
     V_I2(&zero) = 0;
     hres = VarCmp(stack_top(ctx, 0), &zero, ctx->script->lcid, 0);
     if(FAILED(hres))
-        return hres;
+        goto loop_not_initialized;
 
     gteq_zero = hres == VARCMP_GT || hres == VARCMP_EQ;
 
@@ -1570,15 +1615,21 @@ static HRESULT interp_step(exec_ctx_t *ctx)
 
     hres = VarCmp(ref.u.v, stack_top(ctx, 1), ctx->script->lcid, 0);
     if(FAILED(hres))
-        return hres;
+        goto loop_not_initialized;
 
     if(hres == VARCMP_EQ || hres == (gteq_zero ? VARCMP_LT : VARCMP_GT)) {
         ctx->instr++;
     }else {
-        stack_popn(ctx, 2);
+        stack_popn(ctx, 3);
         instr_jmp(ctx, ctx->instr->arg1.uint);
     }
     return S_OK;
+
+loop_not_initialized:
+    WARN("For loop not initialized\n");
+    stack_popn(ctx, 2);
+    instr_jmp(ctx, ctx->instr->arg1.uint);
+    return hres;
 }
 
 static HRESULT interp_newenum(exec_ctx_t *ctx)
@@ -2600,17 +2651,17 @@ HRESULT exec_add_caller_dynamic_var(script_ctx_t *script, exec_ctx_t *ctx, const
 
     /* Skip if name already exists in caller's locals, args, or dynamic vars */
     for(i = 0; i < ctx->func->var_cnt; i++) {
-        if(!wcsicmp(ctx->func->vars[i].name, name))
+        if(!vbs_wcsicmp(ctx->func->vars[i].name, name))
             return S_OK;
     }
     for(i = 0; i < ctx->func->arg_cnt; i++) {
-        if(!wcsicmp(ctx->func->args[i].name, name))
+        if(!vbs_wcsicmp(ctx->func->args[i].name, name))
             return S_OK;
     }
     {
         dynamic_var_t *var;
         for(var = ctx->dynamic_vars; var; var = var->next) {
-            if(!wcsicmp(var->name, name))
+            if(!vbs_wcsicmp(var->name, name))
                 return S_OK;
         }
     }
@@ -2644,13 +2695,18 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
     vbsop_t op;
     HRESULT hres = S_OK;
 
+    if(!extern_caller && ctx->call_depth++ >= max_call_depth) {
+        ctx->call_depth--;
+        return MAKE_VBSERROR(VBSE_OUT_OF_STACK);
+    }
+
     exec.code = func->code_ctx;
     exec.caller = ctx->caller_exec;
     ctx->caller_exec = NULL;
 
     if(dp ? func->arg_cnt != arg_cnt(dp) : func->arg_cnt) {
-        FIXME("wrong arg_cnt %d, expected %d\n", dp ? arg_cnt(dp) : 0, func->arg_cnt);
-        return E_FAIL;
+        WARN("wrong arg_cnt %d, expected %d\n", dp ? arg_cnt(dp) : 0, func->arg_cnt);
+        return MAKE_VBSERROR(VBSE_FUNC_ARITY_MISMATCH);
     }
 
     heap_pool_init(&exec.heap);
@@ -2802,6 +2858,8 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
     }
 
     ctx->current_named_item = prev_named_item;
+    if(!extern_caller)
+        ctx->call_depth--;
     release_exec(&exec);
     return hres;
 }

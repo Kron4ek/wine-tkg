@@ -417,7 +417,7 @@ static expression_t *lookup_const_decls(compile_ctx_t *ctx, const WCHAR *name, B
     const_decl_t *decl;
 
     for(decl = ctx->const_decls; decl; decl = decl->next) {
-        if(!wcsicmp(decl->name, name))
+        if(!vbs_wcsicmp(decl->name, name))
             return decl->value_expr;
     }
 
@@ -425,7 +425,7 @@ static expression_t *lookup_const_decls(compile_ctx_t *ctx, const WCHAR *name, B
         return NULL;
 
     for(decl = ctx->global_consts; decl; decl = decl->next) {
-        if(!wcsicmp(decl->name, name))
+        if(!vbs_wcsicmp(decl->name, name))
             return decl->value_expr;
     }
 
@@ -437,7 +437,7 @@ static BOOL lookup_args_name(compile_ctx_t *ctx, const WCHAR *name)
     unsigned i;
 
     for(i = 0; i < ctx->func->arg_cnt; i++) {
-        if(!wcsicmp(ctx->func->args[i].name, name))
+        if(!vbs_wcsicmp(ctx->func->args[i].name, name))
             return TRUE;
     }
 
@@ -449,7 +449,7 @@ static BOOL lookup_dim_decls(compile_ctx_t *ctx, const WCHAR *name)
     dim_decl_t *dim_decl;
 
     for(dim_decl = ctx->dim_decls; dim_decl; dim_decl = dim_decl->next) {
-        if(!wcsicmp(dim_decl->name, name))
+        if(!vbs_wcsicmp(dim_decl->name, name))
             return TRUE;
     }
 
@@ -870,8 +870,8 @@ static HRESULT compile_foreach_statement(compile_ctx_t *ctx, foreach_statement_t
 
 static HRESULT compile_forto_statement(compile_ctx_t *ctx, forto_statement_t *stat)
 {
-    statement_ctx_t loop_ctx = {2};
-    unsigned step_instr, loop_start, instr;
+    statement_ctx_t loop_ctx = {3};
+    unsigned step_instr, instr, expr_err_label, past_err_label, body_label, from_offset;
     BSTR identifier;
     HRESULT hres;
 
@@ -879,23 +879,32 @@ static HRESULT compile_forto_statement(compile_ctx_t *ctx, forto_statement_t *st
     if(!identifier)
         return E_OUTOFMEMORY;
 
+    expr_err_label = alloc_label(ctx);
+    if(!expr_err_label)
+        return E_OUTOFMEMORY;
+
+    past_err_label = alloc_label(ctx);
+    if(!past_err_label)
+        return E_OUTOFMEMORY;
+
+    body_label = alloc_label(ctx);
+    if(!body_label)
+        return E_OUTOFMEMORY;
+
+    /* Evaluate all three expressions (from, to, step) before assignment,
+     * so that the control variable is not modified if any expression fails.
+     * Stack layout after evaluation: [from, to, step] (step on top). */
+    from_offset = stack_offset(ctx);
+
     hres = compile_expression(ctx, stat->from_expr);
     if(FAILED(hres))
         return hres;
     if(!push_instr(ctx, OP_numval))
         return E_OUTOFMEMORY;
 
-    /* FIXME: Assign should happen after both expressions evaluation. */
-    instr = push_instr(ctx, OP_assign_ident);
-    if(!instr)
-        return E_OUTOFMEMORY;
-    instr_ptr(ctx, instr)->arg1.bstr = identifier;
-    instr_ptr(ctx, instr)->arg2.uint = 0;
-
     hres = compile_expression(ctx, stat->to_expr);
     if(FAILED(hres))
         return hres;
-
     if(!push_instr(ctx, OP_numval))
         return E_OUTOFMEMORY;
 
@@ -912,6 +921,24 @@ static HRESULT compile_forto_statement(compile_ctx_t *ctx, forto_statement_t *st
             return hres;
     }
 
+    /* If any expression failed, clean up and enter body with empty sentinels. */
+    if(!emit_catch_jmp(ctx, 0, expr_err_label))
+        return E_OUTOFMEMORY;
+
+    /* Copy from (buried at depth 2) to top and assign to control variable. */
+    hres = push_instr_uint(ctx, OP_stack, from_offset);
+    if(FAILED(hres))
+        return hres;
+
+    instr = push_instr(ctx, OP_assign_ident);
+    if(!instr)
+        return E_OUTOFMEMORY;
+    instr_ptr(ctx, instr)->arg1.bstr = identifier;
+    instr_ptr(ctx, instr)->arg2.uint = 0;
+
+    if(!emit_catch_jmp(ctx, 0, expr_err_label))
+        return E_OUTOFMEMORY;
+
     loop_ctx.for_end_label = alloc_label(ctx);
     if(!loop_ctx.for_end_label)
         return E_OUTOFMEMORY;
@@ -922,16 +949,16 @@ static HRESULT compile_forto_statement(compile_ctx_t *ctx, forto_statement_t *st
     instr_ptr(ctx, step_instr)->arg2.bstr = identifier;
     instr_ptr(ctx, step_instr)->arg1.uint = loop_ctx.for_end_label;
 
-    if(!emit_catch(ctx, 2))
+    if(!emit_catch(ctx, 3))
         return E_OUTOFMEMORY;
 
-    loop_start = ctx->instr_cnt;
+    label_set_addr(ctx, body_label);
+
     hres = compile_statement(ctx, &loop_ctx, stat->body);
     if(FAILED(hres))
         return hres;
 
-    /* We need a separated OP_step here so that errors jump to the end-of-loop catch. */
-    ctx->loc = stat->stat.loc;
+
     instr = push_instr(ctx, OP_incc);
     if(!instr)
         return E_OUTOFMEMORY;
@@ -943,7 +970,11 @@ static HRESULT compile_forto_statement(compile_ctx_t *ctx, forto_statement_t *st
     instr_ptr(ctx, instr)->arg2.bstr = identifier;
     instr_ptr(ctx, instr)->arg1.uint = loop_ctx.for_end_label;
 
-    hres = push_instr_addr(ctx, OP_jmp, loop_start);
+    hres = push_instr_addr(ctx, OP_jmp, step_instr);
+    if(FAILED(hres))
+        return hres;
+
+    hres = push_instr_uint(ctx, OP_pop, 3);
     if(FAILED(hres))
         return hres;
 
@@ -951,6 +982,28 @@ static HRESULT compile_forto_statement(compile_ctx_t *ctx, forto_statement_t *st
 
     if(!emit_catch(ctx, 0))
         return E_OUTOFMEMORY;
+
+    hres = push_instr_addr(ctx, OP_jmp, past_err_label);
+    if(FAILED(hres))
+        return hres;
+
+    /* Expression error path: push empty from/to/step sentinels and enter body. */
+    label_set_addr(ctx, expr_err_label);
+
+    if(!push_instr(ctx, OP_empty))
+        return E_OUTOFMEMORY;
+
+    if(!push_instr(ctx, OP_empty))
+        return E_OUTOFMEMORY;
+
+    if(!push_instr(ctx, OP_empty))
+        return E_OUTOFMEMORY;
+
+    hres = push_instr_addr(ctx, OP_jmp, body_label);
+    if(FAILED(hres))
+        return hres;
+
+    label_set_addr(ctx, past_err_label);
 
     return S_OK;
 }
@@ -1151,6 +1204,7 @@ static HRESULT compile_dim_statement(compile_ctx_t *ctx, dim_statement_t *stat)
     while(1) {
         if(lookup_dim_decls(ctx, dim_decl->name) || lookup_args_name(ctx, dim_decl->name)
            || lookup_const_decls(ctx, dim_decl->name, FALSE)) {
+            ctx->loc = dim_decl->loc;
             return MAKE_VBSERROR(VBSE_NAME_REDEFINED);
         }
 
@@ -1722,7 +1776,7 @@ static BOOL lookup_funcs_name(compile_ctx_t *ctx, const WCHAR *name)
     function_t *iter;
 
     for(iter = ctx->code->funcs; iter; iter = iter->next) {
-        if(!wcsicmp(iter->name, name))
+        if(!vbs_wcsicmp(iter->name, name))
             return TRUE;
     }
 
@@ -1788,7 +1842,7 @@ static BOOL lookup_class_name(compile_ctx_t *ctx, const WCHAR *name)
     class_desc_t *iter;
 
     for(iter = ctx->code->classes; iter; iter = iter->next) {
-        if(!wcsicmp(iter->name, name))
+        if(!vbs_wcsicmp(iter->name, name))
             return TRUE;
     }
 
@@ -1839,7 +1893,7 @@ static BOOL lookup_class_funcs(class_desc_t *class_desc, const WCHAR *name)
     unsigned i;
 
     for(i=0; i < class_desc->func_cnt; i++) {
-        if(class_desc->funcs[i].name && !wcsicmp(class_desc->funcs[i].name, name))
+        if(class_desc->funcs[i].name && !vbs_wcsicmp(class_desc->funcs[i].name, name))
             return TRUE;
     }
 
@@ -1899,17 +1953,25 @@ static HRESULT compile_class(compile_ctx_t *ctx, class_decl_t *class_decl)
             }
         }
 
-        if(!wcsicmp(L"class_initialize", func_decl->name)) {
+        if(!vbs_wcsicmp(L"class_initialize", func_decl->name)) {
             if(func_decl->type != FUNC_SUB) {
                 FIXME("class initializer is not sub\n");
                 return E_FAIL;
             }
+            if(func_decl->args) {
+                ctx->loc = func_decl->loc;
+                return MAKE_VBSERROR(VBSE_CLASS_INIT_NO_ARGS);
+            }
 
             class_desc->class_initialize_id = i;
-        }else  if(!wcsicmp(L"class_terminate", func_decl->name)) {
+        }else  if(!vbs_wcsicmp(L"class_terminate", func_decl->name)) {
             if(func_decl->type != FUNC_SUB) {
                 FIXME("class terminator is not sub\n");
                 return E_FAIL;
+            }
+            if(func_decl->args) {
+                ctx->loc = func_decl->loc;
+                return MAKE_VBSERROR(VBSE_CLASS_INIT_NO_ARGS);
             }
 
             class_desc->class_terminate_id = i;
@@ -1975,18 +2037,16 @@ static BOOL lookup_script_identifier(compile_ctx_t *ctx, script_ctx_t *script, c
     for(c = 0; c < ARRAY_SIZE(contexts); c++) {
         if(!contexts[c]) continue;
 
-        for(i = 0; i < contexts[c]->global_vars_cnt; i++) {
-            if(!wcsicmp(contexts[c]->global_vars[i]->name, identifier))
-                return TRUE;
-        }
+        if(script_disp_find_var(contexts[c], identifier))
+            return TRUE;
 
         for(i = 0; i < contexts[c]->global_funcs_cnt; i++) {
-            if(!wcsicmp(contexts[c]->global_funcs[i]->name, identifier))
+            if(!vbs_wcsicmp(contexts[c]->global_funcs[i]->name, identifier))
                 return TRUE;
         }
 
         for(class = contexts[c]->classes; class; class = class->next) {
-            if(!wcsicmp(class->name, identifier))
+            if(!vbs_wcsicmp(class->name, identifier))
                 return TRUE;
         }
     }
@@ -2000,17 +2060,17 @@ static BOOL lookup_script_identifier(compile_ctx_t *ctx, script_ctx_t *script, c
             continue;
 
         for(i = 0; i < var_cnt; i++) {
-            if(!wcsicmp(vars[i].name, identifier))
+            if(!vbs_wcsicmp(vars[i].name, identifier))
                 return TRUE;
         }
 
         for(func = code->funcs; func; func = func->next) {
-            if(!wcsicmp(func->name, identifier))
+            if(!vbs_wcsicmp(func->name, identifier))
                 return TRUE;
         }
 
         for(class = code->classes; class; class = class->next) {
-            if(!wcsicmp(class->name, identifier))
+            if(!vbs_wcsicmp(class->name, identifier))
                 return TRUE;
         }
     }

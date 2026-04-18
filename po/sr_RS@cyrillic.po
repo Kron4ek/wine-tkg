@@ -87,7 +87,7 @@ msgstr "&Измени..."
 
 #: dlls/appwiz.cpl/appwiz.rc:71 dlls/appwiz.cpl/appwiz.rc:45
 #: dlls/cryptui/cryptui.rc:351 dlls/msacm32/msacm32.rc:40
-#: programs/winecfg/winecfg.rc:205 programs/winecfg/winecfg.rc:242
+#: programs/winecfg/winecfg.rc:206 programs/winecfg/winecfg.rc:243
 #: programs/wordpad/wordpad.rc:256
 msgid "&Remove"
 msgstr "&Уклони"
@@ -124,7 +124,7 @@ msgstr "Подршка"
 #: programs/regedit/regedit.rc:325 programs/regedit/regedit.rc:341
 #: programs/regedit/regedit.rc:354 programs/regedit/regedit.rc:367
 #: programs/taskmgr/taskmgr.rc:442 programs/taskmgr/taskmgr.rc:517
-#: programs/winecfg/winecfg.rc:219 programs/winecfg/winecfg.rc:229
+#: programs/winecfg/winecfg.rc:220 programs/winecfg/winecfg.rc:230
 #: programs/winefile/winefile.rc:127 programs/winefile/winefile.rc:150
 #: programs/winefile/winefile.rc:180 programs/winemine/winemine.rc:73
 #: programs/winemine/winemine.rc:84 programs/winemine/winemine.rc:98
@@ -230,7 +230,7 @@ msgstr "&Инсталирај"
 #: programs/regedit/regedit.rc:342 programs/regedit/regedit.rc:355
 #: programs/regedit/regedit.rc:368 programs/taskmgr/taskmgr.rc:443
 #: programs/taskmgr/taskmgr.rc:518 programs/wineboot/wineboot.rc:34
-#: programs/winecfg/winecfg.rc:220 programs/winecfg/winecfg.rc:230
+#: programs/winecfg/winecfg.rc:221 programs/winecfg/winecfg.rc:231
 #: programs/winefile/winefile.rc:128 programs/winefile/winefile.rc:151
 #: programs/winefile/winefile.rc:181 programs/winemine/winemine.rc:99
 #: programs/wordpad/wordpad.rc:216 programs/wordpad/wordpad.rc:227
@@ -736,7 +736,7 @@ msgid "Font St&yle:"
 msgstr "&Стил фонта:"
 
 #: dlls/comdlg32/comdlg32.rc:260 dlls/comdlg32/comdlg32.rc:439
-#: programs/winecfg/winecfg.rc:302
+#: programs/winecfg/winecfg.rc:303
 msgid "&Size:"
 msgstr "&Величина:"
 
@@ -752,7 +752,7 @@ msgstr "&Прецртај"
 msgid "&Underline"
 msgstr "&Подвуци"
 
-#: dlls/comdlg32/comdlg32.rc:270 programs/winecfg/winecfg.rc:300
+#: dlls/comdlg32/comdlg32.rc:270 programs/winecfg/winecfg.rc:301
 msgid "&Color:"
 msgstr "&Боја:"
 
@@ -933,7 +933,7 @@ msgstr "Број &примерака:"
 msgid "C&ollate"
 msgstr "&Сложи"
 
-#: dlls/comdlg32/comdlg32.rc:414 programs/winecfg/winecfg.rc:308
+#: dlls/comdlg32/comdlg32.rc:414 programs/winecfg/winecfg.rc:309
 msgid "Si&ze:"
 msgstr "&Величина:"
 
@@ -1013,7 +1013,7 @@ msgstr "&Датотека"
 msgid "Files of type:"
 msgstr "Датотеке &врсте:"
 
-#: dlls/comdlg32/comdlg32.rc:33 dlls/vbscript/vbscript.rc:36
+#: dlls/comdlg32/comdlg32.rc:33 dlls/vbscript/vbscript.rc:37
 msgid "File not found"
 msgstr "Датотека није пронађена"
 
@@ -2486,7 +2486,7 @@ msgid "&File name:"
 msgstr "&Датотека"
 
 #: dlls/cryptui/cryptui.rc:301 dlls/cryptui/cryptui.rc:323
-#: dlls/cryptui/cryptui.rc:437 programs/winecfg/winecfg.rc:321
+#: dlls/cryptui/cryptui.rc:437 programs/winecfg/winecfg.rc:322
 #, fuzzy
 msgid "B&rowse..."
 msgstr ""
@@ -3875,11 +3875,19 @@ msgstr "&Попис"
 msgid "Indeo Video Interactive version 5 video codec"
 msgstr "Wine Video 1 видео кодек"
 
+#: dlls/iyuv_32/iyuv_32.rc:28
+msgid "IYUV codec"
+msgstr ""
+
+#: dlls/iyuv_32/iyuv_32.rc:29
+msgid "Intel Indeo IYUV codec"
+msgstr ""
+
 #: dlls/joy.cpl/joy.rc:37
 msgid "Joysticks"
 msgstr ""
 
-#: dlls/joy.cpl/joy.rc:40 programs/winecfg/winecfg.rc:218
+#: dlls/joy.cpl/joy.rc:40 programs/winecfg/winecfg.rc:219
 #, fuzzy
 msgid "&Disable"
 msgstr "табела"
@@ -4030,13 +4038,13 @@ msgstr "Неважећи поступак позива или аргумента
 msgid "Subscript out of range"
 msgstr "Потпис је ван домета"
 
-#: dlls/jscript/jscript.rc:31
+#: dlls/jscript/jscript.rc:31 dlls/vbscript/vbscript.rc:36
 #, fuzzy
 #| msgid "Out of paper; "
 msgid "Out of stack space"
 msgstr "Нема папира; "
 
-#: dlls/jscript/jscript.rc:32 dlls/vbscript/vbscript.rc:48
+#: dlls/jscript/jscript.rc:32 dlls/vbscript/vbscript.rc:49
 #, fuzzy
 msgid "Object required"
 msgstr "Очекивани објекат"
@@ -4045,25 +4053,25 @@ msgstr "Очекивани објекат"
 msgid "Automation server can't create object"
 msgstr "Аутоматизовани сервер не може да створи објекат"
 
-#: dlls/jscript/jscript.rc:34 dlls/vbscript/vbscript.rc:52
+#: dlls/jscript/jscript.rc:34 dlls/vbscript/vbscript.rc:53
 msgid "Object doesn't support this property or method"
 msgstr "Објекат не подржава ово својство или методу"
 
-#: dlls/jscript/jscript.rc:35 dlls/vbscript/vbscript.rc:53
+#: dlls/jscript/jscript.rc:35 dlls/vbscript/vbscript.rc:54
 msgid "Object doesn't support this action"
 msgstr "Објекат не подржава ову радњу"
 
-#: dlls/jscript/jscript.rc:36 dlls/vbscript/vbscript.rc:57
+#: dlls/jscript/jscript.rc:36 dlls/vbscript/vbscript.rc:58
 msgid "Argument not optional"
 msgstr "Аргумент је обавезан"
 
-#: dlls/jscript/jscript.rc:37 dlls/vbscript/vbscript.rc:59
+#: dlls/jscript/jscript.rc:37 dlls/vbscript/vbscript.rc:60
 #, fuzzy
 #| msgid "Object Class Violation"
 msgid "Object not a collection"
 msgstr "Кршење класе објеката"
 
-#: dlls/jscript/jscript.rc:38 dlls/vbscript/vbscript.rc:65
+#: dlls/jscript/jscript.rc:38 dlls/vbscript/vbscript.rc:69
 msgid "Syntax error"
 msgstr "Грешка у синтакси"
 
@@ -4071,31 +4079,31 @@ msgstr "Грешка у синтакси"
 msgid "Expected ';'"
 msgstr "Очекивано ';'"
 
-#: dlls/jscript/jscript.rc:40 dlls/vbscript/vbscript.rc:66
+#: dlls/jscript/jscript.rc:40 dlls/vbscript/vbscript.rc:70
 msgid "Expected '('"
 msgstr "Очекивано '('"
 
-#: dlls/jscript/jscript.rc:41
+#: dlls/jscript/jscript.rc:41 dlls/vbscript/vbscript.rc:72
 msgid "Expected ')'"
 msgstr "Очекивано ')'"
 
-#: dlls/jscript/jscript.rc:42 dlls/vbscript/vbscript.rc:67
+#: dlls/jscript/jscript.rc:42 dlls/vbscript/vbscript.rc:73
 msgid "Expected identifier"
 msgstr ""
 
-#: dlls/jscript/jscript.rc:43 dlls/vbscript/vbscript.rc:68
+#: dlls/jscript/jscript.rc:43 dlls/vbscript/vbscript.rc:74
 #, fuzzy
 #| msgid "Expected ';'"
 msgid "Expected '='"
 msgstr "Очекивано ';'"
 
-#: dlls/jscript/jscript.rc:44 dlls/vbscript/vbscript.rc:81
+#: dlls/jscript/jscript.rc:44 dlls/vbscript/vbscript.rc:93
 #, fuzzy
 msgid "Invalid character"
 msgstr ""
 "Грешка: унесени су непознати или неисправни параметри наредбене линије.\n"
 
-#: dlls/jscript/jscript.rc:45 dlls/vbscript/vbscript.rc:82
+#: dlls/jscript/jscript.rc:45 dlls/vbscript/vbscript.rc:94
 msgid "Unterminated string constant"
 msgstr "Незавршена константа ниски"
 
@@ -4144,7 +4152,7 @@ msgstr ""
 msgid "Microsoft JScript runtime error"
 msgstr ""
 
-#: dlls/jscript/jscript.rc:99 dlls/vbscript/vbscript.rc:100
+#: dlls/jscript/jscript.rc:99 dlls/vbscript/vbscript.rc:117
 #, fuzzy
 msgid "Unknown runtime error"
 msgstr "Непознат извор"
@@ -4171,7 +4179,7 @@ msgstr "„[object]“ није временски објекат"
 msgid "Object expected"
 msgstr "Очекивани објекат"
 
-#: dlls/jscript/jscript.rc:59
+#: dlls/jscript/jscript.rc:59 dlls/vbscript/vbscript.rc:66
 msgid "Illegal assignment"
 msgstr "Недозвољен задатак"
 
@@ -4406,11 +4414,11 @@ msgstr "Датотека није пронађена.\n"
 msgid "Path not found.\n"
 msgstr "%s путања није пронађена.\n"
 
-#: dlls/kernelbase/winerror.mc:50 dlls/kernelbase/winerror.mc:3775
+#: dlls/kernelbase/winerror.mc:50 dlls/kernelbase/winerror.mc:3780
 msgid "Too many open files.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:55 dlls/kernelbase/winerror.mc:3760
+#: dlls/kernelbase/winerror.mc:55 dlls/kernelbase/winerror.mc:3765
 msgid "Access denied.\n"
 msgstr ""
 
@@ -5850,7 +5858,7 @@ msgstr "Инсталациони програми.\n"
 msgid "File has a user-mapped section.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:1760 dlls/kernelbase/winerror.mc:3790
+#: dlls/kernelbase/winerror.mc:1760 dlls/kernelbase/winerror.mc:3795
 #, fuzzy
 msgid "Connection refused.\n"
 msgstr "Повезивање на %s.\n"
@@ -7582,79 +7590,83 @@ msgid "This network connection does not exist.\n"
 msgstr "Датотека не постоји.\n"
 
 #: dlls/kernelbase/winerror.mc:3750
+msgid "File or directory is not a reparse point.\n"
+msgstr ""
+
+#: dlls/kernelbase/winerror.mc:3755
 #, fuzzy
 msgid "Call interrupted.\n"
 msgstr "Отвори датотеку.\n"
 
-#: dlls/kernelbase/winerror.mc:3755
+#: dlls/kernelbase/winerror.mc:3760
 #, fuzzy
 msgid "Invalid file handle.\n"
 msgstr "Неисправна синтакса.\n"
 
-#: dlls/kernelbase/winerror.mc:3765
+#: dlls/kernelbase/winerror.mc:3770
 #, fuzzy
 msgid "Invalid pointer address.\n"
 msgstr "IP адреса.\n"
 
-#: dlls/kernelbase/winerror.mc:3770
+#: dlls/kernelbase/winerror.mc:3775
 #, fuzzy
 msgid "Invalid argument.\n"
 msgstr "Неисправна синтакса.\n"
 
-#: dlls/kernelbase/winerror.mc:3780
+#: dlls/kernelbase/winerror.mc:3785
 msgid "Cannot assign requested address.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3785
+#: dlls/kernelbase/winerror.mc:3790
 #, fuzzy
 msgid "Connection reset by peer.\n"
 msgstr "Повезивање на %s.\n"
 
-#: dlls/kernelbase/winerror.mc:3795
+#: dlls/kernelbase/winerror.mc:3800
 #, fuzzy
 msgid "Host not found.\n"
 msgstr "%s путања није пронађена.\n"
 
-#: dlls/kernelbase/winerror.mc:3800
+#: dlls/kernelbase/winerror.mc:3805
 #, fuzzy
 msgid "Nonauthoritative host not found.\n"
 msgstr "Датотека није пронађена.\n"
 
-#: dlls/kernelbase/winerror.mc:3805
+#: dlls/kernelbase/winerror.mc:3810
 #, fuzzy
 #| msgid "A printer error occurred."
 msgid "Nonrecoverable error.\n"
 msgstr "Дошло је до грешке у штампачу."
 
-#: dlls/kernelbase/winerror.mc:3810
+#: dlls/kernelbase/winerror.mc:3815
 msgid "Name valid, no data record.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3831
+#: dlls/kernelbase/winerror.mc:3836
 #, fuzzy
 msgid "Not implemented.\n"
 msgstr "Датотека није пронађена"
 
-#: dlls/kernelbase/winerror.mc:3852
+#: dlls/kernelbase/winerror.mc:3857
 #, fuzzy
 msgid "Call failed.\n"
 msgstr "Отвори датотеку.\n"
 
-#: dlls/kernelbase/winerror.mc:3817
+#: dlls/kernelbase/winerror.mc:3822
 #, fuzzy
 msgid "Unable to find matching object.\n"
 msgstr "Неисправна синтакса.\n"
 
-#: dlls/kernelbase/winerror.mc:3824
+#: dlls/kernelbase/winerror.mc:3829
 msgid "No Signature found in file.\n"
 msgstr ""
 
-#: dlls/kernelbase/winerror.mc:3838
+#: dlls/kernelbase/winerror.mc:3843
 #, fuzzy
 msgid "Invalid call.\n"
 msgstr "Неисправни акредитиви.\n"
 
-#: dlls/kernelbase/winerror.mc:3845
+#: dlls/kernelbase/winerror.mc:3850
 #, fuzzy
 msgid "Resource is not currently available.\n"
 msgstr "Недоступно"
@@ -8694,7 +8706,7 @@ msgstr "Хипервеза"
 msgid "Hyperlink Information"
 msgstr "Подаци о хипервези"
 
-#: dlls/mshtml/mshtml.rc:43 programs/winecfg/winecfg.rc:249
+#: dlls/mshtml/mshtml.rc:43 programs/winecfg/winecfg.rc:250
 msgid "&Type:"
 msgstr "&Врста:"
 
@@ -10427,7 +10439,7 @@ msgid "b"
 msgstr "b"
 
 #: dlls/sane.ds/sane.rc:34 dlls/wineps.drv/wineps.rc:52
-#: programs/winecfg/winecfg.rc:188
+#: programs/winecfg/winecfg.rc:189
 msgctxt "unit: dots/inch"
 msgid "dpi"
 msgstr "тпи"
@@ -10980,7 +10992,7 @@ msgstr "&Отвори:"
 
 #: dlls/shell32/shell32.rc:345 programs/progman/progman.rc:182
 #: programs/progman/progman.rc:201 programs/progman/progman.rc:218
-#: programs/winecfg/winecfg.rc:247 programs/winefile/winefile.rc:129
+#: programs/winecfg/winecfg.rc:248 programs/winefile/winefile.rc:129
 msgid "&Browse..."
 msgstr "&Разгледај..."
 
@@ -11078,7 +11090,7 @@ msgstr "Оригинална локација"
 msgid "Date deleted"
 msgstr "Датум брисања"
 
-#: dlls/shell32/shell32.rc:151 programs/winecfg/winecfg.rc:106
+#: dlls/shell32/shell32.rc:151 programs/winecfg/winecfg.rc:107
 #: programs/winefile/winefile.rc:99
 #, fuzzy
 msgctxt "display name"
@@ -13819,260 +13831,332 @@ msgstr ""
 msgid "Type mismatch"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:37
+#: dlls/vbscript/vbscript.rc:38
 msgid "Device I/O error"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:38
+#: dlls/vbscript/vbscript.rc:39
 #, fuzzy
 msgid "File already exists"
 msgstr "Порт %s већ постоји.\n"
 
-#: dlls/vbscript/vbscript.rc:39
+#: dlls/vbscript/vbscript.rc:40
 msgid "Disk full"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:40
+#: dlls/vbscript/vbscript.rc:41
 #, fuzzy
 msgid "Too many files"
 msgstr "Отвори датотеку"
 
-#: dlls/vbscript/vbscript.rc:41
+#: dlls/vbscript/vbscript.rc:42
 msgid "Permission denied"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:42
+#: dlls/vbscript/vbscript.rc:43
 msgid "Path/File access error"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:43
+#: dlls/vbscript/vbscript.rc:44
 #, fuzzy
 msgid "Path not found"
 msgstr "%s путања није пронађена.\n"
 
-#: dlls/vbscript/vbscript.rc:44
+#: dlls/vbscript/vbscript.rc:45
 msgid "Object variable not set"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:45
+#: dlls/vbscript/vbscript.rc:46
 #, fuzzy
 msgid "For loop not initialized"
 msgstr "%s путања није пронађена.\n"
 
-#: dlls/vbscript/vbscript.rc:46
+#: dlls/vbscript/vbscript.rc:47
 #, fuzzy
 msgid "Invalid use of Null"
 msgstr "Неисправни акредитиви.\n"
 
-#: dlls/vbscript/vbscript.rc:47
+#: dlls/vbscript/vbscript.rc:48
 msgid "Can't create necessary temporary file"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:49
+#: dlls/vbscript/vbscript.rc:50
 #, fuzzy
 #| msgid "Automation server can't create object"
 msgid "ActiveX component can't create object"
 msgstr "Аутоматизовани сервер не може да створи објекат"
 
-#: dlls/vbscript/vbscript.rc:50
+#: dlls/vbscript/vbscript.rc:51
 #, fuzzy
 #| msgid "Object doesn't support this action"
 msgid "Class doesn't support Automation"
 msgstr "Објекат не подржава ову радњу"
 
-#: dlls/vbscript/vbscript.rc:51
+#: dlls/vbscript/vbscript.rc:52
 msgid "File name or class name not found during Automation operation"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:54
+#: dlls/vbscript/vbscript.rc:55
 #, fuzzy
 #| msgid "Object doesn't support this action"
 msgid "Object doesn't support named arguments"
 msgstr "Објекат не подржава ову радњу"
 
-#: dlls/vbscript/vbscript.rc:55
+#: dlls/vbscript/vbscript.rc:56
 #, fuzzy
 #| msgid "Object doesn't support this action"
 msgid "Object doesn't support current locale setting"
 msgstr "Објекат не подржава ову радњу"
 
-#: dlls/vbscript/vbscript.rc:56
+#: dlls/vbscript/vbscript.rc:57
 #, fuzzy
 msgid "Named argument not found"
 msgstr "Датотека није пронађена.\n"
 
-#: dlls/vbscript/vbscript.rc:58
+#: dlls/vbscript/vbscript.rc:59
 msgid "Wrong number of arguments or invalid property assignment"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:60
+#: dlls/vbscript/vbscript.rc:62
 #, fuzzy
 #| msgid "Specified control was not found in message"
 msgid "Specified DLL function not found"
 msgstr "Наведена контрола није пронађена у поруци"
 
 #: dlls/vbscript/vbscript.rc:61
-msgid "Variable uses an Automation type not supported in VBScript"
-msgstr ""
-
-#: dlls/vbscript/vbscript.rc:62
-msgid "The remote server machine does not exist or is unavailable"
+msgid "This key is already associated with an element of this collection"
 msgstr ""
 
 #: dlls/vbscript/vbscript.rc:63
+msgid "Variable uses an Automation type not supported in VBScript"
+msgstr ""
+
+#: dlls/vbscript/vbscript.rc:64
+msgid "The remote server machine does not exist or is unavailable"
+msgstr ""
+
+#: dlls/vbscript/vbscript.rc:65
 #, fuzzy
 #| msgid "'|' is undefined"
 msgid "Variable is undefined"
 msgstr "„|“ није одређено"
 
-#: dlls/vbscript/vbscript.rc:64
+#: dlls/vbscript/vbscript.rc:67
 msgid "Invalid or unqualified reference"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:69
+#: dlls/vbscript/vbscript.rc:68
 #, fuzzy
-#| msgid "Expected ';'"
-msgid "Expected 'To'"
-msgstr "Очекивано ';'"
-
-#: dlls/vbscript/vbscript.rc:70
-#, fuzzy
-#| msgid "Expected ';'"
-msgid "Expected 'End'"
-msgstr "Очекивано ';'"
+msgid "Class not defined"
+msgstr "Путања не постоји.\n"
 
 #: dlls/vbscript/vbscript.rc:71
 #, fuzzy
 #| msgid "Expected ';'"
-msgid "Expected 'Then'"
-msgstr "Очекивано ';'"
-
-#: dlls/vbscript/vbscript.rc:72
-#, fuzzy
-#| msgid "Expected ';'"
-msgid "Expected 'Wend'"
-msgstr "Очекивано ';'"
-
-#: dlls/vbscript/vbscript.rc:73
-#, fuzzy
-#| msgid "Expected ';'"
-msgid "Expected 'Loop'"
-msgstr "Очекивано ';'"
-
-#: dlls/vbscript/vbscript.rc:74
-#, fuzzy
-#| msgid "Expected ';'"
-msgid "Expected 'Next'"
+msgid "Expected ']'"
 msgstr "Очекивано ';'"
 
 #: dlls/vbscript/vbscript.rc:75
 #, fuzzy
 #| msgid "Expected ';'"
-msgid "Expected 'Case'"
+msgid "Expected 'If'"
 msgstr "Очекивано ';'"
 
 #: dlls/vbscript/vbscript.rc:76
 #, fuzzy
 #| msgid "Expected ';'"
-msgid "Expected statement"
+msgid "Expected 'To'"
 msgstr "Очекивано ';'"
 
 #: dlls/vbscript/vbscript.rc:77
 #, fuzzy
 #| msgid "Expected ';'"
-msgid "Expected end of statement"
+msgid "Expected 'End'"
 msgstr "Очекивано ';'"
 
 #: dlls/vbscript/vbscript.rc:78
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected 'Function'"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:79
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected 'Sub'"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:80
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected 'Then'"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:81
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected 'Wend'"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:82
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected 'Loop'"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:83
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected 'Next'"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:84
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected 'Case'"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:85
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected 'Select'"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:86
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected statement"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:87
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected end of statement"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:88
 #, fuzzy
 #| msgid "Unterminated string constant"
 msgid "Expected integer constant"
 msgstr "Незавршена константа ниски"
 
-#: dlls/vbscript/vbscript.rc:79
+#: dlls/vbscript/vbscript.rc:89
 msgid "Expected 'While', 'Until' or end of statement"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:80
+#: dlls/vbscript/vbscript.rc:91
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected 'With'"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:90
+msgid "Identifier too long"
+msgstr ""
+
+#: dlls/vbscript/vbscript.rc:92
 #, fuzzy
 msgid "Invalid number"
 msgstr "Неисправна синтакса.\n"
 
-#: dlls/vbscript/vbscript.rc:83
+#: dlls/vbscript/vbscript.rc:95
+#, fuzzy
+msgid "Invalid use of 'Me' keyword"
+msgstr "Неисправни акредитиви.\n"
+
+#: dlls/vbscript/vbscript.rc:96
 msgid "'loop' without 'do'"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:84
+#: dlls/vbscript/vbscript.rc:97
 #, fuzzy
 msgid "Invalid 'exit' statement"
 msgstr "Неисправна синтакса.\n"
 
-#: dlls/vbscript/vbscript.rc:85
+#: dlls/vbscript/vbscript.rc:98
 msgid "Name redefined"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:86
+#: dlls/vbscript/vbscript.rc:99
 msgid "Must be first statement on the line"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:87
+#: dlls/vbscript/vbscript.rc:100
 msgid "Cannot use parentheses when calling a Sub"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:88
+#: dlls/vbscript/vbscript.rc:101
 #, fuzzy
 #| msgid "Unterminated string constant"
 msgid "Expected literal constant"
 msgstr "Незавршена константа ниски"
 
-#: dlls/vbscript/vbscript.rc:89
+#: dlls/vbscript/vbscript.rc:102
 #, fuzzy
 #| msgid "Expected ';'"
 msgid "Expected 'In'"
 msgstr "Очекивано ';'"
 
-#: dlls/vbscript/vbscript.rc:90
+#: dlls/vbscript/vbscript.rc:103
 #, fuzzy
 #| msgid "Expected ';'"
 msgid "Expected 'Class'"
 msgstr "Очекивано ';'"
 
-#: dlls/vbscript/vbscript.rc:91
+#: dlls/vbscript/vbscript.rc:104
 msgid "Must be defined inside a Class"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:92
+#: dlls/vbscript/vbscript.rc:105
 msgid "Expected Let or Set or Get in property declaration"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:93
+#: dlls/vbscript/vbscript.rc:106
+#, fuzzy
+#| msgid "Expected ';'"
+msgid "Expected 'Property'"
+msgstr "Очекивано ';'"
+
+#: dlls/vbscript/vbscript.rc:107
+msgid "Number of arguments must be consistent across properties specification"
+msgstr ""
+
+#: dlls/vbscript/vbscript.rc:108
+msgid "Cannot have multiple default property/method in a Class"
+msgstr ""
+
+#: dlls/vbscript/vbscript.rc:109
 msgid "Class initialize or terminate do not have arguments"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:94
+#: dlls/vbscript/vbscript.rc:110
 msgid "Property set or let must have at least one argument"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:95
+#: dlls/vbscript/vbscript.rc:111
 #, fuzzy
 #| msgid "Expected ';'"
 msgid "Unexpected 'Next'"
 msgstr "Очекивано ';'"
 
-#: dlls/vbscript/vbscript.rc:96
+#: dlls/vbscript/vbscript.rc:112
 msgid "'Default' specification must also specify 'Public'"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:98
+#: dlls/vbscript/vbscript.rc:113
+msgid "'Default' specification can only be on Property Get"
+msgstr ""
+
+#: dlls/vbscript/vbscript.rc:115
 msgid "Microsoft VBScript compilation error"
 msgstr ""
 
-#: dlls/vbscript/vbscript.rc:99
+#: dlls/vbscript/vbscript.rc:116
 msgid "Microsoft VBScript runtime error"
 msgstr ""
 
 #: dlls/winemac.drv/winemac.rc:32 programs/wineboot/wineboot.rc:42
-#: programs/winecfg/winecfg.rc:143
+#: programs/winecfg/winecfg.rc:144
 msgid "Wine"
 msgstr "Wine"
 
@@ -15085,7 +15169,7 @@ msgid "Digi&tal"
 msgstr "&Дигитални"
 
 #: programs/clock/clock.rc:35 programs/notepad/notepad.rc:59
-#: programs/winecfg/winecfg.rc:315 programs/winefile/winefile.rc:63
+#: programs/winecfg/winecfg.rc:316 programs/winefile/winefile.rc:63
 #: programs/wordpad/wordpad.rc:84
 msgid "&Font..."
 msgstr "&Фонт..."
@@ -15901,6 +15985,39 @@ msgstr ""
 
 #: programs/conhost/conhost.rc:42
 msgid "This is a test"
+msgstr ""
+
+#: programs/wscript/wscript.rc:45
+msgid ""
+"Usage: CScript scriptname.extension [option...] [arguments...]\n"
+"\n"
+"Options:\n"
+"//B         Batch mode: Suppresses script errors and prompts from "
+"displaying\n"
+"//D         Enable Active Debugging\n"
+"//E:engine  Use engine for executing script\n"
+"//H:CScript Changes the default script host to CScript.exe\n"
+"//H:WScript Changes the default script host to WScript.exe (default)\n"
+"//I         Interactive mode (default, opposite of //B)\n"
+"//Job:xxxx  Execute a WSF job\n"
+"//Logo      Display logo (default)\n"
+"//Nologo    Prevent logo display: No banner will be shown at execution time\n"
+"//S         Save current command line options for this user\n"
+"//T:nn      Time out in seconds:  Maximum time a script is permitted to run\n"
+"//X         Execute script in debugger\n"
+"//U         Use Unicode for redirected I/O from the console\n"
+msgstr ""
+
+#: programs/wscript/wscript.rc:47
+msgid "Input Error: There is no script file specified.\n"
+msgstr ""
+
+#: programs/wscript/wscript.rc:48
+msgid "Input Error: Can not find script file \"%1\".\n"
+msgstr ""
+
+#: programs/wscript/wscript.rc:49
+msgid "CScript Error: Loading script \"%1\" failed (%2).\n"
 msgstr ""
 
 #: programs/dxdiag/dxdiag.rc:30
@@ -19441,7 +19558,7 @@ msgstr ""
 msgid "The Wine configuration in %s is being updated, please wait..."
 msgstr "Wine поставке у %s се ажурирају. Молимо, сачекајте..."
 
-#: programs/winecfg/winecfg.rc:146
+#: programs/winecfg/winecfg.rc:147
 msgid ""
 "This program is free software; you can redistribute it and/or modify it "
 "under the terms of the GNU Lesser General Public License as published by the "
@@ -19449,172 +19566,172 @@ msgid ""
 "option) any later version."
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:148
+#: programs/winecfg/winecfg.rc:149
 #, fuzzy
 msgid "Windows registration information"
 msgstr "Подаци"
 
-#: programs/winecfg/winecfg.rc:149
+#: programs/winecfg/winecfg.rc:150
 #, fuzzy
 msgid "&Owner:"
 msgstr "Власник"
 
-#: programs/winecfg/winecfg.rc:151
+#: programs/winecfg/winecfg.rc:152
 #, fuzzy
 msgid "Organi&zation:"
 msgstr "анимација"
 
-#: programs/winecfg/winecfg.rc:159
+#: programs/winecfg/winecfg.rc:160
 #, fuzzy
 msgid "Application settings"
 msgstr "Програми"
 
-#: programs/winecfg/winecfg.rc:160
+#: programs/winecfg/winecfg.rc:161
 msgid ""
 "Wine can mimic different Windows versions for each application. This tab is "
 "linked to the Libraries and Graphics tabs to allow you to change system-wide "
 "or per-application settings in those tabs as well."
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:164
+#: programs/winecfg/winecfg.rc:165
 #, fuzzy
 msgid "Add appli&cation..."
 msgstr "програм"
 
-#: programs/winecfg/winecfg.rc:165
+#: programs/winecfg/winecfg.rc:166
 #, fuzzy
 msgid "&Remove application"
 msgstr "програм"
 
-#: programs/winecfg/winecfg.rc:166
+#: programs/winecfg/winecfg.rc:167
 #, fuzzy
 msgid "&Windows Version:"
 msgstr "&Прозор"
 
-#: programs/winecfg/winecfg.rc:174
+#: programs/winecfg/winecfg.rc:175
 #, fuzzy
 msgid "Window settings"
 msgstr "&Прозор"
 
-#: programs/winecfg/winecfg.rc:175
+#: programs/winecfg/winecfg.rc:176
 msgid "Automatically capture the &mouse in full-screen windows"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:176
+#: programs/winecfg/winecfg.rc:177
 msgid "Allow the window manager to &decorate the windows"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:177
+#: programs/winecfg/winecfg.rc:178
 msgid "Allow the &window manager to control the windows"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:178
+#: programs/winecfg/winecfg.rc:179
 msgid "&Emulate a virtual desktop"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:180
+#: programs/winecfg/winecfg.rc:181
 #, fuzzy
 msgid "Desktop &size:"
 msgstr "Радна површина"
 
-#: programs/winecfg/winecfg.rc:185
+#: programs/winecfg/winecfg.rc:186
 msgid "Screen resolution"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:189
+#: programs/winecfg/winecfg.rc:190
 msgid "This is a sample text using 10 point Tahoma"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:196
+#: programs/winecfg/winecfg.rc:197
 #, fuzzy
 msgid "DLL overrides"
 msgstr "&Уређивање"
 
-#: programs/winecfg/winecfg.rc:197
+#: programs/winecfg/winecfg.rc:198
 msgid ""
 "Dynamic Link Libraries can be specified individually to be either builtin "
 "(provided by Wine) or native (taken from Windows or provided by the "
 "application)."
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:199
+#: programs/winecfg/winecfg.rc:200
 msgid "&New override for library:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:201
+#: programs/winecfg/winecfg.rc:202
 msgid "A&dd"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:202
+#: programs/winecfg/winecfg.rc:203
 msgid "Existing &overrides:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:204
+#: programs/winecfg/winecfg.rc:205
 #, fuzzy
 msgid "&Edit..."
 msgstr "&Уређивање"
 
-#: programs/winecfg/winecfg.rc:210
+#: programs/winecfg/winecfg.rc:211
 #, fuzzy
 msgid "Edit Override"
 msgstr "&Уређивање"
 
-#: programs/winecfg/winecfg.rc:213
+#: programs/winecfg/winecfg.rc:214
 #, fuzzy
 msgid "Load order"
 msgstr "граница"
 
-#: programs/winecfg/winecfg.rc:214
+#: programs/winecfg/winecfg.rc:215
 #, fuzzy
 msgid "&Builtin (Wine)"
 msgstr "&О Бележници"
 
-#: programs/winecfg/winecfg.rc:215
+#: programs/winecfg/winecfg.rc:216
 #, fuzzy
 msgid "&Native (Windows)"
 msgstr "&Прозор"
 
-#: programs/winecfg/winecfg.rc:216
+#: programs/winecfg/winecfg.rc:217
 msgid "Buil&tin then Native"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:217
+#: programs/winecfg/winecfg.rc:218
 msgid "Nati&ve then Builtin"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:225
+#: programs/winecfg/winecfg.rc:226
 #, fuzzy
 msgid "Select Drive Letter"
 msgstr "Изабери &све"
 
-#: programs/winecfg/winecfg.rc:237
+#: programs/winecfg/winecfg.rc:238
 #, fuzzy
 msgid "Drive configuration"
 msgstr "Подаци"
 
-#: programs/winecfg/winecfg.rc:238
+#: programs/winecfg/winecfg.rc:239
 msgid ""
 "Failed to connect to the mount manager; the drive configuration cannot be "
 "edited."
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:241
+#: programs/winecfg/winecfg.rc:242
 msgid "A&dd..."
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:245
+#: programs/winecfg/winecfg.rc:246
 msgid "&Path:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:252 programs/winecfg/winecfg.rc:37
+#: programs/winecfg/winecfg.rc:253 programs/winecfg/winecfg.rc:37
 msgid "Show Advan&ced"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:253
+#: programs/winecfg/winecfg.rc:254
 msgid "De&vice:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:255
+#: programs/winecfg/winecfg.rc:256
 #, fuzzy
 msgid "Bro&wse..."
 msgstr ""
@@ -19623,104 +19740,104 @@ msgstr ""
 "#-#-#-#-#  sr_RS@cyrillic.po (Wine)  #-#-#-#-#\n"
 "Разгледај"
 
-#: programs/winecfg/winecfg.rc:257
+#: programs/winecfg/winecfg.rc:258
 msgid "&Label:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:259
+#: programs/winecfg/winecfg.rc:260
 msgid "S&erial:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:262
+#: programs/winecfg/winecfg.rc:263
 #, fuzzy
 msgid "&Show dot files"
 msgstr "&Детаљи"
 
-#: programs/winecfg/winecfg.rc:269
+#: programs/winecfg/winecfg.rc:270
 msgid "Driver diagnostics"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:271
+#: programs/winecfg/winecfg.rc:272
 #, fuzzy
 msgid "&Test Sound"
 msgstr "звук"
 
-#: programs/winecfg/winecfg.rc:272
+#: programs/winecfg/winecfg.rc:273
 #, fuzzy
 msgid "Defaults"
 msgstr "Подразумевано"
 
-#: programs/winecfg/winecfg.rc:273
+#: programs/winecfg/winecfg.rc:274
 #, fuzzy
 msgid "Output device:"
 msgstr "&Назив одредишне датотеке:"
 
-#: programs/winecfg/winecfg.rc:274
+#: programs/winecfg/winecfg.rc:275
 msgid "Voice output device:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:275
+#: programs/winecfg/winecfg.rc:276
 msgid "Input device:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:276
+#: programs/winecfg/winecfg.rc:277
 msgid "Voice input device:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:277
+#: programs/winecfg/winecfg.rc:278
 #, fuzzy
 msgid "MIDI output device:"
 msgstr "&Назив одредишне датотеке:"
 
-#: programs/winecfg/winecfg.rc:283 programs/winecfg/winecfg.rc:89
+#: programs/winecfg/winecfg.rc:284 programs/winecfg/winecfg.rc:89
 #, fuzzy
 msgid "Speaker configuration"
 msgstr "Подаци"
 
-#: programs/winecfg/winecfg.rc:286
+#: programs/winecfg/winecfg.rc:287
 msgid "Speakers:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:294
+#: programs/winecfg/winecfg.rc:295
 msgid "Appearance"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:295
+#: programs/winecfg/winecfg.rc:296
 msgid "&Theme:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:297
+#: programs/winecfg/winecfg.rc:298
 msgid "&WinRT theme:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:299
+#: programs/winecfg/winecfg.rc:300
 #, fuzzy
 msgid "&Install theme..."
 msgstr "Инсталирање..."
 
-#: programs/winecfg/winecfg.rc:304
+#: programs/winecfg/winecfg.rc:305
 msgid "It&em:"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:306
+#: programs/winecfg/winecfg.rc:307
 #, fuzzy
 msgid "C&olor:"
 msgstr "&Колона"
 
-#: programs/winecfg/winecfg.rc:312
+#: programs/winecfg/winecfg.rc:313
 msgid "MIME types"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:313
+#: programs/winecfg/winecfg.rc:314
 msgid "Manage file and protocol &associations"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:316
+#: programs/winecfg/winecfg.rc:317
 #, fuzzy
 msgid "Folders"
 msgstr "Нова фасцикла"
 
-#: programs/winecfg/winecfg.rc:319
+#: programs/winecfg/winecfg.rc:320
 #, fuzzy
 msgid "&Link to:"
 msgstr "Везе"
@@ -19812,29 +19929,33 @@ msgid "(System default)"
 msgstr "Системска путања"
 
 #: programs/winecfg/winecfg.rc:90
-msgid "5.1 Surround"
+msgid "7.1 Surround"
 msgstr ""
 
 #: programs/winecfg/winecfg.rc:91
+msgid "5.1 Surround"
+msgstr ""
+
+#: programs/winecfg/winecfg.rc:92
 #, fuzzy
 #| msgid "graphic"
 msgid "Quadraphonic"
 msgstr "графика"
 
-#: programs/winecfg/winecfg.rc:92
+#: programs/winecfg/winecfg.rc:93
 msgid "Stereo"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:93
+#: programs/winecfg/winecfg.rc:94
 msgid "Mono"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:98
+#: programs/winecfg/winecfg.rc:99
 #, fuzzy
 msgid "Light"
 msgstr "Десна ивица"
 
-#: programs/winecfg/winecfg.rc:99
+#: programs/winecfg/winecfg.rc:100
 msgid "Dark"
 msgstr ""
 
@@ -19944,141 +20065,141 @@ msgid ""
 "Remember to click 'Add' in the Drives tab to create one!\n"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:104
+#: programs/winecfg/winecfg.rc:105
 #, fuzzy
 msgid "Controls Background"
 msgstr "&Умножи позадину"
 
-#: programs/winecfg/winecfg.rc:105
+#: programs/winecfg/winecfg.rc:106
 #, fuzzy
 msgid "Controls Text"
 msgstr "Контрола"
 
-#: programs/winecfg/winecfg.rc:107
+#: programs/winecfg/winecfg.rc:108
 #, fuzzy
 msgid "Menu Background"
 msgstr "&Умножи позадину"
 
-#: programs/winecfg/winecfg.rc:108
+#: programs/winecfg/winecfg.rc:109
 msgid "Menu Text"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:109
+#: programs/winecfg/winecfg.rc:110
 #, fuzzy
 msgid "Scrollbar"
 msgstr "трака за померање"
 
-#: programs/winecfg/winecfg.rc:110
+#: programs/winecfg/winecfg.rc:111
 #, fuzzy
 msgid "Selection Background"
 msgstr "Постави као позадину"
 
-#: programs/winecfg/winecfg.rc:111
+#: programs/winecfg/winecfg.rc:112
 #, fuzzy
 msgid "Selection Text"
 msgstr "Изабери &све"
 
-#: programs/winecfg/winecfg.rc:112
+#: programs/winecfg/winecfg.rc:113
 #, fuzzy
 msgid "Tooltip Background"
 msgstr "&Умножи позадину"
 
-#: programs/winecfg/winecfg.rc:113
+#: programs/winecfg/winecfg.rc:114
 msgid "Tooltip Text"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:114
+#: programs/winecfg/winecfg.rc:115
 #, fuzzy
 msgid "Window Background"
 msgstr "&Умножи позадину"
 
-#: programs/winecfg/winecfg.rc:115
+#: programs/winecfg/winecfg.rc:116
 #, fuzzy
 msgid "Window Text"
 msgstr "&Прозор"
 
-#: programs/winecfg/winecfg.rc:116
+#: programs/winecfg/winecfg.rc:117
 #, fuzzy
 msgid "Active Title Bar"
 msgstr "насловна линија"
 
-#: programs/winecfg/winecfg.rc:117
+#: programs/winecfg/winecfg.rc:118
 msgid "Active Title Text"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:118
+#: programs/winecfg/winecfg.rc:119
 msgid "Inactive Title Bar"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:119
+#: programs/winecfg/winecfg.rc:120
 msgid "Inactive Title Text"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:120
+#: programs/winecfg/winecfg.rc:121
 msgid "Message Box Text"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:121
+#: programs/winecfg/winecfg.rc:122
 #, fuzzy
 msgid "Application Workspace"
 msgstr "Програми"
 
-#: programs/winecfg/winecfg.rc:122
+#: programs/winecfg/winecfg.rc:123
 #, fuzzy
 msgid "Window Frame"
 msgstr "&Прозор"
 
-#: programs/winecfg/winecfg.rc:123
+#: programs/winecfg/winecfg.rc:124
 msgid "Active Border"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:124
+#: programs/winecfg/winecfg.rc:125
 msgid "Inactive Border"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:125
+#: programs/winecfg/winecfg.rc:126
 #, fuzzy
 msgid "Controls Shadow"
 msgstr "Управљачки панел"
 
-#: programs/winecfg/winecfg.rc:126
+#: programs/winecfg/winecfg.rc:127
 msgid "Gray Text"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:127
+#: programs/winecfg/winecfg.rc:128
 msgid "Controls Highlight"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:128
+#: programs/winecfg/winecfg.rc:129
 msgid "Controls Dark Shadow"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:129
+#: programs/winecfg/winecfg.rc:130
 #, fuzzy
 msgid "Controls Light"
 msgstr "Контрола"
 
-#: programs/winecfg/winecfg.rc:130
+#: programs/winecfg/winecfg.rc:131
 msgid "Controls Alternate Background"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:131
+#: programs/winecfg/winecfg.rc:132
 msgid "Hot Tracked Item"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:132
+#: programs/winecfg/winecfg.rc:133
 msgid "Active Title Bar Gradient"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:133
+#: programs/winecfg/winecfg.rc:134
 msgid "Inactive Title Bar Gradient"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:134
+#: programs/winecfg/winecfg.rc:135
 msgid "Menu Highlight"
 msgstr ""
 
-#: programs/winecfg/winecfg.rc:135
+#: programs/winecfg/winecfg.rc:136
 #, fuzzy
 msgid "Menu Bar"
 msgstr "линија менија"

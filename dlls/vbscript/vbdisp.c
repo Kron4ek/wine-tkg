@@ -29,6 +29,38 @@ static const GUID GUID_VBScriptTypeInfo = {0xc59c6b12,0xf6c1,0x11cf,{0x88,0x35,0
 #define DISPID_FUNCTION_MASK 0x20000000
 #define FDEX_VERSION_MASK 0xf0000000
 
+static int func_name_cmp(const void *key, const struct rb_entry *entry)
+{
+    function_t *func = RB_ENTRY_VALUE(entry, function_t, entry);
+    return vbs_wcsicmp(key, func->name);
+}
+
+static int var_name_cmp(const void *key, const struct rb_entry *entry)
+{
+    dynamic_var_t *var = RB_ENTRY_VALUE(entry, dynamic_var_t, entry);
+    return vbs_wcsicmp(key, var->name);
+}
+
+function_t *script_disp_find_func(ScriptDisp *disp, const WCHAR *name)
+{
+    struct rb_entry *entry = rb_get(&disp->func_tree, name);
+
+    if (!entry)
+        return NULL;
+
+    return RB_ENTRY_VALUE(entry, function_t, entry);
+}
+
+dynamic_var_t *script_disp_find_var(ScriptDisp *disp, const WCHAR *name)
+{
+    struct rb_entry *entry = rb_get(&disp->var_tree, name);
+
+    if (!entry)
+        return NULL;
+
+    return RB_ENTRY_VALUE(entry, dynamic_var_t, entry);
+}
+
 static inline BOOL is_func_id(vbdisp_t *This, DISPID id)
 {
     return id < This->desc->func_cnt;
@@ -48,7 +80,7 @@ static BOOL get_func_id(vbdisp_t *This, const WCHAR *name, vbdisp_invoke_type_t 
                 continue;
         }
 
-        if(This->desc->funcs[i].name && !wcsicmp(This->desc->funcs[i].name, name)) {
+        if(This->desc->funcs[i].name && !vbs_wcsicmp(This->desc->funcs[i].name, name)) {
             *id = i;
             return TRUE;
         }
@@ -68,7 +100,7 @@ HRESULT vbdisp_get_id(vbdisp_t *This, BSTR name, vbdisp_invoke_type_t invoke_typ
         if(!search_private && !This->desc->props[i].is_public)
             continue;
 
-        if(!wcsicmp(This->desc->props[i].name, name)) {
+        if(!vbs_wcsicmp(This->desc->props[i].name, name)) {
             *id = i + This->desc->func_cnt;
             return S_OK;
         }
@@ -586,7 +618,8 @@ static HRESULT WINAPI FuncRef_QueryInterface(IDispatch *iface, REFIID riid, void
         return S_OK;
     }
 
-    WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+    if(!IsEqualGUID(riid, &IID_IDispatchEx))
+        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
     *ppv = NULL;
     return E_NOINTERFACE;
 }
@@ -972,14 +1005,14 @@ static HRESULT WINAPI ScriptTypeInfo_GetIDsOfNames(ITypeInfo *iface, LPOLESTR *r
     {
         function_t *func = This->funcs[i].func;
 
-        if (wcsicmp(name, func->name)) continue;
+        if (vbs_wcsicmp(name, func->name)) continue;
         pMemId[0] = This->funcs[i].memid;
 
         for (j = 1; j < cNames; j++)
         {
             name = rgszNames[j];
             for (arg = func->arg_cnt; --arg >= 0;)
-                if (!wcsicmp(name, func->args[arg].name))
+                if (!vbs_wcsicmp(name, func->args[arg].name))
                     break;
             if (arg >= 0)
                 pMemId[j] = arg;
@@ -989,11 +1022,13 @@ static HRESULT WINAPI ScriptTypeInfo_GetIDsOfNames(ITypeInfo *iface, LPOLESTR *r
         return hr;
     }
 
-    for (i = 0; i < This->num_vars; i++)
     {
-        if (wcsicmp(name, This->disp->global_vars[i]->name)) continue;
-        pMemId[0] = i + 1;
-        return S_OK;
+        struct rb_entry *entry = rb_get(&This->disp->var_tree, name);
+        if (entry)
+        {
+            pMemId[0] = RB_ENTRY_VALUE(entry, dynamic_var_t, entry)->index + 1;
+            return S_OK;
+        }
     }
 
     /* Look into the inherited IDispatch */
@@ -1279,7 +1314,7 @@ static HRESULT WINAPI ScriptTypeComp_Bind(ITypeComp *iface, LPOLESTR szName, ULO
 
     for (i = 0; i < This->num_funcs; i++)
     {
-        if (wcsicmp(szName, This->funcs[i].func->name)) continue;
+        if (vbs_wcsicmp(szName, This->funcs[i].func->name)) continue;
         if (!(flags & INVOKE_FUNC)) return TYPE_E_TYPEMISMATCH;
 
         hr = ITypeInfo_GetFuncDesc(&This->ITypeInfo_iface, i, &pBindPtr->lpfuncdesc);
@@ -1291,18 +1326,21 @@ static HRESULT WINAPI ScriptTypeComp_Bind(ITypeComp *iface, LPOLESTR szName, ULO
         return S_OK;
     }
 
-    for (i = 0; i < This->num_vars; i++)
     {
-        if (wcsicmp(szName, This->disp->global_vars[i]->name)) continue;
-        if (!(flags & INVOKE_PROPERTYGET)) return TYPE_E_TYPEMISMATCH;
+        struct rb_entry *entry = rb_get(&This->disp->var_tree, szName);
+        if (entry)
+        {
+            dynamic_var_t *var = RB_ENTRY_VALUE(entry, dynamic_var_t, entry);
+            if (!(flags & INVOKE_PROPERTYGET)) return TYPE_E_TYPEMISMATCH;
 
-        hr = ITypeInfo_GetVarDesc(&This->ITypeInfo_iface, i, &pBindPtr->lpvardesc);
-        if (FAILED(hr)) return hr;
+            hr = ITypeInfo_GetVarDesc(&This->ITypeInfo_iface, var->index, &pBindPtr->lpvardesc);
+            if (FAILED(hr)) return hr;
 
-        *pDescKind = DESCKIND_VARDESC;
-        *ppTInfo = &This->ITypeInfo_iface;
-        ITypeInfo_AddRef(*ppTInfo);
-        return S_OK;
+            *pDescKind = DESCKIND_VARDESC;
+            *ppTInfo = &This->ITypeInfo_iface;
+            ITypeInfo_AddRef(*ppTInfo);
+            return S_OK;
+        }
     }
 
     /* Look into the inherited IDispatch */
@@ -1512,25 +1550,24 @@ static HRESULT WINAPI ScriptDisp_Invoke(IDispatchEx *iface, DISPID dispIdMember,
 static HRESULT WINAPI ScriptDisp_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD grfdex, DISPID *pid)
 {
     ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
-    unsigned i;
+    struct rb_entry *entry;
 
     TRACE("(%p)->(%s %lx %p)\n", This, debugstr_w(bstrName), grfdex, pid);
 
     if(!This->ctx)
         return E_UNEXPECTED;
 
-    for(i = 0; i < This->global_vars_cnt; i++) {
-        if(!wcsicmp(This->global_vars[i]->name, bstrName)) {
-            *pid = i + 1;
-            return S_OK;
-        }
+    entry = rb_get(&This->var_tree, bstrName);
+    if(entry) {
+        *pid = RB_ENTRY_VALUE(entry, dynamic_var_t, entry)->index + 1;
+        return S_OK;
     }
 
-    for(i = 0; i < This->global_funcs_cnt; i++) {
-        if(!wcsicmp(This->global_funcs[i]->name, bstrName)) {
-            *pid = i + 1 + DISPID_FUNCTION_MASK;
-            return S_OK;
-        }
+    entry = rb_get(&This->func_tree, bstrName);
+    if(entry) {
+        function_t *func = RB_ENTRY_VALUE(entry, function_t, entry);
+        *pid = func->index + 1 + DISPID_FUNCTION_MASK;
+        return S_OK;
     }
 
     *pid = -1;
@@ -1669,6 +1706,8 @@ HRESULT create_script_disp(script_ctx_t *ctx, ScriptDisp **ret)
     script_disp->ref = 1;
     script_disp->ctx = ctx;
     heap_pool_init(&script_disp->heap);
+    rb_init(&script_disp->func_tree, func_name_cmp);
+    rb_init(&script_disp->var_tree, var_name_cmp);
     script_disp->rnd = 0x50000;
 
     *ret = script_disp;

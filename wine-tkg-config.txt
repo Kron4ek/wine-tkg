@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-ntsync-git configuration - Mon Apr  6 08:32:00 AM UTC 2026 :
+# Last wine-tkg-staging-ntsync-git configuration - Sat Apr 18 09:18:58 AM UTC 2026 :
 
 Local cfg files used
 
-Wine (plain) version: 11.6.r0.g6e073d28dee
-Using wine-staging patchset (version 11.6.r0.g666d822d)
+Wine (plain) version: 11.7.r0.gf051a28829e
+Using wine-staging patchset (version 11.7.r0.g4782e315)
 
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
@@ -23,6 +23,9 @@ LAA-unix-staging-wow64.patch -- ( Applied large address aware override support )
 
 proton-win10-default.patch -- ( Enforce win10 as default wine version )
 proton_battleye.patch -- ( Add support for Proton's Battleye runtime )
+Revert-ntdll-Get-rid-of-the-wine_nt_to_unix_file_nam.patch -- ( Revert ntdll: Get rid of the wine_nt_to_unix_file_name syscall )
+proton-eac_bridge.patch -- ( Add support for Proton's EAC bridge )
+wow64_loader_hack.patch -- ( Hack around loader name for EAC on 10.2+ )
 
 Applied hotfix Return_nt_filename_and_resolve_DOS_drive_path.mypatch
 Applied hotfix a608ef1.mypatch
@@ -32,6 +35,7 @@ Applied your own patch add-custom-overrides.mypatch
 Applied your own patch disable-hidraw-and-evdev.mypatch
 Applied your own patch disable-winedebug-by-default.mypatch
 Applied your own patch hags.mypatch
+Applied your own patch mui.mypatch
 Applied your own patch notify-about-ntsync.mypatch
 
 wine-tkg-staging.patch -- ( Please don't report bugs about this wine build on winehq.org and use https://github.com/Frogging-Family/wine-tkg-git/issues instead. )

@@ -29,7 +29,6 @@
 #include "msxml6.h"
 #include "msxml6did.h"
 #include "ocidl.h"
-#include "initguid.h"
 #include "dispex.h"
 
 #include "wine/test.h"
@@ -4955,11 +4954,8 @@ static void test_saxreader_properties(void)
     V_VT(&v) = VT_EMPTY;
     V_BSTR(&v) = (void*)0xdeadbeef;
     hr = ISAXXMLReader_getProperty(reader, L"xmldecl-encoding", &v);
-    todo_wine
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    todo_wine
     ok(V_VT(&v) == VT_BSTR, "got %d\n", V_VT(&v));
-    todo_wine
     ok(!V_BSTR(&v), "got %s\n", wine_dbgstr_w(V_BSTR(&v)));
 
     /* stream with declaration */
@@ -4992,14 +4988,10 @@ static void test_saxreader_properties(void)
     V_VT(&v) = VT_EMPTY;
     V_BSTR(&v) = (void*)0xdeadbeef;
     hr = ISAXXMLReader_getProperty(reader, L"xmldecl-encoding", &v);
-    todo_wine
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    if (hr == S_OK)
-    {
-        ok(V_VT(&v) == VT_BSTR, "got %d\n", V_VT(&v));
-        ok(!wcscmp(V_BSTR(&v), L"uTf-16"), "got %s\n", wine_dbgstr_w(V_BSTR(&v)));
-        VariantClear(&v);
-    }
+    ok(V_VT(&v) == VT_BSTR, "got %d\n", V_VT(&v));
+    ok(!wcscmp(V_BSTR(&v), L"uTf-16"), "got %s\n", wine_dbgstr_w(V_BSTR(&v)));
+    VariantClear(&v);
 
     ISAXXMLReader_Release(reader);
     free_bstrs();

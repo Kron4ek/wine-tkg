@@ -28,6 +28,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
 
+#define MAX_IDENTIFIER_LENGTH 255
+
 static int lex_error(parser_ctx_t *ctx, HRESULT hres)
 {
     ctx->hres = hres;
@@ -102,11 +104,18 @@ static const struct {
     {L"xor",       tXOR}
 };
 
+/* VBScript identifiers are ASCII-only: [A-Za-z0-9_]. Windows rejects all
+ * non-ASCII characters (Latin-1, Cyrillic, CJK) at the lexer level with
+ * error 1032 "Invalid character". */
 static inline BOOL is_identifier_char(WCHAR c)
 {
-    return iswalnum(c) || c == '_';
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
 }
 
+/* Compare the current parse position against a keyword using ASCII-only
+ * case-insensitive matching. Keywords are all lowercase ASCII, so we only
+ * need to lowercase [A-Z] in the source. Returns 0 on match, <0 or >0
+ * for ordering (used by the binary search in check_keywords). */
 static int check_keyword(parser_ctx_t *ctx, const WCHAR *word, const WCHAR **lval)
 {
     const WCHAR *p1 = ctx->ptr;
@@ -114,7 +123,8 @@ static int check_keyword(parser_ctx_t *ctx, const WCHAR *word, const WCHAR **lva
     WCHAR c;
 
     while(p1 < ctx->end && *p2) {
-        c = towlower(*p1);
+        c = *p1;
+        if(c >= 'A' && c <= 'Z') c += 'a' - 'A';
         if(c != *p2)
             return c - *p2;
         p1++;
@@ -158,6 +168,9 @@ static int parse_identifier(parser_ctx_t *ctx, const WCHAR **ret)
     while(ctx->ptr < ctx->end && is_identifier_char(*ctx->ptr))
         ctx->ptr++;
     len = ctx->ptr-ptr;
+
+    if(len > MAX_IDENTIFIER_LENGTH)
+        return lex_error(ctx, MAKE_VBSERROR(VBSE_IDENTIFIER_TOO_LONG));
 
     str = parser_alloc(ctx, (len+1)*sizeof(WCHAR));
     if(!str)
@@ -383,7 +396,7 @@ static int parse_hex_literal(parser_ctx_t *ctx, LONG *ret)
 
 static void skip_spaces(parser_ctx_t *ctx)
 {
-    while(*ctx->ptr == ' ' || *ctx->ptr == '\t')
+    while(*ctx->ptr == ' ' || *ctx->ptr == '\t' || *ctx->ptr == '\v' || *ctx->ptr == '\f')
         ctx->ptr++;
 }
 
@@ -395,6 +408,34 @@ static int comment_line(parser_ctx_t *ctx)
     else
         ctx->ptr = ctx->end;
     return tNL;
+}
+
+static int parse_bracket_identifier(parser_ctx_t *ctx, const WCHAR **ret)
+{
+    const WCHAR *start = ++ctx->ptr;
+    WCHAR *str;
+    int len;
+
+    while(ctx->ptr < ctx->end && *ctx->ptr != ']' && *ctx->ptr != '\n' && *ctx->ptr != '\r')
+        ctx->ptr++;
+
+    if(ctx->ptr >= ctx->end || *ctx->ptr != ']')
+        return lex_error(ctx, MAKE_VBSERROR(VBSE_EXPECTED_RBRACKET));
+
+    len = ctx->ptr - start;
+    ctx->ptr++; /* skip ']' */
+
+    if(len > MAX_IDENTIFIER_LENGTH)
+        return lex_error(ctx, MAKE_VBSERROR(VBSE_IDENTIFIER_TOO_LONG));
+
+    str = parser_alloc(ctx, (len+1)*sizeof(WCHAR));
+    if(!str)
+        return 0;
+
+    memcpy(str, start, len*sizeof(WCHAR));
+    str[len] = 0;
+    *ret = str;
+    return tIdentifier;
 }
 
 static int parse_next_token(void *lval, unsigned *loc, parser_ctx_t *ctx)
@@ -411,7 +452,7 @@ static int parse_next_token(void *lval, unsigned *loc, parser_ctx_t *ctx)
     if('0' <= c && c <= '9')
         return parse_numeric_literal(ctx, lval);
 
-    if(iswalpha(c)) {
+    if((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
         int ret = 0;
         if(ctx->last_token != '.' && ctx->last_token != tDOT)
             ret = check_keywords(ctx, lval);
@@ -483,9 +524,12 @@ static int parse_next_token(void *lval, unsigned *loc, parser_ctx_t *ctx)
          * Parser can't predict if bracket is part of argument expression or an argument
          * in call expression. We predict it here instead.
          */
-        if(ctx->last_token == tIdentifier || ctx->last_token == ')' || ctx->last_token == tME)
+        if(ctx->last_token == tIdentifier || ctx->last_token == ')' || ctx->last_token == tME
+                || ctx->last_token == tEMPTYBRACKETS)
             return '(';
         return tEXPRLBRACKET;
+    case '[':
+        return parse_bracket_identifier(ctx, lval);
     case '"':
         return parse_string_literal(ctx, lval);
     case '#':

@@ -540,7 +540,6 @@ BOOL WINAPI ImeSetActiveContext( HIMC himc, BOOL flag )
 
 BOOL WINAPI ImeProcessKey( HIMC himc, UINT vkey, LPARAM lparam, BYTE *state )
 {
-    struct ime_driver_call_params params = {.himc = himc, .state = state};
     INPUTCONTEXT *ctx;
     LRESULT ret;
 
@@ -549,8 +548,15 @@ BOOL WINAPI ImeProcessKey( HIMC himc, UINT vkey, LPARAM lparam, BYTE *state )
     if (!is_ime_hkl( GetKeyboardLayout( 0 ) )) return FALSE;
 
     if (!(ctx = ImmLockIMC( himc ))) return FALSE;
-    ret = NtUserMessageCall( ctx->hWnd, WINE_IME_PROCESS_KEY, vkey, lparam, &params,
-                             NtUserImeDriverCall, FALSE );
+    ret = TRUE; /* TODO: should be ctx->fOpen */
+    switch (LOWORD(vkey))
+    {
+        case VK_SHIFT:
+        case VK_CONTROL:
+        case VK_CAPITAL:
+        case VK_MENU:
+            ret = FALSE;
+    }
     ImmUnlockIMC( himc );
 
     return ret;
@@ -563,6 +569,7 @@ UINT WINAPI ImeToAsciiEx( UINT vkey, UINT vsc, BYTE *state, TRANSMSGLIST *msgs, 
     INPUTCONTEXT *ctx;
     NTSTATUS status;
     BOOL key_consumed = TRUE;
+    struct ime_driver_call_params params = {.himc = himc, .state = state};
 
     TRACE( "vkey %#x, vsc %#x, state %p, msgs %p, flags %#x, himc %p\n",
            vkey, vsc, state, msgs, flags, himc );
@@ -575,7 +582,6 @@ UINT WINAPI ImeToAsciiEx( UINT vkey, UINT vsc, BYTE *state, TRANSMSGLIST *msgs, 
 
     do
     {
-        struct ime_driver_call_params params = {.himc = himc, .state = state};
         HIMCC himcc;
 
         ImmUnlockIMCC( ctx->hCompStr );
@@ -587,9 +593,15 @@ UINT WINAPI ImeToAsciiEx( UINT vkey, UINT vsc, BYTE *state, TRANSMSGLIST *msgs, 
         status = NtUserMessageCall( ctx->hWnd, WINE_IME_TO_ASCII_EX, vkey, vsc, &params,
                                     NtUserImeDriverCall, FALSE );
         size = compstr->dwSize;
+        params.state = NULL;
     } while (status == STATUS_BUFFER_TOO_SMALL);
 
-    if (status) WARN( "WINE_IME_TO_ASCII_EX returned status %#lx\n", status );
+    if (status == STATUS_NOT_IMPLEMENTED)
+    {
+        TRANSMSG msg = {.message = vsc & KF_UP ? WM_KEYUP : WM_KEYDOWN, .wParam = vkey, .lParam = vsc};
+        msgs->TransMsg[count++] = msg;
+    }
+    else if (status) WARN( "WINE_IME_TO_ASCII_EX returned unexpected status %#lx\n", status );
     else
     {
         if (compstr->dwCompStrOffset || compstr->dwResultStrLen)

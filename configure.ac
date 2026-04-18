@@ -160,11 +160,6 @@ then
     fi
 fi
 
-case $build_os in
-  cygwin*|mingw32*) AC_SUBST(toolsext,".exe") ;;
-  *) AC_SUBST(toolsext,"") ;;
-esac
-
 HOST_ARCH=unknown
 case "$host_cpu" in
   aarch64*)        HOST_ARCH=aarch64 ;;
@@ -175,13 +170,23 @@ esac
 m4_set_add_all([_AC_SUBST_VARS],[HOST_ARCH]m4_foreach([cpu],[aarch64,arm,arm64ec,i386,x86_64],
                                 [m4_foreach([var],[CC,CXX,CFLAGS,CXXFLAGS,EXTRACFLAGS,EXTRACXXFLAGS,LDFLAGS,DEBUG,TARGET,STRIP,DELAYLOADFLAG,DISABLED_SUBDIRS],[,cpu[_]var])]))
 
+dnl Some special cases for the Windows platform
+
+case $build_os in
+  cygwin*|mingw32*) AC_SUBST(toolsext,".exe") ;;
+  *) AC_SUBST(toolsext,"") ;;
+esac
+
 case $host_os in
-  darwin*)
-    with_fontconfig=${with_fontconfig:-no}
-    ;;
-  mingw32*|cygwin*)
+  mingw32*)
     enable_archs=${enable_archs:-$HOST_ARCH}
     AS_VAR_SET(${HOST_ARCH}_CC,$CC)
+    with_mingw=${with_mingw:-no}
+    ;;
+esac
+
+case $host_os in
+  mingw32*|cygwin*)
     dnl Disable modules that can't be used on Windows
     enable_loader=${enable_loader:-no}
     enable_server=${enable_server:-no}
@@ -190,7 +195,6 @@ case $host_os in
     dnl Disable dependencies that are not useful on Windows
     with_x=${with_x:-no}
     with_pthread=${with_pthread:-no}
-    with_mingw=${with_mingw:-no}
     ;;
 esac
 
@@ -695,8 +699,8 @@ CXXFLAGS=$saved_CXXFLAGS
 LDFLAGS=$saved_LDFLAGS
 
 case $HOST_ARCH-$host_os in
-  x86_64-darwin*|arm-*|aarch64-*)
-    test "x$PE_ARCHS" != x || AC_MSG_ERROR([PE cross-compilation is required for $host, please install clang/llvm-dlltool/lld, or llvm-mingw.])
+  x86_64-darwin*|arm-*|aarch64-*|*-cygwin*)
+    test "x$PE_ARCHS" != x || AC_MSG_ERROR([PE cross-compilation is required for $host, please install mingw-w64, clang/llvm-dlltool/lld, or llvm-mingw.])
     DLLEXT="" ;;
   *)
     AC_SUBST(DLLEXT,".so")
@@ -968,7 +972,6 @@ case $host_os in
   cygwin*|mingw32*)
     LIBEXT="dll"
     DLLEXT=""
-    WINE_TRY_CFLAGS([-Wl,-delayload,autoconftest.dll],[AC_SUBST(DELAYLOADFLAG,["-Wl,-delayload,"])])
     ;;
 
   darwin*)
@@ -976,6 +979,7 @@ case $host_os in
     DLLFLAGS="$DLLFLAGS -fPIC"
     LDDLLFLAGS="-fPIC"
     enable_winemac_drv=${enable_winemac_drv:-yes}
+    with_fontconfig=${with_fontconfig:-no}
     dnl declare needed frameworks
     AC_SUBST(CORETEXT_LIBS,"-framework CoreText")
     AC_SUBST(COREFOUNDATION_LIBS,"-framework CoreFoundation")
@@ -1194,37 +1198,6 @@ then
     if test "x$TIFF_PE_LIBS" = "x"
     then
         WINE_NOTICE([libtiff ${notice_platform}MinGW development files not found; using bundled version.])
-    fi
-
-    WINE_MINGW_PACKAGE_FLAGS(XML2,[libxml-2.0],[-lxml2],
-        [WINE_CHECK_MINGW_HEADER(libxml/parser.h)
-        WINE_CHECK_MINGW_HEADER(libxml/xmlsave.h)
-        WINE_CHECK_MINGW_HEADER(libxml/SAX2.h)
-        if test "$ac_cv_mingw_header_libxml_parser_h" = "yes" -a "$ac_cv_mingw_header_libxml_xmlsave_h" = "yes" -a "$ac_cv_mingw_header_libxml_SAX2_h" = "yes"
-        then
-            WINE_CHECK_MINGW_LIB(xml2,xmlFirstElementChild,[:],[XML2_PE_CFLAGS=""; XML2_PE_LIBS=""],[$XML2_PE_LIBS])
-        else
-            XML2_PE_CFLAGS=""
-            XML2_PE_LIBS=""
-        fi])
-    if test "x$XML2_PE_LIBS" = "x"
-    then
-        WINE_NOTICE([libxml2 ${notice_platform}MinGW development files not found (or too old); using bundled version.])
-    fi
-
-    WINE_MINGW_PACKAGE_FLAGS(XSLT,[libxslt],[-lxslt],
-        [WINE_CHECK_MINGW_HEADER(libxslt/pattern.h)
-        WINE_CHECK_MINGW_HEADER(libxslt/transform.h)
-        if test "$ac_cv_mingw_header_libxslt_pattern_h" = "yes" -a "$ac_cv_mingw_header_libxslt_transform_h" = "yes"
-        then
-            WINE_CHECK_MINGW_LIB(xslt,xsltCompilePattern,[:],[XSLT_PE_CFLAGS=""; XSLT_PE_LIBS=""],[$XSLT_PE_LIBS])
-        else
-            XSLT_PE_CFLAGS=""
-            XSLT_PE_LIBS=""
-        fi])
-    if test "x$XSLT_PE_LIBS" = "x"
-    then
-        WINE_NOTICE([libxslt ${notice_platform}MinGW development files not found; using bundled version.])
     fi
 
     WINE_MINGW_PACKAGE_FLAGS(VKD3D,[libvkd3d-utils libvkd3d libvkd3d-shader],[-lvkd3d-utils -lvkd3d -lvkd3d-shader],
@@ -1788,7 +1761,7 @@ AC_SUBST(ALSA_LIBS,"")
 if test "x$with_alsa" != "xno"
 then
     WINE_PACKAGE_FLAGS(ALSA,[alsa],[-lasound],,,
-        [AC_CHECK_LIB(asound,snd_pcm_hw_params_get_access_mask,[:],[ALSA_LIBS=""])])
+        [AC_CHECK_LIB(asound,snd_pcm_hw_params_get_access_mask,[:],[ALSA_LIBS=""],[$ALSA_LIBS])])
 fi
 WINE_NOTICE_WITH(alsa,[test -z "$ALSA_LIBS"],
                  [libasound ${notice_platform}development files not found, Alsa won't be supported.],
@@ -2098,7 +2071,13 @@ fi
 
 dnl **** Platform-specific checks ****
 
-AC_SUBST(WINELOADER_PROGRAMS,"wine")
+case "$HOST_ARCH,$PE_ARCHS" in
+  x86_64,i386) wine_binary="wine" ;;
+  x86_64,*) wine_binary="wine64" ;;
+  *) wine_binary="wine" ;;
+esac
+test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine)
+AC_SUBST(WINELOADER_PROGRAMS,"$wine_binary")
 
 case $host_os in
   linux*)
@@ -2111,7 +2090,8 @@ esac
 
 if test "$wine_use_preloader" = "yes"
 then
-  WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS wine-preloader"
+  test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine-preloader)
+  WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS $wine_binary-preloader"
   AC_DEFINE(HAVE_WINE_PRELOADER, 1, [Define to 1 if the Wine preloader is being used.])
 fi
 
@@ -3812,7 +3792,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-11.6.r0.g666d822d\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-11.7.r0.g4782e315\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 dlls/wineandroid.drv/wine-debug.apk: dlls/wineandroid.drv/build.gradle ${wine_srcdir}dlls/wineandroid.drv/AndroidManifest.xml ${wine_srcdir}dlls/wineandroid.drv/WineActivity.java ${wine_srcdir}dlls/wineandroid.drv/wine.svg

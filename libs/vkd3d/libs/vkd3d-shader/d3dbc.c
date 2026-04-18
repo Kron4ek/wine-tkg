@@ -927,35 +927,63 @@ static void record_constant_register(struct vkd3d_shader_sm1_parser *sm1,
     }
 }
 
-static void shader_sm1_scan_register(struct vkd3d_shader_sm1_parser *sm1,
-        const struct vsir_operand *reg, unsigned int mask, bool from_def)
+static unsigned int d3dbc_get_src_register_count(enum vkd3d_shader_opcode opcode, unsigned int src_idx)
 {
-    struct vsir_program *program = sm1->program;
-    uint32_t register_index = reg->idx[0].offset;
-
-    switch (reg->type)
+    switch (opcode)
     {
-        case VKD3DSPR_TEMP:
-            program->temp_count = max(program->temp_count, register_index + 1);
-            break;
-
-        case VKD3DSPR_CONST:
-            record_constant_register(sm1, VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER, register_index, from_def);
-            break;
-
-        case VKD3DSPR_CONSTINT:
-            record_constant_register(sm1, VKD3D_SHADER_D3DBC_INT_CONSTANT_REGISTER, register_index, from_def);
-            break;
-
-        case VKD3DSPR_CONSTBOOL:
-            record_constant_register(sm1, VKD3D_SHADER_D3DBC_BOOL_CONSTANT_REGISTER, register_index, from_def);
-            break;
-
+        case VSIR_OP_M3x2:
+            return (src_idx == 1) ? 2 : 1;
+        case VSIR_OP_M3x3:
+        case VSIR_OP_M4x3:
+            return (src_idx == 1) ? 3 : 1;
+        case VSIR_OP_M3x4:
+        case VSIR_OP_M4x4:
+            return (src_idx == 1) ? 4 : 1;
         default:
-            break;
+            return 1;
     }
+}
 
-    add_signature_element_from_operand(sm1, reg, false, mask, 0);
+static void d3dbc_scan_register(struct vkd3d_shader_sm1_parser *d3dbc,
+        const struct vsir_operand *reg0, unsigned int mask, bool from_def, unsigned int count)
+{
+    struct vsir_program *program = d3dbc->program;
+    struct vsir_operand reg = *reg0;
+
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        uint32_t register_index = reg.idx[0].offset;
+
+        switch (reg.type)
+        {
+            case VKD3DSPR_TEMP:
+                program->temp_count = max(program->temp_count, register_index + 1);
+                break;
+
+            case VKD3DSPR_CONST:
+                record_constant_register(d3dbc, VKD3D_SHADER_D3DBC_FLOAT_CONSTANT_REGISTER, register_index, from_def);
+                break;
+
+            case VKD3DSPR_CONSTINT:
+                record_constant_register(d3dbc, VKD3D_SHADER_D3DBC_INT_CONSTANT_REGISTER, register_index, from_def);
+                break;
+
+            case VKD3DSPR_CONSTBOOL:
+                record_constant_register(d3dbc, VKD3D_SHADER_D3DBC_BOOL_CONSTANT_REGISTER, register_index, from_def);
+                break;
+
+            case VKD3DSPR_DEPTHOUT:
+                bitmap_set(program->io_dcls, VKD3DSPR_DEPTHOUT);
+                break;
+
+            default:
+                break;
+        }
+
+        add_signature_element_from_operand(d3dbc, &reg, false, mask, 0);
+
+        ++reg.idx[0].offset;
+    }
 }
 
 static void d3dbc_add_combined_sampler_descriptor(struct vkd3d_shader_sm1_parser *d3dbc,
@@ -1375,19 +1403,19 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
     {
         d3dbc_read_dst_operand(sm1, &p, dst);
         shader_sm1_read_immconst(sm1, &p, &src[0], VSIR_DIMENSION_VEC4, VSIR_DATA_F32);
-        shader_sm1_scan_register(sm1, &dst->reg, dst->write_mask, true);
+        d3dbc_scan_register(sm1, &dst->reg, dst->write_mask, true, 1);
     }
     else if (ins->opcode == VSIR_OP_DEFB)
     {
         d3dbc_read_dst_operand(sm1, &p, dst);
         shader_sm1_read_immconst(sm1, &p, &src[0], VSIR_DIMENSION_SCALAR, VSIR_DATA_U32);
-        shader_sm1_scan_register(sm1, &dst->reg, dst->write_mask, true);
+        d3dbc_scan_register(sm1, &dst->reg, dst->write_mask, true, 1);
     }
     else if (ins->opcode == VSIR_OP_DEFI)
     {
         d3dbc_read_dst_operand(sm1, &p, dst);
         shader_sm1_read_immconst(sm1, &p, &src[0], VSIR_DIMENSION_VEC4, VSIR_DATA_I32);
-        shader_sm1_scan_register(sm1, &dst->reg, dst->write_mask, true);
+        d3dbc_scan_register(sm1, &dst->reg, dst->write_mask, true, 1);
     }
     else if (ins->opcode == VSIR_OP_TEXKILL)
     {
@@ -1399,7 +1427,7 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
 
         reg = &tmp_dst.reg;
         d3dbc_read_dst_operand(sm1, &p, &tmp_dst);
-        shader_sm1_scan_register(sm1, reg, tmp_dst.write_mask, false);
+        d3dbc_scan_register(sm1, reg, tmp_dst.write_mask, false, 1);
 
         vsir_src_operand_init(&src[0], reg->type, reg->data_type, reg->idx_count);
         src[0].reg = *reg;
@@ -1414,7 +1442,7 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
         if (ins->dst_count)
         {
             d3dbc_read_dst_operand(sm1, &p, dst);
-            shader_sm1_scan_register(sm1, &dst->reg, dst->write_mask, false);
+            d3dbc_scan_register(sm1, &dst->reg, dst->write_mask, false, 1);
         }
 
         /* Predication token */
@@ -1424,8 +1452,10 @@ static void shader_sm1_read_instruction(struct vkd3d_shader_sm1_parser *sm1, str
         /* Other source tokens */
         for (i = 0; i < ins->src_count; ++i)
         {
+            unsigned int src_reg_count = d3dbc_get_src_register_count(ins->opcode, i);
+
             d3dbc_read_src_operand(sm1, &p, &src[i]);
-            shader_sm1_scan_register(sm1, &src[i].reg, mask_from_swizzle(src[i].swizzle), false);
+            d3dbc_scan_register(sm1, &src[i].reg, mask_from_swizzle(src[i].swizzle), false, src_reg_count);
         }
     }
 

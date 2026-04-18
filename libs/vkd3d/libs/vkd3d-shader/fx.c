@@ -1303,6 +1303,12 @@ static const char * get_fx_4_type_name(const struct hlsl_type *type)
         case HLSL_CLASS_PIXEL_SHADER:
             return "PixelShader";
 
+        case HLSL_CLASS_HULL_SHADER:
+            return "HullShader";
+
+        case HLSL_CLASS_DOMAIN_SHADER:
+            return "DomainShader";
+
         case HLSL_CLASS_COMPUTE_SHADER:
             return "ComputeShader";
 

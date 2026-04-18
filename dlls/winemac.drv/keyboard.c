@@ -1106,53 +1106,51 @@ void macdrv_hotkey_press(const macdrv_event *event)
 
 
 /***********************************************************************
- *              ImeProcessKey (MACDRV.@)
+ *              ImeToAsciiEx (MACDRV.@)
  */
-UINT macdrv_ImeProcessKey(HIMC himc, UINT wparam, UINT lparam, const BYTE *key_state)
+UINT macdrv_ImeToAsciiEx(UINT vkey, UINT vsc, const BYTE *state, HIMC himc)
 {
     struct macdrv_thread_data *thread_data = macdrv_thread_data();
-    WORD scan = HIWORD(lparam) & 0x1ff, vkey = LOWORD(wparam);
-    BOOL repeat = !!(lparam >> 30), pressed = !(lparam >> 31);
     unsigned int flags;
     int keyc;
-    UINT ret;
+    bool ret;
+    BOOL repeat = !!(vsc & KF_REPEAT);
 
-    TRACE("himc %p, scan %#x, vkey %#x, repeat %u, pressed %u\n",
-          himc, scan, vkey, repeat, pressed);
+    TRACE("himc %p, vkey %#x state %p repeat %u\n",
+          himc, vkey, state, repeat);
 
-    if (!macdrv_using_input_method()) return 0;
+    if (!state) return STATUS_SUCCESS;
 
-    if (!pressed)
+    if (vsc & KF_UP)
     {
         /* Only key down events should be sent to the Cocoa input context. We do
            not handle key ups, and instead let those go through as a normal
            WM_KEYUP. */
-        return 0;
+        return STATUS_NOT_IMPLEMENTED;
     }
 
     switch (vkey)
     {
-        case VK_SHIFT:
-        case VK_CONTROL:
-        case VK_CAPITAL:
-        case VK_MENU:
-        return 0;
+        case VK_KANA:
+        case VK_KANJI:
+            TRACE("Skipping metakey\n");
+            return STATUS_NOT_IMPLEMENTED;
     }
 
     flags = thread_data->last_modifiers;
-    if (key_state[VK_SHIFT] & 0x80)
+    if (state[VK_SHIFT] & 0x80)
         flags |= NX_SHIFTMASK;
     else
         flags &= ~(NX_SHIFTMASK | NX_DEVICELSHIFTKEYMASK | NX_DEVICERSHIFTKEYMASK);
-    if (key_state[VK_CAPITAL] & 0x01)
+    if (state[VK_CAPITAL] & 0x01)
         flags |= NX_ALPHASHIFTMASK;
     else
         flags &= ~NX_ALPHASHIFTMASK;
-    if (key_state[VK_CONTROL] & 0x80)
+    if (state[VK_CONTROL] & 0x80)
         flags |= NX_CONTROLMASK;
     else
         flags &= ~(NX_CONTROLMASK | NX_DEVICELCTLKEYMASK | NX_DEVICERCTLKEYMASK);
-    if (key_state[VK_MENU] & 0x80)
+    if (state[VK_MENU] & 0x80)
         flags |= NX_COMMANDMASK;
     else
         flags &= ~(NX_COMMANDMASK | NX_DEVICELCMDKEYMASK | NX_DEVICERCMDKEYMASK);
@@ -1164,10 +1162,9 @@ UINT macdrv_ImeProcessKey(HIMC himc, UINT wparam, UINT lparam, const BYTE *key_s
     if (keyc >= ARRAY_SIZE(thread_data->keyc2vkey)) return 0;
 
     TRACE("flags 0x%08x keyc 0x%04x\n", flags, keyc);
-    ret = (UINT)macdrv_ime_process_key(keyc, flags, repeat, himc);
+    ret = macdrv_send_keydown_to_input_source(keyc, flags, repeat, himc);
     NtUserMsgWaitForMultipleObjectsEx(0, NULL, 0, QS_POSTMESSAGE | QS_SENDMESSAGE, 0);
-    TRACE("returning %u\n", ret);
-    return ret;
+    return ret ? STATUS_SUCCESS : STATUS_NOT_IMPLEMENTED;
 }
 
 

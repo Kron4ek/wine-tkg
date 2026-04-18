@@ -1685,6 +1685,8 @@ bool hlsl_clone_semantic(struct hlsl_ctx *ctx, struct hlsl_semantic *dst, const 
 void hlsl_cleanup_ir_switch_cases(struct list *cases);
 void hlsl_free_ir_switch_case(struct hlsl_ir_switch_case *c);
 
+void hlsl_ctx_init_entry_function_attributes(struct hlsl_ctx *ctx);
+
 void hlsl_replace_node(struct hlsl_ir_node *old, struct hlsl_ir_node *new);
 
 void hlsl_free_attribute(struct hlsl_attribute *attr);

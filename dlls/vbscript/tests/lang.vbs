@@ -273,6 +273,52 @@ x _
 
 x = 3
 
+' Maximum identifier length (255 chars)
+Dim aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 42
+Call ok(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = 42, "255-char identifier should work")
+
+' Bracketed identifiers
+Dim [my var]
+[my var] = 42
+Call ok([my var] = 42, "[my var] = " & [my var])
+
+Dim [hello world!]
+[hello world!] = "works"
+Call ok([hello world!] = "works", "[hello world!] = " & [hello world!])
+
+Dim []
+[] = "empty"
+Call ok([] = "empty", "[] = " & [])
+
+Dim [   ]
+[   ] = "spaces"
+Call ok([   ] = "spaces", "[   ] = " & [   ])
+
+Dim [dim]
+[dim] = 99
+Call ok([dim] = 99, "[dim] = " & [dim])
+
+Class BracketTestObj
+    Public [my property]
+    Public Sub Class_Initialize
+        [my property] = "init"
+    End Sub
+End Class
+
+Dim bracketObj
+Set bracketObj = New BracketTestObj
+bracketObj.[my property] = "updated"
+Call ok(bracketObj.[my property] = "updated", "bracketObj.[my property] = " & bracketObj.[my property])
+
+Dim [loop var]
+Dim bracketTotal : bracketTotal = 0
+For [loop var] = 1 To 3
+    bracketTotal = bracketTotal + [loop var]
+Next
+Call ok(bracketTotal = 6, "For [loop var] total = " & bracketTotal)
+
+' Chained call syntax
 Class ChainedCallTarget
     Public Function Ret()
         Set Ret = Me
@@ -855,6 +901,76 @@ do while true
     next
 loop
 
+' For loop control variable should not be modified when expression evaluation fails
+on error resume next
+
+x = 6
+y = 0
+err.clear
+for x = 1/0 to 100
+    y = y + 1
+next
+call ok(err.number = 92, "for (from error): err.number = " & err.number)
+call ok(x = 6, "for (from error): x = " & x)
+
+x = 6
+y = 0
+err.clear
+for x = 100 to 1/0
+    y = y + 1
+next
+call ok(err.number = 92, "for (to error): err.number = " & err.number)
+call ok(x = 6, "for (to error): x = " & x)
+
+x = 6
+y = 0
+err.clear
+for x = 100 to 200 step 1/0
+    y = y + 1
+next
+call ok(err.number = 92, "for (step error): err.number = " & err.number)
+call ok(x = 6, "for (step error): x = " & x)
+
+z = 99
+y = 0
+err.clear
+for z = 1 to UBound(empty)
+    y = y + 1
+next
+call ok(err.number = 92, "for (UBound(empty)): err.number = " & err.number)
+call ok(z = 99, "for (UBound(empty)): z = " & z)
+
+' For loop variable set to incompatible type during iteration
+x = 0
+y = 0
+err.clear
+for x = 1 to 5
+    y = y + 1
+    if x = 3 then x = "not a number"
+next
+call ok(y = 3, "for (type change): y = " & y)
+call ok(x = "not a number", "for (type change): x = " & x)
+call ok(err.number = 13, "for (type change): err.number = " & err.number)
+
+on error goto 0
+
+' For loop expression evaluation order: from, to, step
+dim eval_order
+function trackEval(val, label)
+    eval_order = eval_order & label
+    trackEval = val
+end function
+
+eval_order = ""
+for x = trackEval(1, "F") to trackEval(5, "T") step trackEval(1, "S")
+next
+call ok(eval_order = "FTS", "for eval order = " & eval_order)
+
+eval_order = ""
+for x = trackEval(1, "F") to trackEval(5, "T")
+next
+call ok(eval_order = "FT", "for eval order (no step) = " & eval_order)
+
 if null then call ok(false, "if null evaluated")
 
 while null
@@ -1187,6 +1303,37 @@ Sub TestDimVsConst
     Call ok( c10 = 42, "precedence between const and dim is wrong")
 End Sub
 Call TestDimVsConst
+
+Sub TestIllegalAssignment
+    on error resume next
+
+    ' Assign to Const should give error 501
+    err.clear
+    c10 = 99
+    Call ok(err.number = 501, "assign to const: err.number = " & err.number)
+    Call ok(c10 = 10, "c10 = " & c10)
+
+    ' Set on Const should give error 501
+    err.clear
+    set c10 = Nothing
+    Call ok(err.number = 501, "set const: err.number = " & err.number)
+
+    ' Assign to Sub name should give error 501
+    err.clear
+    TestIllegalAssignment = 10
+    Call ok(err.number = 501, "assign to sub name: err.number = " & err.number)
+End Sub
+Call TestIllegalAssignment
+
+' Assign to function name from outside should give error 501
+Function IllegalAssignTarget
+    IllegalAssignTarget = 0
+End Function
+on error resume next
+err.clear
+IllegalAssignTarget = 10
+Call ok(err.number = 501, "assign to func name: err.number = " & err.number)
+on error goto 0
 
 Function TestFuncMultiArgs(a,b,c,d,e)
     Call ok(a=1, "a = " & a)
@@ -1740,6 +1887,53 @@ call ok(containerObj("Key")(1)(0) = "SubValue1", "containerObj(Key)(1)(0) = " & 
 
 call ok(Split("1;2", ";")(0) = "1", "Split(""1;2"", "";"")(0) = " & Split("1;2", ";")(0))
 call ok(Split("1;2", ";")(1) = "2", "Split(""1;2"", "";"")(1) = " & Split("1;2", ";")(1))
+Function GetABC()
+    GetABC = Array("a", "b", "c")
+End Function
+call ok(GetABC()(0) = "a", "GetABC()(0) = " & GetABC()(0))
+call ok(GetABC()(1) = "b", "GetABC()(1) = " & GetABC()(1))
+call ok(GetABC()(2) = "c", "GetABC()(2) = " & GetABC()(2))
+
+Function GetNested()
+    GetNested = Array(Array(1, 2), Array(3, 4))
+End Function
+call ok(GetNested()(0)(0) = 1, "GetNested()(0)(0) = " & GetNested()(0)(0))
+call ok(GetNested()(0)(1) = 2, "GetNested()(0)(1) = " & GetNested()(0)(1))
+call ok(GetNested()(1)(0) = 3, "GetNested()(1)(0) = " & GetNested()(1)(0))
+call ok(GetNested()(1)(1) = 4, "GetNested()(1)(1) = " & GetNested()(1)(1))
+
+x = GetABC()(0) & GetABC()(2)
+call ok(x = "ac", "GetABC()(0) & GetABC()(2) = " & x)
+
+call ok(Array(10,20,30)(1) = 20, "Array(10,20,30)(1) = " & Array(10,20,30)(1))
+
+' Chained call with dot accessor: dict.Keys()(0)
+Dim chainDict
+Set chainDict = CreateObject("Scripting.Dictionary")
+chainDict.Add "first", 1
+chainDict.Add "second", 2
+call ok(chainDict.Keys()(0) = "first", "dict.Keys()(0) = " & chainDict.Keys()(0))
+call ok(chainDict.Keys()(1) = "second", "dict.Keys()(1) = " & chainDict.Keys()(1))
+call ok(chainDict.Items()(0) = 1, "dict.Items()(0) = " & chainDict.Items()(0))
+
+' Dot accessor after chained index: dict.Items()(0).Item("key")
+Dim chainInner
+Set chainInner = CreateObject("Scripting.Dictionary")
+chainInner.Add "x", 42
+Dim chainOuter
+Set chainOuter = CreateObject("Scripting.Dictionary")
+chainOuter.Add "inner", chainInner
+call ok(chainOuter.Items()(0).Item("x") = 42, "dict.Items()(0).Item(""x"") = " & chainOuter.Items()(0).Item("x"))
+
+' Chained call as argument to function: Len(GetABC()(0))
+call ok(Len(GetABC()(0)) = 1, "Len(GetABC()(0)) = " & Len(GetABC()(0)))
+call ok(UBound(GetABC()) = 2, "UBound(GetABC()) = " & UBound(GetABC()))
+
+' Function call as argument to built-in
+Function GetStr()
+    GetStr = "hello"
+End Function
+call ok(Len(GetStr()) = 5, "Len(GetStr()) = " & Len(GetStr()))
 
 function seta0(arr)
     arr(0) = 2
@@ -2245,6 +2439,97 @@ for each x in noarr
     Call ok(false, "Empty array contains: " & x)
 next
 
+' Indexing non-array variables should give type mismatch (error 13)
+sub test_index_non_array
+    dim tmp
+    on error resume next
+
+    ' indexed assign
+    x = 42
+    err.clear
+    x(0) = 1
+    call ok(err.number = 13, "assign int(0): err.number = " & err.number)
+
+    x = "hello"
+    err.clear
+    x(0) = 1
+    call ok(err.number = 13, "assign str(0): err.number = " & err.number)
+
+    x = True
+    err.clear
+    x(0) = 1
+    call ok(err.number = 13, "assign bool(0): err.number = " & err.number)
+
+    x = Empty
+    err.clear
+    x(0) = 1
+    call ok(err.number = 13, "assign empty(0): err.number = " & err.number)
+
+    x = Null
+    err.clear
+    x(0) = 1
+    call ok(err.number = 13, "assign null(0): err.number = " & err.number)
+
+    x = 3.14
+    err.clear
+    x(0) = 1
+    call ok(err.number = 13, "assign double(0): err.number = " & err.number)
+
+    x = Now
+    err.clear
+    x(0) = 1
+    call ok(err.number = 13, "assign date(0): err.number = " & err.number)
+
+    ' indexed read
+    x = 42
+    err.clear
+    tmp = x(0)
+    call ok(err.number = 13, "read int(0): err.number = " & err.number)
+
+    x = "hello"
+    err.clear
+    tmp = x(0)
+    call ok(err.number = 13, "read str(0): err.number = " & err.number)
+
+    x = True
+    err.clear
+    tmp = x(0)
+    call ok(err.number = 13, "read bool(0): err.number = " & err.number)
+
+    x = Empty
+    err.clear
+    tmp = x(0)
+    call ok(err.number = 13, "read empty(0): err.number = " & err.number)
+
+    x = Null
+    err.clear
+    tmp = x(0)
+    call ok(err.number = 13, "read null(0): err.number = " & err.number)
+
+    x = 3.14
+    err.clear
+    tmp = x(0)
+    call ok(err.number = 13, "read double(0): err.number = " & err.number)
+
+    x = Now
+    err.clear
+    tmp = x(0)
+    call ok(err.number = 13, "read date(0): err.number = " & err.number)
+
+    ' multi-index on non-array
+    x = 42
+    err.clear
+    tmp = x(0, 1)
+    call ok(err.number = 13, "read int(0,1): err.number = " & err.number)
+
+    err.clear
+    x(0, 1) = 1
+    call ok(err.number = 13, "assign int(0,1): err.number = " & err.number)
+
+    on error goto 0
+end sub
+call test_index_non_array
+
 ' It's allowed to declare non-builtin RegExp class...
 class RegExp
      public property get Global()
@@ -2499,6 +2784,35 @@ Set x.objProp = y
 call ok(Err.Number = 438, "Set Property Let only: Err.Number = " & Err.Number & " expected 438")
 On Error GoTo 0
 
+' Wrong number of arguments error (450)
+Sub ArityTestSub(a, b)
+End Sub
+
+Function ArityTestFunc(a)
+    ArityTestFunc = a
+End Function
+
+On Error Resume Next
+
+Err.Clear
+ArityTestSub 1
+Call ok(Err.Number = 450, "too few args sub: err = " & Err.Number)
+
+Err.Clear
+ArityTestSub 1, 2, 3
+Call ok(Err.Number = 450, "too many args sub: err = " & Err.Number)
+
+Err.Clear
+Dim arityResult
+arityResult = ArityTestFunc()
+Call ok(Err.Number = 450, "too few args func: err = " & Err.Number)
+
+Err.Clear
+arityResult = ArityTestFunc(1, 2)
+Call ok(Err.Number = 450, "too many args func: err = " & Err.Number)
+
+On Error GoTo 0
+
 set x = new TestPropSyntax
 set x.prop = new TestPropSyntax
 set x.prop.prop = new TestPropSyntax
@@ -2641,6 +2955,36 @@ function recursingfunction2
 end function
 call ok(recursingfunction2() = 1, "unexpected return value " & recursingfunction2())
 
+Dim recursionDepth
+recursionDepth = 0
+Sub RecurseN(n)
+    recursionDepth = recursionDepth + 1
+    If n > 1 Then RecurseN n - 1
+End Sub
+RecurseN 100
+Call ok(recursionDepth = 100, "recursion depth: " & recursionDepth & " expected 100")
+
+Sub RecurseForever()
+    RecurseForever
+End Sub
+
+Sub MutualA()
+    MutualB
+End Sub
+Sub MutualB()
+    MutualA
+End Sub
+
+On Error Resume Next
+Err.Clear
+MutualA
+Call ok(Err.Number = 28, "mutual recursion: err.number = " & Err.Number)
+
+Err.Clear
+RecurseForever
+Call ok(Err.Number = 28, "infinite recursion: err.number = " & Err.Number)
+On Error GoTo 0
+
 function f2(x,y)
 end function
 
@@ -2748,6 +3092,16 @@ Call ok(Err.Number = 13, "GetRef Empty arg error is " & Err.Number)
 Err.Clear
 Set getRefRef = GetRef(vbNullString)
 Call ok(Err.Number = 5, "GetRef vbNullString error is " & Err.Number)
+
+' GetRef called as a statement (result discarded). Must not crash even
+' though no res pointer is passed to the builtin.
+Err.Clear
+Call GetRef("GetRefTestFunc")
+Call ok(Err.Number = 0, "Call GetRef statement err = " & Err.Number)
+
+Err.Clear
+GetRef "GetRefTestFunc"
+Call ok(Err.Number = 0, "Bare GetRef statement err = " & Err.Number)
 
 ' Eval tests
 Call ok(Eval("1 + 2") = 3, "Eval(""1 + 2"") = " & Eval("1 + 2"))
@@ -2890,13 +3244,13 @@ On Error Resume Next
 Err.Clear
 Execute "Option Explicit : noDimExec = 101"
 Call ok(Err.Number <> 0, "Execute Option Explicit undeclared should error: err=" & Err.Number)
-todo_wine_ok Err.Number = 500, "Execute Option Explicit undeclared: err=" & Err.Number & " expected 500"
+ok Err.Number = 500, "Execute Option Explicit undeclared: err=" & Err.Number & " expected 500"
 
 ' Option Explicit inside same ExecuteGlobal string enforces Dim requirement
 Err.Clear
 ExecuteGlobal "Option Explicit : noDimExecGlobal = 102"
 Call ok(Err.Number <> 0, "ExecuteGlobal Option Explicit undeclared should error: err=" & Err.Number)
-todo_wine_ok Err.Number = 500, "ExecuteGlobal Option Explicit undeclared: err=" & Err.Number & " expected 500"
+ok Err.Number = 500, "ExecuteGlobal Option Explicit undeclared: err=" & Err.Number & " expected 500"
 
 ' Option Explicit with Dim in same string works
 Err.Clear
@@ -3032,6 +3386,61 @@ boolCallVar = True
 Err.Clear
 boolCallVar
 Call ok(Err.Number = 13, "bool var as statement: err = " & Err.Number)
+
+On Error GoTo 0
+
+' Tests for missing runtime error codes
+On Error Resume Next
+
+' Error 11: Division by zero
+Err.Clear
+Dim divZeroResult
+divZeroResult = 1 \ 0
+Call ok(Err.Number = 11, "division by zero: err.number = " & Err.Number)
+
+' Error 94: Invalid use of Null
+Err.Clear
+Dim nullResult
+nullResult = CLng(Null)
+todo_wine_ok Err.Number = 94, "CLng(Null): err.number = " & Err.Number
+
+' Error 429: ActiveX component can't create object
+Err.Clear
+Dim badObj
+Set badObj = CreateObject("No.Such.Object.XXXXXX")
+Call ok(Err.Number = 429, "CreateObject bad ProgID: err.number = " & Err.Number)
+
+' Error 451: Object not a collection
+Err.Clear
+Dim forEachVar
+For Each forEachVar In 42
+Next
+Call ok(Err.Number = 451, "For Each over integer: err.number = " & Err.Number)
+
+' Error 457: Duplicate key in Dictionary
+Err.Clear
+Dim dictObj
+Set dictObj = CreateObject("Scripting.Dictionary")
+dictObj.Add "key1", 1
+dictObj.Add "key1", 2
+Call ok(Err.Number = 457, "duplicate Dictionary key: err.number = " & Err.Number)
+
+' Error 500: `New` with an undeclared identifier resolves the name as a
+' variable first and fails with "Variable is undefined" before reaching
+' class lookup.
+Err.Clear
+Dim undefinedNewTarget
+Set undefinedNewTarget = New NoSuchClass
+Call ok(Err.Number = 500, "New undeclared identifier: err.number = " & Err.Number)
+
+' Error 506: Class not defined. To reach the class lookup path, the
+' identifier must be a declared variable that isn't a class.
+Err.Clear
+Dim notAClass
+notAClass = 42
+Dim undefinedClassObj
+Set undefinedClassObj = New notAClass
+Call ok(Err.Number = 506, "New non-class variable: err.number = " & Err.Number)
 
 On Error GoTo 0
 

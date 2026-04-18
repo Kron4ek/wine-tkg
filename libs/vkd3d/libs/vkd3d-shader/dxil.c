@@ -1871,6 +1871,7 @@ static enum vkd3d_result sm6_parser_type_table_init(struct sm6_parser *sm6)
                 break;
 
             case TYPE_CODE_HALF:
+                sm6->program->f16_denormal_mode = VKD3D_SHADER_DENORMAL_MODE_PRESERVE;
                 dxil_record_validate_operand_max_count(record, 0, sm6);
                 type->class = TYPE_CLASS_FLOAT;
                 type->u.width = 16;
@@ -11747,8 +11748,14 @@ static void sm6_parser_cleanup_attribute_groups(struct sm6_parser *dxil)
     vkd3d_free(dxil->attribute_groups);
 }
 
+static void dxil_cleanup_fixups(struct sm6_parser *dxil)
+{
+    vkd3d_free(dxil->fixups);
+}
+
 static void sm6_parser_cleanup(struct sm6_parser *sm6)
 {
+    dxil_cleanup_fixups(sm6);
     dxil_block_destroy(&sm6->root_block);
     dxil_global_abbrevs_cleanup(sm6->abbrevs, sm6->abbrev_count);
     sm6_type_table_cleanup(sm6->types, sm6->type_count);

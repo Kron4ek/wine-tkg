@@ -840,7 +840,7 @@ static void vkd3d_spirv_dump(const struct vkd3d_shader_code *spirv, enum vkd3d_s
 
     if (!vkd3d_spirv_binary_to_text(spirv, NULL, environment, formatting, &text, &message_context))
     {
-        vkd3d_shader_trace_text(text.code, text.size);
+        TRACE_TEXT(text.code, text.size);
         vkd3d_shader_free_shader_code(&text);
     }
 
@@ -6165,16 +6165,9 @@ static void spirv_compiler_emit_denormal_mode(struct spirv_compiler *compiler,
     if (!spirv_compiler_is_target_extension_supported(compiler,
             VKD3D_SHADER_SPIRV_EXTENSION_KHR_FLOAT_CONTROLS))
     {
-        /* Float controls is not understood by vkd3d-shader <= 1.19. */
-        if (compiler->api_version <= VKD3D_SHADER_API_VERSION_1_19)
-            spirv_compiler_warning(compiler, VKD3D_SHADER_WARNING_SPV_UNSUPPORTED_FEATURE,
-                    "Cannot emit denormal mode for %u-bit floats. "
-                    "The target environment does not support float controls.", bit_width);
-        else
-            spirv_compiler_error(compiler, VKD3D_SHADER_ERROR_SPV_UNSUPPORTED_FEATURE,
-                    "Cannot emit denormal mode for %u-bit floats. "
-                    "The target environment does not support float controls.", bit_width);
-
+        spirv_compiler_error(compiler, VKD3D_SHADER_ERROR_SPV_UNSUPPORTED_FEATURE,
+                "Cannot emit denormal mode for %u-bit floats. "
+                "The target environment does not support float controls.", bit_width);
         return;
     }
 
@@ -10902,7 +10895,7 @@ static int spirv_compiler_generate_spirv(struct spirv_compiler *compiler,
         if (!vkd3d_spirv_validate(&buffer, spirv, environment))
         {
             FIXME("Failed to validate SPIR-V binary.\n");
-            vkd3d_shader_trace_text(buffer.buffer, buffer.content_size);
+            vkd3d_string_buffer_trace(&buffer);
 
             if (compiler->config_flags & VKD3D_SHADER_CONFIG_FLAG_FORCE_VALIDATION)
             {

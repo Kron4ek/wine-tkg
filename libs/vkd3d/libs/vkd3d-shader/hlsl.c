@@ -2391,6 +2391,14 @@ struct hlsl_ir_node *hlsl_new_compile(struct hlsl_ctx *ctx, const struct hlsl_pr
             type = hlsl_get_type(ctx->cur_scope, "GeometryShader", true, true);
             break;
 
+        case VKD3D_SHADER_TYPE_HULL:
+            type = hlsl_get_type(ctx->cur_scope, "HullShader", true, true);
+            break;
+
+        case VKD3D_SHADER_TYPE_DOMAIN:
+            type = hlsl_get_type(ctx->cur_scope, "DomainShader", true, true);
+            break;
+
         case VKD3D_SHADER_TYPE_COMPUTE:
             type = hlsl_get_type(ctx->cur_scope, "ComputeShader", true, true);
             break;
@@ -5093,6 +5101,25 @@ static void declare_predefined_types(struct hlsl_ctx *ctx)
     hlsl_release_string_buffer(ctx, name);
 }
 
+void hlsl_ctx_init_entry_function_attributes(struct hlsl_ctx *ctx)
+{
+    ctx->domain = VKD3D_TESSELLATOR_DOMAIN_INVALID;
+    ctx->output_control_point_count = UINT_MAX;
+    ctx->output_control_point_type = NULL;
+    ctx->output_primitive = 0;
+    ctx->partitioning = 0;
+    ctx->patch_constant_func = NULL;
+    ctx->input_control_point_count = UINT_MAX;
+    ctx->input_control_point_type = NULL;
+    ctx->input_primitive_param = NULL;
+    ctx->max_vertex_count = 0;
+    ctx->input_primitive_type = VKD3D_PT_UNDEFINED;
+    ctx->output_topology_type = VKD3D_PT_UNDEFINED;
+
+    ctx->found_numthreads = 0;
+    memset(ctx->thread_count, 0, sizeof(ctx->thread_count));
+}
+
 static bool hlsl_ctx_init(struct hlsl_ctx *ctx, struct vkd3d_shader_source_list *source_files,
         const struct vkd3d_shader_compile_info *compile_info, const struct hlsl_profile_info *profile,
         struct vkd3d_shader_message_context *message_context)
@@ -5182,14 +5209,7 @@ static bool hlsl_ctx_init(struct hlsl_ctx *ctx, struct vkd3d_shader_source_list 
         return false;
     hlsl_block_add_instr(&ctx->static_initializers, ctx->error_instr);
 
-    ctx->domain = VKD3D_TESSELLATOR_DOMAIN_INVALID;
-    ctx->output_control_point_count = UINT_MAX;
-    ctx->output_primitive = 0;
-    ctx->partitioning = 0;
-    ctx->input_control_point_count = UINT_MAX;
-    ctx->max_vertex_count = 0;
-    ctx->input_primitive_type = VKD3D_PT_UNDEFINED;
-    ctx->output_topology_type = VKD3D_PT_UNDEFINED;
+    hlsl_ctx_init_entry_function_attributes(ctx);
 
     return true;
 }

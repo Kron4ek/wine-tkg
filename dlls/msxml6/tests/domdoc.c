@@ -32,9 +32,61 @@
 #include "windows.h"
 
 #include "initguid.h"
+#include "objsafe.h"
+#include "docobj.h"
+#include "dispex.h"
+
 #include "msxml6.h"
 
 #include "wine/test.h"
+
+#define check_interface(a, b, c) check_interface_(__LINE__, a, b, c)
+static void check_interface_(unsigned int line, void *iface_ptr, REFIID iid, BOOL supported)
+{
+    IUnknown *iface = iface_ptr;
+    HRESULT hr, expected_hr;
+    IUnknown *unk;
+
+    expected_hr = supported ? S_OK : E_NOINTERFACE;
+
+    hr = IUnknown_QueryInterface(iface, iid, (void **)&unk);
+    ok_(__FILE__, line)(hr == expected_hr, "Got hr %#lx, expected %#lx.\n", hr, expected_hr);
+    if (SUCCEEDED(hr))
+        IUnknown_Release(unk);
+}
+
+static const WCHAR email_xml[] =
+L"<?xml version=\"1.0\"?>"
+"<!DOCTYPE email ["\
+"   <!ELEMENT email         (recipients,from,reply-to?,subject,body,attachment*)>"\
+"       <!ATTLIST email attachments IDREFS #REQUIRED>"\
+"       <!ATTLIST email sent (yes|no) \"no\">"\
+"   <!ELEMENT recipients    (to+,cc*)>"\
+"   <!ELEMENT to            (#PCDATA)>"\
+"       <!ATTLIST to name CDATA #IMPLIED>"\
+"   <!ELEMENT cc            (#PCDATA)>"\
+"       <!ATTLIST cc name CDATA #IMPLIED>"\
+"   <!ELEMENT from          (#PCDATA)>"\
+"       <!ATTLIST from name CDATA #IMPLIED>"\
+"   <!ELEMENT reply-to      (#PCDATA)>"\
+"       <!ATTLIST reply-to name CDATA #IMPLIED>"\
+"   <!ELEMENT subject       ANY>"\
+"   <!ELEMENT body          ANY>"\
+"       <!ATTLIST body enc CDATA #FIXED \"UTF-8\">"\
+"   <!ELEMENT attachment    (#PCDATA)>"\
+"       <!ATTLIST attachment id ID #REQUIRED>"\
+"]>"
+"<email attachments=\"patch1\">"
+"   <recipients>"
+"       <to>wine-patches@winehq.org</to>"
+"   </recipients>"
+"   <from name=\"Anonymous\">user@localhost</from>"
+"   <subject>msxml3/tests: DTD validation (try 87)</subject>"
+"   <body>"
+"       It no longer causes spontaneous combustion..."
+"   </body>"
+"   <attachment id=\"patch1\">0001-msxml3-tests-DTD-validation.patch</attachment>"
+"</email>";
 
 static BSTR alloced_bstrs[256];
 static int alloced_bstrs_count;
@@ -453,6 +505,148 @@ static void test_get_parentNode(void)
     IXMLDOMDocument_Release(doc);
 }
 
+static void test_normalize_attribute_values(void)
+{
+    IXMLDOMElement *element;
+    IXMLDOMDocument2 *doc;
+    VARIANT var;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument2, (void **)&doc);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument2_loadXML(doc, _bstr_(L"<a attr=\"v\r\na\tl\r\" />"), NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument2_get_documentElement(doc, &element);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMElement_getAttribute(element, _bstr_(L"attr"), &var);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    todo_wine
+    ok(!wcscmp(V_BSTR(&var), L"v\na\tl\n"), "Unexpected value %s.\n", debugstr_w(V_BSTR(&var)));
+    VariantClear(&var);
+
+    V_VT(&var) = VT_I2;
+    V_I2(&var) = 10;
+    hr = IXMLDOMDocument2_getProperty(doc, _bstr_(L"NormalizeAttributeValues"), &var);
+todo_wine {
+    ok(hr == S_OK, "Failed to get property value, hr %#lx.\n", hr);
+    ok(V_VT(&var) == VT_BOOL, "Unexpected property value type, vt %d.\n", V_VT(&var));
+    ok(V_BOOL(&var) == VARIANT_FALSE, "Unexpected property value.\n");
+}
+    hr = IXMLDOMElement_getAttribute(element, _bstr_(L"attr"), &var);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    todo_wine
+    ok(!wcscmp(V_BSTR(&var), L"v\na\tl\n"), "Unexpected value %s.\n", debugstr_w(V_BSTR(&var)));
+    VariantClear(&var);
+
+    V_VT(&var) = VT_BOOL;
+    V_BOOL(&var) = VARIANT_TRUE;
+    hr = IXMLDOMDocument2_setProperty(doc, _bstr_(L"NormalizeAttributeValues"), var);
+    ok(hr == S_OK, "Failed to set property, hr %#lx.\n", hr);
+
+    V_VT(&var) = VT_I2;
+    V_I2(&var) = 10;
+    hr = IXMLDOMDocument2_getProperty(doc, _bstr_(L"NormalizeAttributeValues"), &var);
+todo_wine {
+    ok(hr == S_OK, "Failed to get property value, hr %#lx.\n", hr);
+    ok(V_VT(&var) == VT_BOOL, "Unexpected property value type, vt %d.\n", V_VT(&var));
+    ok(V_BOOL(&var) == VARIANT_TRUE, "Unexpected property value.\n");
+}
+    hr = IXMLDOMElement_getAttribute(element, _bstr_(L"attr"), &var);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(V_BSTR(&var), L"v a l "), "Unexpected value %s.\n", debugstr_w(V_BSTR(&var)));
+    VariantClear(&var);
+
+    IXMLDOMElement_Release(element);
+    IXMLDOMDocument2_Release(doc);
+    free_bstrs();
+}
+
+static void test_prohibitdtd(void)
+{
+    IXMLDOMDocument2 *doc, *doc2;
+    IXMLDOMNode *node;
+    HRESULT hr;
+    VARIANT v;
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument2, (void **)&doc);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    VariantInit(&v);
+    hr = IXMLDOMDocument2_getProperty(doc, _bstr_(L"ProhibitDTD"), &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_BOOL, "Unexpected type %d.\n", V_VT(&v));
+    ok(V_BOOL(&v) == VARIANT_TRUE, "Unexpected value %d.\n", V_BOOL(&v));
+
+    hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml), NULL);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument2_loadXML(doc, _bstr_(L"<a/>"), NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    V_VT(&v) = VT_I2;
+    V_I2(&v) = 0;
+    hr = IXMLDOMDocument2_setProperty(doc, _bstr_(L"ProhibitDTD"), v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    VariantInit(&v);
+    hr = IXMLDOMDocument2_getProperty(doc, _bstr_(L"ProhibitDTD"), &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_BOOL, "Unexpected type %d.\n", V_VT(&v));
+    ok(!V_BOOL(&v), "Unexpected value %d.\n", V_BOOL(&v));
+
+    hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml), NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument2_cloneNode(doc, VARIANT_FALSE, &node);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMNode_QueryInterface(node, &IID_IXMLDOMDocument2, (void **)&doc2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IXMLDOMNode_Release(node);
+
+    VariantInit(&v);
+    hr = IXMLDOMDocument2_getProperty(doc2, _bstr_(L"ProhibitDTD"), &v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(V_VT(&v) == VT_BOOL, "Unexpected type %d.\n", V_VT(&v));
+    ok(!V_BOOL(&v), "Unexpected value %d.\n", V_BOOL(&v));
+    IXMLDOMDocument2_Release(doc2);
+
+    IXMLDOMDocument2_Release(doc);
+}
+
+static void test_interfaces(void)
+{
+    IXMLDOMDocument *doc;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IXMLDOMDocument, (void **)&doc);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    check_interface(doc, &IID_IXMLDOMDocument, TRUE);
+    check_interface(doc, &IID_IPersistStreamInit, TRUE);
+    check_interface(doc, &IID_IObjectWithSite, TRUE);
+    check_interface(doc, &IID_IObjectSafety, TRUE);
+    check_interface(doc, &IID_IConnectionPointContainer, TRUE);
+    check_interface(doc, &IID_IDispatch, TRUE);
+    check_interface(doc, &IID_IDispatchEx, TRUE);
+    check_interface(doc, &IID_IUnknown, TRUE);
+    check_interface(doc, &IID_IPersistStream, TRUE);
+    check_interface(doc, &IID_ISequentialStream, FALSE);
+    check_interface(doc, &IID_IPersist, FALSE);
+todo_wine
+{
+    check_interface(doc, &IID_IOleCommandTarget, TRUE);
+    check_interface(doc, &IID_IPersistMoniker, TRUE);
+    check_interface(doc, &IID_IProvideClassInfo, TRUE);
+    check_interface(doc, &IID_IStream, TRUE);
+}
+    IXMLDOMDocument_Release(doc);
+}
+
 START_TEST(domdoc)
 {
     HRESULT hr;
@@ -474,6 +668,9 @@ START_TEST(domdoc)
     test_leading_spaces();
     test_get_ownerDocument();
     test_get_parentNode();
+    test_normalize_attribute_values();
+    test_prohibitdtd();
+    test_interfaces();
 
     CoUninitialize();
 }

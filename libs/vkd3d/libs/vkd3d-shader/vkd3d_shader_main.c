@@ -271,24 +271,8 @@ fail:
 
 void vkd3d_string_buffer_trace_(const struct vkd3d_string_buffer *buffer, const char *function)
 {
-    vkd3d_shader_trace_text_(buffer->buffer, buffer->content_size, function);
-}
-
-void vkd3d_shader_trace_text_(const char *text, size_t size, const char *function)
-{
-    const char *p, *q, *end = text + size;
-
-    if (!TRACE_ON())
-        return;
-
-    for (p = text; p < end; p = q)
-    {
-        if (!(q = memchr(p, '\n', end - p)))
-            q = end;
-        else
-            ++q;
-        vkd3d_dbg_printf(VKD3D_DEBUG_ENV_NAME, VKD3D_DBG_LEVEL_TRACE, function, "%.*s", (int)(q - p), p);
-    }
+    vkd3d_debug_channel_print_text(vkd3d_debug_channel_default, VKD3D_DEBUG_ENV_NAME,
+            VKD3D_DEBUG_CLASS_TRACE, function, buffer->buffer, buffer->content_size);
 }
 
 void vkd3d_string_buffer_cache_init(struct vkd3d_string_buffer_cache *cache)
@@ -875,10 +859,19 @@ static enum vkd3d_result vsir_parse(const struct vkd3d_shader_compile_info *comp
         const struct shader_dump_data *dump_data, struct vkd3d_shader_message_context *message_context,
         struct vsir_program *program, struct vkd3d_shader_code *reflection_data)
 {
+    enum vkd3d_shader_api_version api_version = VKD3D_SHADER_API_VERSION_1_2;
     struct vkd3d_shader_compile_info preprocessed_info;
     struct vkd3d_shader_code preprocessed;
     enum vkd3d_result ret;
     unsigned int i;
+
+    for (i = 0; i < compile_info->option_count; ++i)
+    {
+        const struct vkd3d_shader_compile_option *option = &compile_info->options[i];
+
+        if (option->name == VKD3D_SHADER_COMPILE_OPTION_API_VERSION)
+            api_version = option->value;
+    }
 
     switch (compile_info->source_type)
     {
@@ -917,6 +910,13 @@ static enum vkd3d_result vsir_parse(const struct vkd3d_shader_compile_info *comp
     {
         WARN("Failed to parse shader.\n");
         return ret;
+    }
+
+    if (api_version <= VKD3D_SHADER_API_VERSION_1_19)
+    {
+        program->f16_denormal_mode = VKD3D_SHADER_DENORMAL_MODE_ANY;
+        program->f32_denormal_mode = VKD3D_SHADER_DENORMAL_MODE_ANY;
+        program->f64_denormal_mode = VKD3D_SHADER_DENORMAL_MODE_ANY;
     }
 
     for (i = 0; i < compile_info->option_count; ++i)

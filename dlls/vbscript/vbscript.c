@@ -140,18 +140,7 @@ HRESULT exec_global_code(script_ctx_t *ctx, vbscode_t *code, VARIANT *res, BOOL 
 
     for (i = 0; i < code->main_code.var_cnt; i++)
     {
-        size_t j;
-        BOOL found = FALSE;
-
-        for (j = 0; j < obj->global_vars_cnt; j++)
-        {
-            if (!wcsicmp(obj->global_vars[j]->name, code->main_code.vars[i].name))
-            {
-                found = TRUE;
-                break;
-            }
-        }
-        if (found)
+        if (script_disp_find_var(obj, code->main_code.vars[i].name))
             continue;
 
         if (!(var = heap_pool_alloc(&obj->heap, sizeof(*var))))
@@ -163,23 +152,32 @@ HRESULT exec_global_code(script_ctx_t *ctx, vbscode_t *code, VARIANT *res, BOOL 
         V_VT(&var->v) = VT_EMPTY;
         var->is_const = FALSE;
         var->array = NULL;
+        var->index = obj->global_vars_cnt;
+        rb_put(&obj->var_tree, var->name, &var->entry);
 
         obj->global_vars[obj->global_vars_cnt++] = var;
     }
 
     for (func_iter = code->funcs; func_iter; func_iter = func_iter->next)
     {
-        for (i = 0; i < obj->global_funcs_cnt; i++)
+        struct rb_entry *entry = rb_get(&obj->func_tree, func_iter->name);
+
+        if (entry)
         {
-            if (!wcsicmp(obj->global_funcs[i]->name, func_iter->name))
-            {
-                /* global function already exists, replace it */
-                obj->global_funcs[i] = func_iter;
-                break;
-            }
+            function_t *old_func = RB_ENTRY_VALUE(entry, function_t, entry);
+            size_t old_index = old_func->index;
+            /* global function already exists, replace it */
+            rb_remove(&obj->func_tree, &old_func->entry);
+            func_iter->index = old_index;
+            obj->global_funcs[old_index] = func_iter;
+            rb_put(&obj->func_tree, func_iter->name, &func_iter->entry);
         }
-        if (i == obj->global_funcs_cnt)
+        else
+        {
+            func_iter->index = obj->global_funcs_cnt;
             obj->global_funcs[obj->global_funcs_cnt++] = func_iter;
+            rb_put(&obj->func_tree, func_iter->name, &func_iter->entry);
+        }
     }
 
     if (code->classes)
@@ -245,7 +243,7 @@ named_item_t *lookup_named_item(script_ctx_t *ctx, const WCHAR *name, unsigned f
     HRESULT hres;
 
     LIST_FOR_EACH_ENTRY(item, &ctx->named_items, named_item_t, entry) {
-        if((item->flags & flags) == flags && !wcsicmp(item->name, name)) {
+        if((item->flags & flags) == flags && !vbs_wcsicmp(item->name, name)) {
             if(!item->script_obj && !(item->flags & SCRIPTITEM_GLOBALMEMBERS)) {
                 hres = create_script_disp(ctx, &item->script_obj);
                 if(FAILED(hres)) return NULL;

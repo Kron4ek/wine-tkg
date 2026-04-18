@@ -5532,6 +5532,14 @@ int CDECL vwprintf(const wchar_t *format, va_list valist)
 }
 
 /*********************************************************************
+ *              _vwprintf_l (MSVCRT.@)
+ */
+int CDECL _vwprintf_l(const wchar_t *format, _locale_t locale, va_list valist)
+{
+    return _vfwprintf_l(stdout, format, locale, valist);
+}
+
+/*********************************************************************
  *		vwprintf_s (MSVCRT.@)
  */
 int CDECL vwprintf_s(const wchar_t *format, va_list valist)
@@ -5835,6 +5843,19 @@ int WINAPIV wprintf(const wchar_t *format, ...)
     int res;
     va_start(valist, format);
     res = vwprintf(format, valist);
+    va_end(valist);
+    return res;
+}
+
+/*********************************************************************
+ *              _wprintf_l (MSVCRT.@)
+ */
+int WINAPIV _wprintf_l(const wchar_t *format, _locale_t locale, ...)
+{
+    va_list valist;
+    int res;
+    va_start(valist, locale);
+    res = _vwprintf_l(format, locale, valist);
     va_end(valist);
     return res;
 }
