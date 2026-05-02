@@ -111,7 +111,23 @@ void *opengl_drawable_create( UINT size, const struct opengl_drawable_funcs *fun
     drawable->doublebuffer = !!(pixel_formats[format - 1].pfd.dwFlags & PFD_DOUBLEBUFFER);
     drawable->stereo = !!(pixel_formats[format - 1].pfd.dwFlags & PFD_STEREO);
     if ((drawable->client = client)) client_surface_add_ref( client );
-    for (UINT i = 0; i < ARRAY_SIZE(drawable->buffer_map); i++) drawable->buffer_map[i] = GL_FRONT_LEFT + i;
+
+    opengl_drawable_map_buffer( drawable, GL_FRONT_LEFT, GL_FRONT_LEFT );
+    opengl_drawable_map_buffer( drawable, GL_FRONT, GL_FRONT );
+    opengl_drawable_map_buffer( drawable, GL_LEFT, GL_LEFT );
+    opengl_drawable_map_buffer( drawable, GL_FRONT_AND_BACK, GL_FRONT_AND_BACK );
+
+    if (drawable->doublebuffer)
+    {
+        opengl_drawable_map_buffer( drawable, GL_BACK_LEFT, GL_BACK_LEFT );
+        opengl_drawable_map_buffer( drawable, GL_BACK, GL_BACK );
+    }
+    if (drawable->stereo)
+    {
+        opengl_drawable_map_buffer( drawable, GL_FRONT_RIGHT, GL_FRONT_RIGHT );
+        opengl_drawable_map_buffer( drawable, GL_RIGHT, GL_RIGHT );
+        if (drawable->doublebuffer) opengl_drawable_map_buffer( drawable, GL_BACK_RIGHT, GL_BACK_RIGHT );
+    }
 
     TRACE( "created %s\n", debugstr_opengl_drawable( drawable ) );
     return drawable;
@@ -404,23 +420,23 @@ static struct opengl_drawable *framebuffer_surface_create( int format, struct cl
     struct framebuffer_surface *surface;
     if (!(surface = opengl_drawable_create( sizeof(*surface), &framebuffer_surface_funcs, format, client ))) return NULL;
 
-    surface->base.buffer_map[0] = GL_COLOR_ATTACHMENT0;
-    surface->base.buffer_map[2] = surface->base.doublebuffer ? GL_COLOR_ATTACHMENT1 : GL_NONE;
+    opengl_drawable_map_buffer( &surface->base, GL_FRONT_LEFT, GL_COLOR_ATTACHMENT0 );
+    opengl_drawable_map_buffer( &surface->base, GL_FRONT, GL_COLOR_ATTACHMENT0 ); /* only front left */
+    opengl_drawable_map_buffer( &surface->base, GL_LEFT, GL_COLOR_ATTACHMENT0 ); /* only front left */
+    opengl_drawable_map_buffer( &surface->base, GL_FRONT_AND_BACK, GL_COLOR_ATTACHMENT0 ); /* only front left */
+
+    if (surface->base.doublebuffer)
+    {
+        opengl_drawable_map_buffer( &surface->base, GL_BACK_LEFT, GL_COLOR_ATTACHMENT1 );
+        opengl_drawable_map_buffer( &surface->base, GL_BACK, GL_COLOR_ATTACHMENT1 ); /* only back left */
+    }
     if (surface->base.stereo)
     {
-        surface->base.buffer_map[1] = surface->base.doublebuffer ? GL_COLOR_ATTACHMENT2 : GL_COLOR_ATTACHMENT1;
-        surface->base.buffer_map[3] = surface->base.doublebuffer ? GL_COLOR_ATTACHMENT3 : GL_NONE;
+        GLenum attachment = surface->base.doublebuffer ? GL_COLOR_ATTACHMENT2 : GL_COLOR_ATTACHMENT1;
+        opengl_drawable_map_buffer( &surface->base, GL_FRONT_RIGHT, attachment );
+        opengl_drawable_map_buffer( &surface->base, GL_RIGHT, attachment ); /* only front right */
+        if (surface->base.doublebuffer) opengl_drawable_map_buffer( &surface->base, GL_BACK_RIGHT, GL_COLOR_ATTACHMENT3 );
     }
-    else
-    {
-        surface->base.buffer_map[1] = GL_NONE;
-        surface->base.buffer_map[3] = GL_NONE;
-    }
-    surface->base.buffer_map[GL_FRONT - GL_FRONT_LEFT] = surface->base.buffer_map[0]; /* only front left */
-    surface->base.buffer_map[GL_BACK - GL_FRONT_LEFT] = surface->base.buffer_map[2]; /* only back left */
-    surface->base.buffer_map[GL_LEFT - GL_FRONT_LEFT] = surface->base.buffer_map[0]; /* only front left */
-    surface->base.buffer_map[GL_RIGHT - GL_FRONT_LEFT] = surface->base.buffer_map[1]; /* only front right */
-    surface->base.buffer_map[GL_FRONT_AND_BACK - GL_FRONT_LEFT] = surface->base.buffer_map[0]; /* only front left */
 
     return &surface->base;
 }
@@ -1929,11 +1945,6 @@ static BOOL win32u_wglMakeContextCurrentARB( HDC draw_hdc, HDC read_hdc, HGLRC c
     return TRUE;
 }
 
-static BOOL win32u_wglMakeCurrent( HDC hdc, HGLRC client_context )
-{
-    return win32u_wglMakeContextCurrentARB( hdc, hdc, client_context );
-}
-
 static void opengl_client_pbuffer_init( HPBUFFERARB client_pbuffer, struct pbuffer *pbuffer, const struct opengl_funcs *funcs )
 {
     struct opengl_client_pbuffer *client = opengl_client_pbuffer_from_client( client_pbuffer );
@@ -2702,7 +2713,7 @@ static void display_funcs_init(void)
     display_funcs.p_wglDeleteContext = (void *)1; /* never called */
     display_funcs.p_wglCopyContext = (void *)1; /* never called */
     display_funcs.p_wglShareLists = (void *)1; /* never called */
-    display_funcs.p_wglMakeCurrent = win32u_wglMakeCurrent;
+    display_funcs.p_wglMakeCurrent = (void *)1; /* never called */
 
     display_funcs.p_wglSwapBuffers = win32u_wglSwapBuffers;
     display_funcs.p_context_flush = win32u_context_flush;

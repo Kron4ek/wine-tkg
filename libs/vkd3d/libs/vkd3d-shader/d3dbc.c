@@ -989,8 +989,8 @@ static void d3dbc_scan_register(struct vkd3d_shader_sm1_parser *d3dbc,
 static void d3dbc_add_combined_sampler_descriptor(struct vkd3d_shader_sm1_parser *d3dbc,
         unsigned int sampler_idx, enum vkd3d_shader_resource_type resource_type)
 {
-    struct vkd3d_shader_register_range range = {.first = sampler_idx, .last = sampler_idx};
     const struct vkd3d_shader_d3dbc_source_info *source_info = d3dbc->d3dbc_source_info;
+    struct vsir_register_range range = {.first = sampler_idx, .last = sampler_idx};
     struct vsir_program *program = d3dbc->program;
     struct vkd3d_shader_descriptor_info1 *d;
 
@@ -1134,7 +1134,7 @@ static void shader_sm1_read_semantic(struct vkd3d_shader_sm1_parser *sm1,
         const uint32_t **ptr, struct vkd3d_shader_semantic *semantic)
 {
     enum vkd3d_sm1_resource_type resource_type;
-    struct vkd3d_shader_register_range *range;
+    struct vsir_register_range *range;
     uint32_t usage_token, dst_token;
 
     if (*ptr >= sm1->end || sm1->end - *ptr < 2)
@@ -1621,7 +1621,7 @@ int d3dbc_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t c
 
     for (i = 0; i < 3; ++i)
     {
-        struct vkd3d_shader_register_range range = {.space = 0, .first = i, .last = i};
+        struct vsir_register_range range = {.space = 0, .first = i, .last = i};
         unsigned int size = get_external_constant_count(&sm1, i);
 
         if (size)

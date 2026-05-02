@@ -46,6 +46,20 @@
 DECL_FUNCPTR( __android_log_print );
 DECL_FUNCPTR( ANativeWindow_fromSurface );
 DECL_FUNCPTR( ANativeWindow_release );
+
+#ifdef __ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__
+extern struct AHardwareBuffer* ANativeWindowBuffer_getHardwareBuffer(struct ANativeWindowBuffer* anwb) __INTRODUCED_IN(26);
+
+DECL_FUNCPTR( AHardwareBuffer_describe );
+DECL_FUNCPTR( AHardwareBuffer_acquire );
+DECL_FUNCPTR( AHardwareBuffer_release );
+DECL_FUNCPTR( AHardwareBuffer_lock );
+DECL_FUNCPTR( AHardwareBuffer_unlock );
+DECL_FUNCPTR( AHardwareBuffer_recvHandleFromUnixSocket );
+DECL_FUNCPTR( AHardwareBuffer_sendHandleToUnixSocket );
+DECL_FUNCPTR( ANativeWindowBuffer_getHardwareBuffer );
+#endif
+
 #undef DECL_FUNCPTR
 
 
@@ -105,8 +119,6 @@ extern BOOL has_client_surface( HWND hwnd );
 extern NTSTATUS android_dispatch_ioctl( void *arg );
 extern NTSTATUS android_java_init( void *arg );
 extern NTSTATUS android_java_uninit( void *arg );
-extern NTSTATUS android_register_window( void *arg );
-extern PNTAPCFUNC register_window_callback;
 extern UINT64 start_device_callback;
 
 extern unsigned int screen_width;
@@ -119,7 +131,6 @@ enum android_window_messages
     WM_ANDROID_REFRESH = WM_WINE_FIRST_DRIVER_MSG,
 };
 
-extern void init_ahardwarebuffers(void);
 extern HWND get_capture_window(void);
 extern void init_monitors( int width, int height );
 extern void set_screen_dpi( DWORD dpi );
@@ -162,7 +173,6 @@ union event_data
     {
         enum event_type type;
         HWND            hwnd;
-        ANativeWindow  *window;
         BOOL            client;
         unsigned int    width;
         unsigned int    height;
@@ -184,9 +194,9 @@ union event_data
 
 int send_event( const union event_data *data );
 
-extern JavaVM **p_java_vm;
-extern jobject *p_java_object;
-extern unsigned short *p_java_gdt_sel;
+extern JavaVM *java_vm;
+extern jobject java_object;
+extern unsigned short java_gdt_sel;
 
 /* string helpers */
 

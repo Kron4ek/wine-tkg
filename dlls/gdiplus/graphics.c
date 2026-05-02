@@ -5351,8 +5351,21 @@ GpStatus WINGDIPAPI GdipGetNearestColor(GpGraphics *graphics, ARGB* argb)
     {
         static int once;
         GpBitmap *bitmap = (GpBitmap *)graphics->image;
-        if (IsIndexedPixelFormat(bitmap->format) && !once++)
-            FIXME("(%p, %p): Passing color unmodified\n", graphics, argb);
+        if (IsIndexedPixelFormat(bitmap->format))
+        {
+            if (!once++)
+                FIXME("(%p, %p): Passing indexed color unmodified\n", graphics, argb);
+        }
+        else if (bitmap->format == PixelFormat16bppRGB565)
+        {
+            /* 16bpp RGB565: Keep top 5 bits for R and B channels, top 6 bits for G channel */
+            *argb = (*argb & 0x00F8FCF8) | 0xFF000000;
+        }
+        else if (bitmap->format == PixelFormat16bppRGB555)
+        {
+            /* 16bpp RGB555: Keep top 5 bits for R, G, B channels */
+            *argb = (*argb & 0x00F8F8F8) | 0xFF000000;
+        }
     }
 
     return Ok;
@@ -6066,7 +6079,7 @@ GpStatus WINGDIPAPI GdipMeasureCharacterRanges(GpGraphics* graphics,
     struct measure_ranges_args args;
     HDC hdc, temp_hdc=NULL;
     RectF scaled_rect;
-    REAL margin_x;
+    REAL margin_x, offsety = 0.0f;
 
     TRACE("(%p %s %d %p %s %p %d %p)\n", graphics, debugstr_wn(string, length),
             length, font, debugstr_rectf(layoutRect), stringFormat, regionCount, regions);
@@ -6092,14 +6105,34 @@ GpStatus WINGDIPAPI GdipMeasureCharacterRanges(GpGraphics* graphics,
     if (stringFormat->attr)
         TRACE("may be ignoring some format flags: attr %x\n", stringFormat->attr);
 
+    if (stringFormat->line_align != StringAlignmentNear)
+    {
+        RectF bounds, in_rect = *layoutRect;
+        in_rect.Height = 0.0f; /* avoid height clipping */
+        GdipMeasureString(graphics, string, length, font, &in_rect, stringFormat, &bounds, NULL, NULL);
+
+        TRACE("bounds %s\n", debugstr_rectf(&bounds));
+
+        if (stringFormat->line_align == StringAlignmentCenter)
+            offsety = (layoutRect->Height - bounds.Height) / 2.0f;
+        else if (stringFormat->line_align == StringAlignmentFar)
+            offsety = layoutRect->Height - bounds.Height;
+    }
+    TRACE("line align %d, offsety %f\n", stringFormat->line_align, offsety);
 
     margin_x = stringFormat->generic_typographic ? 0.0 : font->emSize / 6.0;
     margin_x *= units_scale(font->unit, graphics->unit, graphics->xres, graphics->printer_display);
     transform_properties(graphics, NULL, TRUE, &args.rel_width, &args.rel_height, NULL);
     scaled_rect.X = (layoutRect->X + margin_x) * args.rel_width;
-    scaled_rect.Y = layoutRect->Y * args.rel_height;
+    scaled_rect.Y = (layoutRect->Y + offsety) * args.rel_height;
     scaled_rect.Width = layoutRect->Width * args.rel_width;
     scaled_rect.Height = layoutRect->Height * args.rel_height;
+    if (scaled_rect.Width >= 0.5f)
+    {
+        scaled_rect.Width -= margin_x * 2.0f * args.rel_width;
+        if (scaled_rect.Width < 0.5f) /* doesn't fit */
+            scaled_rect.Width = 0.5f;
+    }
 
     if (scaled_rect.Width >= 1 << 23) scaled_rect.Width = 1 << 23;
     if (scaled_rect.Height >= 1 << 23) scaled_rect.Height = 1 << 23;
@@ -6167,18 +6200,6 @@ static GpStatus measure_string_callback(struct gdip_format_string_info *info)
 
     if (args->linesfilled)
         (*args->linesfilled)++;
-
-    switch (info->format ? info->format->align : StringAlignmentNear)
-    {
-    case StringAlignmentCenter:
-        bounds->X = bounds->X + (info->rect->Width/2) - (bounds->Width/2);
-        break;
-    case StringAlignmentFar:
-        bounds->X = bounds->X + info->rect->Width - bounds->Width;
-        break;
-    default:
-        break;
-    }
 
     return Ok;
 }
@@ -6265,6 +6286,33 @@ GpStatus WINGDIPAPI GdipMeasureString(GpGraphics *graphics,
 
     if (lines)
         bounds->Width += margin_x * 2.0;
+
+    if (lines && format)
+    {
+        switch (format->align)
+        {
+        case StringAlignmentCenter:
+            bounds->X = rect->X + (rect->Width - bounds->Width) / 2.0f;
+            break;
+        case StringAlignmentFar:
+            bounds->X = rect->X + rect->Width - bounds->Width;
+            break;
+        default:
+            break;
+        }
+
+        switch (format->line_align)
+        {
+        case StringAlignmentCenter:
+            bounds->Y = rect->Y + (rect->Height - bounds->Height) / 2.0f;
+            break;
+        case StringAlignmentFar:
+            bounds->Y = rect->Y + rect->Height - bounds->Height;
+            break;
+        default:
+            break;
+        }
+    }
 
     SelectObject(hdc, oldfont);
     DeleteObject(gdifont);

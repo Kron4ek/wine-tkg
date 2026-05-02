@@ -3856,13 +3856,15 @@ static void fx_parser_skip(struct fx_parser *parser, size_t size)
     parser->ptr += size;
 }
 
-static void VKD3D_PRINTF_FUNC(3, 4) fx_parser_error(struct fx_parser *parser, enum vkd3d_shader_error error,
-        const char *format, ...)
+#define fx_parser_error(parser, error, ...) \
+        fx_parser_error_(parser, error, __FUNCTION__, __VA_ARGS__)
+static void VKD3D_PRINTF_FUNC(4, 5) fx_parser_error_(struct fx_parser *parser, enum vkd3d_shader_error error,
+        const char *function, const char *format, ...)
 {
     va_list args;
 
     va_start(args, format);
-    vkd3d_shader_verror(parser->message_context, NULL, error, format, args);
+    vkd3d_shader_verror(parser->message_context, NULL, error, function, format, args);
     va_end(args);
 
     parser->failed = true;

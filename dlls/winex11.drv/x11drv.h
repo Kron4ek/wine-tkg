@@ -470,8 +470,6 @@ extern BOOL use_take_focus;
 extern BOOL use_primary_selection;
 extern BOOL use_system_cursors;
 extern BOOL grab_fullscreen;
-extern int keyboard_layout;
-extern BOOL keyboard_scancode_detect;
 extern BOOL usexcomposite;
 extern BOOL managed_mode;
 extern BOOL private_color_map;
@@ -756,7 +754,7 @@ extern void X11DRV_ActivateWindow( HWND hwnd, HWND previous );
 extern void reapply_cursor_clipping(void);
 extern void ungrab_clipping_window(void);
 extern void move_resize_window( HWND hwnd, int dir, POINT pos );
-extern void X11DRV_InitKeyboard( Display *display );
+extern void x11drv_init_keyboard( Display *display );
 extern void X11DRV_InitMouse( Display *display );
 extern BOOL X11DRV_ProcessEvents( DWORD mask );
 
@@ -772,11 +770,6 @@ extern BOOL xinerama_get_fullscreen_monitors( const RECT *rect, unsigned long *g
 extern void xinerama_init( unsigned int width, unsigned int height );
 extern void init_recursive_mutex( pthread_mutex_t *mutex );
 extern void init_icm_profile(void);
-
-/* keyboard.c */
-
-extern int x11drv_find_keyboard_layout( const WCHAR *layout );
-extern WCHAR *x11drv_get_keyboard_layout_list( DWORD *size );
 
 #define DEPTH_COUNT 3
 extern const unsigned int *depths;

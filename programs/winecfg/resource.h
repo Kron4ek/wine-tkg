@@ -46,7 +46,6 @@
 #define IDS_LINKS_TO                    17
 #define IDS_WINECFG_TITLE_APP           18   /* App specific title */
 #define IDS_TAB_STAGING                 19
-#define IDS_TAB_INPUT                   20
 #define IDI_WINECFG                     100
 #define IDI_LOGO                        102
 #define IDD_ABOUTCFG                    107
@@ -57,7 +56,6 @@
 #define IDD_DRIVECFG                    112
 #define IDD_DESKTOP_INTEGRATION         115
 #define IDD_STAGING                     116
-#define IDD_INPUT_CONFIG                117
 #define IDC_WINVER                      1012
 #define IDC_DESKTOP_WIDTH               1023
 #define IDC_DESKTOP_HEIGHT              1024
@@ -128,6 +126,7 @@
 /* graphics */
 #define IDC_ENABLE_MANAGED              1100
 #define IDC_ENABLE_DECORATED            1101
+#define IDC_FULLSCREEN_GRAB             1102
 
 #define IDC_RES_TRACKBAR                1107
 #define IDC_RES_DPIEDIT                 1108
@@ -233,10 +232,3 @@
 #define IDC_ABT_TITLE_TEXT           8436
 #define IDC_ABT_WEB_LINK             8437
 #define IDC_ABT_LICENSE_TEXT         8438
-
-/* input tab */
-#define IDC_FULLSCREEN_GRAB             1501
-#define IDC_KEYBOARD_LAYOUT             1502
-#define IDC_KEYBOARD_SCANCODE_DETECT    1503
-
-#define IDS_INPUT_AUTO_DETECT_LAYOUT    8501

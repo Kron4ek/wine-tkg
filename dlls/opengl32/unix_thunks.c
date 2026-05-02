@@ -31,15 +31,6 @@ static NTSTATUS wgl_wglCopyContext( void *args )
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS wgl_wglCreateContext( void *args )
-{
-    struct wglCreateContext_params *params = args;
-    const struct opengl_funcs *funcs = get_dc_funcs( params->hDc );
-    if (!funcs || !funcs->p_wglCreateContext) return STATUS_NOT_IMPLEMENTED;
-    params->ret = wrap_wglCreateContext( params->teb, params->hDc, params->ret );
-    return STATUS_SUCCESS;
-}
-
 static NTSTATUS wgl_wglDeleteContext( void *args )
 {
     struct wglDeleteContext_params *params = args;
@@ -55,13 +46,6 @@ static NTSTATUS wgl_wglGetPixelFormat( void *args )
     const struct opengl_funcs *funcs = get_dc_funcs( params->hdc );
     if (!funcs || !funcs->p_wglGetPixelFormat) return STATUS_NOT_IMPLEMENTED;
     params->ret = funcs->p_wglGetPixelFormat( params->hdc );
-    return STATUS_SUCCESS;
-}
-
-static NTSTATUS wgl_wglMakeCurrent( void *args )
-{
-    struct wglMakeCurrent_params *params = args;
-    params->ret = wrap_wglMakeCurrent( params->teb, params->hDc, params->newContext );
     return STATUS_SUCCESS;
 }
 
@@ -30577,10 +30561,8 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     process_detach,
     get_pixel_formats,
     wgl_wglCopyContext,
-    wgl_wglCreateContext,
     wgl_wglDeleteContext,
     wgl_wglGetPixelFormat,
-    wgl_wglMakeCurrent,
     wgl_wglSetPixelFormat,
     wgl_wglShareLists,
     wgl_wglSwapBuffers,
@@ -33702,21 +33684,6 @@ static NTSTATUS wow64_wgl_wglCopyContext( void *args )
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS wow64_wgl_wglCreateContext( void *args )
-{
-    struct
-    {
-        PTR32 teb;
-        PTR32 hDc;
-        PTR32 ret;
-    } *params = args;
-    TEB *teb = get_teb64( params->teb );
-    const struct opengl_funcs *funcs = get_dc_funcs( ULongToPtr(params->hDc) );
-    if (!funcs || !funcs->p_wglCreateContext) return STATUS_NOT_IMPLEMENTED;
-    params->ret = (UINT_PTR)wrap_wglCreateContext( teb, ULongToPtr(params->hDc), UlongToHandle( params->ret ) );
-    return STATUS_SUCCESS;
-}
-
 static NTSTATUS wow64_wgl_wglDeleteContext( void *args )
 {
     struct
@@ -33743,20 +33710,6 @@ static NTSTATUS wow64_wgl_wglGetPixelFormat( void *args )
     const struct opengl_funcs *funcs = get_dc_funcs( ULongToPtr(params->hdc) );
     if (!funcs || !funcs->p_wglGetPixelFormat) return STATUS_NOT_IMPLEMENTED;
     params->ret = funcs->p_wglGetPixelFormat( ULongToPtr(params->hdc) );
-    return STATUS_SUCCESS;
-}
-
-static NTSTATUS wow64_wgl_wglMakeCurrent( void *args )
-{
-    struct
-    {
-        PTR32 teb;
-        PTR32 hDc;
-        PTR32 newContext;
-        BOOL ret;
-    } *params = args;
-    TEB *teb = get_teb64( params->teb );
-    params->ret = wrap_wglMakeCurrent( teb, ULongToPtr(params->hDc), ULongToPtr(params->newContext) );
     return STATUS_SUCCESS;
 }
 
@@ -87001,10 +86954,8 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     wow64_process_detach,
     wow64_get_pixel_formats,
     wow64_wgl_wglCopyContext,
-    wow64_wgl_wglCreateContext,
     wow64_wgl_wglDeleteContext,
     wow64_wgl_wglGetPixelFormat,
-    wow64_wgl_wglMakeCurrent,
     wow64_wgl_wglSetPixelFormat,
     wow64_wgl_wglShareLists,
     wow64_wgl_wglSwapBuffers,
@@ -90110,11 +90061,6 @@ static BOOL null_wglCopyContext( HGLRC hglrcSrc, HGLRC hglrcDst, UINT mask )
     WARN( "unsupported\n" );
     return 0;
 }
-static HGLRC null_wglCreateContext( HDC hDc )
-{
-    WARN( "unsupported\n" );
-    return 0;
-}
 static BOOL null_wglDeleteContext( HGLRC oldContext )
 {
     WARN( "unsupported\n" );
@@ -90124,11 +90070,6 @@ static int null_wglGetPixelFormat( HDC hdc )
 {
     WARN( "unsupported\n" );
     RtlSetLastWin32Error( ERROR_INVALID_PIXEL_FORMAT );
-    return 0;
-}
-static BOOL null_wglMakeCurrent( HDC hDc, HGLRC newContext )
-{
-    WARN( "unsupported\n" );
     return 0;
 }
 static BOOL null_wglSetPixelFormat( HDC hdc, int ipfd, const PIXELFORMATDESCRIPTOR *ppfd )
@@ -91502,10 +91443,8 @@ static void null_glViewport( GLint x, GLint y, GLsizei width, GLsizei height )
 struct opengl_funcs null_opengl_funcs =
 {
     .p_wglCopyContext = null_wglCopyContext,
-    .p_wglCreateContext = null_wglCreateContext,
     .p_wglDeleteContext = null_wglDeleteContext,
     .p_wglGetPixelFormat = null_wglGetPixelFormat,
-    .p_wglMakeCurrent = null_wglMakeCurrent,
     .p_wglSetPixelFormat = null_wglSetPixelFormat,
     .p_wglShareLists = null_wglShareLists,
     .p_wglSwapBuffers = null_wglSwapBuffers,

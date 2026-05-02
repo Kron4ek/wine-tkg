@@ -197,6 +197,8 @@ static HRESULT create_folder(const WCHAR*, IFolder**);
 static HRESULT create_file(BSTR, IFile**);
 static HRESULT create_foldercoll_enum(struct foldercollection*, IUnknown**);
 static HRESULT create_filecoll_enum(struct filecollection*, IUnknown**);
+static inline HRESULT delete_file(const WCHAR*, DWORD, VARIANT_BOOL);
+static HRESULT delete_folder(const WCHAR*, DWORD, VARIANT_BOOL);
 static HRESULT create_drivecoll_enum(struct drivecollection*, IUnknown**);
 static inline DWORD get_parent_folder_name(const WCHAR *path, DWORD len);
 static HRESULT get_date_from_filetime(const FILETIME *ft, DATE *date);
@@ -2543,15 +2545,49 @@ static HRESULT WINAPI folder_put_Name(IFolder *iface, BSTR name)
 static HRESULT WINAPI folder_get_ShortPath(IFolder *iface, BSTR *path)
 {
     struct folder *This = impl_from_IFolder(iface);
-    FIXME("(%p)->(%p): stub\n", This, path);
-    return E_NOTIMPL;
+    WCHAR short_path[MAX_PATH];
+    DWORD len;
+
+    TRACE("(%p)->(%p)\n", This, path);
+
+    if (!path)
+        return E_POINTER;
+
+    *path = NULL;
+
+    len = GetShortPathNameW(This->path, short_path, MAX_PATH);
+    if (!len)
+        return HRESULT_FROM_WIN32(GetLastError());
+    if (len >= MAX_PATH)
+        return E_FAIL;
+
+    *path = SysAllocString(short_path);
+    return *path ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT WINAPI folder_get_ShortName(IFolder *iface, BSTR *name)
 {
     struct folder *This = impl_from_IFolder(iface);
-    FIXME("(%p)->(%p): stub\n", This, name);
-    return E_NOTIMPL;
+    WCHAR short_path[MAX_PATH];
+    const WCHAR *ptr;
+    DWORD len;
+
+    TRACE("(%p)->(%p)\n", This, name);
+
+    if (!name)
+        return E_POINTER;
+
+    *name = NULL;
+
+    len = GetShortPathNameW(This->path, short_path, MAX_PATH);
+    if (!len)
+        return HRESULT_FROM_WIN32(GetLastError());
+    if (len >= MAX_PATH)
+        return E_FAIL;
+
+    ptr = wcsrchr(short_path, '\\');
+    *name = SysAllocString(ptr ? ptr + 1 : short_path);
+    return *name ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT WINAPI folder_get_Drive(IFolder *iface, IDrive **drive)
@@ -2667,8 +2703,37 @@ static HRESULT WINAPI folder_get_Type(IFolder *iface, BSTR *type)
 static HRESULT WINAPI folder_Delete(IFolder *iface, VARIANT_BOOL force)
 {
     struct folder *This = impl_from_IFolder(iface);
-    FIXME("(%p)->(%x): stub\n", This, force);
-    return E_NOTIMPL;
+    WCHAR path[MAX_PATH];
+    DWORD len;
+    HRESULT hr;
+
+    TRACE("(%p)->(%x)\n", This, force);
+
+    len = SysStringLen(This->path);
+    if (len + 3 >= MAX_PATH)
+        return E_FAIL;
+
+    memcpy(path, This->path, len * sizeof(WCHAR));
+    path[len] = '\\';
+    path[len + 1] = '*';
+    path[len + 2] = 0;
+
+    hr = delete_file(path, len + 2, force);
+    if (FAILED(hr))
+        return hr;
+
+    hr = delete_folder(path, len + 2, force);
+    if (FAILED(hr))
+        return hr;
+
+    if (!RemoveDirectoryW(This->path))
+    {
+        if (!force || !SetFileAttributesW(This->path, FILE_ATTRIBUTE_NORMAL)
+                || !RemoveDirectoryW(This->path))
+            return create_error(GetLastError());
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI folder_Copy(IFolder *iface, BSTR dest, VARIANT_BOOL overwrite)
@@ -2681,8 +2746,13 @@ static HRESULT WINAPI folder_Copy(IFolder *iface, BSTR dest, VARIANT_BOOL overwr
 static HRESULT WINAPI folder_Move(IFolder *iface, BSTR dest)
 {
     struct folder *This = impl_from_IFolder(iface);
-    FIXME("(%p)->(%s): stub\n", This, debugstr_w(dest));
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(dest));
+
+    if (!MoveFileW(This->path, dest))
+        return create_error(GetLastError());
+
+    return S_OK;
 }
 
 static HRESULT WINAPI folder_get_IsRootFolder(IFolder *iface, VARIANT_BOOL *isroot)
@@ -2981,15 +3051,49 @@ static HRESULT WINAPI file_put_Name(IFile *iface, BSTR pbstrName)
 static HRESULT WINAPI file_get_ShortPath(IFile *iface, BSTR *pbstrPath)
 {
     struct file *This = impl_from_IFile(iface);
-    FIXME("(%p)->(%p)\n", This, pbstrPath);
-    return E_NOTIMPL;
+    WCHAR short_path[MAX_PATH];
+    DWORD len;
+
+    TRACE("(%p)->(%p)\n", This, pbstrPath);
+
+    if (!pbstrPath)
+        return E_POINTER;
+
+    *pbstrPath = NULL;
+
+    len = GetShortPathNameW(This->path, short_path, MAX_PATH);
+    if (!len)
+        return HRESULT_FROM_WIN32(GetLastError());
+    if (len >= MAX_PATH)
+        return E_FAIL;
+
+    *pbstrPath = SysAllocString(short_path);
+    return *pbstrPath ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT WINAPI file_get_ShortName(IFile *iface, BSTR *pbstrName)
 {
     struct file *This = impl_from_IFile(iface);
-    FIXME("(%p)->(%p)\n", This, pbstrName);
-    return E_NOTIMPL;
+    WCHAR short_path[MAX_PATH];
+    const WCHAR *ptr;
+    DWORD len;
+
+    TRACE("(%p)->(%p)\n", This, pbstrName);
+
+    if (!pbstrName)
+        return E_POINTER;
+
+    *pbstrName = NULL;
+
+    len = GetShortPathNameW(This->path, short_path, MAX_PATH);
+    if (!len)
+        return HRESULT_FROM_WIN32(GetLastError());
+    if (len >= MAX_PATH)
+        return E_FAIL;
+
+    ptr = wcsrchr(short_path, '\\');
+    *pbstrName = SysAllocString(ptr ? ptr + 1 : short_path);
+    return *pbstrName ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT WINAPI file_get_Drive(IFile *iface, IDrive **ppdrive)
@@ -3143,8 +3247,17 @@ static HRESULT WINAPI file_get_Type(IFile *iface, BSTR *pbstrType)
 static HRESULT WINAPI file_Delete(IFile *iface, VARIANT_BOOL Force)
 {
     struct file *This = impl_from_IFile(iface);
-    FIXME("(%p)->(%x)\n", This, Force);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%x)\n", This, Force);
+
+    if (!DeleteFileW(This->path))
+    {
+        if (!Force || !SetFileAttributesW(This->path, FILE_ATTRIBUTE_NORMAL)
+                || !DeleteFileW(This->path))
+            return create_error(GetLastError());
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI file_Copy(IFile *iface, BSTR Destination, VARIANT_BOOL OverWriteFiles)
@@ -3157,8 +3270,13 @@ static HRESULT WINAPI file_Copy(IFile *iface, BSTR Destination, VARIANT_BOOL Ove
 static HRESULT WINAPI file_Move(IFile *iface, BSTR Destination)
 {
     struct file *This = impl_from_IFile(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_w(Destination));
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(Destination));
+
+    if (!MoveFileW(This->path, Destination))
+        return create_error(GetLastError());
+
+    return S_OK;
 }
 
 static HRESULT WINAPI file_OpenAsTextStream(IFile *iface, IOMode mode, Tristate format, ITextStream **stream)

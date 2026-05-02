@@ -129,7 +129,6 @@ struct context
     HGLRC client;                  /* client-side context handle */
     HGLRC share;                   /* context to be shared with */
     int *attribs;                  /* creation attributes */
-    DWORD tid;                     /* thread that the context is current in */
     UINT64 debug_callback;         /* client pointer */
     UINT64 debug_user;             /* client pointer */
     GLubyte *extensions;           /* extension string */
@@ -316,7 +315,7 @@ static BOOL copy_context_attributes( TEB *teb, HGLRC client_dst, struct context 
         return FALSE;
     }
 
-    funcs->p_wglMakeCurrent( hdc, client_dst );
+    funcs->p_wglMakeContextCurrentARB( hdc, hdc, client_dst );
 
     if (mask & GL_COLOR_BUFFER_BIT)
     {
@@ -369,8 +368,7 @@ static BOOL copy_context_attributes( TEB *teb, HGLRC client_dst, struct context 
     }
     dst->used |= (src->used & mask);
 
-    if (!old_ctx) funcs->p_wglMakeCurrent( NULL, NULL );
-    else if (!old_funcs->p_wglMakeContextCurrentARB) old_funcs->p_wglMakeCurrent( draw_hdc, old_ctx->client );
+    if (!old_ctx) funcs->p_wglMakeContextCurrentARB( NULL, NULL, NULL );
     else old_funcs->p_wglMakeContextCurrentARB( draw_hdc, read_hdc, old_ctx->client );
 
     NtUserReleaseDC( hwnd, hdc );
@@ -433,10 +431,11 @@ static struct context *get_updated_context( TEB *teb, HGLRC client_context );
 /* update context if it has been re-shared with another one */
 static struct context *update_context( TEB *teb, HGLRC client_context, struct context *ctx )
 {
+    struct opengl_client_context *client = opengl_client_context_from_client( client_context );
     const struct opengl_funcs *funcs = get_context_funcs( client_context );
     struct context *share;
 
-    if (ctx->tid) return ctx; /* currently in use */
+    if (client->current_tid) return ctx; /* currently in use */
     if (ctx->share == (HGLRC)-1) return ctx; /* not re-shared */
 
     share = ctx->share ? get_updated_context( teb, ctx->share ) : NULL;
@@ -742,29 +741,27 @@ static void set_gl_error( TEB *teb, GLenum error )
 static BOOL get_default_fbo_integer( struct context *ctx, struct opengl_drawable *draw, struct opengl_drawable *read,
                                      GLenum pname, GLint *data )
 {
-    if (pname == GL_READ_BUFFER && !ctx->read_fbo && read->read_fbo)
+    if (pname == GL_READ_BUFFER && !ctx->read_fbo)
     {
-        if (ctx->pixel_mode.read_buffer) *data = ctx->pixel_mode.read_buffer;
-        else *data = read->doublebuffer ? GL_BACK : GL_FRONT;
+        *data = ctx->pixel_mode.read_buffer;
         return TRUE;
     }
-    if ((pname == GL_DRAW_BUFFER || pname == GL_DRAW_BUFFER0) && !ctx->draw_fbo && draw->draw_fbo)
+    if ((pname == GL_DRAW_BUFFER || pname == GL_DRAW_BUFFER0) && !ctx->draw_fbo)
     {
-        if (ctx->color_buffer.draw_buffers[0]) *data = ctx->color_buffer.draw_buffers[0];
-        else *data = draw->doublebuffer ? GL_BACK : GL_FRONT;
+        *data = ctx->color_buffer.draw_buffers[0];
         return TRUE;
     }
-    if (pname >= GL_DRAW_BUFFER1 && pname <= GL_DRAW_BUFFER15 && !ctx->draw_fbo && draw->draw_fbo)
+    if (pname >= GL_DRAW_BUFFER1 && pname <= GL_DRAW_BUFFER15 && !ctx->draw_fbo)
     {
         *data = ctx->color_buffer.draw_buffers[pname - GL_DRAW_BUFFER0];
         return TRUE;
     }
-    if (pname == GL_DOUBLEBUFFER && draw->draw_fbo)
+    if (pname == GL_DOUBLEBUFFER && !ctx->draw_fbo)
     {
         *data = draw->doublebuffer;
         return TRUE;
     }
-    if (pname == GL_STEREO && draw->draw_fbo)
+    if (pname == GL_STEREO && !ctx->draw_fbo)
     {
         *data = draw->stereo;
         return TRUE;
@@ -788,11 +785,9 @@ static BOOL get_integer( TEB *teb, GLenum pname, GLint *data )
     switch (pname)
     {
     case GL_DRAW_FRAMEBUFFER_BINDING:
-        if (!draw->draw_fbo) break;
         *data = ctx->draw_fbo;
         return TRUE;
     case GL_READ_FRAMEBUFFER_BINDING:
-        if (!read->read_fbo) break;
         *data = ctx->read_fbo;
         return TRUE;
     case GL_DEVICE_NODE_MASK_EXT:
@@ -1070,13 +1065,11 @@ static void make_context_current( TEB *teb, const struct opengl_funcs *funcs, HD
                                   HGLRC client_context, struct context *ctx )
 {
     struct opengl_client_context *client = opengl_client_context_from_client( ctx->base.client_context );
-    DWORD tid = HandleToULong(teb->ClientId.UniqueThread);
     const char *version, *rest = "";
     size_t count = 0, i;
 
     static pthread_once_t once = PTHREAD_ONCE_INIT;
 
-    ctx->tid = tid;
     teb->glReserved1[0] = draw_hdc;
     teb->glReserved1[1] = read_hdc;
     teb->glTable = (void *)funcs;
@@ -1141,40 +1134,9 @@ static void make_context_current( TEB *teb, const struct opengl_funcs *funcs, HD
     client->extension_count = count;
 
     if (TRACE_ON(opengl)) for (i = 0; i < count; i++) TRACE( "++ %s\n", all_extensions[client->extension_array[i]].name );
-}
 
-BOOL wrap_wglMakeCurrent( TEB *teb, HDC hdc, HGLRC client_context )
-{
-    DWORD tid = HandleToULong(teb->ClientId.UniqueThread);
-    struct context *ctx, *prev = get_current_context( teb, NULL, NULL );
-
-    if (client_context)
-    {
-        const struct opengl_funcs *funcs = get_context_funcs( client_context );
-        if (!(ctx = get_updated_context( teb, client_context ))) return FALSE;
-        if (ctx->tid && ctx->tid != tid)
-        {
-            RtlSetLastWin32Error( ERROR_BUSY );
-            return FALSE;
-        }
-
-        if (!funcs->p_wglMakeCurrent( hdc, client_context )) return FALSE;
-        if (prev) prev->tid = 0;
-        make_context_current( teb, funcs, hdc, hdc, client_context, ctx );
-    }
-    else if (prev)
-    {
-        const struct opengl_funcs *funcs = teb->glTable;
-        if (!funcs->p_wglMakeCurrent( 0, NULL )) return FALSE;
-        prev->tid = 0;
-        teb->glTable = &null_opengl_funcs;
-    }
-    else if (!hdc)
-    {
-        RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
-        return FALSE;
-    }
-    return TRUE;
+    ctx->color_buffer.draw_buffers[0] = ctx->base.draw->doublebuffer ? GL_BACK : GL_FRONT;
+    ctx->pixel_mode.read_buffer = ctx->base.draw->doublebuffer ? GL_BACK : GL_FRONT;
 }
 
 static void free_context( struct context *ctx )
@@ -1189,13 +1151,6 @@ BOOL wrap_wglDeleteContext( TEB *teb, HGLRC client_context )
 {
     const struct opengl_funcs *funcs = get_context_funcs( client_context );
     struct context *ctx = context_from_client_context( client_context );
-
-    if (ctx->tid)
-    {
-        RtlSetLastWin32Error( ERROR_BUSY );
-        return FALSE;
-    }
-
     funcs->p_context_destroy( &ctx->base );
     free_context( ctx );
     return TRUE;
@@ -1208,21 +1163,42 @@ static GLenum drawable_buffer_from_buffer( struct opengl_drawable *drawable, GLe
     return drawable->buffer_map[buffer - GL_FRONT_LEFT];
 }
 
+enum buffer_mask
+{
+    MASK_NONE        = 0,
+    MASK_FRONT_LEFT  = 1,
+    MASK_FRONT_RIGHT = 2,
+    MASK_BACK_LEFT   = 4,
+    MASK_BACK_RIGHT  = 8,
+    MASK_BACK        = MASK_BACK_LEFT | MASK_BACK_RIGHT,
+    MASK_FRONT       = MASK_FRONT_LEFT | MASK_FRONT_RIGHT,
+    MASK_LEFT        = MASK_FRONT_LEFT | MASK_BACK_LEFT,
+    MASK_RIGHT       = MASK_FRONT_RIGHT | MASK_BACK_RIGHT,
+    MASK_ALL         = MASK_FRONT | MASK_BACK,
+};
+
+static enum buffer_mask buffer_mask_from_enum( GLenum buffer )
+{
+    switch (buffer)
+    {
+    case GL_BACK:           return MASK_BACK;
+    case GL_BACK_LEFT:      return MASK_BACK_LEFT;
+    case GL_BACK_RIGHT:     return MASK_BACK_LEFT;
+    case GL_FRONT:          return MASK_FRONT;
+    case GL_FRONT_LEFT:     return MASK_FRONT_LEFT;
+    case GL_FRONT_RIGHT:    return MASK_FRONT_RIGHT;
+    case GL_LEFT:           return MASK_LEFT;
+    case GL_RIGHT:          return MASK_RIGHT;
+    case GL_FRONT_AND_BACK: return MASK_ALL;
+    default:                return MASK_NONE;
+    }
+}
+
 static BOOL context_draws_back( struct context *ctx )
 {
     for (int i = 0; i < ARRAY_SIZE(ctx->color_buffer.draw_buffers); i++)
-    {
-        switch (ctx->color_buffer.draw_buffers[i])
-        {
-        case GL_LEFT:
-        case GL_RIGHT:
-        case GL_BACK:
-        case GL_FRONT_AND_BACK:
-        case GL_BACK_LEFT:
-        case GL_BACK_RIGHT:
+        if (buffer_mask_from_enum( ctx->color_buffer.draw_buffers[i] ) & MASK_BACK)
             return TRUE;
-        }
-    }
 
     return FALSE;
 }
@@ -1230,19 +1206,8 @@ static BOOL context_draws_back( struct context *ctx )
 static BOOL context_draws_front( struct context *ctx )
 {
     for (int i = 0; i < ARRAY_SIZE(ctx->color_buffer.draw_buffers); i++)
-    {
-        switch (ctx->color_buffer.draw_buffers[i])
-        {
-        case GL_LEFT:
-        case GL_RIGHT:
-        case GL_FRONT:
-        case GL_FRONT_AND_BACK:
-        case GL_FRONT_LEFT:
-        case GL_FRONT_RIGHT:
+        if (buffer_mask_from_enum( ctx->color_buffer.draw_buffers[i] ) & MASK_FRONT)
             return TRUE;
-        }
-    }
-
     return FALSE;
 }
 
@@ -1395,41 +1360,21 @@ HGLRC wrap_wglCreateContextAttribsARB( TEB *teb, HDC hdc, HGLRC client_shared, c
     return client_context;
 }
 
-HGLRC wrap_wglCreateContext( TEB *teb, HDC hdc, HGLRC client_context )
-{
-    static const int attribs[] =
-    {
-        WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB,
-        0, 0,
-    };
-
-    return wrap_wglCreateContextAttribsARB( teb, hdc, NULL, attribs, client_context );
-}
-
 BOOL wrap_wglMakeContextCurrentARB( TEB *teb, HDC draw_hdc, HDC read_hdc, HGLRC client_context )
 {
-    DWORD tid = HandleToULong(teb->ClientId.UniqueThread);
     struct context *ctx, *prev = get_current_context( teb, NULL, NULL );
 
     if (client_context)
     {
         const struct opengl_funcs *funcs = get_context_funcs( client_context );
         if (!(ctx = get_updated_context( teb, client_context ))) return FALSE;
-        if (ctx->tid && ctx->tid != tid)
-        {
-            RtlSetLastWin32Error( ERROR_BUSY );
-            return FALSE;
-        }
-
         if (!funcs->p_wglMakeContextCurrentARB( draw_hdc, read_hdc, client_context )) return FALSE;
-        if (prev) prev->tid = 0;
         make_context_current( teb, funcs, draw_hdc, read_hdc, client_context, ctx );
     }
     else if (prev)
     {
         const struct opengl_funcs *funcs = teb->glTable;
-        if (!funcs->p_wglMakeCurrent( 0, NULL )) return FALSE;
-        prev->tid = 0;
+        if (!funcs->p_wglMakeContextCurrentARB( NULL, NULL, NULL )) return FALSE;
         teb->glTable = &null_opengl_funcs;
     }
     return TRUE;
@@ -1602,18 +1547,22 @@ void resolve_default_fbo( TEB *teb, BOOL read )
 static GLenum *set_default_fbo_draw_buffers( struct context *ctx, struct opengl_drawable *draw,
                                              GLsizei count, const GLenum *src, GLenum *dst )
 {
-    memset( ctx->color_buffer.draw_buffers, 0, sizeof(ctx->color_buffer.draw_buffers) );
+    UINT used[4] = {0};
 
+    for (GLsizei i = 0; i < count; i++) dst[i] = GL_BACK_LEFT; /* some invalid combination */
+    for (GLsizei i = 0; i < count; i++)
+    {
+        if ((buffer_mask_from_enum( src[i] ) & MASK_FRONT_LEFT) && used[0]++) return dst;
+        if ((buffer_mask_from_enum( src[i] ) & MASK_FRONT_RIGHT) && used[1]++) return dst;
+        if ((buffer_mask_from_enum( src[i] ) & MASK_BACK_LEFT) && used[2]++) return dst;
+        if ((buffer_mask_from_enum( src[i] ) & MASK_BACK_RIGHT) && used[3]++) return dst;
+        if (src[i] && !drawable_buffer_from_buffer( draw, src[i] )) return dst;
+    }
+
+    memset( ctx->color_buffer.draw_buffers, 0, sizeof(ctx->color_buffer.draw_buffers) );
     for (GLsizei i = 0; i < count; i++)
     {
         dst[i] = drawable_buffer_from_buffer( draw, src[i] );
-        if (src[i] && !dst[i])
-        {
-            WARN( "Invalid draw buffer #%d %#x for context %p\n", i, src[i], ctx );
-            dst[i] = src[i];
-            continue;
-        }
-
         if (i >= MAX_DRAW_BUFFERS) FIXME( "Needs %u draw buffers\n", i );
         else ctx->color_buffer.draw_buffers[i] = src[i];
     }
@@ -1787,8 +1736,11 @@ void wrap_glGetFramebufferParameteriv( TEB *teb, GLuint fbo, GLenum pname, GLint
     struct opengl_drawable *draw, *read;
     struct context *ctx;
 
-    if ((ctx = get_current_context( teb, &draw, &read )) && !fbo && (fbo = draw->draw_fbo))
+    if ((ctx = get_current_context( teb, &draw, &read )) && !fbo)
+    {
         if (get_default_fbo_integer( ctx, draw, read, pname, params )) return;
+        fbo = draw->draw_fbo;
+    }
 
     p_glGetFramebufferParameteriv( fbo, pname, params );
 }

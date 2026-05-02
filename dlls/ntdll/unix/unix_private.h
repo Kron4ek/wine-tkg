@@ -98,46 +98,53 @@ static inline BOOL is_arm64ec(void)
             main_image_info.Machine == IMAGE_FILE_MACHINE_AMD64);
 }
 
+/* per-thread data for the Unix side, stored at the bottom of the signal stack */
+
+struct thread_data
+{
+    TEB         *teb;               /* TEB */
+    int          request_fd;        /* fd for sending server requests */
+    int          reply_fd;          /* fd for receiving server replies */
+    int          wait_fd[2];        /* fd for sleeping server requests */
+    int          alert_fd;          /* inproc sync fd for user apc alerts */
+    DWORD        tid;               /* thread id */
+    BOOL         allow_writes;      /* ThreadAllowWrites flags */
+    pthread_t    pthread_id;        /* pthread thread id */
+    void        *jmp_buf;           /* setjmp buffer for exception handling */
+    void        *start;             /* thread entry point */
+    void        *param;             /* thread entry point parameter */
+    struct list  entry;             /* entry in TEB list */
+    char         debug_info[0x800]; /* debug_info structure */
+    char         signal_stack[];    /* signal stack */
+    /* char kernel_stack[] */
+};
+
+extern pthread_key_t thread_data_key;
+
+static inline struct thread_data *get_thread_data(void)
+{
+    return pthread_getspecific( thread_data_key );
+}
+
 /* thread private data, stored in NtCurrentTeb()->GdiTebBatch */
-struct ntdll_thread_data
+struct teb_data
 {
     void                     *cpu_data[16];  /* 1d4/02f0 reserved for CPU-specific data */
     SYSTEM_SERVICE_TABLE     *syscall_table; /* 214/0370 syscall table */
     struct syscall_frame     *syscall_frame; /* 218/0378 current syscall frame */
     int                       syscall_trace; /* 21c/0380 syscall trace flag */
-    int                       request_fd;    /* fd for sending server requests */
-    int                       reply_fd;      /* fd for receiving server replies */
-    int                       wait_fd[2];    /* fd for sleeping server requests */
-    int                       alert_fd;      /* inproc sync fd for user apc alerts */
-    BOOL                      allow_writes;  /* ThreadAllowWrites flags */
-    pthread_t                 pthread_id;    /* pthread thread id */
-    void                     *kernel_stack;  /* stack for thread startup and kernel syscalls */
-    struct list               entry;         /* entry in TEB list */
-    PRTL_THREAD_START_ROUTINE start;         /* thread entry point */
-    void                     *param;         /* thread entry point parameter */
-    void                     *jmp_buf;       /* setjmp buffer for exception handling */
 };
 
-C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
+C_ASSERT( sizeof(struct teb_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
 #ifdef _WIN64
-C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_table ) == 0x370 );
-C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_frame ) == 0x378 );
-C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_trace ) == 0x380 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct teb_data, syscall_table ) == 0x370 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct teb_data, syscall_frame ) == 0x378 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct teb_data, syscall_trace ) == 0x380 );
 #else
-C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_table ) == 0x214 );
-C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_frame ) == 0x218 );
-C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct ntdll_thread_data, syscall_trace ) == 0x21c );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct teb_data, syscall_table ) == 0x214 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct teb_data, syscall_frame ) == 0x218 );
+C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct teb_data, syscall_trace ) == 0x21c );
 #endif
-
-static inline struct ntdll_thread_data *ntdll_get_thread_data(void)
-{
-    return (struct ntdll_thread_data *)&NtCurrentTeb()->GdiTebBatch;
-}
-
-static inline struct syscall_frame *get_syscall_frame(void)
-{
-    return ntdll_get_thread_data()->syscall_frame;
-}
 
 /* returns TRUE if the async is complete; FALSE if it should be restarted */
 typedef BOOL async_callback_t( void *user, ULONG_PTR *info, unsigned int *status );
@@ -162,9 +169,8 @@ struct pe_mapping_info
 };
 
 static const SIZE_T page_size = 0x1000;
-static const SIZE_T teb_size = 0x3800;  /* TEB64 + TEB32 + debug info */
 static const SIZE_T signal_stack_mask = 0xffff;
-static const SIZE_T signal_stack_size = 0x10000 - 0x3800;
+static const SIZE_T signal_stack_size = 0x10000 - offsetof( struct thread_data, signal_stack );
 static const SIZE_T kernel_stack_size = 0x100000;
 static const SIZE_T min_kernel_stack  = 0x2000;
 static const LONG teb_offset = 0x2000;
@@ -196,8 +202,8 @@ extern const char *wineloader;
 extern const char *user_name;
 extern const char **dll_paths;
 extern const char **system_dll_paths;
-extern pthread_key_t teb_key;
 extern PEB *peb;
+extern DWORD pid;
 extern USHORT *uctable;
 extern USHORT *lctable;
 extern SIZE_T startup_info_size;
@@ -273,7 +279,7 @@ extern void copy_xstate( XSAVE_AREA_HEADER *dst, XSAVE_AREA_HEADER *src, UINT64 
 extern void set_process_instrumentation_callback( void *callback );
 
 extern void *get_cpu_area( USHORT machine );
-extern void set_thread_id( TEB *teb, DWORD pid, DWORD tid );
+extern void set_thread_id( struct thread_data *data );
 extern NTSTATUS init_thread_stack( TEB *teb, ULONG_PTR limit, SIZE_T reserve_size, SIZE_T commit_size );
 extern void DECLSPEC_NORETURN abort_thread( int status );
 extern void DECLSPEC_NORETURN abort_process( int status );
@@ -301,20 +307,21 @@ extern NTSTATUS virtual_create_builtin_view( void *module, const UNICODE_STRING 
                                              struct pe_image_info *info, void *so_handle );
 extern NTSTATUS virtual_relocate_module( void *module );
 extern TEB *virtual_alloc_first_teb(void);
-extern NTSTATUS virtual_alloc_teb( TEB **ret_teb );
-extern void virtual_free_teb( TEB *teb );
+extern NTSTATUS virtual_alloc_teb( struct thread_data *data );
+struct thread_data *virtual_alloc_thread_data(void);
+extern void virtual_free_thread_data( struct thread_data *data );
 extern NTSTATUS virtual_clear_tls_index( ULONG index );
 extern NTSTATUS virtual_alloc_thread_stack( INITIAL_TEB *stack, ULONG_PTR limit_low, ULONG_PTR limit_high,
                                             SIZE_T reserve_size, SIZE_T commit_size, BOOL guard_page );
 extern void virtual_map_user_shared_data(void);
 extern void virtual_init_user_shared_data(void);
-extern NTSTATUS virtual_handle_fault( EXCEPTION_RECORD *rec, void *stack );
+extern NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec, void *stack );
 extern unsigned int virtual_locked_server_call( void *req_ptr );
 extern ssize_t virtual_locked_read( int fd, void *addr, size_t size );
 extern ssize_t virtual_locked_pread( int fd, void *addr, size_t size, off_t offset );
 extern ssize_t virtual_locked_recvmsg( int fd, struct msghdr *hdr, int flags );
 extern BOOL virtual_is_valid_code_address( const void *addr, SIZE_T size );
-extern void *virtual_setup_exception( void *stack_ptr, size_t size, EXCEPTION_RECORD *rec );
+extern void *virtual_setup_exception( struct thread_data *data, void *stack_ptr, size_t size, EXCEPTION_RECORD *rec );
 extern BOOL virtual_check_buffer_for_read( const void *ptr, SIZE_T size );
 extern BOOL virtual_check_buffer_for_write( void *ptr, SIZE_T size );
 extern SIZE_T virtual_uninterrupted_read_memory( const void *addr, void *buffer, SIZE_T size );
@@ -332,7 +339,6 @@ extern void *get_native_context( CONTEXT *context );
 extern void *get_wow_context( CONTEXT *context );
 extern BOOL get_thread_times( int unix_pid, int unix_tid, LARGE_INTEGER *kernel_time,
                               LARGE_INTEGER *user_time );
-extern void signal_init_threading(void);
 extern NTSTATUS signal_alloc_thread( TEB *teb );
 extern void signal_free_thread( TEB *teb );
 extern void signal_disable_syscall_dispatch(void);
@@ -436,21 +442,37 @@ static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
     while (len--) *dst++ = (unsigned char)*src++;
 }
 
-static inline void *get_signal_stack(void)
+static inline void *get_kernel_stack( struct thread_data *data )
 {
-    return (void *)(((ULONG_PTR)NtCurrentTeb() & ~signal_stack_mask) + teb_size);
+    return data->signal_stack + signal_stack_size;
 }
 
-static inline BOOL is_inside_signal_stack( void *ptr )
+static inline struct teb_data *get_teb_data( struct thread_data *data )
 {
-    return ((char *)ptr >= (char *)get_signal_stack() &&
-            (char *)ptr < (char *)get_signal_stack() + signal_stack_size);
+    return (struct teb_data *)&data->teb->GdiTebBatch;
 }
 
-static inline BOOL is_inside_syscall( ULONG_PTR sp )
+static inline struct syscall_frame *get_syscall_frame( struct thread_data *data )
 {
-    return ((char *)sp >= (char *)ntdll_get_thread_data()->kernel_stack &&
-            (char *)sp <= (char *)get_syscall_frame());
+    return get_teb_data(data)->syscall_frame;
+}
+
+static inline void alloc_syscall_frame( SIZE_T frame_size )
+{
+    struct thread_data *data = get_thread_data();
+    void *frame = (char *)get_kernel_stack(data) + kernel_stack_size - frame_size;
+    get_teb_data(data)->syscall_frame = frame;
+}
+
+static inline BOOL is_inside_signal_stack( struct thread_data *data, void *ptr )
+{
+    return ((char *)ptr >= data->signal_stack && (char *)ptr < data->signal_stack + signal_stack_size);
+}
+
+static inline BOOL is_inside_syscall( struct thread_data *data, ULONG_PTR sp )
+{
+    return ((char *)sp >= (char *)get_kernel_stack( data ) &&
+            (char *)sp <= (char *)get_syscall_frame( data ));
 }
 
 static inline BOOL is_ec_code( ULONG_PTR ptr )

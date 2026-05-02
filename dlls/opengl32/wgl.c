@@ -145,8 +145,6 @@ static struct handle_entry *alloc_handle( struct handle_table *table, void *user
     struct handle_entry *ptr = NULL;
     WORD generation;
 
-    EnterCriticalSection( &wgl_cs );
-
     if ((ptr = table->next_free)) table->next_free = ptr->next_free;
     else if (table->count < ARRAY_SIZE(table->handles)) ptr = table->handles + table->count++;
     else ptr = NULL;
@@ -158,19 +156,15 @@ static struct handle_entry *alloc_handle( struct handle_table *table, void *user
         ptr->user_data = user_data;
     }
 
-    LeaveCriticalSection( &wgl_cs );
-
     if (!ptr) RtlSetLastWin32Error( ERROR_NOT_ENOUGH_MEMORY );
     return ptr;
 }
 
 static void free_handle( struct handle_table *table, struct handle_entry *ptr )
 {
-    EnterCriticalSection( &wgl_cs );
     ptr->handle |= 0xffff;
     ptr->next_free = table->next_free;
     table->next_free = ptr;
-    LeaveCriticalSection( &wgl_cs );
 }
 
 static struct handle_entry *get_handle_ptr( struct handle_table *table, HANDLE handle )
@@ -178,19 +172,20 @@ static struct handle_entry *get_handle_ptr( struct handle_table *table, HANDLE h
     WORD index = LOWORD( handle ) - 1;
     struct handle_entry *ptr = table->handles + index;
 
-    EnterCriticalSection( &wgl_cs );
-    if (index >= table->count || ULongToHandle( ptr->handle ) != handle) ptr = NULL;
-    LeaveCriticalSection( &wgl_cs );
-
-    if (!ptr) RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
-    return ptr;
+    if (index < table->count && ULongToHandle( ptr->handle ) == handle) return ptr;
+    RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
+    return NULL;
 }
 
 static struct opengl_client_pbuffer *pbuffer_from_handle( HPBUFFERARB handle )
 {
     struct handle_entry *ptr;
-    if (!(ptr = get_handle_ptr( &pbuffers, handle ))) return NULL;
-    return ptr->pbuffer;
+
+    EnterCriticalSection( &wgl_cs );
+    ptr = get_handle_ptr( &pbuffers, handle );
+    LeaveCriticalSection( &wgl_cs );
+
+    return ptr ? ptr->pbuffer : NULL;
 }
 
 BOOL get_pbuffer_from_handle( HPBUFFERARB handle, HPBUFFERARB *obj )
@@ -206,19 +201,21 @@ static struct handle_entry *alloc_client_pbuffer(void)
     struct handle_entry *ptr;
 
     if (!(pbuffer = calloc( 1, sizeof(*pbuffer) ))) return NULL;
-    if (!(ptr = alloc_handle( &pbuffers, pbuffer )))
-    {
-        free( pbuffer );
-        return NULL;
-    }
 
+    EnterCriticalSection( &wgl_cs );
+    ptr = alloc_handle( &pbuffers, pbuffer );
+    LeaveCriticalSection( &wgl_cs );
+
+    if (!ptr) free( pbuffer );
     return ptr;
 }
 
 static void free_client_pbuffer( struct handle_entry *ptr )
 {
     struct opengl_client_pbuffer *pbuffer = ptr->pbuffer;
+    EnterCriticalSection( &wgl_cs );
     free_handle( &pbuffers, ptr );
+    LeaveCriticalSection( &wgl_cs );
     free( pbuffer );
 }
 
@@ -249,7 +246,11 @@ BOOL WINAPI wglDestroyPbufferARB( HPBUFFERARB handle )
 
     TRACE( "handle %p\n", handle );
 
-    if (!(ptr = get_handle_ptr( &pbuffers, handle ))) return FALSE;
+    EnterCriticalSection( &wgl_cs );
+    ptr = get_handle_ptr( &pbuffers, handle );
+    LeaveCriticalSection( &wgl_cs );
+
+    if (!ptr) return FALSE;
     args.hPbuffer = &ptr->pbuffer->obj;
 
     if ((status = UNIX_CALL( wglDestroyPbufferARB, &args ))) WARN( "wglDestroyPbufferARB returned %#lx\n", status );
@@ -272,8 +273,12 @@ static struct context *context_from_opengl_client_context( struct opengl_client_
 static struct opengl_client_context *opengl_client_context_from_handle( HGLRC handle )
 {
     struct handle_entry *ptr;
-    if (!(ptr = get_handle_ptr( &contexts, handle ))) return NULL;
-    return ptr->context;
+
+    EnterCriticalSection( &wgl_cs );
+    ptr = get_handle_ptr( &contexts, handle );
+    LeaveCriticalSection( &wgl_cs );
+
+    return ptr ? ptr->context : NULL;
 }
 
 static struct context *context_from_handle( HGLRC handle )
@@ -294,19 +299,29 @@ static struct handle_entry *alloc_client_context(void)
     struct handle_entry *ptr;
 
     if (!(context = calloc( 1, sizeof(*context) ))) return NULL;
-    if (!(ptr = alloc_handle( &contexts, context )))
-    {
-        free( context );
-        return NULL;
-    }
 
+    EnterCriticalSection( &wgl_cs );
+    ptr = alloc_handle( &contexts, context );
+    LeaveCriticalSection( &wgl_cs );
+
+    if (!ptr) free( context );
     return ptr;
 }
 
 static void free_client_context( struct handle_entry *ptr )
 {
     struct context *context = context_from_opengl_client_context( ptr->context );
+
+    for (int i = 0; i < context->syncs.count; i++)
+    {
+        struct handle_entry *entry = context->syncs.handles + i;
+        if (LOWORD(entry->handle) == 0xffff) continue;
+        free( entry->user_data );
+    }
+
+    EnterCriticalSection( &wgl_cs );
     free_handle( &contexts, ptr );
+    LeaveCriticalSection( &wgl_cs );
     free( context );
 }
 
@@ -319,21 +334,9 @@ void set_gl_error( GLenum error )
 
 HGLRC WINAPI wglCreateContext( HDC hdc )
 {
-    struct wglCreateContext_params args = { .teb = NtCurrentTeb(), .hDc = hdc };
-    struct handle_entry *ptr;
-    NTSTATUS status;
-
+    static const int attribs[] = { WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB, 0, 0 };
     TRACE( "hdc %p\n", hdc );
-
-    if (!(ptr = alloc_client_context())) return NULL;
-    args.ret = &ptr->context->obj;
-
-    if ((status = UNIX_CALL( wglCreateContext, &args ))) WARN( "wglCreateContext returned %#lx\n", status );
-    assert( args.ret == &ptr->context->obj || !args.ret );
-
-    if (!status && args.ret) return UlongToHandle( ptr->handle );
-    free_client_context( ptr );
-    return NULL;
+    return wglCreateContextAttribsARB( hdc, NULL, attribs );
 }
 
 HGLRC WINAPI wglCreateContextAttribsARB( HDC hdc, HGLRC share, const int *attribs )
@@ -369,53 +372,60 @@ BOOL WINAPI wglDeleteContext( HGLRC handle )
 
     TRACE( "handle %p\n", handle );
 
-    if (!(ptr = get_handle_ptr( &contexts, handle ))) return FALSE;
+    EnterCriticalSection( &wgl_cs );
+    ptr = get_handle_ptr( &contexts, handle );
+    LeaveCriticalSection( &wgl_cs );
+
+    if (!ptr) return FALSE;
     args.oldContext = &ptr->context->obj;
 
-    if (handle && handle == teb->glCurrentRC) wglMakeCurrent( NULL, NULL );
+    if (handle == teb->glCurrentRC) wglMakeCurrent( NULL, NULL );
+    if (ptr->context->current_tid)
+    {
+        SetLastError( ERROR_BUSY );
+        return FALSE;
+    }
+
     if ((status = UNIX_CALL( wglDeleteContext, &args ))) WARN( "wglDeleteContext returned %#lx\n", status );
     if (status || !args.ret) return FALSE;
 
-    if (handle == teb->glCurrentRC)
-    {
-        teb->glCurrentRC = 0;
-        teb->glReserved1[0] = 0;
-        teb->glReserved1[1] = 0;
-    }
     free_client_context( ptr );
     return TRUE;
 }
 
 BOOL WINAPI wglMakeCurrent( HDC hdc, HGLRC handle )
 {
-    TEB *teb = NtCurrentTeb();
-    struct wglMakeCurrent_params args = { .teb = teb, .hDc = hdc };
-    NTSTATUS status;
-
-    TRACE( "hdc %p, newContext %p\n", hdc, handle );
-
-    if (!get_context_from_handle( handle, &args.newContext )) return FALSE;
-    if ((status = UNIX_CALL( wglMakeCurrent, &args ))) WARN( "wglMakeCurrent returned %#lx\n", status );
-    if (status || !args.ret) return FALSE;
-
-    teb->glCurrentRC = handle;
-    teb->glReserved1[0] = hdc;
-    teb->glReserved1[1] = hdc;
-    return TRUE;
+    TRACE( "hdc %p, handle %p\n", hdc, handle );
+    if (!hdc && !handle && !NtCurrentTeb()->glCurrentRC)
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
+        return FALSE;
+    }
+    return wglMakeContextCurrentARB( hdc, hdc, handle );
 }
 
 BOOL WINAPI wglMakeContextCurrentARB( HDC draw_hdc, HDC read_hdc, HGLRC handle )
 {
     TEB *teb = NtCurrentTeb();
     struct wglMakeContextCurrentARB_params args = { .teb = teb, .hDrawDC = draw_hdc, .hReadDC = read_hdc };
+    struct opengl_client_context *context = NULL, *previous = opengl_client_context_from_handle( teb->glCurrentRC );
     NTSTATUS status;
 
     TRACE( "draw_hdc %p, read_hdc %p, handle %p\n", draw_hdc, read_hdc, handle );
 
     if (!get_context_from_handle( handle, &args.hglrc )) return FALSE;
+    if ((context = opengl_client_context_from_handle( handle )) &&
+        context->current_tid && context->current_tid != GetCurrentThreadId())
+    {
+        SetLastError( ERROR_BUSY );
+        return FALSE;
+    }
+
     if ((status = UNIX_CALL( wglMakeContextCurrentARB, &args ))) WARN( "wglMakeContextCurrentARB returned %#lx\n", status );
     if (status || !args.ret) return FALSE;
 
+    if (context) context->current_tid = GetCurrentThreadId();
+    if (previous) previous->current_tid = 0;
     teb->glCurrentRC = handle;
     teb->glReserved1[0] = draw_hdc;
     teb->glReserved1[1] = read_hdc;
@@ -1963,7 +1973,7 @@ GLsync WINAPI glCreateSyncFromCLeventARB( struct _cl_context *context, struct _c
     assert( args.ret == ptr->user_data || !args.ret );
 
     if (!status && args.ret) return UlongToHandle( ptr->handle );
-    free_client_context( ptr );
+    free_client_sync( ctx, ptr );
     return NULL;
 }
 
@@ -2003,7 +2013,7 @@ GLsync WINAPI glFenceSync( GLenum condition, GLbitfield flags )
     assert( args.ret == ptr->user_data || !args.ret );
 
     if (!status && args.ret) return UlongToHandle( ptr->handle );
-    free_client_context( ptr );
+    free_client_sync( ctx, ptr );
     return NULL;
 }
 
@@ -2025,12 +2035,16 @@ GLsync WINAPI glImportSyncEXT( GLenum external_sync_type, GLintptr external_sync
     assert( args.ret == ptr->user_data || !args.ret );
 
     if (!status && args.ret) return UlongToHandle( ptr->handle );
-    free_client_context( ptr );
+    free_client_sync( ctx, ptr );
     return NULL;
 }
 
-static BOOL get_integer( struct context *ctx, GLenum name, GLint *data )
+BOOL get_integer( GLenum name, GLint *data )
 {
+    struct context *ctx;
+
+    if (!(ctx = context_from_handle( NtCurrentTeb()->glCurrentRC ))) return FALSE;
+
     switch (name)
     {
     case GL_MAJOR_VERSION:
@@ -2107,76 +2121,6 @@ const GLubyte * WINAPI glGetString( GLenum name )
     else if (args.ret) append_wow64_string( (char *)args.ret );
 #endif
     return args.ret;
-}
-
-void WINAPI glGetBooleanv( GLenum pname, GLboolean *data )
-{
-    struct glGetBooleanv_params args = { .teb = NtCurrentTeb(), .pname = pname, .data = data };
-    struct context *ctx;
-    NTSTATUS status;
-    GLint value;
-
-    TRACE( "pname %d, data %p\n", pname, data );
-
-    if (!(ctx = context_from_handle( NtCurrentTeb()->glCurrentRC ))) return;
-    if (get_integer( ctx, pname, &value )) *data = value;
-    else if ((status = UNIX_CALL( glGetBooleanv, &args ))) WARN( "glGetBooleanv returned %#lx\n", status );
-}
-
-void WINAPI glGetDoublev( GLenum pname, GLdouble *data )
-{
-    struct glGetDoublev_params args = { .teb = NtCurrentTeb(), .pname = pname, .data = data };
-    struct context *ctx;
-    NTSTATUS status;
-    GLint value;
-
-    TRACE( "pname %d, data %p\n", pname, data );
-
-    if (!(ctx = context_from_handle( NtCurrentTeb()->glCurrentRC ))) return;
-    if (get_integer( ctx, pname, &value )) *data = value;
-    else if ((status = UNIX_CALL( glGetDoublev, &args ))) WARN( "glGetDoublev returned %#lx\n", status );
-}
-
-void WINAPI glGetFloatv( GLenum pname, GLfloat *data )
-{
-    struct glGetFloatv_params args = { .teb = NtCurrentTeb(), .pname = pname, .data = data };
-    struct context *ctx;
-    NTSTATUS status;
-    GLint value;
-
-    TRACE( "pname %d, data %p\n", pname, data );
-
-    if (!(ctx = context_from_handle( NtCurrentTeb()->glCurrentRC ))) return;
-    if (get_integer( ctx, pname, &value )) *data = value;
-    else if ((status = UNIX_CALL( glGetFloatv, &args ))) WARN( "glGetFloatv returned %#lx\n", status );
-}
-
-void WINAPI glGetInteger64v( GLenum pname, GLint64 *data )
-{
-    struct glGetInteger64v_params args = { .teb = NtCurrentTeb(), .pname = pname, .data = data };
-    struct context *ctx;
-    NTSTATUS status;
-    GLint value;
-
-    TRACE( "pname %d, data %p\n", pname, data );
-
-    if (!(ctx = context_from_handle( NtCurrentTeb()->glCurrentRC ))) return;
-    if (get_integer( ctx, pname, &value )) *data = value;
-    else if ((status = UNIX_CALL( glGetInteger64v, &args ))) WARN( "glGetInteger64v returned %#lx\n", status );
-}
-
-void WINAPI glGetIntegerv( GLenum pname, GLint *data )
-{
-    struct glGetIntegerv_params args = { .teb = NtCurrentTeb(), .pname = pname, .data = data };
-    struct context *ctx;
-    NTSTATUS status;
-    GLint value;
-
-    TRACE( "pname %d, data %p\n", pname, data );
-
-    if (!(ctx = context_from_handle( NtCurrentTeb()->glCurrentRC ))) return;
-    if (get_integer( ctx, pname, &value )) *data = value;
-    else if ((status = UNIX_CALL( glGetIntegerv, &args ))) WARN( "glGetIntegerv returned %#lx\n", status );
 }
 
 const char * WINAPI wglGetExtensionsStringARB( HDC hdc )

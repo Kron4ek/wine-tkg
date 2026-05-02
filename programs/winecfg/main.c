@@ -58,7 +58,7 @@ PropSheetCallback (HWND hWnd, UINT uMsg, LPARAM lParam)
     return 0;
 }
 
-#define NUM_PROPERTY_PAGES 9
+#define NUM_PROPERTY_PAGES 8
 
 static INT_PTR
 doPropertySheet (HINSTANCE hInstance, HWND hOwner)
@@ -146,16 +146,6 @@ doPropertySheet (HINSTANCE hInstance, HWND hOwner)
     psp[pg].pszIcon = NULL;
     psp[pg].pfnDlgProc = StagingDlgProc;
     psp[pg].pszTitle =  load_string (IDS_TAB_STAGING);
-    psp[pg].lParam = 0;
-    pg++;
-
-    psp[pg].dwSize = sizeof (PROPSHEETPAGEW);
-    psp[pg].dwFlags = PSP_USETITLE;
-    psp[pg].hInstance = hInstance;
-    psp[pg].pszTemplate = MAKEINTRESOURCEW (IDD_INPUT_CONFIG);
-    psp[pg].pszIcon = NULL;
-    psp[pg].pfnDlgProc = InputDlgProc;
-    psp[pg].pszTitle =  load_string (IDS_TAB_INPUT);
     psp[pg].lParam = 0;
     pg++;
 

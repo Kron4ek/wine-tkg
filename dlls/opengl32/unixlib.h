@@ -30,13 +30,6 @@ struct wglCopyContext_params
     BOOL ret;
 };
 
-struct wglCreateContext_params
-{
-    TEB *teb;
-    HDC hDc;
-    HGLRC ret;
-};
-
 struct wglDeleteContext_params
 {
     TEB *teb;
@@ -49,14 +42,6 @@ struct wglGetPixelFormat_params
     TEB *teb;
     HDC hdc;
     int ret;
-};
-
-struct wglMakeCurrent_params
-{
-    TEB *teb;
-    HDC hDc;
-    HGLRC newContext;
-    BOOL ret;
 };
 
 struct wglSetPixelFormat_params
@@ -25871,10 +25856,8 @@ enum unix_funcs
     unix_process_detach,
     unix_get_pixel_formats,
     unix_wglCopyContext,
-    unix_wglCreateContext,
     unix_wglDeleteContext,
     unix_wglGetPixelFormat,
-    unix_wglMakeCurrent,
     unix_wglSetPixelFormat,
     unix_wglShareLists,
     unix_wglSwapBuffers,

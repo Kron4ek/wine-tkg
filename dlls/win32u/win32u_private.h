@@ -305,6 +305,7 @@ extern void map_window_region( HWND from, HWND to, HRGN hrgn );
 extern BOOL screen_to_client( HWND hwnd, POINT *pt );
 extern LONG_PTR set_window_long( HWND hwnd, INT offset, UINT size, LONG_PTR newval,
                                  BOOL ansi );
+extern void set_window_normal_placement( HWND hwnd, RECT rect );
 extern BOOL set_window_pos( WINDOWPOS *winpos, int parent_x, int parent_y );
 extern UINT set_window_style_bits( HWND hwnd, UINT set_bits, UINT clear_bits );
 extern void update_window_state( HWND hwnd );
@@ -418,7 +419,7 @@ static inline UINT unicodez_to_ascii( char *dst, const WCHAR *src )
 
 static inline BOOL is_win9x(void)
 {
-    return NtCurrentTeb()->Peb->OSPlatformId == VER_PLATFORM_WIN32s;
+    return RtlGetCurrentPeb()->OSPlatformId == VER_PLATFORM_WIN32s;
 }
 
 static inline const char *debugstr_us( const UNICODE_STRING *us )

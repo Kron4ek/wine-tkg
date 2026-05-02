@@ -33,6 +33,62 @@
 
 extern const CLSID * DOMDocument_version(MSXML_VERSION v);
 
+enum error_codes
+{
+    E_SAX_UNDEFINEDREF = 0xc00ce002,
+    E_SAX_INFINITEREFLOOP = 0xc00ce003,
+    E_SAX_UNPARSEDENTITYREF = 0xc00ce006,
+    E_SAX_CONTAINSCOLON = 0xc00ce00c,
+    E_SAX_UNDECLAREDPREFIX = 0xc00ce01d,
+
+    E_SAX_MISSINGEQUALS = 0xc00ce501,
+    E_SAX_MISSINGQUOTE = 0xc00ce502,
+    E_SAX_COMMENTSYNTAX = 0xc00ce503,
+    E_SAX_BADSTARTNAMECHAR = 0xc00ce504,
+    E_SAX_BADNAMECHAR = 0xc00ce505,
+    E_SAX_BADCHARINSTRING = 0xc00ce506,
+    E_SAX_XMLDECLSYNTAX = 0xc00ce507,
+    E_SAX_MISSINGWHITESPACE = 0xc00ce509,
+    E_SAX_EXPECTINGTAGEND = 0xc00ce50a,
+    E_SAX_BADCHARINDTD = 0xc00ce50b,
+    E_SAX_MISSINGSEMICOLON = 0xc00ce50d,
+    E_SAX_BADCHARINENTREF = 0xc00ce50e,
+    E_SAX_BADCHARINMIXEDMODEL = 0xc00ce515,
+    E_SAX_MISSING_STAR = 0xc00ce516,
+    E_SAX_MISSING_PAREN = 0xc00ce518,
+    E_SAX_BADCHARINENUMERATION = 0xc00ce519,
+    E_SAX_PIDECLSYNTAX = 0xc00ce51a,
+    E_SAX_EXPECTINGCLOSEQUOTE = 0xc00ce51b,
+    E_SAX_MULTIPLE_COLONS = 0xc00ce51c,
+    E_SAX_INVALID_UNICODE = 0xc00ce51f,
+    E_SAX_WHITESPACEORQUESTIONMARK = 0xc00ce520,
+    E_SAX_UNEXPECTEDENDTAG = 0xc00ce552,
+    E_SAX_DUPLICATEATTRIBUTE = 0xc00ce554,
+    E_SAX_INVALIDATROOTLEVEL = 0xc00ce556,
+    E_SAX_BAD_XMLDECL = 0xc00ce557,
+    E_SAX_MISSINGROOT = 0xc00ce558,
+    E_SAX_UNEXPECTED_EOF = 0xc00ce559,
+    E_SAX_INVALID_CDATACLOSINGTAG = 0xc00ce55c,
+    E_SAX_UNCLOSEDPI = 0xc00ce55d,
+    E_SAX_UNCLOSEDENDTAG = 0xc00ce55f,
+    E_SAX_UNCLOSEDCDATA = 0xc00ce564,
+    E_SAX_BADDECLNAME = 0xc00ce565,
+    E_SAX_RESERVEDNAMESPACE = 0xc00ce568,
+    E_SAX_UNEXPECTED_ATTRIBUTE = 0xc00ce56c,
+    E_SAX_ENDTAGMISMATCH = 0xc00ce56d,
+    E_SAX_INVALIDENCODING = 0xc00ce56e,
+    E_SAX_INVALIDSWITCH = 0xc00ce56f,
+    E_SAX_INVALID_MODEL = 0xc00ce571,
+    E_SAX_INVALID_TYPE = 0xc00ce572,
+    E_SAX_BADXMLCASE = 0xc00ce576,
+    E_SAX_INVALID_STANDALONE = 0xc00ce579,
+    E_SAX_INVALID_VERSION = 0xc00ce57f,
+    E_DOM_MAX_ELEMENT_DEPTH = 0xc00ce586,
+
+    E_SAX_MAX_ELEMENT_DEPTH = 0xc00cee92,
+};
+
+
 static inline bool array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
 {
     size_t new_capacity, max_capacity;
@@ -136,6 +192,7 @@ enum domnode_flags
     DOMNODE_READONLY_VALUE = 0x1,
     DOMNODE_IGNORED_WS_AFTER_STARTTAG = 0x2,
     DOMNODE_IGNORED_WS = 0x4,
+    DOMNODE_PARSED_VALUE = 0x8,
 };
 
 typedef struct _select_ns_entry
@@ -158,6 +215,8 @@ struct domdoc_properties
     LONG selectNsStr_len;
     bool XPath;
     bool prohibit_dtd;
+    bool normalize_attribute_values;
+    int max_element_depth;
     IUri *uri;
 };
 
@@ -176,7 +235,11 @@ struct domnode
     BSTR data;
     BSTR uri;
 
-    struct domdoc_properties *properties;
+    union
+    {
+        struct domdoc_properties *properties;
+        struct dtd *dtd;
+    };
 
     struct domnode *parent;
     struct domnode *owner;
@@ -283,6 +346,9 @@ extern struct domnode *get_node_obj(void *iface);
 extern bool parser_is_valid_qualified_name(const WCHAR *name);
 extern HRESULT parse_xml_decl_body(const WCHAR *text, BSTR *version, BSTR *encoding, BSTR *standalone);
 
+extern struct dtd * parser_dtd_addref(struct dtd *dtd);
+extern void parser_dtd_release(struct dtd *dtd);
+
 extern HRESULT node_append_child(struct domnode*,IXMLDOMNode*,IXMLDOMNode**);
 extern HRESULT node_attribute_get_namespace_uri(struct domnode *, BSTR *);
 extern HRESULT node_get_name(struct domnode*,BSTR*);
@@ -316,7 +382,7 @@ extern HRESULT node_get_namespaceURI(struct domnode*, BSTR *);
 extern HRESULT node_remove_child(struct domnode*,IXMLDOMNode*,IXMLDOMNode**);
 extern HRESULT node_has_childnodes(const struct domnode*,VARIANT_BOOL*);
 extern HRESULT node_get_owner_document(const struct domnode*,IXMLDOMDocument**);
-extern HRESULT node_get_text(const struct domnode*,BSTR*);
+extern HRESULT node_get_text(struct domnode*,BSTR*);
 extern HRESULT node_get_preserved_text(const struct domnode*,BSTR*);
 extern HRESULT node_get_value(struct domnode *node, VARIANT *value);
 extern HRESULT node_select_nodes(struct domnode*,BSTR,IXMLDOMNodeList**);
@@ -348,6 +414,8 @@ extern xmlChar const* dt_to_str(XDR_DT dt);
 extern const char* debugstr_dt(XDR_DT dt);
 extern OLECHAR const* dt_to_bstr(XDR_DT dt);
 extern HRESULT dt_validate(XDR_DT dt, const WCHAR *content);
+
+extern HRESULT variant_get_int_property(const VARIANT *v, int *ret);
 
 #include <libxslt/documents.h>
 extern xmlDocPtr xslt_doc_default_loader(const xmlChar *uri, xmlDictPtr dict, int options,

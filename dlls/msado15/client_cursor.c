@@ -68,7 +68,7 @@ struct accessor
     DBBINDING bindings[1];
 };
 
-static void dbtype_free(DBTYPE type, void *data)
+void dbtype_free(DBTYPE type, void *data)
 {
     if (type & DBTYPE_BYREF)
     {
@@ -77,7 +77,7 @@ static void dbtype_free(DBTYPE type, void *data)
         if (p)
         {
             dbtype_free(type & ~DBTYPE_BYREF, p);
-            free(p);
+            CoTaskMemFree(p);
         }
         return;
     }
@@ -1078,7 +1078,7 @@ static struct IRowsetInfoVtbl rowset_info_vtbl =
     rowset_info_GetSpecification
 };
 
-HRESULT create_mem_rowset(int count, const DBCOLUMNINFO *info, IUnknown **ret)
+HRESULT create_client_cursor(int count, const DBCOLUMNINFO *info, IUnknown **ret)
 {
     struct rowset *rowset;
     HRESULT hr;

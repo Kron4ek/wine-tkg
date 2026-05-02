@@ -837,7 +837,6 @@ static void shader_sm4_read_shader_data(struct vkd3d_shader_instruction *ins, ui
 
     if (!(icb = vkd3d_malloc(offsetof(struct vkd3d_shader_immediate_constant_buffer, data[icb_size]))))
     {
-        ERR("Failed to allocate immediate constant buffer, size %u.\n", icb_size);
         vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_OUT_OF_MEMORY, "Out of memory.");
         ins->opcode = VSIR_OP_INVALID;
         return;
@@ -853,16 +852,13 @@ static void shader_sm4_read_shader_data(struct vkd3d_shader_instruction *ins, ui
 }
 
 static void shader_sm4_set_descriptor_register_range(struct vkd3d_shader_sm4_parser *sm4,
-        const struct vsir_operand *reg, struct vkd3d_shader_register_range *range)
+        const struct vsir_operand *reg, struct vsir_register_range *range)
 {
     range->first = reg->idx[1].offset;
     range->last = reg->idx[shader_is_sm_5_1(sm4) ? 2 : 1].offset;
     if (range->last < range->first)
-    {
-        FIXME("Invalid register range [%u:%u].\n", range->first, range->last);
         vkd3d_shader_parser_error(&sm4->p, VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_RANGE,
                 "Last register %u must not be less than first register %u in range.", range->last, range->first);
-    }
 }
 
 static void shader_sm4_read_dcl_resource(struct vkd3d_shader_instruction *ins, uint32_t opcode,
@@ -1015,7 +1011,6 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
             break;
 
         default:
-            WARN("Unhandled register type %#x.\n", type);
             vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_INDEX_RANGE_DCL,
                     "Invalid register type %#x for index range base %u, count %u, mask %#x.",
                     type, register_idx, register_count, write_mask);
@@ -1035,8 +1030,6 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
         if ((r.index <= register_idx && register_idx - r.index < r.count)
                 || (register_idx < r.index && r.index - register_idx < register_count))
         {
-            WARN("Detected index range collision for base %u, count %u, mask %#x.\n",
-                    register_idx, register_count, write_mask);
             vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_INDEX_RANGE_DCL,
                     "Register index range base %u, count %u, mask %#x collides with a previous declaration.",
                     register_idx, register_count, write_mask);
@@ -1055,7 +1048,6 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
         if (e && e->sysval_semantic && register_count > 1 && !vsir_sysval_semantic_is_tess_factor(e->sysval_semantic)
                 && !vsir_sysval_semantic_is_clip_cull(e->sysval_semantic))
         {
-            WARN("Sysval %u included in an index range declaration.\n", e->sysval_semantic);
             vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_INDEX_RANGE_DCL,
                     "Index range base %u, count %u, mask %#x contains sysval %u.",
                     register_idx, register_count, write_mask, e->sysval_semantic);
@@ -1064,8 +1056,6 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
         if ((io_masks[register_idx + i] & write_mask) != write_mask
                 && (io_masks[register_idx + i] & write_mask) != 0)
         {
-            WARN("No matching declaration for index range base %u, count %u, mask %#x.\n",
-                    register_idx, register_count, write_mask);
             vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_INDEX_RANGE_DCL,
                     "Input/output registers matching index range base %u, count %u, mask %#x were not declared.",
                     register_idx, register_count, write_mask);
@@ -1410,13 +1400,15 @@ struct tpf_compiler
     struct dxbc_writer dxbc;
 };
 
-static void VKD3D_PRINTF_FUNC(3, 4) tpf_compiler_error(struct tpf_compiler *tpf,
-        enum vkd3d_shader_error error, const char *fmt, ...)
+#define tpf_compiler_error(tpf, error, ...) \
+        tpf_compiler_error_(tpf, error, __FUNCTION__, __VA_ARGS__)
+static void VKD3D_PRINTF_FUNC(4, 5) tpf_compiler_error_(struct tpf_compiler *tpf,
+        enum vkd3d_shader_error error, const char *function, const char *fmt, ...)
 {
     va_list args;
 
     va_start(args, fmt);
-    vkd3d_shader_verror(tpf->message_context, &tpf->location, error, fmt, args);
+    vkd3d_shader_verror(tpf->message_context, &tpf->location, error, function, fmt, args);
     va_end(args);
 
     if (!tpf->first_error)
@@ -2004,7 +1996,7 @@ static enum vsir_data_type map_data_type(char t)
 }
 
 static bool shader_sm4_read_reg_idx(struct vkd3d_shader_sm4_parser *tpf, const uint32_t **ptr,
-        const uint32_t *end, uint32_t addressing, struct vkd3d_shader_register_index *reg_idx)
+        const uint32_t *end, uint32_t addressing, struct vsir_register_index *reg_idx)
 {
     if (addressing & VKD3D_SM4_ADDRESSING_RELATIVE)
     {
@@ -2211,11 +2203,8 @@ static bool shader_sm4_read_param(struct vkd3d_shader_sm4_parser *priv, const ui
     else if (register_type == VKD3D_SM4_RT_IMMCONSTBUFFER)
     {
         if (param->idx_count != 1)
-        {
-            WARN("Unexpected idx count %u.\n", param->idx_count);
             vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_REGISTER_INDEX_COUNT,
                     "Invalid index count %u for immediate const buffer register; expected count 1.", param->idx_count);
-        }
     }
     else if (!shader_is_sm_5_1(priv) && vsir_operand_is_descriptor(param))
     {
@@ -2335,8 +2324,6 @@ static bool shader_sm4_validate_input_output_register(struct vkd3d_shader_sm4_pa
     /* The signature element registers have already been checked against MAX_REG_OUTPUT. */
     if (register_idx >= MAX_REG_OUTPUT || (masks[register_idx] & mask) != mask)
     {
-        WARN("Failed to find signature element for register type %#x, index %u and mask %#x.\n",
-                reg->type, register_idx, mask);
         vkd3d_shader_parser_error(&priv->p, VKD3D_SHADER_ERROR_TPF_INVALID_IO_REGISTER,
                 "Could not find signature element matching register type %#x, index %u and mask %#x.",
                 reg->type, register_idx, mask);
@@ -2831,8 +2818,6 @@ static bool shader_sm4_parser_validate_signature(struct vkd3d_shader_sm4_parser 
         register_count = signature->elements[i].register_count;
         if (register_idx != ~0u && (register_idx >= MAX_REG_OUTPUT || MAX_REG_OUTPUT - register_idx < register_count))
         {
-            WARN("%s signature element %u unhandled register index %u, count %u.\n",
-                    name, i, register_idx, register_count);
             vkd3d_shader_parser_error(&sm4->p, VKD3D_SHADER_ERROR_TPF_TOO_MANY_REGISTERS,
                     "%s signature element %u register index %u, count %u exceeds maximum index of %u.", name,
                     i, register_idx, register_count, MAX_REG_OUTPUT - 1);
@@ -2840,11 +2825,8 @@ static bool shader_sm4_parser_validate_signature(struct vkd3d_shader_sm4_parser 
         }
 
         if (!vkd3d_bitmask_is_contiguous(mask = signature->elements[i].mask))
-        {
-            WARN("%s signature element %u mask %#x is not contiguous.\n", name, i, mask);
             vkd3d_shader_parser_warning(&sm4->p, VKD3D_SHADER_WARNING_TPF_MASK_NOT_CONTIGUOUS,
                     "%s signature element %u mask %#x is not contiguous.", name, i, mask);
-        }
 
         if (register_idx != ~0u)
             masks[register_idx] |= mask;
@@ -2875,7 +2857,6 @@ static void shader_sm4_validate_default_phase_index_ranges(struct vkd3d_shader_s
     }
 
     /* This is very unlikely to occur and would complicate the default control point phase implementation. */
-    WARN("Default phase index ranges are not identical.\n");
     vkd3d_shader_parser_error(&sm4->p, VKD3D_SHADER_ERROR_TPF_INVALID_INDEX_RANGE_DCL,
             "Default control point phase input and output index range declarations are not identical.");
     return;
@@ -3010,6 +2991,7 @@ bool sm4_register_from_semantic_name(const struct vkd3d_shader_version *version,
         {"sv_depth",            true,  VKD3D_SHADER_TYPE_PIXEL,    VKD3DSPR_DEPTHOUT,      false},
         {"sv_target",           true,  VKD3D_SHADER_TYPE_PIXEL,    VKD3DSPR_OUTPUT,        true},
         {"sv_coverage",         true,  VKD3D_SHADER_TYPE_PIXEL,    VKD3DSPR_SAMPLEMASK,    false},
+        {"sv_stencilref",       true,  VKD3D_SHADER_TYPE_PIXEL,    VKD3DSPR_OUTSTENCILREF, false},
     };
 
     for (i = 0; i < ARRAY_SIZE(register_table); ++i)
@@ -3154,6 +3136,7 @@ bool sm4_sysval_semantic_from_semantic_name(enum vkd3d_shader_sysval_semantic *s
         {"depth",                       true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_DEPTH},
         {"sv_coverage",                 true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_COVERAGE},
         {"sv_depth",                    true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_DEPTH},
+        {"sv_stencilref",               true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_STENCIL_REF},
         {"sv_target",                   true,  VKD3D_SHADER_TYPE_PIXEL,     VKD3D_SHADER_SV_TARGET},
 
         {"sv_instanceid",               false, VKD3D_SHADER_TYPE_VERTEX,    VKD3D_SHADER_SV_INSTANCE_ID},
@@ -3520,7 +3503,7 @@ static uint32_t sm4_encode_register(const struct tpf_compiler *tpf, const struct
 static void sm4_write_register_index(const struct tpf_compiler *tpf, const struct vsir_operand *reg, unsigned int j)
 {
     unsigned int addressing = sm4_get_index_addressing_from_reg(reg, j);
-    const struct vkd3d_shader_register_index *idx = &reg->idx[j];
+    const struct vsir_register_index *idx = &reg->idx[j];
     struct vkd3d_bytecode_buffer *buffer = tpf->buffer;
     unsigned int k;
 
@@ -3967,7 +3950,7 @@ static void write_sm4_dcl_global_flags(struct tpf_compiler *tpf, uint32_t flags)
     struct sm4_instruction instr =
     {
         .opcode = VKD3D_SM4_OP_DCL_GLOBAL_FLAGS,
-        .extra_bits = flags << VKD3D_SM4_GLOBAL_FLAGS_SHIFT,
+        .extra_bits = (flags << VKD3D_SM4_GLOBAL_FLAGS_SHIFT) & VKD3D_SM4_GLOBAL_FLAGS_MASK,
     };
 
     write_sm4_instruction(tpf, &instr);
@@ -4451,7 +4434,7 @@ static void tpf_write_shdr(struct tpf_compiler *tpf)
     put_u32(&buffer, vkd3d_make_u32((version->major << 4) | version->minor, shader_types[version->type]));
     token_count_position = put_u32(&buffer, 0);
 
-    if (program->global_flags)
+    if (program->global_flags & (VKD3D_SM4_GLOBAL_FLAGS_MASK >> VKD3D_SM4_GLOBAL_FLAGS_SHIFT))
         write_sm4_dcl_global_flags(tpf, program->global_flags);
 
     if (version->type == VKD3D_SHADER_TYPE_HULL)
@@ -4496,6 +4479,8 @@ static void tpf_write_sfi0(struct tpf_compiler *tpf)
 
     if (tpf->program->global_flags & VKD3DSGF_ENABLE_MINIMUM_PRECISION)
         *flags |= DXBC_SFI0_REQUIRES_MINIMUM_PRECISION;
+    if (tpf->program->global_flags & VKD3DSGF_ENABLE_STENCIL_REF)
+        *flags |= DXBC_SFI0_REQUIRES_STENCIL_REF;
 
     /* FIXME: We also emit code that should require UAVS_AT_EVERY_STAGE,
      * STENCIL_REF, and TYPED_UAV_LOAD_ADDITIONAL_FORMATS. */

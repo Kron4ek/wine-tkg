@@ -1129,8 +1129,8 @@ static HRESULT interp_const(exec_ctx_t *ctx)
         return hres;
 
     if(ref.type != REF_NONE) {
-        FIXME("%s already defined\n", debugstr_w(arg));
-        return E_FAIL;
+        WARN("%s already defined\n", debugstr_w(arg));
+        return MAKE_VBSERROR(VBSE_NAME_REDEFINED);
     }
 
     hres = stack_assume_val(ctx, 0);
@@ -2108,14 +2108,37 @@ static HRESULT interp_imp(exec_ctx_t *ctx)
     return stack_push(ctx, &v);
 }
 
+static inline BOOL is_numeric_vt(VARTYPE vt)
+{
+    return vt == VT_I2 || vt == VT_I4 || vt == VT_R4 || vt == VT_R8
+        || vt == VT_CY || vt == VT_DATE || vt == VT_UI1;
+}
+
 static HRESULT var_cmp(exec_ctx_t *ctx, VARIANT *l, VARIANT *r)
 {
     TRACE("%s %s\n", debugstr_variant(l), debugstr_variant(r));
 
-    /* FIXME: Fix comparing string to number */
+    /* VarCmp would use string comparison; VBScript converts the string to a number. */
+    if((V_VT(l) == VT_BSTR && is_numeric_vt(V_VT(r))) ||
+       (V_VT(r) == VT_BSTR && is_numeric_vt(V_VT(l)))) {
+        double dl, dr;
+        HRESULT hres;
+
+        hres = to_double(l, &dl);
+        if(FAILED(hres))
+            return hres;
+        hres = to_double(r, &dr);
+        if(FAILED(hres))
+            return hres;
+        if(dl < dr)
+            return VARCMP_LT;
+        if(dl > dr)
+            return VARCMP_GT;
+        return VARCMP_EQ;
+    }
 
     return VarCmp(l, r, ctx->script->lcid, 0);
- }
+}
 
 static HRESULT cmp_oper(exec_ctx_t *ctx)
 {
@@ -2258,8 +2281,13 @@ static HRESULT interp_case(exec_ctx_t *ctx)
 
     hres = var_cmp(ctx, stack_top(ctx, 0), v.v);
     release_val(&v);
-    if(FAILED(hres))
+    if(FAILED(hres)) {
+        if(hres == DISP_E_TYPEMISMATCH) {
+            ctx->instr++;
+            return S_OK;
+        }
         return hres;
+    }
 
     if(hres == VARCMP_EQ) {
         stack_popn(ctx, 1);
@@ -2695,11 +2723,6 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
     vbsop_t op;
     HRESULT hres = S_OK;
 
-    if(!extern_caller && ctx->call_depth++ >= max_call_depth) {
-        ctx->call_depth--;
-        return MAKE_VBSERROR(VBSE_OUT_OF_STACK);
-    }
-
     exec.code = func->code_ctx;
     exec.caller = ctx->caller_exec;
     ctx->caller_exec = NULL;
@@ -2758,6 +2781,15 @@ HRESULT exec_script(script_ctx_t *ctx, BOOL extern_caller, function_t *func, vbd
     if(!exec.stack) {
         release_exec(&exec);
         return E_OUTOFMEMORY;
+    }
+
+    /* Recursion guard. Counted only once setup has succeeded so the
+     * single decrement at the bottom always pairs with this. Adding new
+     * early returns above this point can't desync the counter. */
+    if(!extern_caller && ctx->call_depth++ >= max_call_depth) {
+        ctx->call_depth--;
+        release_exec(&exec);
+        return MAKE_VBSERROR(VBSE_OUT_OF_STACK);
     }
 
     if(extern_caller)

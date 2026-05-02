@@ -117,6 +117,41 @@ Call ok(1 <> Not 0 = 0, "1 <> Not 0 = 0 should be true")
 Call ok(0 = Not 1 = 1, "0 = Not 1 = 1 should be true")
 Call ok(1 > Not 5 > 3, "1 > Not 5 > 3 should be true")
 Call ok(Not false And false = false, "Not false And false should be false")
+x = "0"
+Call ok(not (x > 30), """0"" > 30 should be false")
+Call ok(x < 30, """0"" < 30 should be true")
+Call ok(not ("0" > 30), """0"" > 30 literal should be false")
+Call ok("0" < 30, """0"" < 30 literal should be true")
+Call ok("10" > 9, """10"" > 9 should be true")
+Call ok(not ("10" > 100), """10"" > 100 should be false")
+Call ok("10" < 100, """10"" < 100 should be true")
+Call ok("42" = 42, """42"" = 42 should be true")
+Call ok(not ("42" = 43), """42"" = 43 should be false")
+Call ok(doubleAsString(0.5) > 0, """0.5"" > 0 should be true")
+Call ok(doubleAsString(0.5) < 1, """0.5"" < 1 should be true")
+Call ok(doubleAsString(3.5) = 3.5, """3.5"" = 3.5 should be true")
+Call ok(not (doubleAsString(1.5) > 2), """1.5"" > 2 should be false")
+Call ok(doubleAsString(2.5) > 2, """2.5"" > 2 should be true")
+Call ok(30 > "0", "30 > ""0"" should be true")
+Call ok(9 < "10", "9 < ""10"" should be true")
+Call ok(42 = "42", "42 = ""42"" should be true")
+Call ok(not ("10" > "9"), """10"" > ""9"" should be false (string comparison)")
+' String vs Boolean uses string comparison, not numeric conversion
+Call ok(not ("1" = True), """1"" = True should be false")
+Call ok(not ("-1" = True), """-1"" = True should be false")
+Call ok(not ("0" = False), """0"" = False should be false")
+' Non-numeric string compared to number should raise type mismatch
+on error resume next
+err.clear
+x = ("abc" > 5)
+Call ok(err.number = 13, """abc"" > 5 err.number = " & err.number)
+err.clear
+x = ("" > 0)
+Call ok(err.number = 13, """"" > 0 err.number = " & err.number)
+err.clear
+x = (5 > "abc")
+Call ok(err.number = 13, "5 > ""abc"" err.number = " & err.number)
+on error goto 0
 
 Call ok(getVT(false) = "VT_BOOL", "getVT(false) is not VT_BOOL")
 Call ok(getVT(true) = "VT_BOOL", "getVT(true) is not VT_BOOL")
@@ -1217,6 +1252,184 @@ Call TestSubExit2
 TestSubMultiArgs 1, 2, 3, 4, 5
 Call TestSubMultiArgs(1, 2, 3, 4, 5)
 
+Sub TestSubParenExpr(a, b)
+    Call ok(a=16, "a = " & a)
+    Call ok(b=7, "b = " & b)
+End Sub
+
+TestSubParenExpr (2) * 8, 7
+TestSubParenExpr 8 * (2), 7
+
+Sub TestSubParenExprAdd(a, b)
+    Call ok(a=6, "a = " & a)
+    Call ok(b=7, "b = " & b)
+End Sub
+
+TestSubParenExprAdd (2) + 4, 7
+TestSubParenExprAdd 4 + (2), 7
+
+Sub TestSubParenExprNoSpace(a)
+    Call ok(a=6, "a = " & a)
+End Sub
+
+TestSubParenExprNoSpace(10 \ 2) + 1
+
+' Regression test: function call with space before ( in expression context
+' e.g. x = (CInt (2) + 1) * 3 must parse and evaluate correctly
+x = CInt (2) + 1
+Call ok(x = 3, "CInt (2) + 1 = " & x)
+x = (CInt (2) + 1) * 3
+Call ok(x = 9, "(CInt (2) + 1) * 3 = " & x)
+
+' Regression test: function call with space before ( and * in expression context
+' e.g. x = CInt (2) * 3 must treat CInt (2) as a function call, not expression grouping
+x = CInt (2) * 3
+Call ok(x = 6, "CInt (2) * 3 = " & x)
+
+' Test member expression in statement context: obj.Method (x) * y, z
+Class TestObjParenExpr
+    Sub Check(a, b)
+        Call ok(a=16, "obj a = " & a)
+        Call ok(b=7, "obj b = " & b)
+    End Sub
+End Class
+
+Dim objParenExpr
+Set objParenExpr = New TestObjParenExpr
+objParenExpr.Check (2) * 8, 7
+
+Sub TestSubParenExprConcat(a, b)
+    Call ok(a="helloworld", "a = " & a)
+    Call ok(b=7, "b = " & b)
+End Sub
+
+TestSubParenExprConcat ("hello") & "world", 7
+
+' Test: function call as argument with & after paren must be a call, not grouping
+' e.g. TestSub Mid ("hello", 2) & "x" should call TestSub with "ellox"
+' Mid("hello", 2) returns "ello", & "x" concatenates to "ellox"
+Sub TestSubArgCallConcat(a)
+    Call ok(a="ellox", "a = " & a)
+End Sub
+
+TestSubArgCallConcat Mid ("hello", 2) & "x"
+
+' Test: obj(idx).method (expr) * val, y in statement context
+' The (expr) after .method must be expression grouping, not call paren
+Class TestIndexedObjParenExpr
+    Public arr_(1)
+    Public Sub Init()
+        Set arr_(0) = New TestObjParenExpr
+    End Sub
+    Public Default Property Get Item(idx)
+        Set Item = arr_(idx)
+    End Property
+End Class
+
+Dim idxObj
+Set idxObj = New TestIndexedObjParenExpr
+Call idxObj.Init()
+idxObj(0).Check (2) * 8, 7
+
+' No-space variants of Sub-first-arg paren pattern.
+' On native VBScript, `S(x) OP y` in statement context treats the whole
+' `S(x) OP y` as a call to S with argument `(x) OP y` — for every binary
+' operator except `=` (parsed as assignment).
+' Each case is wrapped in Execute so parse failures of one don't abort the rest.
+Dim npArg, npArgA, npArgB
+Sub NpS(a)
+    npArg = a
+End Sub
+Sub NpT(a, b)
+    npArgA = a
+    npArgB = b
+End Sub
+
+Sub CheckNpS(src, expected)
+    npArg = Empty
+    On Error Resume Next
+    Err.Clear
+    Execute src
+    Dim e : e = Err.Number
+    On Error GoTo 0
+    Call ok(e = 0, "parse error for " & src & ": err=" & e)
+    If e = 0 Then Call ok(npArg = expected, src & ": npArg = " & npArg & " expected " & expected)
+End Sub
+
+CheckNpS "NpS(10)+5",                15
+CheckNpS "NpS(10)-3",                7
+CheckNpS "NpS(10)*3",                30
+CheckNpS "NpS(10)/2",                5
+CheckNpS "NpS(10)\3",                3
+CheckNpS "NpS(10)^2",                100
+CheckNpS "NpS(""hi"")&""!""",        "hi!"
+CheckNpS "NpS(10) Mod 3",            1
+CheckNpS "NpS(10)<>10",              False
+CheckNpS "NpS(10)<5",                False
+CheckNpS "NpS(10)>5",                True
+CheckNpS "NpS(10)<=10",              True
+CheckNpS "NpS(10)>=5",               True
+CheckNpS "NpS(1) And 1",             1
+CheckNpS "NpS(0) Or 1",              1
+CheckNpS "NpS(1) Xor 1",             0
+CheckNpS "NpS(1) Eqv 1",             -1
+CheckNpS "NpS(1) Imp 1",             -1
+CheckNpS "NpS(Nothing) Is Nothing",  True
+
+' Two-arg form: S(x) OP y, z — result of `(x) OP y` is first arg, z is second.
+Sub CheckNpT(src, expectedA, expectedB)
+    npArgA = Empty
+    npArgB = Empty
+    On Error Resume Next
+    Err.Clear
+    Execute src
+    Dim e : e = Err.Number
+    On Error GoTo 0
+    Call ok(e = 0, "parse error for " & src & ": err=" & e)
+    If e = 0 Then Call ok(npArgA = expectedA and npArgB = expectedB, _
+        src & ": a=" & npArgA & " b=" & npArgB)
+End Sub
+
+CheckNpT "NpT(10)+5, 7",             15,      7
+CheckNpT "NpT(10)*3, 7",             30,      7
+CheckNpT "NpT(""hi"")&""!"", 7",     "hi!",   7
+
+' Member expression: obj.Method(x) OP y — no space, same pattern.
+Class NpCls
+    Sub Check(a)
+        npArg = a
+    End Sub
+End Class
+Dim npObj
+Set npObj = New NpCls
+CheckNpS "npObj.Check(10)+5",        15
+CheckNpS "npObj.Check(10)*3",        30
+
+Function ParenId(a)
+    ParenId = a
+End Function
+
+Dim parenRes
+parenRes = 0
+If False Then
+ElseIf ParenId(3) <= ParenId(4) + 0.1 Then
+    parenRes = 1
+End If
+Call ok(parenRes = 1, "ElseIf f(x) <= f(y) + z: parenRes = " & parenRes)
+
+parenRes = 0
+If False Then
+ElseIf ParenId(3) * 2 > 0 Then
+    parenRes = 1
+End If
+Call ok(parenRes = 1, "ElseIf f(x) * y > z: parenRes = " & parenRes)
+
+Dim parenOuter, parenInner
+ReDim parenOuter(3)
+parenInner = Array(1, 3, 5, 7)
+parenOuter(parenInner(1) And 1) = 99
+Call ok(parenOuter(1) = 99, "outer(inner(i) And k) = v: parenOuter(1) = " & parenOuter(1))
+
 Sub TestSubLocalVal
     x = false
     Call ok(not x, "local x is not false?")
@@ -1565,6 +1778,24 @@ Call ok(obj.publicArrayProp(1) = 2, "obj.publicArrayProp(1) = " & obj.publicArra
 x = obj.publicArrayProp(2)
 Call ok(getVT(x) = "VT_EMPTY*", "getVT(x) = " & getVT(x))
 Call ok(obj.publicArrayProp("0") = 1, "obj.publicArrayProp(0) = " & obj.publicArrayProp("0"))
+
+' Indexing a scalar (non-array) public property: native raises 438 for both
+' get and set (regardless of arg count or arg type).
+On Error Resume Next
+Err.Clear
+x = obj.publicProp(0)
+Call ok(Err.number = 438, "obj.publicProp(0) Err.number = " & Err.number)
+Err.Clear
+obj.publicProp(0) = 5
+Call ok(Err.number = 438, "obj.publicProp(0) = 5 Err.number = " & Err.number)
+Err.Clear
+x = obj.publicProp(0, 1)
+Call ok(Err.number = 438, "obj.publicProp(0, 1) Err.number = " & Err.number)
+Err.Clear
+obj.publicProp("k") = 5
+Call ok(Err.number = 438, "obj.publicProp(""k"") = 5 Err.number = " & Err.number)
+Err.Clear
+On Error Goto 0
 
 x = (New testclass).publicProp
 
@@ -2365,7 +2596,7 @@ End Class
 
 Set obj = new ArrClass
 Call ok(getVT(obj.classarr) = "VT_ARRAY|VT_VARIANT", "getVT(obj.classarr) = " & getVT(obj.classarr))
-'todo_wine Call ok(obj.classarr(1) = 2, "obj.classarr(1) = " & obj.classarr(1))
+Call ok(obj.classarr(1) = 2, "obj.classarr(1) = " & obj.classarr(1))
 
 obj.var = arr
 Call ok(getVT(obj.var) = "VT_ARRAY|VT_VARIANT", "getVT(obj.var) = " & getVT(obj.var))
@@ -2619,6 +2850,36 @@ Class class_test_identifiers_as_property_name
     End Property
 End Class
 
+' Local Dim inside a class method should not conflict with a global Function of the same name
+Function GlobalShadowFunc()
+    GlobalShadowFunc = 42
+End Function
+
+Class TestLocalDimShadowsGlobalFunc
+    Public Sub TestShadow()
+        Dim GlobalShadowFunc
+        GlobalShadowFunc = 10
+        Call ok(GlobalShadowFunc = 10, "local Dim should shadow global Function: " & GlobalShadowFunc)
+    End Sub
+
+    Private Function ClassPrivateFunc()
+        ClassPrivateFunc = 99
+    End Function
+
+    Public Sub TestPrivate()
+        Call ok(ClassPrivateFunc() = 99, "private class function should be callable: " & ClassPrivateFunc())
+    End Sub
+End Class
+
+' Global function with same name as private class function
+Function ClassPrivateFunc()
+    ClassPrivateFunc = 1
+End Function
+
+Dim objShadow : Set objShadow = New TestLocalDimShadowsGlobalFunc
+objShadow.TestShadow
+objShadow.TestPrivate
+
 sub test_dotIdentifiers
     ' test keywords that can also be an identifier after a dot
     Call ok(testObj.rem = 10, "testObj.rem = " & testObj.rem & " expected 10")
@@ -2856,8 +3117,7 @@ call ok(x.pub2 = 2, "x.pub2 = " & x.pub2)
 call ok(ubound(x.pubArray) = 3, "ubound(x.pubArray) = " & ubound(x.pubArray))
 call ok(ubound(x.pubArray2, 1) = 5, "ubound(x.pubArray2, 1) = " & ubound(x.pubArray2, 1))
 call ok(ubound(x.pubArray2, 2) = 10, "ubound(x.pubArray2, 2) = " & ubound(x.pubArray2, 2))
-' TODO: this does not parse: accessing class variable of array type element directly
-' call ok(x.pubArray(0) = 3, "x.pubArray(0) = " & x.pubArray(0))
+call ok(x.pubArray(0) = 3, "x.pubArray(0) = " & x.pubArray(0))
 call ok(x.dim1 = 7, "x.dim1 = " & x.dim1)
 call ok(x.dim2 = 8, "x.dim2 = " & x.dim2)
 
@@ -2868,9 +3128,9 @@ err.clear
 x.priv2 = 2
 call ok(err.number = 438, "err.number = " & err.number)
 err.clear
-' TODO: set class variable of array type element directly
 x.pubArray(0) = 1
-call todo_wine_ok(err.number = 0, "set x.pubArray(0) err.number = " & err.number)
+call ok(err.number = 0, "set x.pubArray(0) err.number = " & err.number)
+call ok(x.pubArray(0) = 1, "x.pubArray(0) = " & x.pubArray(0))
 on error goto 0
 
 funcCalled = ""
@@ -2983,6 +3243,24 @@ Call ok(Err.Number = 28, "mutual recursion: err.number = " & Err.Number)
 Err.Clear
 RecurseForever
 Call ok(Err.Number = 28, "infinite recursion: err.number = " & Err.Number)
+On Error GoTo 0
+
+' Regression: early-return paths in exec_script must not leak
+' ctx->call_depth, otherwise a hot loop of arity-mismatch calls under
+' OERN saturates the limit and breaks every later call.
+Sub callDepthLeakProbe(a, b, c)
+End Sub
+Sub callDepthLeakSink()
+End Sub
+Dim callDepthLeakI
+On Error Resume Next
+For callDepthLeakI = 1 To 1100
+    Err.Clear
+    callDepthLeakProbe
+Next
+Err.Clear
+callDepthLeakSink
+Call ok(Err.Number = 0, "call_depth leak after arity-mismatch flood: err.number = " & Err.Number)
 On Error GoTo 0
 
 function f2(x,y)
@@ -3133,6 +3411,90 @@ Sub TestEvalNoLeak
 End Sub
 Call TestEvalNoLeak
 Call ok(getVT(evalLocal) = "VT_EMPTY*", "evalLocal leaked from Eval scope: " & getVT(evalLocal))
+
+' Eval with non-BSTR arguments: non-string values are returned as-is
+Call ok(Eval(42) = 42, "Eval(42) = " & Eval(42))
+Call ok(getVT(Eval(42)) = "VT_I2", "Eval(42) type = " & getVT(Eval(42)))
+Call ok(Eval(3.14) = 3.14, "Eval(3.14) = " & Eval(3.14))
+Call ok(Eval(True) = True, "Eval(True) = " & Eval(True))
+Call ok(IsNull(Eval(Null)), "Eval(Null) should be Null")
+Call ok(IsEmpty(Eval(Empty)), "Eval(Empty) should be Empty")
+
+' Eval with object that has a default property: converts to string via default, then evaluates
+Class EvalHasDefault
+    Public Default Function GetValue()
+        GetValue = "True"
+    End Function
+End Class
+Dim evalHasDefaultObj
+Set evalHasDefaultObj = New EvalHasDefault
+Call ok(Eval(evalHasDefaultObj) = True, "Eval(HasDefault) = " & Eval(evalHasDefaultObj))
+
+' Eval with object without default property: should fail with error 438
+Class EvalNoDefault
+    Public Name
+End Class
+Dim evalNoDefaultObj
+Set evalNoDefaultObj = New EvalNoDefault
+
+On Error Resume Next
+Err.Clear
+Dim evalObjResult
+evalObjResult = Eval(evalNoDefaultObj)
+Call ok(Err.Number = 438, "Eval(NoDefault) err.number = " & Err.Number & " expected 438")
+
+' Eval(Nothing) should fail with error 91
+Err.Clear
+Dim evalNothingResult
+evalNothingResult = Eval(Nothing)
+Call ok(Err.Number = 91, "Eval(Nothing) err.number = " & Err.Number & " expected 91")
+
+' Eval(dispatch) in If..Is should trigger error, not silently return the object
+Err.Clear
+Dim evalCheckResult
+evalCheckResult = True
+If Not Eval(evalNoDefaultObj) Is evalNoDefaultObj Or Err Then evalCheckResult = False
+Call ok(evalCheckResult = False, "Eval(obj) Is obj: checkResult = " & evalCheckResult & " expected False")
+
+' Execute/ExecuteGlobal with non-BSTR should fail with type mismatch
+Err.Clear
+Execute 42
+Call ok(Err.Number = 13, "Execute(42) err.number = " & Err.Number & " expected 13")
+
+Err.Clear
+ExecuteGlobal 42
+Call ok(Err.Number = 13, "ExecuteGlobal(42) err.number = " & Err.Number & " expected 13")
+
+' Execute/ExecuteGlobal with dispatch: converts via default property
+Class ExecHasDefault
+    Public Default Function GetValue()
+        GetValue = "execHdResult = 99"
+    End Function
+End Class
+Dim execHdObj : Set execHdObj = New ExecHasDefault
+Dim execHdResult : execHdResult = 0
+
+Err.Clear
+Execute execHdObj
+Call ok(Err.Number = 0, "Execute(HasDefault) err.number = " & Err.Number)
+Call ok(execHdResult = 99, "Execute(HasDefault) execHdResult = " & execHdResult)
+
+Err.Clear
+execHdResult = 0
+ExecuteGlobal execHdObj
+Call ok(Err.Number = 0, "ExecuteGlobal(HasDefault) err.number = " & Err.Number)
+Call ok(execHdResult = 99, "ExecuteGlobal(HasDefault) execHdResult = " & execHdResult)
+
+' Execute/ExecuteGlobal with dispatch without default property: error 438
+Err.Clear
+Execute evalNoDefaultObj
+Call ok(Err.Number = 438, "Execute(NoDefault) err.number = " & Err.Number & " expected 438")
+
+Err.Clear
+ExecuteGlobal evalNoDefaultObj
+Call ok(Err.Number = 438, "ExecuteGlobal(NoDefault) err.number = " & Err.Number & " expected 438")
+
+On Error GoTo 0
 
 ' ExecuteGlobal tests
 x = 0
@@ -3348,6 +3710,32 @@ Call ok(Err.Number = 13, "Eval type mismatch: Err.Number = " & Err.Number & " ex
 Call ok(Err.Source = "Microsoft VBScript runtime error", "Eval type mismatch: Err.Source = """ & Err.Source & """")
 
 On Error Goto 0
+' Duplicate Sub declarations: last one wins
+dim dupSubResult
+dupSubResult = 0
+Sub DupSub()
+    dupSubResult = 1
+End Sub
+Sub DupSub()
+    dupSubResult = 2
+End Sub
+DupSub
+call ok(dupSubResult = 2, "dupSubResult = " & dupSubResult)
+
+' Sub replaced by Function with same name: Function wins
+dim dupMixedResult
+dupMixedResult = 0
+Sub DupMixed()
+    dupMixedResult = 1
+End Sub
+Function DupMixed()
+    dupMixedResult = 2
+    DupMixed = 42
+End Function
+dim dupMixedRet
+dupMixedRet = DupMixed()
+call ok(dupMixedResult = 2, "dupMixedResult = " & dupMixedResult)
+call ok(dupMixedRet = 42, "dupMixedRet = " & dupMixedRet)
 
 ' Test calling a dispatch variable as statement (invokes default property)
 funcCalled = ""
@@ -3443,6 +3831,61 @@ Set undefinedClassObj = New notAClass
 Call ok(Err.Number = 506, "New non-class variable: err.number = " & Err.Number)
 
 On Error GoTo 0
+
+' === GetLocale / SetLocale / locale-sensitive Format* ===
+Dim origLcid
+origLcid = GetLocale()
+Call ok(origLcid > 0, "GetLocale initial: " & origLcid)
+
+' SetLocale returns the previous LCID.
+Call ok(SetLocale(1033) = origLcid, "SetLocale(1033) return value")
+Call ok(GetLocale() = 1033, "GetLocale after SetLocale(1033): " & GetLocale())
+
+' en-US formatting
+Call ok(FormatNumber(1234567.89) = "1,234,567.89", "FormatNumber en-US: " & FormatNumber(1234567.89))
+Call ok(FormatCurrency(1234567.89) = "$1,234,567.89", "FormatCurrency en-US: " & FormatCurrency(1234567.89))
+Call ok(FormatPercent(0.1234) = "12.34%", "FormatPercent en-US: " & FormatPercent(0.1234))
+Call ok(FormatDateTime(DateSerial(2026,3,15), 1) = "Sunday, March 15, 2026", _
+    "FormatDateTime en-US: " & FormatDateTime(DateSerial(2026,3,15), 1))
+
+' de-DE: '.' thousands, ',' decimal
+Call SetLocale(1031)
+Call ok(GetLocale() = 1031, "GetLocale after SetLocale(1031)")
+Call ok(FormatNumber(1234567.89) = "1.234.567,89", "FormatNumber de-DE: " & FormatNumber(1234567.89))
+Call ok(FormatPercent(0.1234) = "12,34%", "FormatPercent de-DE: " & FormatPercent(0.1234))
+
+' ja-JP: Anglo number formatting
+Call SetLocale(1041)
+Call ok(GetLocale() = 1041, "GetLocale after SetLocale(1041)")
+Call ok(FormatNumber(1234567.89) = "1,234,567.89", "FormatNumber ja-JP: " & FormatNumber(1234567.89))
+Call ok(FormatPercent(0.1234) = "12.34%", "FormatPercent ja-JP: " & FormatPercent(0.1234))
+
+' Variant coercion to string (CStr etc.) uses the script LCID.
+Call SetLocale(1031)
+Call ok(CStr(1.5) = "1,5", "CStr(1.5) de-DE: " & CStr(1.5))
+Call SetLocale(1033)
+Call ok(CStr(1.5) = "1.5", "CStr(1.5) en-US: " & CStr(1.5))
+
+' Day/Month/Year parse date strings using the script LCID.
+Call SetLocale(1031)
+Call ok(Day("15.03.2026") = 15, "Day(""15.03.2026"") de-DE: " & Day("15.03.2026"))
+Call ok(Month("15.03.2026") = 3, "Month(""15.03.2026"") de-DE: " & Month("15.03.2026"))
+Call ok(Year("15.03.2026") = 2026, "Year(""15.03.2026"") de-DE: " & Year("15.03.2026"))
+
+' The German-format string is rejected under en-US.
+Call SetLocale(1033)
+Dim dateErr
+On Error Resume Next
+Err.Clear
+Call Day("15.03.2026")
+dateErr = Err.Number
+Err.Clear
+On Error Goto 0
+Call ok(dateErr <> 0, "Day(""15.03.2026"") en-US should error: err=" & dateErr)
+
+' Restore original locale.
+Call SetLocale(origLcid)
+Call ok(GetLocale() = origLcid, "restore: GetLocale = " & GetLocale())
 
 function wmi_array_bstr()
 const HKEY_LOCAL_MACHINE = &H80000002

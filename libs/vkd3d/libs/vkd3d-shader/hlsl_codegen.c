@@ -9502,6 +9502,24 @@ static void generate_vsir_signature_entry(struct hlsl_ctx *ctx, struct vsir_prog
                 break;
         }
 
+        if (sysval == VKD3D_SHADER_SV_STENCIL_REF)
+        {
+            if (hlsl_version_lt(ctx, 5, 0))
+                hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INCOMPATIBLE_PROFILE,
+                        "Stencil export is only supported in shader model 5.0 or higher.");
+            if (var->semantic.index)
+                hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SEMANTIC,
+                        "Invalid semantic index %u for semantic variable %s.", var->semantic.index, var->name);
+            if (!hlsl_is_vec1(var->data_type) || numeric_type != HLSL_TYPE_UINT)
+            {
+                if ((string = hlsl_type_to_string(ctx, var->data_type)))
+                    hlsl_error(ctx, &var->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                            "Invalid data type %s for semantic variable %s.", string->buffer, var->name);
+                hlsl_release_string_buffer(ctx, string);
+            }
+            program->global_flags |= VKD3DSGF_ENABLE_STENCIL_REF;
+        }
+
         if (sysval == VKD3D_SHADER_SV_TARGET && ascii_strcasecmp(name, "SV_Target"))
             name = "SV_Target";
         else if (sysval == VKD3D_SHADER_SV_DEPTH && ascii_strcasecmp(name, "SV_Depth"))
@@ -9767,10 +9785,10 @@ static void sm1_generate_vsir_sampler_dcls(struct hlsl_ctx *ctx,
         struct vsir_program *program, struct hlsl_block *block)
 {
     enum vkd3d_shader_resource_type resource_type;
-    struct vkd3d_shader_register_range *range;
     struct vkd3d_shader_semantic *semantic;
     struct vkd3d_shader_instruction *ins;
     enum hlsl_sampler_dim sampler_dim;
+    struct vsir_register_range *range;
     struct vsir_dst_operand *dst;
     struct hlsl_ir_var *var;
     unsigned int i, count;
@@ -14103,8 +14121,8 @@ static void generate_vsir_descriptors_for_var(struct hlsl_ctx *ctx, struct vsir_
     for (unsigned int k = 0; k < component_count; ++k)
     {
         const struct hlsl_type *component_type = hlsl_type_get_component_type(ctx, var->data_type, k);
-        struct vkd3d_shader_register_range range;
         struct vkd3d_shader_descriptor_info1 *d;
+        struct vsir_register_range range;
         unsigned int regset_offset;
         enum hlsl_regset regset;
         uint32_t id;
@@ -14167,8 +14185,8 @@ static void generate_vsir_descriptors_for_var(struct hlsl_ctx *ctx, struct vsir_
 
 static void generate_vsir_descriptors(struct hlsl_ctx *ctx, struct vsir_program *program)
 {
-    struct vkd3d_shader_register_range range;
     struct vkd3d_shader_descriptor_info1 *d;
+    struct vsir_register_range range;
     const struct hlsl_ir_var *var;
 
     if (program->shader_version.major < 4)
@@ -15088,6 +15106,73 @@ static bool hlsl_version_has_sm1_loop_support(struct hlsl_ctx *ctx)
     return hlsl_version_ge(ctx, 2, 1);
 }
 
+static bool is_instr_constant_lt_var(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr,
+        unsigned int k, struct hlsl_ir_var **var, unsigned int *var_component, bool *negated)
+{
+    unsigned int component, component_count, swizzle_component = 0;
+    struct hlsl_ir_expr *expr;
+    struct hlsl_ir_node *arg1;
+    struct hlsl_ir_load *load;
+    bool floating = false;
+    bool neg = false;
+
+    if (instr->type != HLSL_IR_EXPR)
+        return false;
+    expr = hlsl_ir_expr(instr);
+
+    if (expr->op == HLSL_OP1_LOGIC_NOT)
+    {
+        if (expr->operands[0].node->type != HLSL_IR_EXPR)
+            return false;
+        expr = hlsl_ir_expr(expr->operands[0].node);
+        neg = true;
+    }
+
+    if (expr->op == HLSL_OP2_GEQUAL)
+        neg = !neg;
+    else if (expr->op != HLSL_OP2_LESS)
+        return false;
+
+    if (expr->operands[0].node->type != HLSL_IR_CONSTANT)
+        return false;
+
+    arg1 = expr->operands[1].node;
+    if (arg1->type == HLSL_IR_EXPR && hlsl_ir_expr(arg1)->op == HLSL_OP1_CAST)
+    {
+        if (hlsl_type_is_floating_point(arg1->data_type))
+            floating = true;
+        arg1 = hlsl_ir_expr(arg1)->operands[0].node;
+    }
+    if (arg1->type == HLSL_IR_SWIZZLE)
+    {
+        VKD3D_ASSERT(hlsl_ir_swizzle(arg1)->val.node->data_type->class == HLSL_CLASS_VECTOR);
+
+        swizzle_component = hlsl_swizzle_get_component(hlsl_ir_swizzle(arg1)->u.vector, 0);
+        arg1 = hlsl_ir_swizzle(arg1)->val.node;
+    }
+    if (arg1->type != HLSL_IR_LOAD)
+        return false;
+    if (!floating && hlsl_ir_constant(expr->operands[0].node)->value.u[0].u != k)
+        return false;
+    if (floating && hlsl_ir_constant(expr->operands[0].node)->value.u[0].f != k)
+        return false;
+
+    load = hlsl_ir_load(arg1);
+    if (load->node.data_type->e.numeric.type != HLSL_TYPE_INT
+            && load->node.data_type->e.numeric.type != HLSL_TYPE_UINT)
+        return false;
+    *var = load->src.var;
+
+    if (!hlsl_component_index_range_from_deref(ctx, &load->src, &component, &component_count))
+        return false;
+    component += swizzle_component;
+    component = map_matrix_component_index((*var)->data_type, component, READING_ORDER_ALWAYS_ROW_MAJOR);
+
+    *var_component = component;
+    *negated = neg;
+    return true;
+}
+
 /* In SM1, the native compiler will emit REP or LOOP instructions to represent
  * loops. These instructions require an i# register containing the number of
  * iterations.
@@ -15125,73 +15210,39 @@ static bool hlsl_version_has_sm1_loop_support(struct hlsl_ctx *ctx)
 static struct hlsl_ir_if *identify_limiter_uniform(struct hlsl_ctx *ctx,
         struct hlsl_ir_loop *loop, struct hlsl_block *block, unsigned int k)
 {
-    unsigned int limiter_component, component_count, swizzle_component = 0;
-    struct hlsl_ir_node *condition, *arg1;
+    struct hlsl_ir_node *condition;
     struct hlsl_ir_if *iff = NULL;
-    struct hlsl_ir_expr *expr;
-    struct hlsl_ir_load *load;
+    unsigned int var_component;
     struct hlsl_ir_var *var;
+    bool negated;
 
     VKD3D_ASSERT(loop->unroll_type == HLSL_LOOP_FORCE_LOOP);
     VKD3D_ASSERT(loop->type != HLSL_LOOP_DO_WHILE);
 
-    iff = find_loop_conditional(block);
-
-    if (!iff)
-        goto fail;
+    /* If we don't find the loop conditional, this means that either this
+     * whole iteration is guaranteed, so the loop is not limited by our
+     * current limiter candidate, or that the loop always ends in this
+     * iteration for conditions other than the limiter itself. In the latter
+     * case, fxc/d3dcompiler doesn't invalidate the limiter. */
+    if (!(iff = find_loop_conditional(block)))
+        return NULL;
 
     condition = iff->condition.node;
-    if (condition->type != HLSL_IR_EXPR)
+    if (!is_instr_constant_lt_var(ctx, condition, k, &var, &var_component, &negated))
         goto fail;
-    expr = hlsl_ir_expr(condition);
-
-    if (expr->op == HLSL_OP1_LOGIC_NOT)
-    {
-        if (expr->operands[0].node->type != HLSL_IR_EXPR)
-            goto fail;
-        expr = hlsl_ir_expr(expr->operands[0].node);
-        if (expr->op != HLSL_OP2_LESS)
-            goto fail;
-    }
-    else if (expr->op != HLSL_OP2_GEQUAL)
+    if (!negated)
         goto fail;
-
-    if (expr->operands[0].node->type != HLSL_IR_CONSTANT)
-        goto fail;
-    arg1 = expr->operands[1].node;
-    if (arg1->type == HLSL_IR_SWIZZLE)
-    {
-        VKD3D_ASSERT(hlsl_ir_swizzle(arg1)->val.node->data_type->class == HLSL_CLASS_VECTOR);
-
-        swizzle_component = hlsl_swizzle_get_component(hlsl_ir_swizzle(arg1)->u.vector, 0);
-        arg1 = hlsl_ir_swizzle(arg1)->val.node;
-    }
-    if (arg1->type != HLSL_IR_LOAD)
-        goto fail;
-    if (hlsl_ir_constant(expr->operands[0].node)->value.u[0].u != k)
-        goto fail;
-
-    load = hlsl_ir_load(arg1);
-    if (load->node.data_type->e.numeric.type != HLSL_TYPE_INT
-            && load->node.data_type->e.numeric.type != HLSL_TYPE_UINT)
-        goto fail;
-    var = load->src.var;
 
     if (!var->is_uniform)
         goto fail;
 
-    if (!hlsl_component_index_range_from_deref(ctx, &load->src, &limiter_component, &component_count))
-        goto fail;
-    limiter_component += swizzle_component;
-    limiter_component = map_matrix_component_index(var->data_type, limiter_component, READING_ORDER_ALWAYS_ROW_MAJOR);
-
     if (!loop->limiter)
     {
         loop->limiter = var;
-        loop->limiter_component = limiter_component;
+        loop->limiter_component = var_component;
     }
 
-    if (loop->limiter != var || loop->limiter_component != limiter_component)
+    if (loop->limiter != var || loop->limiter_component != var_component)
         goto fail;
 
     return iff;
@@ -15282,7 +15333,13 @@ static bool loop_unrolling_unroll_loop(struct hlsl_ctx *ctx, struct hlsl_block *
             struct hlsl_ir_if *limiter_if;
 
             if (!(limiter_if = identify_limiter_uniform(ctx, loop, &target_if->then_block, i)))
+            {
+                loop_unrolling_simplify(ctx, &target_if->then_block, &state, &index);
+                if (!loop_unrolling_check_val(&state, broken))
+                    loop->limiter = NULL;
                 goto fail;
+            }
+
             VKD3D_ASSERT(list_empty(&limiter_if->else_block.instrs));
             /* Remove the conditional so the next iteration can assume that this
              * one was completed while lowering. */

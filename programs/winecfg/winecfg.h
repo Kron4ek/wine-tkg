@@ -74,9 +74,6 @@ WCHAR *keypath(const WCHAR *section);
 BOOL initialize(HINSTANCE hInstance);
 extern HKEY config_key;
 
-/* winex11 registry */
-void convert_x11_desktop_key(void);
-
 /* hack for the property sheet control  */
 void set_window_title(HWND dialog);
 
@@ -90,7 +87,6 @@ INT_PTR CALLBACK AudioDlgProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPara
 INT_PTR CALLBACK ThemeDlgProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK StagingDlgProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
 INT_PTR CALLBACK AboutDlgProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
-INT_PTR CALLBACK InputDlgProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 /* Windows version management */
 BOOL set_winver_from_string(const WCHAR *version);

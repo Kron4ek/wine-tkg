@@ -2231,13 +2231,17 @@ static LRESULT handle_internal_message( HWND hwnd, UINT msg, WPARAM wparam, LPAR
         window_rect = map_rect_raw_to_virt( window_rect, get_thread_dpi() );
 
         if (foreground) set_foreground_window( foreground, FALSE, TRUE );
-        switch (state_cmd)
+        switch (LOWORD(state_cmd))
         {
         case SC_RESTORE:
-            NtUserSetInternalWindowPos( hwnd, SW_SHOW, &window_rect, NULL );
+            if (HIWORD(state_cmd)) NtUserSetActiveWindow( hwnd );
+
+            /* make the win32 window restore to the current host window config */
+            set_window_normal_placement( hwnd, window_rect );
+
             /* fallthrough */
         default:
-            send_message( hwnd, WM_SYSCOMMAND, state_cmd, 0 );
+            send_message( hwnd, WM_SYSCOMMAND, LOWORD(state_cmd), 0 );
             break;
         case 0:
             if (!swp_flags) break;
@@ -3438,11 +3442,11 @@ static DWORD wait_objects( DWORD count, const HANDLE *handles, DWORD timeout,
 static HANDLE normalize_std_handle( HANDLE handle )
 {
     if (handle == (HANDLE)STD_INPUT_HANDLE)
-        return NtCurrentTeb()->Peb->ProcessParameters->hStdInput;
+        return RtlGetCurrentPeb()->ProcessParameters->hStdInput;
     if (handle == (HANDLE)STD_OUTPUT_HANDLE)
-        return NtCurrentTeb()->Peb->ProcessParameters->hStdOutput;
+        return RtlGetCurrentPeb()->ProcessParameters->hStdOutput;
     if (handle == (HANDLE)STD_ERROR_HANDLE)
-        return NtCurrentTeb()->Peb->ProcessParameters->hStdError;
+        return RtlGetCurrentPeb()->ProcessParameters->hStdError;
 
     return handle;
 }

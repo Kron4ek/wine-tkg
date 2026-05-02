@@ -822,6 +822,101 @@ static void test_File_ParentFolder(void)
     DeleteFileW(pathW);
 }
 
+static void test_File_ShortName(void)
+{
+    WCHAR long_path[MAX_PATH], expected_path[MAX_PATH], *ptr;
+    IFile *file;
+    BSTR path, str;
+    DWORD len;
+    HRESULT hr;
+    HANDLE hf;
+
+    get_temp_path(NULL, long_path);
+    hf = CreateFileW(long_path, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hf == INVALID_HANDLE_VALUE) {
+        skip("Can't create temporary file\n");
+        return;
+    }
+    CloseHandle(hf);
+
+    len = GetShortPathNameW(long_path, expected_path, MAX_PATH);
+    ok(len && len < MAX_PATH, "GetShortPathNameW failed, len %lu\n", len);
+
+    path = SysAllocString(long_path);
+    hr = IFileSystem3_GetFile(fs3, path, &file);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    SysFreeString(path);
+
+    hr = IFile_get_ShortPath(file, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    hr = IFile_get_ShortPath(file, &str);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!lstrcmpW(str, expected_path), "got %s, expected %s\n",
+       wine_dbgstr_w(str), wine_dbgstr_w(expected_path));
+    SysFreeString(str);
+
+    hr = IFile_get_ShortName(file, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    hr = IFile_get_ShortName(file, &str);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ptr = wcsrchr(expected_path, '\\');
+    ok(ptr != NULL, "short path has no backslash: %s\n", wine_dbgstr_w(expected_path));
+    ok(!lstrcmpW(str, ptr + 1), "got %s, expected %s\n",
+       wine_dbgstr_w(str), wine_dbgstr_w(ptr + 1));
+    SysFreeString(str);
+
+    IFile_Release(file);
+    DeleteFileW(long_path);
+}
+
+static void test_Folder_ShortName(void)
+{
+    static const WCHAR dir_name[] = L"scrrun_shortname_test_longname";
+    WCHAR temp_path[MAX_PATH], dir_path[MAX_PATH], expected_path[MAX_PATH], *ptr;
+    IFolder *folder;
+    BSTR path, str;
+    DWORD len;
+    HRESULT hr;
+
+    GetTempPathW(MAX_PATH, temp_path);
+    lstrcpyW(dir_path, temp_path);
+    lstrcatW(dir_path, dir_name);
+    ok(CreateDirectoryW(dir_path, NULL), "CreateDirectory failed, error %ld\n", GetLastError());
+
+    len = GetShortPathNameW(dir_path, expected_path, MAX_PATH);
+    ok(len && len < MAX_PATH, "GetShortPathNameW failed, len %lu\n", len);
+
+    path = SysAllocString(dir_path);
+    hr = IFileSystem3_GetFolder(fs3, path, &folder);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    SysFreeString(path);
+
+    hr = IFolder_get_ShortPath(folder, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    hr = IFolder_get_ShortPath(folder, &str);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!lstrcmpW(str, expected_path), "got %s, expected %s\n",
+       wine_dbgstr_w(str), wine_dbgstr_w(expected_path));
+    SysFreeString(str);
+
+    hr = IFolder_get_ShortName(folder, NULL);
+    ok(hr == E_POINTER, "Unexpected hr %#lx.\n", hr);
+
+    hr = IFolder_get_ShortName(folder, &str);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ptr = wcsrchr(expected_path, '\\');
+    ok(ptr != NULL, "short path has no backslash: %s\n", wine_dbgstr_w(expected_path));
+    ok(!lstrcmpW(str, ptr + 1), "got %s, expected %s\n",
+       wine_dbgstr_w(str), wine_dbgstr_w(ptr + 1));
+    SysFreeString(str);
+
+    IFolder_Release(folder);
+    RemoveDirectoryW(dir_path);
+}
+
 static inline BOOL create_file(const WCHAR *name)
 {
     HANDLE f = CreateFileW(name, GENERIC_WRITE, 0, NULL, CREATE_NEW, 0, NULL);
@@ -3135,6 +3230,217 @@ static void test_DoOpenPipeStream(void)
         ITextStream_Release(stream_write);
 }
 
+static void test_File_Delete(void)
+{
+    WCHAR pathW[MAX_PATH];
+    IFile *file;
+    BSTR path;
+    HRESULT hr;
+    HANDLE hf;
+    DWORD attrs;
+
+    /* Create a normal file and delete it. */
+    get_temp_path(NULL, pathW);
+    hf = CreateFileW(pathW, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hf == INVALID_HANDLE_VALUE)
+    {
+        skip("Can't create temporary file\n");
+        return;
+    }
+    CloseHandle(hf);
+
+    path = SysAllocString(pathW);
+    hr = IFileSystem3_GetFile(fs3, path, &file);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IFile_Delete(file, VARIANT_FALSE);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    attrs = GetFileAttributesW(pathW);
+    ok(attrs == INVALID_FILE_ATTRIBUTES, "expected file to be deleted\n");
+
+    IFile_Release(file);
+    SysFreeString(path);
+
+    /* Create a readonly file and try deleting without force. */
+    hf = CreateFileW(pathW, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_READONLY, NULL);
+    if (hf == INVALID_HANDLE_VALUE)
+    {
+        skip("Can't create temporary readonly file\n");
+        return;
+    }
+    CloseHandle(hf);
+
+    path = SysAllocString(pathW);
+    hr = IFileSystem3_GetFile(fs3, path, &file);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IFile_Delete(file, VARIANT_FALSE);
+    ok(hr == CTL_E_PERMISSIONDENIED, "Unexpected hr %#lx.\n", hr);
+
+    attrs = GetFileAttributesW(pathW);
+    ok(attrs != INVALID_FILE_ATTRIBUTES, "file should still exist\n");
+
+    /* Now delete with force. */
+    hr = IFile_Delete(file, VARIANT_TRUE);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    attrs = GetFileAttributesW(pathW);
+    ok(attrs == INVALID_FILE_ATTRIBUTES, "expected file to be deleted\n");
+
+    IFile_Release(file);
+    SysFreeString(path);
+}
+
+static void test_File_Move(void)
+{
+    WCHAR src_path[MAX_PATH], dst_path[MAX_PATH];
+    IFile *file;
+    BSTR path, dst;
+    HRESULT hr;
+    HANDLE hf;
+    DWORD attrs;
+
+    get_temp_path(NULL, src_path);
+    hf = CreateFileW(src_path, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hf == INVALID_HANDLE_VALUE)
+    {
+        skip("Can't create temporary file\n");
+        return;
+    }
+    CloseHandle(hf);
+
+    get_temp_path(NULL, dst_path);
+    /* get_temp_path creates and deletes, so dst_path is free. */
+
+    path = SysAllocString(src_path);
+    hr = IFileSystem3_GetFile(fs3, path, &file);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    dst = SysAllocString(dst_path);
+    hr = IFile_Move(file, dst);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    attrs = GetFileAttributesW(src_path);
+    ok(attrs == INVALID_FILE_ATTRIBUTES, "source file should be gone\n");
+
+    attrs = GetFileAttributesW(dst_path);
+    ok(attrs != INVALID_FILE_ATTRIBUTES, "destination file should exist\n");
+
+    IFile_Release(file);
+    SysFreeString(path);
+    SysFreeString(dst);
+    DeleteFileW(dst_path);
+}
+
+static void test_Folder_Delete(void)
+{
+    WCHAR temp_path[MAX_PATH], dir_path[MAX_PATH], file_path[MAX_PATH];
+    IFolder *folder;
+    BSTR path;
+    HRESULT hr;
+    HANDLE hf;
+    DWORD attrs;
+
+    GetTempPathW(MAX_PATH, temp_path);
+    lstrcpyW(dir_path, temp_path);
+    lstrcatW(dir_path, L"scrrun_del_test");
+
+    if (!CreateDirectoryW(dir_path, NULL))
+    {
+        skip("Can't create temporary directory\n");
+        return;
+    }
+
+    /* Create a file inside the folder. */
+    lstrcpyW(file_path, dir_path);
+    lstrcatW(file_path, L"\\testfile.txt");
+    hf = CreateFileW(file_path, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    ok(hf != INVALID_HANDLE_VALUE, "CreateFile failed, error %ld\n", GetLastError());
+    CloseHandle(hf);
+
+    path = SysAllocString(dir_path);
+    hr = IFileSystem3_GetFolder(fs3, path, &folder);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IFolder_Delete(folder, VARIANT_FALSE);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    attrs = GetFileAttributesW(dir_path);
+    ok(attrs == INVALID_FILE_ATTRIBUTES, "expected folder to be deleted\n");
+
+    IFolder_Release(folder);
+    SysFreeString(path);
+
+    /* Test deleting folder containing a readonly file with force. */
+    ok(CreateDirectoryW(dir_path, NULL), "CreateDirectory failed, error %ld\n", GetLastError());
+    lstrcpyW(file_path, dir_path);
+    lstrcatW(file_path, L"\\readonly.txt");
+    hf = CreateFileW(file_path, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_READONLY, NULL);
+    ok(hf != INVALID_HANDLE_VALUE, "CreateFile failed, error %ld\n", GetLastError());
+    CloseHandle(hf);
+
+    path = SysAllocString(dir_path);
+    hr = IFileSystem3_GetFolder(fs3, path, &folder);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IFolder_Delete(folder, VARIANT_FALSE);
+    ok(hr == CTL_E_PERMISSIONDENIED, "Unexpected hr %#lx.\n", hr);
+
+    attrs = GetFileAttributesW(dir_path);
+    ok(attrs != INVALID_FILE_ATTRIBUTES, "folder should still exist\n");
+
+    hr = IFolder_Delete(folder, VARIANT_TRUE);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    attrs = GetFileAttributesW(dir_path);
+    ok(attrs == INVALID_FILE_ATTRIBUTES, "expected folder to be deleted\n");
+
+    IFolder_Release(folder);
+    SysFreeString(path);
+}
+
+static void test_Folder_Move(void)
+{
+    WCHAR temp_path[MAX_PATH], src_path[MAX_PATH], dst_path[MAX_PATH];
+    IFolder *folder;
+    BSTR path, dst;
+    HRESULT hr;
+    DWORD attrs;
+
+    GetTempPathW(MAX_PATH, temp_path);
+    lstrcpyW(src_path, temp_path);
+    lstrcatW(src_path, L"scrrun_move_src");
+    lstrcpyW(dst_path, temp_path);
+    lstrcatW(dst_path, L"scrrun_move_dst");
+
+    if (!CreateDirectoryW(src_path, NULL))
+    {
+        skip("Can't create temporary directory\n");
+        return;
+    }
+
+    path = SysAllocString(src_path);
+    hr = IFileSystem3_GetFolder(fs3, path, &folder);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    dst = SysAllocString(dst_path);
+    hr = IFolder_Move(folder, dst);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    attrs = GetFileAttributesW(src_path);
+    ok(attrs == INVALID_FILE_ATTRIBUTES, "source folder should be gone\n");
+
+    attrs = GetFileAttributesW(dst_path);
+    ok(attrs != INVALID_FILE_ATTRIBUTES, "destination folder should exist\n");
+    ok(attrs & FILE_ATTRIBUTE_DIRECTORY, "expected directory attribute\n");
+
+    IFolder_Release(folder);
+    SysFreeString(path);
+    SysFreeString(dst);
+    RemoveDirectoryW(dst_path);
+}
+
 START_TEST(filesystem)
 {
     HRESULT hr;
@@ -3159,6 +3465,7 @@ START_TEST(filesystem)
     test_GetAbsolutePathName();
     test_GetFile();
     test_File_ParentFolder();
+    test_File_ShortName();
     test_GetTempName();
     test_CopyFolder();
     test_BuildPath();
@@ -3166,6 +3473,7 @@ START_TEST(filesystem)
     test_Folder_Attributes();
     test_Folder_Dates();
     test_Folder_ParentFolder();
+    test_Folder_ShortName();
     test_FolderCollection();
     test_FileCollection();
     test_DriveCollection();
@@ -3185,6 +3493,10 @@ START_TEST(filesystem)
     test_MoveFile();
     test_MoveFolder();
     test_DoOpenPipeStream();
+    test_File_Delete();
+    test_Folder_Delete();
+    test_File_Move();
+    test_Folder_Move();
 
     IFileSystem3_Release(fs3);
 

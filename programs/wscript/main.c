@@ -224,6 +224,37 @@ static void WINAPIV print_resource(unsigned int id, ...)
     free(fmt);
 }
 
+static HANDLE timeout_cancel_event;
+static HANDLE timeout_thread;
+
+static DWORD WINAPI timeout_thread_proc(void *arg)
+{
+    DWORD ms = (DWORD)(DWORD_PTR)arg;
+    if(WaitForSingleObject(timeout_cancel_event, ms) == WAIT_TIMEOUT) {
+        print_resource(IDS_TIMEOUT_EXCEEDED, scriptFullName);
+        ExitProcess(1);
+    }
+    return 0;
+}
+
+void schedule_timeout(LONG seconds)
+{
+    if(timeout_thread) {
+        SetEvent(timeout_cancel_event);
+        WaitForSingleObject(timeout_thread, INFINITE);
+        CloseHandle(timeout_thread);
+        timeout_thread = NULL;
+    }
+    if(seconds <= 0)
+        return;
+    if(!timeout_cancel_event)
+        timeout_cancel_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    else
+        ResetEvent(timeout_cancel_event);
+    timeout_thread = CreateThread(NULL, 0, timeout_thread_proc,
+                                  (void *)(DWORD_PTR)(seconds * 1000), 0, NULL);
+}
+
 static void print_banner(void)
 {
     const char * (CDECL *wine_get_version)(void);
@@ -555,8 +586,13 @@ static BOOL set_host_properties(const WCHAR *prop)
         WINE_FIXME("ignoring //h:\n");
     else if(wcsnicmp(prop, L"job:", 4) == 0)
         WINE_FIXME("ignoring //job:\n");
-    else if(wcsnicmp(prop, L"t:", 2) == 0)
-        WINE_FIXME("ignoring //t:\n");
+    else if(wcsnicmp(prop, L"t:", 2) == 0) {
+        WCHAR *end;
+        LONG t = wcstol(prop + 2, &end, 10);
+        if(end == prop + 2 || *end || t < 0)
+            return FALSE;
+        wshTimeout = t;
+    }
     else
         return FALSE;
     return TRUE;
@@ -673,8 +709,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
     }
 
     if(init_engine(script, parser)) {
+        schedule_timeout(wshTimeout);
         if(!run_script(script_text, script, parser))
             ret = 1;
+        schedule_timeout(0);
         IActiveScript_Close(script);
         ITypeInfo_Release(host_ti);
     }else {

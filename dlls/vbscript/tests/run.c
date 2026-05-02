@@ -1967,9 +1967,12 @@ static ULONG WINAPI ActiveScriptSite_Release(IActiveScriptSite *iface)
     return 1;
 }
 
+/* 0 = use the user default; otherwise return this LCID to the engine. */
+static LCID site_lcid_override;
+
 static HRESULT WINAPI ActiveScriptSite_GetLCID(IActiveScriptSite *iface, LCID *plcid)
 {
-    *plcid = GetUserDefaultLCID();
+    *plcid = site_lcid_override ? site_lcid_override : GetUserDefaultLCID();
     return S_OK;
 }
 
@@ -2922,7 +2925,7 @@ static void test_parse_errors(void)
             /* Expected 'End' - error 1014 */
             L"If True Then\nx = 1\n",
             2, 0,
-            NULL, S_OK, -1014
+            NULL, S_OK, 1014
         },
         {
             /* Name redefined - error 1041 */
@@ -2934,7 +2937,7 @@ static void test_parse_errors(void)
             /* Expected identifier - error 1010 */
             L"Dim If\n",
             0, 4,
-            NULL, S_OK, -1010
+            NULL, S_OK, 1010
         },
         {
             /* Invalid character - error 1032 */
@@ -2945,8 +2948,8 @@ static void test_parse_errors(void)
         {
             /* Expected literal constant - error 1045 */
             L"Const x = 1 + \"a\"\n",
-            0, -17,
-            NULL, S_OK, -1045
+            0, 17,
+            NULL, S_OK, 1045
         },
         {
             /* Expected '(' - error 1005 */
@@ -2976,19 +2979,19 @@ static void test_parse_errors(void)
             /* Expected 'Wend' - error 1018 */
             L"While True\nx = 1\n",
             2, 0,
-            NULL, S_OK, -1018
+            NULL, S_OK, 1018
         },
         {
             /* Expected 'Loop' - error 1019 */
             L"Do\nx = 1\n",
             2, 0,
-            NULL, S_OK, -1019
+            NULL, S_OK, 1019
         },
         {
             /* Expected 'Next' - error 1020 */
             L"For i = 1 To 10\nx = 1\n",
             2, 0,
-            NULL, S_OK, -1020
+            NULL, S_OK, 1020
         },
         {
             /* Expected 'Case' - error 1021 */
@@ -3012,7 +3015,7 @@ static void test_parse_errors(void)
             /* 'loop' without 'do' - error 1038 */
             L"Loop\n",
             0, 0,
-            NULL, S_OK, -1038
+            NULL, S_OK, 1038
         },
         {
             /* Invalid 'exit' statement - error 1039 */
@@ -3078,7 +3081,7 @@ static void test_parse_errors(void)
             /* Unexpected 'Next' - error 1055 */
             L"Next\n",
             0, 0,
-            NULL, S_OK, -1055
+            NULL, S_OK, 1055
         },
         {
             /* 'Default' must also specify 'Public' - error 1057 */
@@ -3262,6 +3265,185 @@ static void test_parse_errors(void)
             "End Class\n",
             -4, -20,
             NULL, S_OK, 1051
+        },
+        {
+            /* Const redefined */
+            L"Const X = 1\n"
+            "Const X = 2\n",
+            1, 6,
+            L"Const X = 2", S_OK, 1041
+        },
+        {
+            /* Const redefined on same statement */
+            L"Const C = 1, C = 2\n",
+            0, 13,
+            L"Const C = 1, C = 2", S_OK, 1041
+        },
+        {
+            /* Dim after Const with same name */
+            L"Const D = 1\n"
+            "Dim D\n",
+            1, 4,
+            L"Dim D", S_OK, 1041
+        },
+        {
+            /* Const after Dim with same name */
+            L"Dim E\n"
+            "Const E = 1\n",
+            1, 6,
+            L"Const E = 1", S_OK, 1041
+        },
+        {
+            /* Sub after Const with same name */
+            L"Const F = 1\n"
+            "Sub F()\n"
+            "End Sub\n",
+            1, 4,
+            L"Sub F()", S_OK, 1041
+        },
+        {
+            /* Sub after Dim with same name */
+            L"Dim G\n"
+            "Sub G()\n"
+            "End Sub\n",
+            1, 4,
+            L"Sub G()", S_OK, 1041
+        },
+        {
+            /* Function after Const with same name */
+            L"Const H = 1\n"
+            "Function H()\n"
+            "End Function\n",
+            1, 9,
+            L"Function H()", S_OK, 1041
+        },
+        {
+            /* Const after Sub with same name */
+            L"Sub I()\n"
+            "End Sub\n"
+            "Const I = 1\n",
+            2, 6,
+            L"Const I = 1", S_OK, 1041
+        },
+        {
+            /* Dim after Sub with same name */
+            L"Sub J()\n"
+            "End Sub\n"
+            "Dim J\n",
+            2, 4,
+            L"Dim J", S_OK, 1041
+        },
+        {
+            /* Class after Const with same name */
+            L"Const K = 1\n"
+            "Class K\n"
+            "End Class\n",
+            1, 6,
+            L"Class K", S_OK, 1041
+        },
+        {
+            /* Class after Dim with same name */
+            L"Dim L\n"
+            "Class L\n"
+            "End Class\n",
+            1, 6,
+            L"Class L", S_OK, 1041
+        },
+        {
+            /* Class after Sub with same name */
+            L"Sub M()\n"
+            "End Sub\n"
+            "Class M\n"
+            "End Class\n",
+            2, 6,
+            L"Class M", S_OK, 1041
+        },
+        {
+            /* Duplicate Sub inside Class */
+            L"Class N\n"
+            "    Sub Foo\n"
+            "    End Sub\n"
+            "    Sub Foo\n"
+            "    End Sub\n"
+            "End Class\n",
+            3, 8,
+            L"    Sub Foo", S_OK, 1041
+        },
+        {
+            /* Duplicate Function inside Class */
+            L"Class O\n"
+            "    Function Foo\n"
+            "    End Function\n"
+            "    Function Foo\n"
+            "    End Function\n"
+            "End Class\n",
+            3, 13,
+            L"    Function Foo", S_OK, 1041
+        },
+        {
+            /* Sub and Function with same name inside Class */
+            L"Class P\n"
+            "    Sub Foo\n"
+            "    End Sub\n"
+            "    Function Foo\n"
+            "    End Function\n"
+            "End Class\n",
+            3, 13,
+            L"    Function Foo", S_OK, 1041
+        },
+        {
+            /* Property Get and Sub with same name inside Class */
+            L"Class Q\n"
+            "    Property Get Foo\n"
+            "    End Property\n"
+            "    Sub Foo\n"
+            "    End Sub\n"
+            "End Class\n",
+            3, 8,
+            L"    Sub Foo", S_OK, 1041
+        },
+        {
+            /* Duplicate Property Get inside Class */
+            L"Class R\n"
+            "    Property Get Foo\n"
+            "    End Property\n"
+            "    Property Get Foo\n"
+            "    End Property\n"
+            "End Class\n",
+            3, 17,
+            L"    Property Get Foo", S_OK, 1041
+        },
+        {
+            /* Dim and Sub with same name inside Class */
+            L"Class S\n"
+            "    Dim Foo\n"
+            "    Sub Foo\n"
+            "    End Sub\n"
+            "End Class\n",
+            2, 8,
+            L"    Sub Foo", S_OK, 1041
+        },
+        {
+            /* Sub and Dim with same name inside Class */
+            L"Class T\n"
+            "    Sub Foo\n"
+            "    End Sub\n"
+            "    Dim Foo\n"
+            "End Class\n",
+            3, 8,
+            L"    Dim Foo", S_OK, 1041
+        },
+        {
+            /* Invalid 'for' loop control variable (member expression) - error 1040 */
+            L"Dim x\nFor x.y = 1 To 3\nNext\n",
+            1, 8,
+            NULL, S_OK, 1040
+        },
+        {
+            /* Invalid 'for each' loop control variable (member expression) - error 1040 */
+            L"Dim x\nFor Each x.y In Array(1)\nNext\n",
+            1, 13,
+            NULL, S_OK, 1040
         }
     };
     HRESULT hres;
@@ -3680,11 +3862,37 @@ static void run_from_res(const char *name)
     test_name = "";
 }
 
+static void test_setlocale_reset_uses_host_lcid(void)
+{
+    /* The engine takes the LCID returned by IActiveScriptSite::GetLCID as the
+     * baseline; SetLocale with no argument must restore it regardless of the
+     * user default. */
+    site_lcid_override = 1036; /* fr-FR */
+    parse_script_w(L"Call ok(GetLocale() = 1036, \"initial GetLocale = \" & GetLocale())\n"
+                   L"SetLocale 1041\n"
+                   L"Call ok(GetLocale() = 1041, \"after SetLocale 1041: \" & GetLocale())\n"
+                   L"SetLocale\n"
+                   L"Call ok(GetLocale() = 1036, \"after SetLocale reset: \" & GetLocale())\n");
+    site_lcid_override = 0;
+}
+
+static void test_setlocale_does_not_touch_thread_locale(void)
+{
+    LCID thread_lcid_before = GetThreadLocale();
+    parse_script_w(L"SetLocale 1036\n");
+    ok(GetThreadLocale() == thread_lcid_before,
+       "SetLocale leaked to thread locale: before=%#lx after=%#lx\n",
+       thread_lcid_before, GetThreadLocale());
+}
+
 static void run_tests(void)
 {
     HRESULT hres;
 
     strict_dispid_check = TRUE;
+
+    test_setlocale_reset_uses_host_lcid();
+    test_setlocale_does_not_touch_thread_locale();
 
     parse_script_w(L"");
     parse_script_w(L"' empty ;");

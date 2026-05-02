@@ -132,6 +132,7 @@ my %manual_win_functions =
     (
      "glDebugEntry" => 1,
      "wglChoosePixelFormat" => 1,
+     "wglCreateContext" => 1,
      "wglCreateLayerContext" => 1,
      "wglDescribeLayerPlane" => 1,
      "wglDescribePixelFormat" => 1,
@@ -143,6 +144,7 @@ my %manual_win_functions =
      "wglGetExtensionsStringEXT" => 1,
      "wglGetLayerPaletteEntries" => 1,
      "wglGetProcAddress" => 1,
+     "wglMakeCurrent" => 1,
      "wglRealizeLayerPalette" => 1,
      "wglSetLayerPaletteEntries" => 1,
      "wglSwapLayerBuffers" => 1,
@@ -156,16 +158,10 @@ my %manual_win_thunks =
      "glCreateSyncFromCLeventARB" => 1,
      "glDeleteSync" => 1,
      "glFenceSync" => 1,
-     "glGetBooleanv" => 1,
-     "glGetDoublev" => 1,
-     "glGetFloatv" => 1,
-     "glGetInteger64v" => 1,
-     "glGetIntegerv" => 1,
      "glGetString" => 1,
      "glGetStringi" => 1,
      "glImportSyncEXT" => 1,
      "wglChoosePixelFormatARB" => 1,
-     "wglCreateContext" => 1,
      "wglCreateContextAttribsARB" => 1,
      "wglCreatePbufferARB" => 1,
      "wglDeleteContext" => 1,
@@ -174,7 +170,6 @@ my %manual_win_thunks =
      "wglGetPixelFormatAttribfvARB" => 1,
      "wglGetPixelFormatAttribivARB" => 1,
      "wglMakeContextCurrentARB" => 1,
-     "wglMakeCurrent" => 1,
      "wglQueryCurrentRendererStringWINE" => 1,
      "wglQueryRendererStringWINE" => 1,
      "wglSwapBuffers" => 1,
@@ -685,6 +680,7 @@ sub get_handle_function($)
 sub generate_win_thunk($$)
 {
     my ($name, $func) = @_;
+    my $get_integer = get_integer_call( $name, $func );
     my $decl_args = get_func_args( $func );
     my $func_ret = get_func_ret( $func );
     my $params = "";
@@ -713,9 +709,11 @@ sub generate_win_thunk($$)
     $ret .= " = {$params }";
     $ret .= ";\n";
     $ret .= "    NTSTATUS status;\n";
+    $ret .= "    int integer;\n" if $get_integer;
     $ret .= "    " . get_func_trace( $name, $func, 1 );
     $ret .= $checks;
-    $ret .= "    if ((status = UNIX_CALL( $name, &args ))) WARN( \"$name returned %#lx\\n\", status );\n";
+    $ret .= $get_integer ? "    $get_integer\n    else " : "    ";
+    $ret .= "if ((status = UNIX_CALL( $name, &args ))) WARN( \"$name returned %#lx\\n\", status );\n";
     $ret .= "    return args.ret;\n" unless is_void_func($func);
     $ret .= "}\n";
 
@@ -1094,6 +1092,26 @@ sub add_extension($)
         $wgl_extensions{$alias} = 1 if $alias =~ /^WGL/;
         $egl_extensions{$alias} = 1 if $alias =~ /^EGL/;
     }
+}
+
+sub get_integer_call($)
+{
+    my ($name, $func) = @_;
+    my $params;
+    my $pname;
+
+    foreach my $arg (@{$func->[1]})
+    {
+        my $name = get_arg_name( $arg );
+        my $type = get_arg_type( $arg );
+        $pname = $name if $name =~ /^(pname|target|value)$/;
+        $params = $name;
+    }
+
+    return 0 if !$pname;
+
+    my $hook = "if (get_integer( $pname, &integer )) *$params = integer;";
+    return $hook if $name =~ /^glGet(Boolean|Double|Float|Integer|Integer64)v/;
 }
 
 sub parse_registry($)
@@ -1561,6 +1579,25 @@ print OUT "#define UNIX_CALL( func, params ) WINE_UNIX_CALL( unix_ ## func, para
 print OUT "#endif /* __WINE_OPENGL32_UNIXLIB_H */\n";
 close OUT;
 
+
+#
+# Generate the thunks.h file
+#
+open OUT, ">thunks.h" or die "cannot create thunks.h";
+print OUT "/* Automatically generated from http://www.opengl.org/registry files; DO NOT EDIT! */\n\n";
+
+foreach (sort keys %ext_functions)
+{
+    next unless is_exposed_function( $ext_functions{$_} );
+    next unless defined $manual_win_functions{$_} || $manual_win_thunks{$_};
+    my $decl_args = get_func_args( $ext_functions{$_} );
+    my $func_ret = get_func_ret( $ext_functions{$_} );
+    printf OUT "extern %s WINAPI %s(%s);\n", $func_ret, $_, $decl_args;
+}
+
+close OUT;
+
+
 #
 # Generate the thunks.c file
 #
@@ -1601,15 +1638,6 @@ foreach (sort keys %ext_functions)
     print OUT "\nstatic " . generate_win_thunk($_, $ext_functions{$_});
 }
 print OUT "\n";
-
-foreach (sort keys %ext_functions)
-{
-    next unless is_exposed_function( $ext_functions{$_} );
-    next unless defined $manual_win_functions{$_} || $manual_win_thunks{$_};
-    my $decl_args = get_func_args( $ext_functions{$_} );
-    my $func_ret = get_func_ret( $ext_functions{$_} );
-    printf OUT "extern %s WINAPI %s(%s);\n", $func_ret, $_, $decl_args;
-}
 
 print OUT "const void *extension_procs[] =\n";
 print OUT "{\n";

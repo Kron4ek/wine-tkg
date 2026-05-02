@@ -73,6 +73,7 @@ struct opengl_client_context
     struct HGLRC__              obj;            /* client object header */
     UINT64                      unix_handle;
     UINT64                      unix_funcs;
+    DWORD                       current_tid;                            /* thread that the context is current in */
     GLenum                      last_error;
     int                         major_version;
     int                         minor_version;
@@ -221,6 +222,11 @@ static inline const char *debugstr_opengl_drawable( struct opengl_drawable *draw
 {
     if (!drawable) return "(null)";
     return wine_dbg_sprintf( "%s/%p (format %u)", debugstr_client_surface( drawable->client ), drawable, drawable->format );
+}
+
+static inline void opengl_drawable_map_buffer( struct opengl_drawable *drawable, GLenum buffer, GLenum set )
+{
+    drawable->buffer_map[buffer - GL_FRONT_LEFT] = set;
 }
 
 W32KAPI void *opengl_drawable_create( UINT size, const struct opengl_drawable_funcs *funcs, int format, struct client_surface *client );

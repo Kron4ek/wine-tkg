@@ -3605,6 +3605,7 @@ struct test_grabber_callback
 
     BOOL do_event;
     BOOL need_sample_time;
+    BOOL shutdown;
 };
 
 static struct test_grabber_callback *impl_from_IMFSampleGrabberSinkCallback(IMFSampleGrabberSinkCallback *iface)
@@ -3726,6 +3727,8 @@ static HRESULT WINAPI test_grabber_callback_OnProcessSample(IMFSampleGrabberSink
 
 static HRESULT WINAPI test_grabber_callback_OnShutdown(IMFSampleGrabberSinkCallback *iface)
 {
+    struct test_grabber_callback *grabber = impl_from_IMFSampleGrabberSinkCallback(iface);
+    grabber->shutdown = TRUE;
     return S_OK;
 }
 
@@ -3759,6 +3762,27 @@ static IMFSampleGrabberSinkCallback *create_test_grabber_callback(void)
     grabber->do_event = TRUE;
 
     return &grabber->IMFSampleGrabberSinkCallback_iface;
+}
+
+static struct test_grabber_callback *create_activated_test_grabber_callback(IMFMediaType *output_type,
+        IMFStreamSink **stream_sink)
+{
+    struct test_grabber_callback *grabber_callback;
+    IMFActivate *sink_activate;
+    IMFMediaSink *sink;
+    HRESULT hr;
+
+    grabber_callback = impl_from_IMFSampleGrabberSinkCallback(create_test_grabber_callback());
+    hr = MFCreateSampleGrabberSinkActivate(output_type, &grabber_callback->IMFSampleGrabberSinkCallback_iface, &sink_activate);
+    ok(hr == S_OK, "Failed to create grabber sink, hr %#lx.\n", hr);
+    hr = IMFActivate_ActivateObject(sink_activate, &IID_IMFMediaSink, (void **)&sink);
+    ok(hr == S_OK, "Failed to activate, hr %#lx.\n", hr);
+    IMFActivate_Release(sink_activate);
+    hr = IMFMediaSink_GetStreamSinkByIndex(sink, 0, stream_sink);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFMediaSink_Release(sink);
+
+    return grabber_callback;
 }
 
 static HRESULT WINAPI testshutdown_QueryInterface(IMFShutdown *iface, REFIID riid, void **obj)
@@ -6062,7 +6086,8 @@ static void test_sample_grabber_is_mediatype_supported(void)
 }
 
 /* create a test topology with the specified source, sink, and option MFT. Return duration if required */
-static IMFTopology *create_test_topology_unk(IMFMediaSource *source, IUnknown *sink, IUnknown *mft, UINT64 *duration)
+static IMFTopology *create_test_topology_unk_noshutdown(IMFMediaSource *source, IUnknown *sink, IUnknown *mft,
+        UINT64 *duration, UINT noshutdown_on_remove)
 {
     IMFTopologyNode *src_node, *sink_node, *mft_node;
     IMFPresentationDescriptor *pd;
@@ -6114,6 +6139,11 @@ static IMFTopology *create_test_topology_unk(IMFMediaSource *source, IUnknown *s
     ok(hr == S_OK, "Failed to set object, hr %#lx.\n", hr);
     hr = IMFTopologyNode_SetUINT32(sink_node, &MF_TOPONODE_CONNECT_METHOD, MF_CONNECT_ALLOW_DECODER);
     ok(hr == S_OK, "Failed to set connect method, hr %#lx.\n", hr);
+    if (noshutdown_on_remove != UINT_MAX)
+    {
+        hr = IMFTopologyNode_SetUINT32(sink_node, &MF_TOPONODE_NOSHUTDOWN_ON_REMOVE, noshutdown_on_remove);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    }
     hr = IMFTopology_SetUINT32(topology, &MF_TOPOLOGY_ENUMERATE_SOURCE_TYPES, TRUE);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
@@ -6122,6 +6152,11 @@ static IMFTopology *create_test_topology_unk(IMFMediaSource *source, IUnknown *s
     IMFTopologyNode_Release(src_node);
     IMFTopologyNode_Release(sink_node);
     return topology;
+}
+
+static IMFTopology *create_test_topology_unk(IMFMediaSource *source, IUnknown *sink, IUnknown *mft, UINT64 *duration)
+{
+    return create_test_topology_unk_noshutdown(source, (IUnknown*)sink, mft, duration, UINT_MAX);
 }
 
 static IMFTopology *create_test_topology(IMFMediaSource *source, IMFActivate *sink_activate, UINT64 *duration)
@@ -6230,6 +6265,7 @@ static void test_sample_grabber_orientation(GUID subtype)
 
     hr = IMFMediaSession_Shutdown(session);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(grabber_callback->shutdown, "Media sink is not shut down.\n");
     hr = IMFMediaSource_Shutdown(source);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = IMFActivate_ShutdownObject(sink_activate);
@@ -9226,13 +9262,11 @@ static void test_h264_output_alignment(void)
     IMFTopology *topology, *resolved_topology;
     struct test_callback *test_callback;
     IMFMediaTypeHandler *handler;
-    IMFActivate *sink_activate;
     IMFTopoLoader *topo_loader;
     IMFStreamSink *stream_sink;
     IMFAsyncCallback *callback;
     IMFMediaType *output_type;
     IMFMediaSession *session;
-    IMFMediaSink *media_sink;
     IMFTransform *transform;
     IMFMediaSource *source;
     PROPVARIANT propvar;
@@ -9252,21 +9286,15 @@ static void test_h264_output_alignment(void)
         return;
     }
 
-    grabber_callback = impl_from_IMFSampleGrabberSinkCallback(create_test_grabber_callback());
-    grabber_callback->ready_event = CreateEventW(NULL, FALSE, FALSE, NULL);
-    ok(!!grabber_callback->ready_event, "CreateEventW failed, error %lu\n", GetLastError());
-
     hr = MFCreateMediaType(&output_type);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     init_media_type(output_type, video_nv12_desc, -1);
-    hr = MFCreateSampleGrabberSinkActivate(output_type, &grabber_callback->IMFSampleGrabberSinkCallback_iface, &sink_activate);
-    ok(hr == S_OK, "Failed to create grabber sink, hr %#lx.\n", hr);
-    IMFMediaType_Release(output_type);
 
-    IMFActivate_ActivateObject(sink_activate, &IID_IMFMediaSink, (void **)&media_sink);
-    hr = IMFMediaSink_GetStreamSinkByIndex(media_sink, 0, &stream_sink);
-    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
-    IMFActivate_Release(sink_activate);
+    grabber_callback = create_activated_test_grabber_callback(output_type, &stream_sink);
+    IMFMediaType_Release(output_type);
+    grabber_callback->ready_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    ok(!!grabber_callback->ready_event, "CreateEventW failed, error %lu\n", GetLastError());
+
     topology = create_test_topology_unk(source, (IUnknown *)stream_sink, NULL, NULL);
     hr = MFCreateTopoLoader(&topo_loader);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
@@ -9339,7 +9367,6 @@ static void test_h264_output_alignment(void)
     IMFAsyncCallback_Release(callback);
     IMFMediaSession_Release(session);
     IMFStreamSink_Release(stream_sink);
-    IMFMediaSink_Release(media_sink);
     IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
     IMFMediaSource_Release(source);
 
@@ -9488,12 +9515,14 @@ static void test_media_session_Start(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = wait_media_event(session, callback, MESessionClosed, 1000, &propvar);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!grabber_callback->shutdown, "Media sink was shut down.\n");
 
     /* Media session is shut down */
     hr = IMFMediaSource_Shutdown(source);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = IMFMediaSession_Shutdown(session);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(grabber_callback->shutdown, "Media sink is not shut down.\n");
 
     propvar.vt = VT_I8;
     propvar.hVal.QuadPart = 10000000;
@@ -9572,8 +9601,10 @@ static void test_media_session_Start(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = wait_media_event(session, callback, MESessionClosed, 1000, &propvar);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!grabber_callback->shutdown, "Media sink was shut down.\n");
     hr = IMFMediaSession_Shutdown(session);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(grabber_callback->shutdown, "Media sink is not shut down.\n");
     hr = IMFMediaSource_Shutdown(source);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
@@ -9787,6 +9818,7 @@ static void test_media_session_source_shutdown(void)
 
         IMFMediaSource_Release(source);
 
+        ok(!grabber_callback->shutdown, "Media sink was shut down.\n");
         IMFActivate_ShutdownObject(sink_activate);
         IMFActivate_Release(sink_activate);
         IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
@@ -10020,6 +10052,7 @@ static void test_media_session_Close(void)
 
     hr = IMFMediaSession_Shutdown(session);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(grabber_callback->shutdown, "Media sink is not shut down.\n");
 
     IMFPresentationClock_Release(presentation_clock);
     IMFAsyncCallback_Release(callback);
@@ -10162,6 +10195,7 @@ static void test_media_session_thinning(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = IMFMediaSession_Shutdown(session);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(grabber_callback->shutdown, "Media sink is not shut down.\n");
     hr = IMFMediaSource_Shutdown(source);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
@@ -11281,6 +11315,233 @@ static void test_media_session_invalid_topology(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 }
 
+static void test_media_session_sink_shutdown(void)
+{
+    media_type_desc video_rgb32_desc =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32),
+    };
+    struct test_grabber_callback *grabber_callback, *grabber_callbacks[3];
+    IMFAsyncCallback *callback;
+    IMFStreamSink *stream_sink;
+    IMFActivate *sink_activate;
+    IMFMediaType *output_type;
+    IMFMediaSession *session;
+    IMFMediaSource *source;
+    IMFTopology *topology;
+    PROPVARIANT propvar;
+    HRESULT hr;
+    LONG ref;
+    UINT i;
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
+    hr = MFCreateMediaType(&output_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    init_media_type(output_type, video_rgb32_desc, -1);
+
+    callback = create_test_callback(TRUE);
+
+    /* Sinks are always shut down on session shutdown, but never before.
+     * MF_TOPONODE_NOSHUTDOWN_ON_REMOVE is ignored. */
+
+    for (i = 0; i < 4; ++i)
+    {
+        winetest_push_context("Test %u", i);
+
+        if (!(source = create_media_source(L"test.mp4", L"video/mp4")))
+        {
+            todo_wine /* Gitlab CI Debian runner */
+            win_skip("MP4 media source is not supported, skipping tests.\n");
+            goto done;
+        }
+
+        hr = MFCreateMediaSession(NULL, &session);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        if (i & 2)
+        {
+            grabber_callback = impl_from_IMFSampleGrabberSinkCallback(create_test_grabber_callback());
+            hr = MFCreateSampleGrabberSinkActivate(output_type, &grabber_callback->IMFSampleGrabberSinkCallback_iface, &sink_activate);
+            ok(hr == S_OK, "Failed to create grabber sink, hr %#lx.\n", hr);
+            topology = create_test_topology_unk_noshutdown(source, (IUnknown *)sink_activate, NULL, NULL, i & 1);
+            IMFActivate_Release(sink_activate);
+        }
+        else
+        {
+            grabber_callback = create_activated_test_grabber_callback(output_type, &stream_sink);
+            topology = create_test_topology_unk_noshutdown(source, (IUnknown *)stream_sink, NULL, NULL, i & 1);
+            IMFStreamSink_Release(stream_sink);
+        }
+
+        hr = IMFMediaSession_SetTopology(session, 0, topology);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        IMFTopology_Release(topology);
+
+        propvar.vt = VT_EMPTY;
+        hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        hr = wait_media_event(session, callback, MESessionStarted, 5000, &propvar);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        hr = IMFMediaSession_Stop(session);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = wait_media_event_until_blocking(session, callback, MESessionStopped, 1000, &propvar);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        hr = IMFMediaSession_SetTopology(session, MFSESSION_SETTOPOLOGY_CLEAR_CURRENT, NULL);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = wait_media_event(session, callback, MESessionTopologySet, 1000, &propvar);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        PropVariantClear(&propvar);
+        ok(!grabber_callback->shutdown, "Media sink was shut down.\n");
+
+        hr = IMFMediaSession_ClearTopologies(session);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = wait_media_event(session, callback, MESessionTopologiesCleared, 1000, &propvar);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(!grabber_callback->shutdown, "Media sink was shut down.\n");
+
+        hr = IMFMediaSession_Close(session);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        hr = wait_media_event(session, callback, MESessionClosed, 1000, &propvar);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(!grabber_callback->shutdown, "Media sink was shut down.\n");
+
+        hr = IMFMediaSession_Shutdown(session);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(grabber_callback->shutdown, "Media sink is not shut down.\n");
+        IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
+
+        hr = IMFMediaSource_Shutdown(source);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        Sleep(20);
+        ref = IMFMediaSession_Release(session);
+        ok(!ref, "Unexpected refcount %ld.\n", ref);
+        ref = IMFMediaSource_Release(source);
+        ok(!ref, "Unexpected refcount %ld.\n", ref);
+
+        winetest_pop_context();
+    }
+
+    if (!(source = create_media_source(L"test.mp4", L"video/mp4")))
+    {
+        todo_wine /* Gitlab CI Debian runner */
+        win_skip("MP4 media source is not supported, skipping tests.\n");
+        goto done;
+    }
+
+    /* Sinks in queued topologies are not shut down until session shutdown. */
+
+    hr = MFCreateMediaSession(NULL, &session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    for (i = 0; i < 2; ++i)
+    {
+        grabber_callbacks[i] = create_activated_test_grabber_callback(output_type, &stream_sink);
+        topology = create_test_topology_unk_noshutdown(source, (IUnknown *)stream_sink, NULL, NULL, 0);
+        IMFStreamSink_Release(stream_sink);
+
+        hr = IMFMediaSession_SetTopology(session, 0, topology);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        IMFTopology_Release(topology);
+    }
+
+    grabber_callbacks[2] = impl_from_IMFSampleGrabberSinkCallback(create_test_grabber_callback());
+    hr = MFCreateSampleGrabberSinkActivate(output_type, &grabber_callbacks[2]->IMFSampleGrabberSinkCallback_iface, &sink_activate);
+    ok(hr == S_OK, "Failed to create grabber sink, hr %#lx.\n", hr);
+    topology = create_test_topology_unk_noshutdown(source, (IUnknown *)sink_activate, NULL, NULL, 0);
+    IMFActivate_Release(sink_activate);
+
+    hr = IMFMediaSession_SetTopology(session, 0, topology);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFTopology_Release(topology);
+
+    propvar.vt = VT_EMPTY;
+    hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = wait_media_event(session, callback, MESessionStarted, 5000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFMediaSession_Close(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event(session, callback, MESessionClosed, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    for (i = 0; i < ARRAY_SIZE(grabber_callbacks); ++i)
+        ok(!grabber_callbacks[i]->shutdown, "Media sink %u was shut down.\n", i);
+
+    hr = IMFMediaSession_Shutdown(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    for (i = 0; i < ARRAY_SIZE(grabber_callbacks); ++i)
+    {
+        ok(grabber_callbacks[i]->shutdown, "Media sink %u is not shut down.\n", i);
+        IMFSampleGrabberSinkCallback_Release(&grabber_callbacks[i]->IMFSampleGrabberSinkCallback_iface);
+    }
+
+    hr = IMFMediaSource_Shutdown(source);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    Sleep(20);
+    ref = IMFMediaSession_Release(session);
+    ok(!ref, "Unexpected refcount %ld.\n", ref);
+
+    ref = IMFMediaSource_Release(source);
+    ok(!ref, "Unexpected refcount %ld.\n", ref);
+
+    /* Unexpected source shutdown does not shut down sinks.
+     * NOTE: Source re-use is broken in Wine, for more reasons than
+     * just errors from multiple event subscription. */
+
+    if (!(source = create_media_source(L"test.mp4", L"video/mp4")))
+    {
+        todo_wine /* Gitlab CI Debian runner */
+        win_skip("MP4 media source is not supported, skipping tests.\n");
+        goto done;
+    }
+
+    hr = MFCreateMediaSession(NULL, &session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    grabber_callback = create_activated_test_grabber_callback(output_type, &stream_sink);
+    topology = create_test_topology_unk(source, (IUnknown *)stream_sink, NULL, NULL);
+    IMFStreamSink_Release(stream_sink);
+
+    hr = IMFMediaSession_SetTopology(session, 0, topology);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFTopology_Release(topology);
+
+    propvar.vt = VT_EMPTY;
+    hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = wait_media_event(session, callback, MESessionStarted, 5000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFMediaSource_Shutdown(source);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!grabber_callback->shutdown, "Media sink was shut down.\n");
+
+    hr = IMFMediaSession_Shutdown(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(grabber_callback->shutdown, "Media sink is not shut down.\n");
+    IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
+
+    IMFMediaSession_Release(session);
+    IMFMediaSource_Release(source);
+
+done:
+    IMFAsyncCallback_Release(callback);
+    IMFMediaType_Release(output_type);
+
+    hr = MFShutdown();
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+}
+
 static void test_network_bytestream(void)
 {
     static const WCHAR *URL = L"http://test.winehq.org/tests/test.mp3";
@@ -11654,4 +11915,5 @@ START_TEST(mf)
     test_media_session_scrubbing();
     test_media_session_sample_request();
     test_media_session_invalid_topology();
+    test_media_session_sink_shutdown();
 }

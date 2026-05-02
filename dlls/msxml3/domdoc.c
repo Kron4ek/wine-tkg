@@ -304,27 +304,13 @@ static HRESULT WINAPI PersistStreamInit_Load(IPersistStreamInit *iface, IStream 
     return doc->error = domdoc_load_from_stream(doc, (ISequentialStream *)stream);
 }
 
-static HRESULT WINAPI PersistStreamInit_Save(
-    IPersistStreamInit *iface, IStream *stream, BOOL clr_dirty)
+static HRESULT WINAPI PersistStreamInit_Save(IPersistStreamInit *iface, IStream *stream, BOOL clr_dirty)
 {
-    domdoc *This = impl_from_IPersistStreamInit(iface);
-    BSTR xmlString;
-    HRESULT hr;
+    domdoc *doc = impl_from_IPersistStreamInit(iface);
 
-    TRACE("(%p)->(%p %d)\n", This, stream, clr_dirty);
+    TRACE("%p, %p, %d.\n", iface, stream, clr_dirty);
 
-    hr = IXMLDOMDocument3_get_xml(&This->IXMLDOMDocument3_iface, &xmlString);
-    if(hr == S_OK)
-    {
-        DWORD len = SysStringLen(xmlString) * sizeof(WCHAR);
-
-        hr = IStream_Write( stream, xmlString, len, NULL );
-        SysFreeString(xmlString);
-    }
-
-    TRACE("hr %#lx.\n", hr);
-
-    return hr;
+    return node_save(doc->node, stream);
 }
 
 static HRESULT WINAPI PersistStreamInit_GetSizeMax(IPersistStreamInit *iface, ULARGE_INTEGER *size)
@@ -1176,7 +1162,6 @@ static HRESULT WINAPI domdoc_createNode(IXMLDOMDocument3 *iface, VARIANT type, B
         /* Check if we need a name */
         case NODE_ELEMENT:
         case NODE_ATTRIBUTE:
-        case NODE_ENTITY_REFERENCE:
         case NODE_PROCESSING_INSTRUCTION:
 
             if (!name || *name == 0)
@@ -1194,10 +1179,22 @@ static HRESULT WINAPI domdoc_createNode(IXMLDOMDocument3 *iface, VARIANT type, B
             break;
     }
 
+    if (node_type == NODE_ENTITY_REFERENCE)
+    {
+        if (!name || !parser_is_valid_qualified_name(name) || wcschr(name, ':'))
+            return E_FAIL;
+        if (uri && *uri)
+            return E_FAIL;
+    }
+    else if (node_type == NODE_DOCUMENT_FRAGMENT)
+    {
+        name = uri = NULL;
+    }
+
     *node = NULL;
 
-    if (FAILED(hr = domnode_create(node_type, name, SysStringLen(name), uri, SysStringLen(uri),
-            doc->node, &domnode)))
+    if (FAILED(hr = domnode_create(node_type, name, name ? wcslen(name) : 0,
+            uri, uri ? wcslen(uri) : 0, doc->node, &domnode)))
     {
         return hr;
     }
@@ -1813,12 +1810,24 @@ static HRESULT WINAPI domdoc_validate(IXMLDOMDocument3 *iface, IXMLDOMParseError
     return IXMLDOMDocument3_validateNode(iface, (IXMLDOMNode *)iface, err);
 }
 
+static HRESULT variant_get_bool_property(const VARIANT *v, VARIANT_BOOL *ret)
+{
+    VARIANT dest;
+
+    VariantInit(&dest);
+    if (FAILED(VariantChangeType(&dest, v, 0, VT_BOOL)))
+        return E_FAIL;
+
+    *ret = V_BOOL(&dest);
+    return S_OK;
+}
+
 static HRESULT WINAPI domdoc_setProperty(IXMLDOMDocument3 *iface, BSTR p, VARIANT value)
 {
     domdoc *doc = impl_from_IXMLDOMDocument3(iface);
     struct domdoc_properties *properties = doc->node->properties;
+    VARIANT_BOOL b;
     HRESULT hr;
-    VARIANT v;
 
     TRACE("%p, %s, %s.\n", iface, debugstr_w(p), debugstr_variant(&value));
 
@@ -1985,9 +1994,7 @@ static HRESULT WINAPI domdoc_setProperty(IXMLDOMDocument3 *iface, BSTR p, VARIAN
     else if (wcsicmp(p, L"NewParser") == 0 ||
              wcsicmp(p, L"ResolveExternals") == 0 ||
              wcsicmp(p, L"AllowXsltScript") == 0 ||
-             wcsicmp(p, L"NormalizeAttributeValues") == 0 ||
              wcsicmp(p, L"AllowDocumentFunction") == 0 ||
-             wcsicmp(p, L"MaxElementDepth") == 0 ||
              wcsicmp(p, L"UseInlineSchema") == 0)
     {
         /* Ignore */
@@ -1997,14 +2004,36 @@ static HRESULT WINAPI domdoc_setProperty(IXMLDOMDocument3 *iface, BSTR p, VARIAN
 
     if (!wcscmp(p, L"ProhibitDTD"))
     {
-        V_VT(&v) = VT_EMPTY;
-        if (FAILED(hr = VariantChangeType(&v, &value, 0, VT_BOOL)))
-        {
-            WARN("Failed to convert to boolean.\n");
+        if (FAILED(hr = variant_get_bool_property(&value, &b)))
             return hr;
-        }
 
-        properties->prohibit_dtd = V_BOOL(&v) == VARIANT_TRUE;
+        properties->prohibit_dtd = b == VARIANT_TRUE;
+        return S_OK;
+    }
+
+    if (!wcscmp(p, L"NormalizeAttributeValues"))
+    {
+        if (properties->version < MSXML6)
+            return E_FAIL;
+
+        if (FAILED(hr = variant_get_bool_property(&value, &b)))
+            return hr;
+
+        properties->normalize_attribute_values = b == VARIANT_TRUE;
+        return S_OK;
+    }
+
+    if (!wcscmp(p, L"MaxElementDepth"))
+    {
+        int depth;
+
+        if (FAILED(variant_get_int_property(&value, &depth)))
+            return E_FAIL;
+
+        if (depth < 0)
+            return E_INVALIDARG;
+
+        properties->max_element_depth = depth;
         return S_OK;
     }
 
@@ -2079,6 +2108,23 @@ static HRESULT WINAPI domdoc_getProperty(IXMLDOMDocument3 *iface, BSTR p, VARIAN
     {
         V_VT(var) = VT_BOOL;
         V_BOOL(var) = properties->prohibit_dtd ? VARIANT_TRUE : VARIANT_FALSE;
+        return S_OK;
+    }
+
+    if (!wcscmp(p, L"MaxElementDepth"))
+    {
+        V_VT(var) = VT_I4;
+        V_I4(var) = properties->max_element_depth;
+        return S_OK;
+    }
+
+    if (!wcscmp(p, L"NormalizeAttributeValues"))
+    {
+        if (properties->version < MSXML6)
+            return E_FAIL;
+
+        V_VT(var) = VT_BOOL;
+        V_BOOL(var) = properties->normalize_attribute_values ? VARIANT_TRUE : VARIANT_FALSE;
         return S_OK;
     }
 

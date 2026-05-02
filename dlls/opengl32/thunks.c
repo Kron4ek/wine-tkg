@@ -841,12 +841,32 @@ void WINAPI glGenTextures( GLsizei n, GLuint *textures )
     if ((status = UNIX_CALL( glGenTextures, &args ))) WARN( "glGenTextures returned %#lx\n", status );
 }
 
+void WINAPI glGetBooleanv( GLenum pname, GLboolean *data )
+{
+    struct glGetBooleanv_params args = { .teb = NtCurrentTeb(), .pname = pname, .data = data };
+    NTSTATUS status;
+    int integer;
+    TRACE( "pname %d, data %p\n", pname, data );
+    if (get_integer( pname, &integer )) *data = integer;
+    else if ((status = UNIX_CALL( glGetBooleanv, &args ))) WARN( "glGetBooleanv returned %#lx\n", status );
+}
+
 void WINAPI glGetClipPlane( GLenum plane, GLdouble *equation )
 {
     struct glGetClipPlane_params args = { .teb = NtCurrentTeb(), .plane = plane, .equation = equation };
     NTSTATUS status;
     TRACE( "plane %d, equation %p\n", plane, equation );
     if ((status = UNIX_CALL( glGetClipPlane, &args ))) WARN( "glGetClipPlane returned %#lx\n", status );
+}
+
+void WINAPI glGetDoublev( GLenum pname, GLdouble *data )
+{
+    struct glGetDoublev_params args = { .teb = NtCurrentTeb(), .pname = pname, .data = data };
+    NTSTATUS status;
+    int integer;
+    TRACE( "pname %d, data %p\n", pname, data );
+    if (get_integer( pname, &integer )) *data = integer;
+    else if ((status = UNIX_CALL( glGetDoublev, &args ))) WARN( "glGetDoublev returned %#lx\n", status );
 }
 
 GLenum WINAPI glGetError(void)
@@ -856,6 +876,26 @@ GLenum WINAPI glGetError(void)
     TRACE( "\n" );
     if ((status = UNIX_CALL( glGetError, &args ))) WARN( "glGetError returned %#lx\n", status );
     return args.ret;
+}
+
+void WINAPI glGetFloatv( GLenum pname, GLfloat *data )
+{
+    struct glGetFloatv_params args = { .teb = NtCurrentTeb(), .pname = pname, .data = data };
+    NTSTATUS status;
+    int integer;
+    TRACE( "pname %d, data %p\n", pname, data );
+    if (get_integer( pname, &integer )) *data = integer;
+    else if ((status = UNIX_CALL( glGetFloatv, &args ))) WARN( "glGetFloatv returned %#lx\n", status );
+}
+
+void WINAPI glGetIntegerv( GLenum pname, GLint *data )
+{
+    struct glGetIntegerv_params args = { .teb = NtCurrentTeb(), .pname = pname, .data = data };
+    NTSTATUS status;
+    int integer;
+    TRACE( "pname %d, data %p\n", pname, data );
+    if (get_integer( pname, &integer )) *data = integer;
+    else if ((status = UNIX_CALL( glGetIntegerv, &args ))) WARN( "glGetIntegerv returned %#lx\n", status );
 }
 
 void WINAPI glGetLightfv( GLenum light, GLenum pname, GLfloat *params )
@@ -8601,6 +8641,16 @@ static void WINAPI glGetInteger64i_v( GLenum target, GLuint index, GLint64 *data
     NTSTATUS status;
     TRACE( "target %d, index %d, data %p\n", target, index, data );
     if ((status = UNIX_CALL( glGetInteger64i_v, &args ))) WARN( "glGetInteger64i_v returned %#lx\n", status );
+}
+
+static void WINAPI glGetInteger64v( GLenum pname, GLint64 *data )
+{
+    struct glGetInteger64v_params args = { .teb = NtCurrentTeb(), .pname = pname, .data = data };
+    NTSTATUS status;
+    int integer;
+    TRACE( "pname %d, data %p\n", pname, data );
+    if (get_integer( pname, &integer )) *data = integer;
+    else if ((status = UNIX_CALL( glGetInteger64v, &args ))) WARN( "glGetInteger64v returned %#lx\n", status );
 }
 
 static void WINAPI glGetIntegerIndexedvEXT( GLenum target, GLuint index, GLint *data )
@@ -24784,24 +24834,6 @@ static BOOL WINAPI wglSwapIntervalEXT( int interval )
     return args.ret;
 }
 
-extern GLsync WINAPI glCreateSyncFromCLeventARB( struct _cl_context *context, struct _cl_event *event, GLbitfield flags );
-extern void WINAPI glDeleteSync( GLsync sync );
-extern GLsync WINAPI glFenceSync( GLenum condition, GLbitfield flags );
-extern void WINAPI glGetInteger64v( GLenum pname, GLint64 *data );
-extern const GLubyte * WINAPI glGetStringi( GLenum name, GLuint index );
-extern GLsync WINAPI glImportSyncEXT( GLenum external_sync_type, GLintptr external_sync, GLbitfield flags );
-extern BOOL WINAPI wglChoosePixelFormatARB( HDC hdc, const int *piAttribIList, const FLOAT *pfAttribFList, UINT nMaxFormats, int *piFormats, UINT *nNumFormats );
-extern HGLRC WINAPI wglCreateContextAttribsARB( HDC hDC, HGLRC hShareContext, const int *attribList );
-extern HPBUFFERARB WINAPI wglCreatePbufferARB( HDC hDC, int iPixelFormat, int iWidth, int iHeight, const int *piAttribList );
-extern BOOL WINAPI wglDestroyPbufferARB( HPBUFFERARB hPbuffer );
-extern HDC WINAPI wglGetCurrentReadDCARB(void);
-extern const char * WINAPI wglGetExtensionsStringARB( HDC hdc );
-extern const char * WINAPI wglGetExtensionsStringEXT(void);
-extern BOOL WINAPI wglGetPixelFormatAttribfvARB( HDC hdc, int iPixelFormat, int iLayerPlane, UINT nAttributes, const int *piAttributes, FLOAT *pfValues );
-extern BOOL WINAPI wglGetPixelFormatAttribivARB( HDC hdc, int iPixelFormat, int iLayerPlane, UINT nAttributes, const int *piAttributes, int *piValues );
-extern BOOL WINAPI wglMakeContextCurrentARB( HDC hDrawDC, HDC hReadDC, HGLRC hglrc );
-extern const GLchar * WINAPI wglQueryCurrentRendererStringWINE( GLenum attribute );
-extern const GLchar * WINAPI wglQueryRendererStringWINE( HDC dc, GLint renderer, GLenum attribute );
 const void *extension_procs[] =
 {
     glAccumxOES,

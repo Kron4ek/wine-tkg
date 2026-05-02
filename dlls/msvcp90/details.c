@@ -541,7 +541,7 @@ size_t __thiscall _Concurrent_vector_base_v4__Internal_capacity(
     last_block = (this->segment == this->storage ? STORAGE_SIZE : SEGMENT_SIZE);
     for(i = 0; i < last_block; i++)
     {
-        if(!this->segment[i])
+        if(!this->segment[i] || this->segment[i] == SEGMENT_ALLOC_MARKER)
             return !i ? 0 : 1 << i;
     }
     return 1 << i;
@@ -1055,7 +1055,8 @@ static void WINAPI threadpool_callback(PTP_CALLBACK_INSTANCE instance, void *con
 {
     _Threadpool_chore *chore = context;
     TRACE("calling chore callback: %p\n", chore);
-    chore->callback(chore->arg);
+    if (chore->callback)
+        chore->callback(chore->arg);
 }
 
 /* ?_Schedule_chore@details@Concurrency@@YAHPAU_Threadpool_chore@12@@Z */

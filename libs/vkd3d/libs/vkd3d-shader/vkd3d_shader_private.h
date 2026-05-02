@@ -730,6 +730,8 @@ enum vkd3d_shader_register_type
     VKD3DSPR_INVALID = ~0u,
 };
 
+const char *vsir_register_type_get_name(enum vkd3d_shader_register_type type, const char *error);
+
 enum vsir_rastout_register
 {
     VSIR_RASTOUT_POSITION   = 0x0,
@@ -1035,9 +1037,9 @@ struct vkd3d_shader_indexable_temp
     const struct vkd3d_shader_immediate_constant_buffer *initialiser;
 };
 
-/* This structure is used by vkd3d_shader_register_index_compare(); changes to
- * the structure should be reflected by the comparison function as well. */
-struct vkd3d_shader_register_index
+/* This structure is used by vsir_register_index_compare(); changes to the
+ * structure should be reflected by the comparison function as well. */
+struct vsir_register_index
 {
     struct vsir_src_operand *rel_addr;
     unsigned int offset;
@@ -1053,7 +1055,7 @@ struct vsir_operand
     enum vkd3d_shader_register_precision precision;
     bool non_uniform;
     enum vsir_data_type data_type;
-    struct vkd3d_shader_register_index idx[3];
+    struct vsir_register_index idx[3];
     unsigned int idx_count;
     enum vsir_dimension dimension;
     /* known address alignment for optimisation, or zero */
@@ -1161,7 +1163,7 @@ struct vkd3d_shader_index_range
     unsigned int register_count;
 };
 
-struct vkd3d_shader_register_range
+struct vsir_register_range
 {
     unsigned int space;
     unsigned int first, last;
@@ -1170,7 +1172,7 @@ struct vkd3d_shader_register_range
 struct vkd3d_shader_resource
 {
     struct vsir_dst_operand reg;
-    struct vkd3d_shader_register_range range;
+    struct vsir_register_range range;
 };
 
 enum vkd3d_decl_usage
@@ -1326,14 +1328,14 @@ struct vkd3d_shader_register_semantic
 struct vkd3d_shader_sampler
 {
     struct vsir_src_operand src;
-    struct vkd3d_shader_register_range range;
+    struct vsir_register_range range;
 };
 
 struct vkd3d_shader_constant_buffer
 {
     struct vsir_src_operand src;
     unsigned int size;
-    struct vkd3d_shader_register_range range;
+    struct vsir_register_range range;
 };
 
 struct vkd3d_shader_structured_resource
@@ -1739,8 +1741,7 @@ enum vkd3d_result vsir_update_dcl_temps(struct vsir_program *program,
         struct vkd3d_shader_message_context *message_context);
 
 struct vkd3d_shader_descriptor_info1 *vsir_program_add_descriptor(struct vsir_program *program,
-        enum vkd3d_shader_descriptor_type type, unsigned int register_id,
-        const struct vkd3d_shader_register_range *range,
+        enum vkd3d_shader_descriptor_type type, unsigned int register_id, const struct vsir_register_range *range,
         enum vkd3d_shader_resource_type resource_type, enum vsir_data_type resource_data_type);
 bool vsir_program_add_icb(struct vsir_program *program, struct vkd3d_shader_immediate_constant_buffer *icb);
 void vsir_program_cleanup(struct vsir_program *program);
@@ -1799,12 +1800,16 @@ struct vkd3d_shader_parser
     enum vkd3d_result status;
 };
 
-void vkd3d_shader_parser_error(struct vkd3d_shader_parser *parser,
-        enum vkd3d_shader_error error, const char *format, ...) VKD3D_PRINTF_FUNC(3, 4);
+#define vkd3d_shader_parser_error(parser, error, ...) \
+        vkd3d_shader_parser_error_(parser, error, __FUNCTION__, __VA_ARGS__)
+void vkd3d_shader_parser_error_(struct vkd3d_shader_parser *parser, enum vkd3d_shader_error error,
+        const char *function, const char *format, ...) VKD3D_PRINTF_FUNC(4, 5);
 void vkd3d_shader_parser_init(struct vkd3d_shader_parser *parser,
         struct vkd3d_shader_message_context *message_context, const char *source_name);
-void vkd3d_shader_parser_warning(struct vkd3d_shader_parser *parser,
-        enum vkd3d_shader_error error, const char *format, ...) VKD3D_PRINTF_FUNC(3, 4);
+#define vkd3d_shader_parser_warning(parser, error, ...) \
+        vkd3d_shader_parser_warning_(parser, error, __FUNCTION__, __VA_ARGS__)
+void vkd3d_shader_parser_warning_(struct vkd3d_shader_parser *parser, enum vkd3d_shader_error error,
+        const char *function, const char *format, ...) VKD3D_PRINTF_FUNC(4, 5);
 
 void vsir_program_trace(struct vsir_program *program);
 
@@ -1907,16 +1912,20 @@ void vkd3d_shader_message_context_trace_messages_(const struct vkd3d_shader_mess
         const char *function);
 #define vkd3d_shader_message_context_trace_messages(context) \
         vkd3d_shader_message_context_trace_messages_(context, __FUNCTION__)
-void vkd3d_shader_error(struct vkd3d_shader_message_context *context, const struct vkd3d_shader_location *location,
-        enum vkd3d_shader_error error, const char *format, ...) VKD3D_PRINTF_FUNC(4, 5);
+#define vkd3d_shader_error(context, location, error, ...) \
+        vkd3d_shader_error_(context, location, error, __FUNCTION__, __VA_ARGS__)
+void vkd3d_shader_error_(struct vkd3d_shader_message_context *context, const struct vkd3d_shader_location *location,
+        enum vkd3d_shader_error error, const char *function, const char *format, ...) VKD3D_PRINTF_FUNC(5, 6);
 void vkd3d_shader_verror(struct vkd3d_shader_message_context *context, const struct vkd3d_shader_location *location,
-        enum vkd3d_shader_error error, const char *format, va_list args);
+        enum vkd3d_shader_error error, const char *function, const char *format, va_list args);
 void vkd3d_shader_vnote(struct vkd3d_shader_message_context *context, const struct vkd3d_shader_location *location,
-        enum vkd3d_shader_log_level level, const char *format, va_list args);
-void vkd3d_shader_warning(struct vkd3d_shader_message_context *context, const struct vkd3d_shader_location *location,
-        enum vkd3d_shader_error error, const char *format, ...) VKD3D_PRINTF_FUNC(4, 5);
+        enum vkd3d_shader_log_level level, const char *function, const char *format, va_list args);
+#define vkd3d_shader_warning(context, location, error, ...) \
+        vkd3d_shader_warning_(context, location, error, __FUNCTION__, __VA_ARGS__)
+void vkd3d_shader_warning_(struct vkd3d_shader_message_context *context, const struct vkd3d_shader_location *location,
+        enum vkd3d_shader_error error, const char *function, const char *format, ...) VKD3D_PRINTF_FUNC(5, 6);
 void vkd3d_shader_vwarning(struct vkd3d_shader_message_context *context, const struct vkd3d_shader_location *location,
-        enum vkd3d_shader_error error, const char *format, va_list args);
+        enum vkd3d_shader_error error, const char *function, const char *format, va_list args);
 
 void vkd3d_shader_string_from_message_context(char **out, struct vkd3d_shader_message_context *context);
 

@@ -5653,6 +5653,33 @@ static const uri_properties uri_tests[] = {
             {URLZONE_INVALID,E_NOTIMPL,FALSE}
         }
     },
+    /* Punycode-encoded host with Uri_CREATE_NO_CANONICALIZE */
+    {
+        "http://xn--0zwm56d.EXAMPLE.com/", Uri_CREATE_NO_CANONICALIZE, S_OK, FALSE, 0,
+        {
+            {"http://xn--0zwm56d.EXAMPLE.com/",S_OK,FALSE},
+            {"xn--0zwm56d.EXAMPLE.com",S_OK,FALSE},
+            {"http://xn--0zwm56d.EXAMPLE.com/",S_OK,FALSE},
+            {"EXAMPLE.com",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE},
+            {"xn--0zwm56d.EXAMPLE.com",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"/",S_OK,FALSE},
+            {"/",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"http://xn--0zwm56d.EXAMPLE.com/",S_OK,FALSE},
+            {"http",S_OK,FALSE},
+            {"",S_FALSE,FALSE},
+            {"",S_FALSE,FALSE,NULL},
+        },
+        {
+            {Uri_HOST_IDN,S_OK,FALSE},
+            {80,S_OK,FALSE},
+            {URL_SCHEME_HTTP,S_OK,FALSE},
+            {URLZONE_INVALID,E_NOTIMPL,FALSE}
+        }
+    },
     /* Multiple flags */
     {   "http://username:password@winehq.org/index.html?query=value#fragment", 0, S_OK, FALSE, Uri_DISPLAY_NO_FRAGMENT | Uri_DISPLAY_IDN_HOST,
         {
@@ -8250,6 +8277,9 @@ typedef struct _uri_parse_test {
     const char  *property;
     HRESULT     expected;
     BOOL        todo;
+    /* Whether CoInternetParseIUri returns S_OK when provided
+     * with a buffer that's too small. */
+    BOOL        insufficient_buffer_ok;
     const char  *property2;
 } uri_parse_test;
 
@@ -8257,7 +8287,8 @@ static const uri_parse_test uri_parse_tests[] = {
     /* PARSE_CANONICALIZE tests. */
     {"zip://google.com/test<|>",0,PARSE_CANONICALIZE,0,"zip://google.com/test<|>",S_OK,FALSE},
     {"http://google.com/test<|>",0,PARSE_CANONICALIZE,0,"http://google.com/test%3C%7C%3E",S_OK,FALSE},
-    {"http://google.com/%30%23%3F",0,PARSE_CANONICALIZE,URL_UNESCAPE,"http://google.com/0#?",S_OK,FALSE},
+    {"http://google.com/%30%23%3F",0,PARSE_CANONICALIZE,URL_UNESCAPE,"http://google.com/0#?",S_OK,FALSE,TRUE},
+    {"http://google.com/%30%23%3F/..",0,PARSE_CANONICALIZE,URL_UNESCAPE,"http://google.com/",S_OK,FALSE,TRUE},
     {"test <|>",Uri_CREATE_ALLOW_RELATIVE,PARSE_CANONICALIZE,URL_ESCAPE_UNSAFE,"test %3C%7C%3E",S_OK,FALSE},
     {"test <|>",Uri_CREATE_ALLOW_RELATIVE,PARSE_CANONICALIZE,URL_ESCAPE_SPACES_ONLY,"test%20<|>",S_OK,FALSE},
     {"test%20<|>",Uri_CREATE_ALLOW_RELATIVE,PARSE_CANONICALIZE,URL_UNESCAPE|URL_ESCAPE_UNSAFE,"test%20%3C%7C%3E",S_OK,FALSE},
@@ -8266,6 +8297,7 @@ static const uri_parse_test uri_parse_tests[] = {
     {"http://google.com/test/../",Uri_CREATE_NO_CANONICALIZE,PARSE_CANONICALIZE,URL_NO_META,"http://google.com/test/../",S_OK,FALSE},
     {"http://google.com/test/../",Uri_CREATE_NO_CANONICALIZE,PARSE_CANONICALIZE,0,"http://google.com/",S_OK,FALSE},
     {"zip://google.com/test/../",Uri_CREATE_NO_CANONICALIZE,PARSE_CANONICALIZE,0,"zip://google.com/",S_OK,FALSE},
+    {"zip://google.com/test/%2E./",Uri_CREATE_NO_CANONICALIZE,PARSE_CANONICALIZE,URL_UNESCAPE,"zip://google.com/test/../",S_OK,FALSE,TRUE},
     {"file:///c:/test/../test",Uri_CREATE_NO_CANONICALIZE,PARSE_CANONICALIZE,URL_DONT_SIMPLIFY,"file:///c:/test/../test",S_OK,FALSE},
 
     /* PARSE_FRIENDLY tests. */
@@ -8317,7 +8349,7 @@ static const uri_parse_test uri_parse_tests[] = {
     {"file://server/test",0,PARSE_SITE,0,"server",S_OK,FALSE},
 
     /* PARSE_DOMAIN tests. */
-    {"http://google.com.uk/",0,PARSE_DOMAIN,0,"google.com.uk",S_OK,FALSE,"com.uk"},
+    {"http://google.com.uk/",0,PARSE_DOMAIN,0,"google.com.uk",S_OK,FALSE,FALSE,"com.uk"},
     {"http://google.com.com/",0,PARSE_DOMAIN,0,"com.com",S_OK,FALSE},
     {"test/test",Uri_CREATE_ALLOW_RELATIVE,PARSE_DOMAIN,0,"",S_OK,FALSE},
     {"file://server/test",0,PARSE_DOMAIN,0,"",S_OK,FALSE},
@@ -11725,8 +11757,24 @@ static void test_CoInternetParseIUri(void) {
         hr = pCreateUri(uriW, test.uri_flags, 0, &uri);
         ok(SUCCEEDED(hr), "Error: CreateUri returned 0x%08lx on uri_parse_tests[%ld].\n", hr, i);
         if(SUCCEEDED(hr)) {
-            WCHAR result[INTERNET_MAX_URL_LENGTH+1];
+            WCHAR result[INTERNET_MAX_URL_LENGTH+1], short_result[1];
             DWORD result_len = -1;
+
+            if (!test.expected && lstrlenA(test.property) > 1) {
+                HRESULT expected_hr = test.insufficient_buffer_ok ? 0 : STRSAFE_E_INSUFFICIENT_BUFFER;
+                DWORD expected_len = test.insufficient_buffer_ok ? 0 : lstrlenA(test.property);
+                /* test result_len calculation with insufficient buffer. */
+                hr = pCoInternetParseIUri(uri, test.action, test.flags, short_result, 1, &result_len, 0);
+                todo_wine_if(test.insufficient_buffer_ok)
+                ok(hr == expected_hr,
+                    "Error: CoInternetParseIUri returned 0x%08lx, expected 0x%08lx on uri_parse_tests[%ld].\n",
+                    hr, expected_hr, i);
+                todo_wine_if(test.insufficient_buffer_ok)
+                ok((expected_len == result_len || broken(0 == result_len) /* <= win10 v1507 */) ||
+                    (test.property2 && lstrlenA(test.property2) == result_len),
+                    "Error: Expected %lu, but got %ld instead on uri_parse_tests[%ld] - %s.\n",
+                    expected_len, result_len, i, wine_dbgstr_w(uriW));
+            }
 
             hr = pCoInternetParseIUri(uri, test.action, test.flags, result, INTERNET_MAX_URL_LENGTH+1, &result_len, 0);
             todo_wine_if(test.todo)

@@ -69,7 +69,7 @@ static unsigned int set_startup_info_flags( unsigned int mask, unsigned int flag
 
 void init_startup_info(void)
 {
-    RTL_USER_PROCESS_PARAMETERS *p = NtCurrentTeb()->Peb->ProcessParameters;
+    RTL_USER_PROCESS_PARAMETERS *p = RtlGetCurrentPeb()->ProcessParameters;
 
     startup_show_window = p->wShowWindow;
     set_startup_info_flags( ~0u, p->dwFlags );
@@ -3075,6 +3075,18 @@ static void make_point_onscreen( POINT *pt )
     pt->y = rect.top;
 }
 
+void set_window_normal_placement( HWND hwnd, RECT rect )
+{
+    WND *win = get_win_ptr( hwnd );
+
+    if (win && win != WND_OTHER_PROCESS && win != WND_DESKTOP)
+    {
+        make_rect_onscreen( &rect );
+        win->normal_rect = rect_thread_to_win_dpi( hwnd, rect );
+        release_win_ptr( win );
+    }
+}
+
 static BOOL set_window_placement( HWND hwnd, const WINDOWPLACEMENT *wndpl, UINT flags )
 {
     WND *win = get_win_ptr( hwnd );
@@ -5641,7 +5653,7 @@ static void fix_cs_coordinates( CREATESTRUCTW *cs, INT *sw )
     }
     else  /* overlapped window */
     {
-        RTL_USER_PROCESS_PARAMETERS *params = NtCurrentTeb()->Peb->ProcessParameters;
+        RTL_USER_PROCESS_PARAMETERS *params = RtlGetCurrentPeb()->ProcessParameters;
         MONITORINFO mon_info;
 
         if (!is_default_coord( cs->x ) && !is_default_coord( cs->cx ) && !is_default_coord( cs->cy ))

@@ -179,6 +179,7 @@ HRESULT create_func_ref(script_ctx_t*,function_t*,IDispatch**);
 function_t *script_disp_find_func(ScriptDisp*,const WCHAR*);
 
 HRESULT to_int(VARIANT*,int*);
+HRESULT to_double(VARIANT*,double*);
 
 static inline unsigned arg_cnt(const DISPPARAMS *dp)
 {
@@ -203,7 +204,8 @@ struct vbcaller {
 
 struct _script_ctx_t {
     IActiveScriptSite *site;
-    LCID lcid;
+    LCID lcid;      /* current, mutable via SetLocale */
+    LCID host_lcid; /* embedder-supplied baseline (IActiveScriptSite::GetLCID) */
     UINT codepage;
 
     IInternetHostSecurityManager *secmgr;

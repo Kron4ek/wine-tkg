@@ -9,7 +9,6 @@ SOURCES = \
 	audio.c \
 	drive.c \
 	driveui.c \
-	input.c \
 	libraries.c \
 	logo.svg \
 	main.c \

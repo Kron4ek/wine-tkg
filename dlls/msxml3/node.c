@@ -468,7 +468,7 @@ static void domnode_set_owner(struct domnode *node, struct domnode *owner)
     struct domnode *n, *old_owner;
 
     /* Document node does not have the owner set. */
-    owner = owner->owner ? owner->owner : owner;
+    owner = node_get_doc(owner);
 
     assert(!!owner);
 
@@ -525,8 +525,6 @@ static void domnode_add_refs(struct domnode *node, unsigned int count)
 {
     struct domnode *p = node;
 
-    if (node->owner)
-        node->owner->refcount += count;
     while (p)
     {
         p->refcount += count;
@@ -712,6 +710,8 @@ HRESULT node_put_data(struct domnode *node, const WCHAR *data)
         }
         ++p;
     }
+
+    node->flags &= ~DOMNODE_PARSED_VALUE;
 
     switch (node->type)
     {
@@ -1046,44 +1046,51 @@ HRESULT domnode_create(DOMNodeType type, const WCHAR *name, int name_len, const 
 {
     struct domnode *object;
     WCHAR *p;
-    BSTR str;
 
     *node = NULL;
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
 
-    str = SysAllocStringLen(name, name_len);
+    list_init(&object->entry);
+    list_init(&object->owner_entry);
+    list_init(&object->children);
+    list_init(&object->attributes);
+    list_init(&object->owned);
+    object->owner = owner;
+    /* Document node does not have an owner */
+    if (owner)
+        list_add_tail(&owner->owned, &object->owner_entry);
+
+    object->qname = SysAllocStringLen(name, name_len);
     if (type == NODE_ELEMENT || type == NODE_ATTRIBUTE)
     {
-        if (!parser_is_valid_qualified_name(str))
+        if (!parser_is_valid_qualified_name(object->qname))
         {
-            SysFreeString(str);
+            domnode_destroy_tree(object);
             return E_FAIL;
         }
 
-        if ((p = wcschr(str, ':')))
+        if ((p = wcschr(object->qname, ':')))
         {
-            object->prefix = SysAllocStringLen(str, p - str);
+            object->prefix = SysAllocStringLen(object->qname, p - object->qname);
             object->name = SysAllocString(p + 1);
         }
         else
         {
-            object->name = str;
+            object->name = object->qname;
         }
     }
     else
     {
-        object->name = str;
+        object->name = object->qname;
     }
-    object->qname = str;
 
     if (uri_len)
     {
         if (!(object->uri = SysAllocStringLen(uri, uri_len)))
         {
-            free(object->name);
-            free(object);
+            domnode_destroy_tree(object);
             return E_OUTOFMEMORY;
         }
     }
@@ -1099,26 +1106,19 @@ HRESULT domnode_create(DOMNodeType type, const WCHAR *name, int name_len, const 
             ;
     }
 
-    list_init(&object->entry);
-    list_init(&object->owner_entry);
-    list_init(&object->children);
-    list_init(&object->attributes);
-    list_init(&object->owned);
-    object->owner = owner;
-    /* Document node does not have an owner */
-    if (owner)
-        list_add_tail(&owner->owned, &object->owner_entry);
-
     *node = object;
 
     return S_OK;
 }
 
-static void domnode_append_attribute(struct domnode *parent, struct domnode *node)
+static void domnode_insert_attribute(struct domnode *parent, struct domnode *node, struct domnode *ref_node)
 {
     domnode_unlink_attribute(node);
 
-    list_add_tail(&parent->attributes, &node->entry);
+    if (ref_node)
+        list_add_before(&ref_node->entry, &node->entry);
+    else
+        list_add_tail(&parent->attributes, &node->entry);
     node->parent = parent;
     domnode_add_refs(node->parent, node->refcount);
     domnode_set_owner(node, parent);
@@ -1133,7 +1133,7 @@ static HRESULT parse_xml_decl_append_attribute(struct domnode *pi, const WCHAR *
         return hr;
 
     if (SUCCEEDED(hr = node_put_data(attribute, value)))
-        domnode_append_attribute(pi, attribute);
+        domnode_insert_attribute(pi, attribute, NULL);
     else
         domnode_destroy_tree(attribute);
 
@@ -1235,24 +1235,10 @@ HRESULT node_get_owner_document(const struct domnode *node, IXMLDOMDocument **do
 
 struct domnode *domnode_addref(struct domnode *node)
 {
+    if (node->owner)
+        ++node->owner->refcount;
     domnode_add_refs(node, 1);
     return node;
-}
-
-static struct domnode *domnode_drop_refs(struct domnode *node, unsigned int count)
-{
-    struct domnode *top = NULL;
-
-    if (node->owner)
-        node->owner->refcount -= count;
-    while (node)
-    {
-        top = node;
-        node->refcount -= count;
-        node = node->parent;
-    }
-
-    return top;
 }
 
 struct domdoc_properties *domdoc_create_properties(MSXML_VERSION version)
@@ -1270,6 +1256,8 @@ struct domdoc_properties *domdoc_create_properties(MSXML_VERSION version)
     properties->version = version;
     properties->XPath = (version == MSXML4 || version == MSXML6);
     properties->prohibit_dtd = version == MSXML6;
+    properties->normalize_attribute_values = false;
+    properties->max_element_depth = version > MSXML3 ? 256 : 5000;
 
     /* document uri */
     properties->uri = NULL;
@@ -1302,10 +1290,12 @@ static struct domdoc_properties* domdoc_properties_clone(struct domdoc_propertie
         pcopy->preserving = properties->preserving;
         pcopy->validating = properties->validating;
         pcopy->prohibit_dtd = properties->prohibit_dtd;
+        pcopy->normalize_attribute_values = properties->normalize_attribute_values;
         pcopy->schemaCache = properties->schemaCache;
         if (pcopy->schemaCache)
             IXMLDOMSchemaCollection2_AddRef(pcopy->schemaCache);
         pcopy->XPath = properties->XPath;
+        pcopy->max_element_depth = properties->max_element_depth;
         pcopy->selectNsStr_len = properties->selectNsStr_len;
         list_init( &pcopy->selectNsList );
         pcopy->selectNsStr = malloc(len);
@@ -1365,6 +1355,12 @@ void domnode_destroy_tree(struct domnode *tree)
             list_remove(&node->entry);
             domnode_destroy_tree(node);
         }
+
+        if (tree->type == NODE_DOCUMENT_TYPE)
+        {
+            parser_dtd_release(tree->dtd);
+            tree->dtd = NULL;
+        }
     }
 
     if (tree->prefix)
@@ -1383,7 +1379,15 @@ void domnode_release(struct domnode *node)
 {
     struct domnode *top;
 
-    top = domnode_drop_refs(node, 1);
+    if (node->owner)
+        --node->owner->refcount;
+    while (node)
+    {
+        top = node;
+        --node->refcount;
+        node = node->parent;
+    }
+
     if (top->refcount == 0)
         domnode_destroy_tree(top);
 }
@@ -1403,6 +1407,8 @@ HRESULT node_clone_domnode(struct domnode *node, bool deep, struct domnode **clo
 
     if (node->type == NODE_DOCUMENT)
         object->properties = domdoc_properties_clone(node->properties);
+    else if (node->type == NODE_DOCUMENT_TYPE)
+        object->dtd = parser_dtd_addref(node->dtd);
 
     if (deep)
     {
@@ -1416,7 +1422,7 @@ HRESULT node_clone_domnode(struct domnode *node, bool deep, struct domnode **clo
     LIST_FOR_EACH_ENTRY(n, &node->attributes, struct domnode, entry)
     {
         node_clone_domnode(n, true, &child);
-        domnode_append_attribute(object, child);
+        domnode_insert_attribute(object, child, NULL);
     }
 
     *cloned = object;
@@ -1617,7 +1623,39 @@ static void domnode_get_text(const struct domnode *node, struct node_get_text_co
     }
 }
 
-HRESULT node_get_text(const struct domnode *node, BSTR *text)
+static void domnode_get_attribute_value(struct domnode *attr, struct string_buffer *buffer)
+{
+    struct domnode *doc = node_get_doc(attr);
+    const struct domdoc_properties *properties = doc->properties;
+    struct domnode *child;
+    const WCHAR *p;
+
+    if (properties->normalize_attribute_values && (attr->flags & DOMNODE_PARSED_VALUE))
+    {
+        LIST_FOR_EACH_ENTRY(child, &attr->children, struct domnode, entry)
+        {
+            p = child->data;
+
+            while (*p)
+            {
+                if (*p == '\n' || *p == '\t')
+                    string_append(buffer, L" ", 1);
+                else
+                    string_append(buffer, p, 1);
+                ++p;
+            }
+        }
+    }
+    else
+    {
+        LIST_FOR_EACH_ENTRY(child, &attr->children, struct domnode, entry)
+        {
+            string_append(buffer, child->data, SysStringLen(child->data));
+        }
+    }
+}
+
+HRESULT node_get_text(struct domnode *node, BSTR *text)
 {
     struct node_get_text_context context = { 0 };
     struct domnode *child;
@@ -1650,10 +1688,7 @@ HRESULT node_get_text(const struct domnode *node, BSTR *text)
             return string_to_bstr(&context.buffer, text);
 
         case NODE_ATTRIBUTE:
-            LIST_FOR_EACH_ENTRY(child, &node->children, struct domnode, entry)
-            {
-                string_append(&context.buffer, child->data, SysStringLen(child->data));
-            }
+            domnode_get_attribute_value(node, &context.buffer);
             return string_to_bstr(&context.buffer, text);
 
         case NODE_DOCUMENT:
@@ -3374,8 +3409,8 @@ HRESULT node_get_attribute_by_index(const struct domnode *node, LONG index, IXML
 
 HRESULT node_get_attribute_value(struct domnode *node, const WCHAR *name, VARIANT *value)
 {
-    struct domnode *attr, *child;
     struct string_buffer buffer;
+    struct domnode *attr;
 
     if (!name || !value)
         return E_INVALIDARG;
@@ -3392,10 +3427,7 @@ HRESULT node_get_attribute_value(struct domnode *node, const WCHAR *name, VARIAN
     }
 
     string_buffer_init(&buffer);
-    LIST_FOR_EACH_ENTRY(child, &attr->children, struct domnode, entry)
-    {
-        string_append(&buffer, child->data, SysStringLen(child->data));
-    }
+    domnode_get_attribute_value(attr, &buffer);
 
     V_VT(value) = VT_BSTR;
     return string_to_bstr(&buffer, &V_BSTR(value));
@@ -3429,14 +3461,12 @@ HRESULT node_set_attribute(struct domnode *node, IXMLDOMNode *attribute, IXMLDOM
                 return hr;
         }
 
-        list_add_before(&old_attr->entry, &attr->entry);
-        attr->parent = node;
-
+        domnode_insert_attribute(node, attr, old_attr);
         domnode_unlink_attribute(old_attr);
     }
     else
     {
-        domnode_append_attribute(node, attr);
+        domnode_insert_attribute(node, attr, NULL);
     }
 
     return S_OK;
@@ -3484,7 +3514,7 @@ HRESULT node_set_attribute_value(struct domnode *node, const WCHAR *name, const 
     if (domnode_get_attribute(node, name, &attr) != S_OK)
     {
         if (SUCCEEDED(hr = domnode_create(NODE_ATTRIBUTE, name, wcslen(name), NULL, 0, node->owner, &attr)))
-            domnode_append_attribute(node, attr);
+            domnode_insert_attribute(node, attr, NULL);
     }
 
     if (SUCCEEDED(hr))
@@ -3578,7 +3608,10 @@ struct parse_context
     /* Parsed output */
     struct domnode *root;
 
+    MSXML_VERSION version;
     HRESULT status;
+    int max_depth;
+    int depth;
 };
 
 static void parse_context_node_create(struct parse_context *context, DOMNodeType type,
@@ -3602,7 +3635,7 @@ static void parse_context_append_child(struct parse_context *context, struct dom
 static void parse_context_append_attribute(struct parse_context *context, struct domnode *node, struct domnode *attribute)
 {
     if (context->status == S_OK)
-        domnode_append_attribute(node, attribute);
+        domnode_insert_attribute(node, attribute, NULL);
 }
 
 static void parse_context_node_put_data(struct parse_context *context, struct domnode *node, const WCHAR *data, int data_len)
@@ -3753,8 +3786,13 @@ static HRESULT WINAPI parse_content_handler_startElement(ISAXContentHandler *ifa
 {
     struct parse_context *c = impl_from_ISAXContentHandler(iface);
     struct domnode *element, *attr;
+    int max_depth = c->max_depth;
     int count, length;
     const WCHAR *str;
+
+    ++c->depth;
+    if (max_depth && c->depth > max_depth)
+        return c->version < MSXML6 ? E_ABORT : E_DOM_MAX_ELEMENT_DEPTH;
 
     parse_context_create_text_node(c, NODE_TEXT);
     parse_context_node_create(c, NODE_ELEMENT, qname, qname_len, uri, uri_len, c->root, &element);
@@ -3778,8 +3816,12 @@ static HRESULT WINAPI parse_content_handler_startElement(ISAXContentHandler *ifa
             ISAXAttributes_getValue(attrs, i, &str, &length);
             parse_context_node_put_data(c, attr, str, length);
 
-            if (attr && is_namespace_definition(attr))
-                attr->flags |= DOMNODE_READONLY_VALUE;
+            if (attr)
+            {
+                attr->flags |= DOMNODE_PARSED_VALUE;
+                if (is_namespace_definition(attr))
+                    attr->flags |= DOMNODE_READONLY_VALUE;
+            }
         }
     }
 
@@ -3791,6 +3833,7 @@ static HRESULT WINAPI parse_content_handler_endElement(ISAXContentHandler *iface
 {
     struct parse_context *c = impl_from_ISAXContentHandler(iface);
 
+    --c->depth;
     parse_context_create_text_node(c, NODE_TEXT);
     c->node = c->node->parent;
 
@@ -3903,7 +3946,8 @@ static HRESULT WINAPI parse_extension_handler_xmldecl(ISAXExtensionHandler *ifac
     return c->status;
 }
 
-static HRESULT WINAPI parse_extension_handler_dtd(ISAXExtensionHandler *iface, BSTR data)
+static HRESULT WINAPI parse_extension_handler_dtd(ISAXExtensionHandler *iface,
+        BSTR data, struct dtd *dtd)
 {
     struct parse_context *c = impl_from_ISAXExtensionHandler(iface);
 
@@ -3911,6 +3955,7 @@ static HRESULT WINAPI parse_extension_handler_dtd(ISAXExtensionHandler *iface, B
     {
         if (!(c->node->data = SysAllocStringLen(data, SysStringLen(data))))
             c->status = E_OUTOFMEMORY;
+        c->node->dtd = parser_dtd_addref(dtd);
     }
 
     return c->status;
@@ -4042,6 +4087,8 @@ static HRESULT parse_context_init(struct parse_context *c, const struct domdoc_p
     c->extension_handler.lpVtbl = &parse_extension_handler_vtbl;
     c->lexical_handler.lpVtbl = &parse_lexical_handler_vtbl;
     c->buffer.status = &c->status;
+    c->max_depth = properties->max_element_depth;
+    c->version = properties->version;
 
     if (FAILED(hr = SAXXMLReader_create(MSXML3, (void **)&unk)))
         return hr;
@@ -4060,7 +4107,11 @@ static HRESULT parse_context_init(struct parse_context *c, const struct domdoc_p
     V_UNKNOWN(&v) = (IUnknown *)&c->extension_handler;
     ISAXXMLReader_putProperty(c->reader, L"http://winehq.org/sax/properties/extension-handler", v);
 
+    V_VT(&v) = VT_I4;
+    V_I4(&v) = 0;
+    ISAXXMLReader_putProperty(c->reader, L"max-element-depth", v);
     ISAXXMLReader_putFeature(c->reader, L"prohibit-dtd", properties->prohibit_dtd ? VARIANT_TRUE : VARIANT_FALSE);
+    ISAXXMLReader_putFeature(c->reader, L"normalize-attribute-values", VARIANT_FALSE);
 
     domnode_create(NODE_DOCUMENT, NULL, 0, NULL, 0, NULL, &c->root);
     c->root->properties = domdoc_create_properties(MSXML_DEFAULT);
@@ -4306,7 +4357,7 @@ xmlDocPtr create_xmldoc_from_domdoc(struct domnode *node, xmlNodePtr *xmlnode)
 
     *xmlnode = NULL;
 
-    doc = node->owner ? node->owner : node;
+    doc = node_get_doc(node);
     xmldoc = xmlNewDoc(NULL);
     xmldoc->_private2 = doc;
 

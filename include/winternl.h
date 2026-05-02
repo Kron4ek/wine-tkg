@@ -5507,11 +5507,10 @@ NTSYSAPI LONGLONG  WINAPI RtlLargeIntegerSubtract(LONGLONG,LONGLONG);
 NTSYSAPI NTSTATUS  WINAPI RtlLargeIntegerToChar(const ULONGLONG *,ULONG,ULONG,PCHAR);
 #endif
 
-/* Wine internal functions */
-
-NTSYSAPI NTSTATUS WINAPI wine_nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char *nameA, ULONG *size,
-                                                    UINT disposition );
-
+#ifdef WINE_UNIX_LIB
+NTSYSAPI HANDLE    WINAPI PsGetCurrentProcessId(void);
+NTSYSAPI HANDLE    WINAPI PsGetCurrentThreadId(void);
+#endif
 
 /***********************************************************************
  * Inline functions
@@ -5584,6 +5583,11 @@ static inline PLIST_ENTRY RemoveTailList(PLIST_ENTRY le)
     if (e != le) e->Flink = e->Blink = NULL;
     return e;
 }
+
+/* Wine internal functions */
+
+NTSYSAPI NTSTATUS WINAPI wine_nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char *nameA, ULONG *size,
+                                                    UINT disposition );
 
 
 #ifdef __WINESRC__
