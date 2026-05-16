@@ -554,6 +554,10 @@ struct hlsl_ir_var
      * sampler and a texture for SM<4 backwards compatibility. */
     bool is_combined_sampler;
 
+    /* Whether the initial value of the variable is a compile-time constant
+     * expression and therefore it could be moved to ctx->static_initializers. */
+    bool is_compile_time_const;
+
     uint32_t is_input_semantic : 1;
     uint32_t is_output_semantic : 1;
     uint32_t is_uniform : 1;
@@ -1137,6 +1141,8 @@ struct hlsl_ctx
      *   scanner is declared as reentrant, which is the case. */
     void *scanner;
 
+    vkd3d_locale c_locale;
+
     /* Pointer to the current scope; changes as the parser reads the code. */
     struct hlsl_scope *cur_scope;
     /* Scope of global variables. */
@@ -1532,6 +1538,13 @@ static inline struct hlsl_type *hlsl_get_numeric_type(const struct hlsl_ctx *ctx
 static inline bool hlsl_is_numeric_type(const struct hlsl_type *type)
 {
     return type->class <= HLSL_CLASS_LAST_NUMERIC;
+}
+
+static inline struct hlsl_type *hlsl_change_base_type(const struct hlsl_ctx *ctx,
+        const struct hlsl_type *type, enum hlsl_base_type base_type)
+{
+    VKD3D_ASSERT(hlsl_is_numeric_type(type));
+    return hlsl_get_numeric_type(ctx, type->class, base_type, type->e.numeric.dimx, type->e.numeric.dimy);
 }
 
 static inline bool hlsl_is_vec1(const struct hlsl_type *type)

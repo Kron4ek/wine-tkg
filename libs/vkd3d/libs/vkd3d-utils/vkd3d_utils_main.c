@@ -19,7 +19,7 @@
 #include "config.h"
 #include <unistd.h>
 #ifdef _WIN32
-#include <direct.h>   /* getcwd */
+#include <direct.h>     /* For getcwd() */
 #endif
 #include "vkd3d_utils_private.h"
 #include "vkd3d_shader_utils.h"

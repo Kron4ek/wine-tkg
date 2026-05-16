@@ -437,7 +437,7 @@ static int is_valid_view_addr( struct process *process, client_ptr_t addr, mem_s
     struct memory_view *view;
 
     if (!size) return 0;
-    if (addr & host_page_mask) return 0;
+    if (addr & (process->page_size - 1)) return 0;
     if (addr + size < addr) return 0;  /* overflow */
 
     /* check for overlapping view */
@@ -1309,8 +1309,8 @@ void generate_startup_debug_events( struct process *process )
     /* generate creation events */
     LIST_FOR_EACH_ENTRY( thread, &process->thread_list, struct thread, proc_entry )
     {
-        if (thread != first_thread)
-            generate_debug_event( thread, DbgCreateThreadStateChange, NULL );
+        if (thread->is_system) continue;
+        if (thread != first_thread) generate_debug_event( thread, DbgCreateThreadStateChange, NULL );
     }
 
     /* generate dll events (in loading order) */

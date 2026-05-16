@@ -19,18 +19,18 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
- 
+
 /*******************************************************************************/
 /* Modification and Enhancement Narrative                                      */
 /*                                                                             */
-/* Craig Schulstad - Horace, ND  USA (4 April, 2026)                           */
+/* Craig Schulstad - Horace, ND  USA (2 May, 2026)                             */
 /*                                                                             */
 /* This program has been revised to reactively acquire an MUI file reference   */
 /* to be used by the various resource fetch functions.  Without these code     */
 /* changes, no MUI reference was found and the calling program was falling     */
 /* back to the "exe" file for information.                                     */
 /*                                                                             */
-/* Version being enhanced:  11.6                                               */
+/* Version being enhanced:  11.8                                               */
 /*                                                                             */
 /* The following function calls were added:                                    */
 /*   get_mui (Attempts to locate and retrieve an MUI file)                     */
@@ -1120,6 +1120,8 @@ HMODULE get_mui(HMODULE module)
         RegQueryValueExW( intl_key, L"LocaleName", NULL, NULL, (BYTE *)mui_locale, &count );
         TRACE("Locale name: %s\n", debugstr_w(mui_locale));
     }
+	
+    SetLastError(save_error);
 
     last_slash = wcsrchr(module_name, L'\\');
 
@@ -1248,7 +1250,6 @@ BOOL WINAPI DECLSPEC_HOTPATCH FreeResource( HGLOBAL handle )
 {
     return FALSE;
 }
-
 
 /* MUI Start */
 /**********************************************************************

@@ -3540,11 +3540,13 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
     {
         SECTION_IMAGE_INFORMATION info;
         ULONG64 prev = 0;
+        struct thread_data *data = get_thread_data();
+        TEB64 *teb64 = get_teb64( data->teb );
 
-        if (NtCurrentTeb64())
+        if (teb64)
         {
-            prev = NtCurrentTeb64()->Tib.ArbitraryUserPointer;
-            NtCurrentTeb64()->Tib.ArbitraryUserPointer = PtrToUlong(NtCurrentTeb()->Tib.ArbitraryUserPointer);
+            prev = teb64->Tib.ArbitraryUserPointer;
+            teb64->Tib.ArbitraryUserPointer = PtrToUlong(data->teb->Tib.ArbitraryUserPointer);
         }
         /* check if we can replace that mapping with the builtin */
         res = load_builtin( pe_mapping, machine, &info, addr_ptr, size_ptr,
@@ -3553,7 +3555,7 @@ static unsigned int virtual_map_section( HANDLE handle, PVOID *addr_ptr, ULONG_P
             res = virtual_map_image( handle, addr_ptr, size_ptr, limit_low, limit_high,
                                      alloc_type, pe_mapping, machine, FALSE, offset.QuadPart );
         free_pe_mapping_info( pe_mapping );
-        if (NtCurrentTeb64()) NtCurrentTeb64()->Tib.ArbitraryUserPointer = prev;
+        if (teb64) teb64->Tib.ArbitraryUserPointer = prev;
         return res;
     }
 
@@ -3744,6 +3746,16 @@ ULONG_PTR get_system_affinity_mask(void)
     if (num_cpus >= sizeof(ULONG_PTR) * 8) return ~(ULONG_PTR)0;
     return ((ULONG_PTR)1 << num_cpus) - 1;
 }
+
+
+/***********************************************************************
+ *           get_host_page_size
+ */
+UINT_PTR get_host_page_size(void)
+{
+    return host_page_size;
+}
+
 
 /***********************************************************************
  *           virtual_get_system_info
@@ -4539,10 +4551,11 @@ struct thread_stack_info
  */
 static BOOL is_inside_thread_stack( struct thread_data *data, void *ptr, struct thread_stack_info *stack )
 {
-    TEB *teb = data->teb;
-    WOW_TEB *wow_teb = get_wow_teb( teb );
+    TEB *teb;
+    WOW_TEB *wow_teb;
     size_t min_guaranteed = max( page_size * (is_win64 ? 2 : 1), host_page_size );
 
+    if (!(teb = data->teb)) return FALSE;
     stack->start = teb->DeallocationStack;
     stack->limit = teb->Tib.StackLimit;
     stack->end   = teb->Tib.StackBase;
@@ -4550,7 +4563,7 @@ static BOOL is_inside_thread_stack( struct thread_data *data, void *ptr, struct 
     stack->is_wow = FALSE;
     if ((char *)ptr > stack->start && (char *)ptr <= stack->end) return TRUE;
 
-    if (!wow_teb) return FALSE;
+    if (!(wow_teb = get_wow_teb( teb ))) return FALSE;
     stack->start = ULongToPtr( wow_teb->DeallocationStack );
     stack->limit = ULongToPtr( wow_teb->Tib.StackLimit );
     stack->end   = ULongToPtr( wow_teb->Tib.StackBase );
@@ -4563,7 +4576,7 @@ static BOOL is_inside_thread_stack( struct thread_data *data, void *ptr, struct 
 /***********************************************************************
  *           grow_thread_stack
  */
-static NTSTATUS grow_thread_stack( char *page, struct thread_stack_info *stack_info )
+static NTSTATUS grow_thread_stack( struct thread_data *data, char *page, struct thread_stack_info *stack_info )
 {
     NTSTATUS ret = 0;
 
@@ -4583,10 +4596,10 @@ static NTSTATUS grow_thread_stack( char *page, struct thread_stack_info *stack_i
     }
     if (stack_info->is_wow)
     {
-        WOW_TEB *wow_teb = get_wow_teb( NtCurrentTeb() );
+        WOW_TEB *wow_teb = get_wow_teb( data->teb );
         wow_teb->Tib.StackLimit = PtrToUlong( page );
     }
-    else NtCurrentTeb()->Tib.StackLimit = page;
+    else data->teb->Tib.StackLimit = page;
     return ret;
 }
 
@@ -4623,7 +4636,7 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec, 
             mprotect_range( page, host_page_size, 0, 0 );
             ret = STATUS_GUARD_PAGE_VIOLATION;
         }
-        else ret = grow_thread_stack( page, &stack_info );
+        else ret = grow_thread_stack( data, page, &stack_info );
     }
     else if (err == EXCEPTION_WRITE_FAULT)
     {
@@ -4689,7 +4702,7 @@ void *virtual_setup_exception( struct thread_data *data, void *stack_ptr, size_t
     {
         char *page = ROUND_ADDR( stack, host_page_mask );
         mutex_lock( &virtual_mutex );  /* no need for signal masking inside signal handler */
-        if ((get_host_page_vprot( page ) & VPROT_GUARD) && grow_thread_stack( page, &stack_info ))
+        if ((get_host_page_vprot( page ) & VPROT_GUARD) && grow_thread_stack( data, page, &stack_info ))
         {
             rec->ExceptionCode = STATUS_STACK_OVERFLOW;
             rec->NumberParameters = 0;

@@ -4641,7 +4641,7 @@ static const struct IDirect3DDevice9ExVtbl d3d9_device_vtbl =
  * It doesn't really make sense to force using this sequence to initialize the
  * d3d9_device, so instead just put it here. */
 
-#include <pshpack1.h>
+#pragma pack(push,1)
 
 static const __attribute__((used)) struct
 {
@@ -4654,7 +4654,7 @@ static const __attribute__((used)) struct
 }
 d3d9_overlay_scanner_marker = {{0xc7, 0x06}, &d3d9_device_vtbl, {0x89, 0x86}, 0, {0x89, 0x86}, 0};
 
-#include <poppack.h>
+#pragma pack(pop)
 
 #endif
 

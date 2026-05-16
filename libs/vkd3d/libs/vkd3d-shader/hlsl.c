@@ -1458,11 +1458,7 @@ struct hlsl_type *hlsl_type_clone(struct hlsl_ctx *ctx, struct hlsl_type *old,
                     return NULL;
                 }
                 dst_field->name = hlsl_strdup(ctx, src_field->name);
-                if (src_field->semantic.name)
-                {
-                    dst_field->semantic.name = hlsl_strdup(ctx, src_field->semantic.name);
-                    dst_field->semantic.index = src_field->semantic.index;
-                }
+                hlsl_clone_semantic(ctx, &dst_field->semantic, &src_field->semantic);
             }
             break;
         }
@@ -5122,6 +5118,24 @@ void hlsl_ctx_init_entry_function_attributes(struct hlsl_ctx *ctx)
     memset(ctx->thread_count, 0, sizeof(ctx->thread_count));
 }
 
+static void hlsl_ctx_cleanup_locale(struct hlsl_ctx *ctx)
+{
+#ifdef _WIN32
+    _free_locale(ctx->c_locale);
+#else
+    freelocale(ctx->c_locale);
+#endif
+}
+
+static void hlsl_ctx_init_locale(struct hlsl_ctx *ctx)
+{
+#ifdef _WIN32
+    ctx->c_locale = _create_locale(LC_ALL, "C");
+#else
+    ctx->c_locale = newlocale(LC_ALL_MASK, "C", NULL);
+#endif
+}
+
 static bool hlsl_ctx_init(struct hlsl_ctx *ctx, struct vkd3d_shader_source_list *source_files,
         const struct vkd3d_shader_compile_info *compile_info, const struct hlsl_profile_info *profile,
         struct vkd3d_shader_message_context *message_context)
@@ -5143,10 +5157,13 @@ static bool hlsl_ctx_init(struct hlsl_ctx *ctx, struct vkd3d_shader_source_list 
     ctx->location.line = ctx->location.column = 1;
     vkd3d_string_buffer_cache_init(&ctx->string_buffers);
 
+    hlsl_ctx_init_locale(ctx);
+
     list_init(&ctx->scopes);
 
     if (!(ctx->dummy_scope = hlsl_new_scope(ctx, NULL)))
     {
+        hlsl_ctx_cleanup_locale(ctx);
         vkd3d_string_buffer_cache_cleanup(&ctx->string_buffers);
         return false;
     }
@@ -5165,10 +5182,16 @@ static bool hlsl_ctx_init(struct hlsl_ctx *ctx, struct vkd3d_shader_source_list 
 
     if (!(ctx->globals_buffer = hlsl_new_buffer(ctx, HLSL_BUFFER_CONSTANT,
             hlsl_strdup(ctx, "$Globals"), 0, NULL, NULL, &ctx->location)))
+    {
+        hlsl_ctx_cleanup_locale(ctx);
         return false;
+    }
     if (!(ctx->params_buffer = hlsl_new_buffer(ctx, HLSL_BUFFER_CONSTANT,
             hlsl_strdup(ctx, "$Params"), 0, NULL, NULL, &ctx->location)))
+    {
+        hlsl_ctx_cleanup_locale(ctx);
         return false;
+    }
     ctx->cur_buffer = ctx->globals_buffer;
 
     ctx->warn_implicit_truncation = true;
@@ -5208,7 +5231,10 @@ static bool hlsl_ctx_init(struct hlsl_ctx *ctx, struct vkd3d_shader_source_list 
     }
 
     if (!(ctx->error_instr = hlsl_new_error_expr(ctx)))
+    {
+        hlsl_ctx_cleanup_locale(ctx);
         return false;
+    }
     hlsl_block_add_instr(&ctx->static_initializers, ctx->error_instr);
 
     hlsl_ctx_init_entry_function_attributes(ctx);
@@ -5263,6 +5289,7 @@ static void hlsl_ctx_cleanup(struct hlsl_ctx *ctx)
     }
 
     vkd3d_free(ctx->constant_defs.regs);
+    hlsl_ctx_cleanup_locale(ctx);
 }
 
 static int hlsl_ctx_parse(struct hlsl_ctx *ctx, struct vkd3d_shader_source_list *source_list,

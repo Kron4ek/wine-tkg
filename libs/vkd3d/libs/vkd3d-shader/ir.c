@@ -1064,7 +1064,7 @@ static void vsir_src_operand_init_ssa_f32(struct vsir_src_operand *src, unsigned
     vsir_src_operand_init_ssa_scalar(src, idx, VSIR_DATA_F32);
 }
 
-static void vsir_src_operand_init_ssa_f32v4(struct vsir_src_operand *src, unsigned int idx)
+void vsir_src_operand_init_ssa_f32v4(struct vsir_src_operand *src, unsigned int idx)
 {
     vsir_src_operand_init_ssa(src, idx, VSIR_DATA_F32, VSIR_DIMENSION_VEC4);
 }
@@ -1148,7 +1148,7 @@ static void vsir_dst_operand_init_ssa_f32(struct vsir_dst_operand *dst, unsigned
     vsir_dst_operand_init_ssa_scalar(dst, idx, VSIR_DATA_F32);
 }
 
-static void vsir_dst_operand_init_ssa_f32v4(struct vsir_dst_operand *dst, unsigned int idx)
+void vsir_dst_operand_init_ssa_f32v4(struct vsir_dst_operand *dst, unsigned int idx)
 {
     vsir_dst_operand_init_ssa(dst, idx, VSIR_DATA_F32, VSIR_DIMENSION_VEC4);
 }
@@ -4573,7 +4573,7 @@ struct io_normaliser
     struct io_normaliser_register_data input_range_map[MAX_REG_OUTPUT];
     struct io_normaliser_register_data output_range_map[MAX_REG_OUTPUT];
     struct io_normaliser_register_data pc_range_map[MAX_REG_OUTPUT];
-    uint32_t vpos_ssa;
+    uint32_t vpos_ssa, vface_ssa;
 
     bool use_vocp;
 };
@@ -5121,6 +5121,11 @@ static void vsir_src_operand_io_normalise(struct vsir_src_operand *src,
                 reg->type = VKD3DSPR_SSA;
                 reg->idx[0].offset = normaliser->vpos_ssa;
             }
+            else if (reg->idx[0].offset == 1)
+            {
+                reg->type = VKD3DSPR_SSA;
+                reg->idx[0].offset = normaliser->vface_ssa;
+            }
             return;
 
         default:
@@ -5158,33 +5163,58 @@ static enum vkd3d_result io_normaliser_init_misctype(struct vsir_program_iterato
         struct vsir_program *program, struct io_normaliser *normaliser)
 {
     struct vkd3d_shader_location location = vsir_program_iterator_current(it)->location;
+    const struct signature_element *element;
     struct vkd3d_shader_instruction *ins;
-    const struct signature_element *vpos;
-    unsigned int vpos_idx;
+    unsigned int signature_idx;
 
     if (normaliser->shader_type != VKD3D_SHADER_TYPE_PIXEL || normaliser->major != 3)
         return VKD3D_OK;
 
-    if (!vsir_signature_find_sysval(normaliser->input_signature, VKD3D_SHADER_SV_POSITION, 0, &vpos_idx))
-        return VKD3D_OK;
-    vpos = &normaliser->input_signature->elements[vpos_idx];
-
-    /* sm4 (and therefore vsir) SV_Position returns the pixel center,
-     * i.e. coordinates ending in .5, but vPos should return integer
-     * coordinates. Take the floor. */
-
-    if (!(ins = vsir_program_iterator_insert_before_and_move(it, 1)))
-        return VKD3D_ERROR_OUT_OF_MEMORY;
-    normaliser->vpos_ssa = program->ssa_count++;
-    if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_ROUND_Z, 1, 1))
+    if (vsir_signature_find_sysval(normaliser->input_signature, VKD3D_SHADER_SV_POSITION, 0, &signature_idx))
     {
-        vsir_instruction_init(ins, &location, VSIR_OP_NOP);
-        return VKD3D_ERROR_OUT_OF_MEMORY;
+        element = &normaliser->input_signature->elements[signature_idx];
+
+        /* sm4 (and therefore vsir) SV_Position returns the pixel center,
+         * i.e. coordinates ending in .5, but vPos should return integer
+         * coordinates. Take the floor. */
+
+        if (!(ins = vsir_program_iterator_insert_before_and_move(it, 1)))
+            return VKD3D_ERROR_OUT_OF_MEMORY;
+        normaliser->vpos_ssa = program->ssa_count++;
+        if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_ROUND_Z, 1, 1))
+        {
+            vsir_instruction_init(ins, &location, VSIR_OP_NOP);
+            return VKD3D_ERROR_OUT_OF_MEMORY;
+        }
+        vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], normaliser->vpos_ssa);
+        vsir_src_operand_init_io(&ins->src[0], VKD3DSPR_INPUT, element, 1);
+        ins->src[0].reg.idx[0].offset = signature_idx;
+        vsir_program_iterator_next(it);
     }
-    vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], normaliser->vpos_ssa);
-    vsir_src_operand_init_io(&ins->src[0], VKD3DSPR_INPUT, vpos, 1);
-    ins->src[0].reg.idx[0].offset = vpos_idx;
-    vsir_program_iterator_next(it);
+
+    if (vsir_signature_find_sysval(normaliser->input_signature, VKD3D_SHADER_SV_IS_FRONT_FACE, 0, &signature_idx))
+    {
+        element = &normaliser->input_signature->elements[signature_idx];
+
+        /* sm4 (and therefore vsir) SV_IsFrontFace returns ~0u for front
+         * and 0 for back. vFace returns 1.0 for front and -1.0 for back. */
+
+        if (!(ins = vsir_program_iterator_insert_before_and_move(it, 1)))
+            return VKD3D_ERROR_OUT_OF_MEMORY;
+        normaliser->vface_ssa = program->ssa_count++;
+        if (!vsir_instruction_init_with_params(program, ins, &location, VSIR_OP_MOVC, 1, 3))
+        {
+            vsir_instruction_init(ins, &location, VSIR_OP_NOP);
+            return VKD3D_ERROR_OUT_OF_MEMORY;
+        }
+        vsir_dst_operand_init_ssa_f32v4(&ins->dst[0], normaliser->vface_ssa);
+        vsir_src_operand_init_io(&ins->src[0], VKD3DSPR_INPUT, element, 1);
+        ins->src[0].reg.idx[0].offset = signature_idx;
+        ins->src[0].reg.data_type = VSIR_DATA_U32;
+        vsir_src_operand_init_const_f32(&ins->src[1], 1.0f);
+        vsir_src_operand_init_const_f32(&ins->src[2], -1.0f);
+        vsir_program_iterator_next(it);
+    }
 
     return VKD3D_OK;
 }
@@ -5237,7 +5267,7 @@ static enum vkd3d_result vsir_program_normalise_io_registers(struct vsir_program
     normaliser.output_signature = &program->output_signature;
     normaliser.patch_constant_signature = &program->patch_constant_signature;
     normaliser.normalisation_flags = &program->normalisation_flags;
-    normaliser.vpos_ssa = ~0u;
+    normaliser.vpos_ssa = normaliser.vface_ssa = ~0u;
 
     for (ins = vsir_program_iterator_head(&it); ins; ins = vsir_program_iterator_next(&it))
     {
@@ -11249,6 +11279,8 @@ struct liveness_tracker
 
 static void liveness_track_src(struct liveness_tracker *tracker, struct vsir_src_operand *src, unsigned int index)
 {
+    struct liveness_tracker_reg *reg;
+
     for (unsigned int k = 0; k < src->reg.idx_count; ++k)
     {
         if (src->reg.idx[k].rel_addr)
@@ -11256,14 +11288,21 @@ static void liveness_track_src(struct liveness_tracker *tracker, struct vsir_src
     }
 
     if (src->reg.type == VKD3DSPR_SSA)
-    {
-        tracker->ssa_regs[src->reg.idx[0].offset].last_read = index;
-        tracker->ssa_regs[src->reg.idx[0].offset].last_access = index;
-    }
+        reg = &tracker->ssa_regs[src->reg.idx[0].offset];
     else if (src->reg.type == VKD3DSPR_TEMP)
+        reg = &tracker->temp_regs[src->reg.idx[0].offset];
+    else
+        return;
+
+    reg->last_read = index;
+    reg->last_access = index;
+    if (!reg->written)
     {
-        tracker->temp_regs[src->reg.idx[0].offset].last_read = index;
-        tracker->temp_regs[src->reg.idx[0].offset].last_access = index;
+        WARN("Register %s%u used uninitialised in instruction %u. Recording implicit write.\n",
+                vsir_register_type_get_name(src->reg.type, NULL), src->reg.idx[0].offset, index);
+        reg->first_write = index;
+        reg->last_access = index;
+        reg->written = true;
     }
 }
 
@@ -11405,51 +11444,53 @@ static enum vkd3d_result track_liveness(struct vsir_program *program, struct liv
         }
         else if (ins->opcode == VSIR_OP_ENDLOOP || ins->opcode == VSIR_OP_ENDREP)
         {
-            if (!--loop_depth)
+            --loop_depth;
+
+            /* SSA registers should always be written before they are read.
+             * Moreover, if they are written in a loop, all reads must be
+             * inside the same loop. However, reads can be inside a loop
+             * that follows the write.
+             *
+             * In this case, the register must not be scratched between
+             * iterations of the loop, so we need to extend the liveness
+             * to the end of the loop. We track the beginning of each
+             * immediate child loop that follows the write, and if the last
+             * access was after that loop began, extend it to the loop end.
+             *
+             * For temps, we don't have these restrictions. A temp can be
+             * written at the end of the loop and read earlier in the same
+             * loop, and the value has to be preserved, so we need to extend
+             * both the first write and last access. It may be possible to
+             * be more sophisticated, but many of the cases that matter are
+             * affected by other optimizations such as copy propagation
+             * anyway.
+             */
+            for (unsigned int j = 0; j < program->ssa_count; ++j)
             {
-                /* SSA registers should always be written before they are read.
-                 * Moreover, if they are written in a loop, all reads must be
-                 * inside the same loop. However, reads can be inside a loop
-                 * that follows the write.
-                 *
-                 * In this case, the register must not be scratched between
-                 * iterations of the loop, so we need to extend the liveness
-                 * to the end of the loop. We track the beginning of each
-                 * immediate child loop that follows the write, and if the last
-                 * access was after that loop began, extend it to the loop end.
-                 *
-                 * For temps, we don't have these restrictions. A temp can be
-                 * written at the end of the loop and read earlier in the same
-                 * loop, and the value has to be preserved, so we need to extend
-                 * both the first write and last access. It may be possible to
-                 * be more sophisticated, but many of the cases that matter are
-                 * affected by other optimizations such as copy propagation
-                 * anyway.
-                 */
-                for (unsigned int j = 0; j < program->ssa_count; ++j)
+                struct liveness_tracker_reg *reg = &tracker->ssa_regs[j];
+
+                if (reg->written && reg->interior_loop_depth == loop_depth + 1)
                 {
-                    struct liveness_tracker_reg *reg = &tracker->ssa_regs[j];
+                    if (reg->last_access > reg->interior_loop_start)
+                        reg->last_access = i;
+                    if (reg->last_read > reg->interior_loop_start)
+                        reg->last_read = i;
 
-                    if (reg->written && reg->interior_loop_depth == loop_depth + 1)
-                    {
-                        if (reg->last_access > reg->interior_loop_start)
-                            reg->last_access = i;
-                        if (reg->last_read > reg->interior_loop_start)
-                            reg->last_read = i;
-
-                        reg->interior_loop_depth = 0;
-                    }
+                    reg->interior_loop_depth = 0;
                 }
+            }
 
+            if (!loop_depth)
+            {
                 for (unsigned int j = 0; j < program->temp_count; ++j)
                 {
                     struct liveness_tracker_reg *reg = &tracker->temp_regs[j];
 
                     if (reg->first_write > loop_start)
                         reg->first_write = loop_start;
-                    if (reg->last_access < i)
+                    if (reg->last_access > loop_start && reg->last_access < i)
                         reg->last_access = i;
-                    if (reg->last_read < i)
+                    if (reg->last_read > loop_start && reg->last_read < i)
                         reg->last_read = i;
                 }
             }
@@ -11702,8 +11743,10 @@ static void temp_allocator_open_register(struct temp_allocator *allocator, struc
              * We currently only handle cases where the mask is zero-based and
              * contiguous, so we need to fill in the missing components to
              * ensure this. */
-            uint8_t mask = (1u << (vkd3d_log2i(liveness_reg->mask) + 1)) - 1;
+            uint8_t mask = 0;
 
+            if (liveness_reg->mask)
+                mask = (1u << (vkd3d_log2i(liveness_reg->mask) + 1)) - 1;
             if (vkd3d_popcount(available_mask) >= vkd3d_popcount(mask))
             {
                 if (mask != liveness_reg->mask)
@@ -14992,7 +15035,7 @@ static void vsir_validate_texdepth(struct validation_context *ctx,
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_OPCODE,
                 "TEXDEPTH cannot be used in version %u.%u.", version->major, version->minor);
 
-    if (instruction->dst[0].write_mask != 0x3)
+    if (instruction->dst[0].write_mask != VKD3DSP_WRITEMASK_ALL)
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_WRITE_MASK,
                 "Invalid TEXDEPTH write mask %#x.", instruction->dst[0].write_mask);
 

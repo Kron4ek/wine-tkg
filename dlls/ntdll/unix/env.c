@@ -1839,10 +1839,11 @@ static void init_peb( RTL_USER_PROCESS_PARAMETERS *params, void *module )
 #ifdef _WIN64
     if (!is_machine_64bit( main_image_info.Machine ))
     {
-        NtCurrentTeb()->WowTebOffset = teb_offset;
-        NtCurrentTeb()->Tib.ExceptionList = (void *)((char *)NtCurrentTeb() + teb_offset);
+        struct thread_data *data = get_thread_data();
+        data->teb->WowTebOffset = teb_offset;
+        data->teb->Tib.ExceptionList = (void *)((char *)data->teb + teb_offset);
         wow_peb = (PEB32 *)((char *)peb + page_size);
-        set_thread_id( get_thread_data() );
+        set_thread_id( data );
     }
 #endif
 
@@ -1890,8 +1891,9 @@ static RTL_USER_PROCESS_PARAMETERS *build_initial_params( void **module )
     WCHAR *curdir = get_initial_directory();
     UNICODE_STRING nt_name;
     NTSTATUS status;
+    TEB64 *teb64 = get_teb64( NtCurrentTeb() );
 
-    if (NtCurrentTeb64()) NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR] = TRUE;
+    if (teb64) teb64->TlsSlots[WOW64_TLS_FILESYSREDIR] = TRUE;
 
     /* store the initial PATH value */
     path = get_env_var( env, env_pos, pathW, 4 );
@@ -1946,7 +1948,7 @@ static RTL_USER_PROCESS_PARAMETERS *build_initial_params( void **module )
     else
     {
         rebuild_argv();
-        if (NtCurrentTeb64()) NtCurrentTeb64()->TlsSlots[WOW64_TLS_FILESYSREDIR] = FALSE;
+        if (teb64) teb64->TlsSlots[WOW64_TLS_FILESYSREDIR] = FALSE;
     }
 
     main_wargv = build_wargv( get_dos_path( nt_name.Buffer ));
@@ -2402,8 +2404,9 @@ void WINAPI RtlInitUnicodeString( UNICODE_STRING *str, const WCHAR *data )
  */
 ULONG WINAPI RtlNtStatusToDosError( NTSTATUS status )
 {
-    NtCurrentTeb()->LastStatusValue = status;
+    TEB *teb = NtCurrentTeb();
 
+    if (teb) teb->LastStatusValue = status;
     if (!status || (status & 0x20000000)) return status;
     if ((status & 0xf0000000) == 0xd0000000) status &= ~0x10000000;
 
@@ -2420,11 +2423,16 @@ ULONG WINAPI RtlNtStatusToDosError( NTSTATUS status )
 DWORD WINAPI RtlGetLastWin32Error(void)
 {
     TEB *teb = NtCurrentTeb();
+
+    if (teb)
+    {
 #ifdef _WIN64
-    WOW_TEB *wow_teb = get_wow_teb( teb );
-    if (wow_teb) return wow_teb->LastErrorValue;
+        WOW_TEB *wow_teb = get_wow_teb( teb );
+        if (wow_teb) return wow_teb->LastErrorValue;
 #endif
-    return teb->LastErrorValue;
+        return teb->LastErrorValue;
+    }
+    else return 0;
 }
 
 /**********************************************************************
@@ -2433,11 +2441,15 @@ DWORD WINAPI RtlGetLastWin32Error(void)
 void WINAPI RtlSetLastWin32Error( DWORD err )
 {
     TEB *teb = NtCurrentTeb();
+
+    if (teb)
+    {
 #ifdef _WIN64
-    WOW_TEB *wow_teb = get_wow_teb( teb );
-    if (wow_teb) wow_teb->LastErrorValue = err;
+        WOW_TEB *wow_teb = get_wow_teb( teb );
+        if (wow_teb) wow_teb->LastErrorValue = err;
 #endif
-    teb->LastErrorValue = err;
+        teb->LastErrorValue = err;
+    }
 }
 
 /**********************************************************************

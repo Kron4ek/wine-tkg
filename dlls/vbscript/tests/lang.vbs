@@ -72,6 +72,17 @@ Call ok(&H000000031& = 49, "&H000000031& <> 49")
 Call ok(getVT(&H00000000000000FF) = "VT_I2", "getVT(&H00000000000000FF) is not VT_I2")
 Call ok(getVT(&H007FFFFFFF) = "VT_I4", "getVT(&H007FFFFFFF) is not VT_I4")
 Call ok(&h0 = 0, "&h0 <> 0")
+
+' &H8000 (INT16_MIN bit pattern) is the one 16-bit value parsed as Long, not
+' Integer: -32768 has no positive Int16 representation, so native promotes it.
+Call ok(&H8000 = -32768, "&H8000 <> -32768")
+Call ok(getVT(&H8000) = "VT_I4", "getVT(&H8000) is not VT_I4")
+Call ok(&H8001 = -32767, "&H8001 <> -32767")
+Call ok(getVT(&H8001) = "VT_I2", "getVT(&H8001) is not VT_I2")
+Call ok(&H7FFF = 32767, "&H7FFF <> 32767")
+Call ok(getVT(&H7FFF) = "VT_I2", "getVT(&H7FFF) is not VT_I2")
+Call ok(&H8000& = 32768, "&H8000& <> 32768")
+Call ok(getVT(&H8000&) = "VT_I4", "getVT(&H8000&) is not VT_I4")
 Call ok(&h0& = 0, "&h0& <> 0")
 Call ok(&h00 = 0, "&h00 <> 0")
 Call ok(&h000000000 = 0, "&h000000000 <> 0")
@@ -136,12 +147,56 @@ Call ok(30 > "0", "30 > ""0"" should be true")
 Call ok(9 < "10", "9 < ""10"" should be true")
 Call ok(42 = "42", "42 = ""42"" should be true")
 Call ok(not ("10" > "9"), """10"" > ""9"" should be false (string comparison)")
-' String vs Boolean uses string comparison, not numeric conversion
+' Locale-invariant numeric strings: parse to the same value as the literal in any locale
+Call ok("+5" = 5, """+5"" = 5 should be true")
+Call ok("-0" = 0, """-0"" = 0 should be true")
+Call ok("05" = 5, """05"" = 5 should be true")
+Call ok(" 5" = 5, """ 5"" = 5 should be true")
+Call ok("5 " = 5, """5 "" = 5 should be true")
+Call ok("5e0" = 5, """5e0"" = 5 should be true")
+' BSTR vs Boolean: string-compare against CStr(bool) ("True"/"False"),
+' case-sensitive, no whitespace trimming, no numeric coercion, no type-mismatch.
+Call ok("True" = True, """True"" = True should be true")
+Call ok("False" = False, """False"" = False should be true")
+Call ok(not ("True" = False), """True"" = False should be false")
+Call ok(not ("False" = True), """False"" = True should be false")
+Call ok(not ("true" = True), """true"" = True should be false (case-sensitive)")
+Call ok(not ("TRUE" = True), """TRUE"" = True should be false (case-sensitive)")
+Call ok(not ("True " = True), """True "" = True should be false (no trim)")
+Call ok(not (" True" = True), """ True"" = True should be false (no trim)")
 Call ok(not ("1" = True), """1"" = True should be false")
 Call ok(not ("-1" = True), """-1"" = True should be false")
 Call ok(not ("0" = False), """0"" = False should be false")
-' Non-numeric string compared to number should raise type mismatch
+Call ok(not ("-1" = False), """-1"" = False should be false")
+Call ok(not ("True" <> True), """True"" <> True should be false")
+Call ok("False" <> True, """False"" <> True should be true")
+Call ok(not ("abc" = True), """abc"" = True should be false (no error)")
+Call ok(not ("" = True), """"" = True should be false (no error)")
+Call ok(not ("" = False), """"" = False should be false (no error)")
+Call ok(True = "True", "True = ""True"" should be true")
+Call ok(False = "False", "False = ""False"" should be true")
+' Relational: lexicographic string comparison after coercing bool to BSTR
+Call ok("True" > False, """True"" > False should be true (lex)")
+Call ok(not ("True" < False), """True"" < False should be false (lex)")
+Call ok(not ("False" > True), """False"" > True should be false (lex)")
+Call ok("abc" > True, """abc"" > True should be true (lex)")
+' Non-numeric BSTR compared to number raises type mismatch (= / <> / relational)
 on error resume next
+err.clear
+x = ("abc" = 5)
+Call ok(err.number = 13, """abc"" = 5 err.number = " & err.number)
+err.clear
+x = ("" = 5)
+Call ok(err.number = 13, """"" = 5 err.number = " & err.number)
+err.clear
+x = (" " = 0)
+Call ok(err.number = 13, """ "" = 0 err.number = " & err.number)
+err.clear
+x = ("abc" <> 5)
+Call ok(err.number = 13, """abc"" <> 5 err.number = " & err.number)
+err.clear
+x = ("" <> 5)
+Call ok(err.number = 13, """"" <> 5 err.number = " & err.number)
 err.clear
 x = ("abc" > 5)
 Call ok(err.number = 13, """abc"" > 5 err.number = " & err.number)
@@ -152,6 +207,213 @@ err.clear
 x = (5 > "abc")
 Call ok(err.number = 13, "5 > ""abc"" err.number = " & err.number)
 on error goto 0
+
+' BSTR coerces to numeric for comparison even when it carries VT_BYREF
+' (e.g. ByRef parameter holding a string).
+Sub TestByRefStrEq5(ByRef x)
+    Call ok(x = 5,  "ByRef ""5"" = 5 should be true")
+    Call ok(x < 6,  "ByRef ""5"" < 6 should be true")
+End Sub
+TestByRefStrEq5 "5"
+
+' BSTR vs each numeric VT VBScript can produce.
+Call ok("5" = CByte(5), """5"" = CByte(5) should be true")
+Call ok("5" = CInt(5),  """5"" = CInt(5) should be true")
+Call ok("5" = CLng(5),  """5"" = CLng(5) should be true")
+Call ok("5" = CSng(5),  """5"" = CSng(5) should be true")
+Call ok("5" = CDbl(5),  """5"" = CDbl(5) should be true")
+Call ok("5" = CCur(5),  """5"" = CCur(5) should be true")
+Call ok(CByte(5) = "5", "CByte(5) = ""5"" should be true")
+Call ok(CCur(5)  = "5", "CCur(5) = ""5"" should be true")
+
+' Hex / scientific BSTRs parse as numeric.
+Call ok("1e2" = 100, """1e2"" = 100 should be true")
+Call ok("&hff" = 255, """&hff"" = 255 should be true")
+Call ok("&H1F" = 31,  """&H1F"" = 31 should be true")
+
+' VT_UI1/VT_CY vs BSTR diverge from VT_I2: string-compare against CStr(numeric).
+' Non-numeric BSTR returns False with NO error (VT_I2 raises 13 for the same).
+Call ok(not ("abc" = CByte(5)), """abc"" = CByte(5) should be false (no error)")
+Call ok(not ("abc" = CCur(5)),  """abc"" = CCur(5) should be false (no error)")
+Call ok(not ("" = CByte(0)),    """"" = CByte(0) should be false (no error)")
+Call ok(not ("" = CCur(0)),     """"" = CCur(0) should be false (no error)")
+' Relational confirms lex compare: 10 > 5 numerically would be true; lex "10" < "5".
+Call ok(not ("10" > CByte(5)),  """10"" > CByte(5) should be false (lex)")
+Call ok(not ("5" < CCur(10)),   """5"" < CCur(10) should be false (lex)")
+
+' VT_I8/UI8/I1/UI2/UI4/UINT cannot be produced by VBScript natively; obtain
+' them via a host IDispatch (testobj). Native VBScript:
+'  - VT_UI8/UI2/UI4/UINT: error 458 (VBSE_INVALID_TYPELIB_VARIABLE) on
+'    both 32-bit and 64-bit when used in any expression.
+'  - VT_I8: error 458 on 32-bit; on 64-bit no error but BSTR-vs-I8 compares
+'    as not-equal (no CStr coercion of the numeric side).
+'  - VT_I1: no error on either arch (treated as a small integer); BSTR
+'    literal vs I1 compares equal via numeric coercion, matching the
+'    baseline "5" = CInt(5) behavior.
+Call ok("5" = testobj.i1val, """5"" = testobj.i1val should be true")
+
+Dim x_str : x_str = "5"
+Dim cmp_result
+On Error Resume Next
+
+' VT_I8 vs non-literal BSTR. 32-bit: err 458. 64-bit: cmp = False (default
+' VarCmp returns BSTR > other since I8 isn't in is_numeric_vt).
+Err.Clear : cmp_result = (x_str = testobj.i8val) : saved_err = Err.number : Err.Clear
+Call ok(saved_err = 458 or cmp_result = False, _
+    "x_str = testobj.i8val: err=" & saved_err & " result=" & cmp_result)
+
+' VT_UI8/UI2/UI4/UINT: native errors 458 on both archs. Wine's VarCmp
+' rejects VT_UI8 and VT_UINT via DISP_E_BADVARTYPE (mapped to 458)
+' without a script-level gate; UI2/UI4 still go through DISP_E_TYPEMISMATCH
+' (mapped to 13) and need the gate, so they remain todo_wine for now.
+Err.Clear : cmp_result = ("5" = testobj.ui8val) : saved_err = Err.number : Err.Clear
+Call ok(saved_err = 458, _
+    "BSTR = testobj.ui8val should err 458, got " & saved_err)
+
+Err.Clear : cmp_result = ("5" = testobj.ui2val) : saved_err = Err.number : Err.Clear
+Call ok(saved_err = 458, _
+    "BSTR = testobj.ui2val should err 458, got " & saved_err)
+
+Err.Clear : cmp_result = ("5" = testobj.ui4val) : saved_err = Err.number : Err.Clear
+Call ok(saved_err = 458, _
+    "BSTR = testobj.ui4val should err 458, got " & saved_err)
+
+Err.Clear : cmp_result = ("5" = testobj.uintval) : saved_err = Err.number : Err.Clear
+Call ok(saved_err = 458, _
+    "BSTR = testobj.uintval should err 458, got " & saved_err)
+
+On Error Goto 0
+
+' --- BSTR vs numeric LITERAL: BSTR coerces to a number, parse failure raises 13. ---
+Dim saved_err
+on error resume next
+err.clear
+x = ("abc" = 5.5)        : saved_err = err.number : err.clear
+Call ok(saved_err = 13, "literal R8: ""abc"" = 5.5 should error 13 (got " & saved_err & "; needs literal tracking)")
+x = ("abc" = 1e2)        : saved_err = err.number : err.clear
+Call ok(saved_err = 13, "literal sci: ""abc"" = 1e2 should error 13 (got " & saved_err & "; needs literal tracking)")
+x = ("abc" = &hff)       : saved_err = err.number : err.clear
+Call ok(saved_err = 13, "literal hex: ""abc"" = &hff should error 13 (got " & saved_err & ")")
+x = ("abc" = 100000)     : saved_err = err.number : err.clear
+Call ok(saved_err = 13, "literal I4: ""abc"" = 100000 should error 13 (got " & saved_err & ")")
+x = ("abc" = #1/15/2024#): saved_err = err.number : err.clear
+Call ok(saved_err = 13, "literal date: ""abc"" = #1/15/2024# should error 13 (got " & saved_err & "; needs literal tracking)")
+on error goto 0
+
+' --- Variable holding a numeric / arithmetic / unary / function return ---
+' VBScript on Windows treats these as non-literal: BSTR vs numeric uses
+' string-compare, non-numeric BSTR returns False with no error.
+Dim n5  : n5  = 5
+Dim n10 : n10 = 10
+Call ok(not ("abc" = n5),       "var: ""abc"" = (n=5) should be false")
+Call ok(not ("010" = n10),      "var: ""010"" = (n=10) should be false (string)")
+Call ok(not ("abc" = (5+0)),    "arith: ""abc"" = (5+0) should be false")
+Call ok(not ("010" = (5+5)),    "arith: ""010"" = (5+5) should be false")
+Call ok(not ("010" = (10*1)),   "arith: ""010"" = (10*1) should be false")
+Call ok(not ("abc" = -5),       "neg: ""abc"" = -5 should be false")
+
+' --- C-coercion functions return non-literal values; BSTR vs numeric
+' uses string-compare regardless of the underlying VT. ---
+Call ok(not ("010" = CInt(10)), "CInt: ""010"" = CInt(10) should be false")
+Call ok(not ("010" = CLng(10)), "CLng: ""010"" = CLng(10) should be false")
+Call ok(not ("010" = CSng(10)), "CSng: ""010"" = CSng(10) should be false")
+Call ok(not ("010" = CDbl(10)), "CDbl: ""010"" = CDbl(10) should be false")
+Call ok(not ("abc" = CInt(5)),  "CInt: ""abc"" = CInt(5) should be false")
+Call ok(not ("abc" = CLng(5)),  "CLng: ""abc"" = CLng(5) should be false")
+Call ok(not ("abc" = CSng(5)),  "CSng: ""abc"" = CSng(5) should be false")
+Call ok(not ("abc" = CDbl(5)),  "CDbl: ""abc"" = CDbl(5) should be false")
+
+' VT_R4 / VT_R8 from CSng/CDbl: relational uses lex compare.
+Call ok(not ("10" > CDbl(5)), """10"" > CDbl(5) should be false (lex)")
+Call ok(not ("10" > CSng(5)), """10"" > CSng(5) should be false (lex)")
+Call ok(not ("9" < CDbl(10)), """9"" < CDbl(10) should be false (lex)")
+
+Dim ws_space : ws_space = Space(3)
+Dim ws_tab   : ws_tab   = Chr(9)
+Dim ws_lf    : ws_lf    = Chr(10)
+Dim ws_cr    : ws_cr    = Chr(13)
+Dim ws_nbsp  : ws_nbsp  = Chr(160)
+Call ok(not (Len("ab") > ws_space), "Len(""ab"") > Space(3) should be false")
+Call ok((Len("ab") < ws_space),     "Len(""ab"") < Space(3) should be true")
+Call ok(not (Len("ab") = ws_space),           "Len(""ab"") = Space(3) should be false")
+Call ok(not (Len("ab") > ws_tab),   "Len(""ab"") > Chr(9) should be false")
+Call ok((Len("ab") < ws_tab),       "Len(""ab"") < Chr(9) should be true")
+Call ok(not (Len("ab") > ws_lf),    "Len(""ab"") > Chr(10) should be false")
+Call ok((Len("ab") < ws_lf),        "Len(""ab"") < Chr(10) should be true")
+Call ok(not (Len("ab") > ws_cr),    "Len(""ab"") > Chr(13) should be false")
+Call ok((Len("ab") < ws_cr),        "Len(""ab"") < Chr(13) should be true")
+Call ok(not (Len("ab") > ws_nbsp),  "Len(""ab"") > Chr(160) should be false")
+Call ok((Len("ab") < ws_nbsp),      "Len(""ab"") < Chr(160) should be true")
+
+Dim ctl_nul  : ctl_nul  = Chr(0)
+Dim ctl_soh  : ctl_soh  = Chr(1)
+Dim ctl_us   : ctl_us   = Chr(31)
+Call ok((Len("ab") < ctl_nul), "Len(""ab"") < Chr(0) should be true")
+Call ok((Len("ab") < ctl_soh), "Len(""ab"") < Chr(1) should be true")
+Call ok((Len("ab") < ctl_us),  "Len(""ab"") < Chr(31) should be true")
+Call ok((Len("ab") < (ctl_nul & "5")), "Len(""ab"") < Chr(0)&""5"" should be true")
+Call ok((Len("ab") < (ctl_nul & " ")), "Len(""ab"") < Chr(0)&"" "" should be true")
+Call ok((Len("ab") < (" " & ctl_nul)), "Len(""ab"") < "" ""&Chr(0) should be true")
+
+Call ok((Len("ab") > ""),                     "Len(""ab"") > """" should be true")
+
+' --- BSTR vs numeric/bool with NEITHER side literal: native treats BSTR
+'     as greater than the numeric/boolean, regardless of values. ---
+Sub testNonLitBstrCmp
+    Dim s : s = "5"
+    Dim n : n = CInt(5)
+    Dim b : b = True
+    Dim sb : sb = "True"
+    call ok(not (s = n),       "var ""5"" = var 5 should be false")
+    call ok(s > n,             "var ""5"" > var 5 should be true (BSTR > num)")
+    call ok(not (s < n),       "var ""5"" < var 5 should be false")
+    call ok(not (sb = b),      "var ""True"" = var True should be false")
+    call ok(sb > b,            "var ""True"" > var True should be true (BSTR > bool)")
+    Dim e : e = ""
+    call ok(not (e = n),       "var """" = var 5 should be false")
+    call ok(e > n,             "var """" > var 5 should be true (BSTR > num)")
+End Sub
+Call testNonLitBstrCmp
+
+Dim guard_str : guard_str = "ab"
+Dim guard_err, guard_r
+On Error Resume Next
+Err.Clear
+If Len(guard_str) > Space(3) Then
+    guard_r = Left(guard_str, Space(3))
+End If
+guard_err = Err.number
+Err.Clear
+On Error Goto 0
+Call ok(guard_err = 0, "Len(""ab"") > Space(3) guard should not raise (got " & guard_err & ")")
+
+' --- VT_DATE from CDate is non-literal: string compare, no error. ---
+Dim cdt : cdt = CDate("2024-01-15")
+Call ok(not ("abc" = cdt), "CDate: ""abc"" = CDate(...) should be false")
+
+' --- Function return / ByVal / ByRef strip "literal" status. ---
+Function GetFiveLit()
+    GetFiveLit = 5
+End Function
+Call ok(not ("abc" = GetFiveLit()), "fn return: ""abc"" = GetFiveLit() should be false")
+
+Sub TestByValStripsLit(ByVal v)
+    Call ok(not ("abc" = v), "ByVal: ""abc"" = v should be false")
+End Sub
+TestByValStripsLit 5
+
+Sub TestByRefStripsLit(ByRef v)
+    Call ok(not ("abc" = v), "ByRef: ""abc"" = v should be false")
+End Sub
+Dim litvar : litvar = 5
+TestByRefStripsLit litvar
+
+' Const references compile to an EXPR_MEMBER node so the comparison is
+' tagged non-literal even though the value is inlined; "abc" = FIVE goes
+' through the BSTR-vs-numeric string-compare path and returns False with
+' no error.
+Const FIVE_C = 5
+Call ok(not ("abc" = FIVE_C), "Const: ""abc"" = FIVE_C should be false")
 
 Call ok(getVT(false) = "VT_BOOL", "getVT(false) is not VT_BOOL")
 Call ok(getVT(true) = "VT_BOOL", "getVT(true) is not VT_BOOL")
@@ -230,6 +492,165 @@ call ok(true imp true, "true does not imp true?")
 call ok(false imp false, "false does not imp false?")
 call ok(not (true imp false), "true imp false?")
 call ok(false imp null, "false imp null is false?")
+
+' Smoke check that VBScript's `And` operator reaches VarAnd correctly and
+' propagates the result payload. The full VarAnd+Null conformance table
+' lives in dlls/oleaut32/tests/vartest.c.
+Call ok((False And Null) = False,            "False And Null is not False")
+Call ok(isNull(True And Null),               "True And Null is not Null")
+Call ok(isNull(Null And Null),               "Null And Null is not Null")
+Call ok((CInt(0) And Null) = 0,              "CInt(0) And Null is not 0")
+Call ok(getVT(CInt(0) And Null) = "VT_I2",   "getVT(CInt(0) And Null) = " & getVT(CInt(0) And Null))
+Call ok(isNull(CInt(5) And Null),            "CInt(5) And Null is not Null")
+
+' Smoke checks that VBScript's sibling logical operators reach Var*
+' correctly and propagate the result payload. The full conformance tables
+' live in dlls/oleaut32/tests/vartest.c.
+Call ok((True Or Null) = True,               "True Or Null is not True")
+Call ok(isNull(False Or Null),               "False Or Null is not Null")
+Call ok(isNull(CInt(5) Xor Null),            "CInt(5) Xor Null is not Null")
+Call ok(isNull(CInt(5) Eqv Null),            "CInt(5) Eqv Null is not Null")
+Call ok(isNull(CDate(-1) Imp Null),          "CDate(-1) Imp Null is not Null")
+Call ok((Not CLng(0)) = -1,                  "Not CLng(0) is not -1")
+
+' VBScript-specific: for VT_UI1 Imp VT_NULL, native VBScript keeps UI1
+' width and returns the bitwise complement of the left operand, rather
+' than applying VarImp's three-valued "all-ones Imp unknown = unknown"
+' rule (which returns VT_NULL at the C level for UI1 0xFF). interp_imp
+' has a narrow special case to match this native behavior.
+Call ok((CByte(0) Imp Null) = 255,           "CByte(0) Imp Null is not 255")
+Call ok(getVT(CByte(0) Imp Null) = "VT_UI1", "getVT(CByte(0) Imp Null) = " & getVT(CByte(0) Imp Null))
+Call ok((CByte(170) Imp Null) = 85,          "CByte(170) Imp Null is not 85")
+Call ok((CByte(255) Imp Null) = 0,           "CByte(255) Imp Null is not 0")
+Call ok(getVT(CByte(255) Imp Null) = "VT_UI1",    "getVT(CByte(255) Imp Null) = " & getVT(CByte(255) Imp Null))
+
+' Empty at rest keeps its type tag. Variable references come through with
+' VT_BYREF|VT_VARIANT, which getVT renders as "VT_EMPTY*".
+Call ok(getVT(Empty) = "VT_EMPTY",           "getVT(Empty) = " & getVT(Empty))
+Dim emp : emp = Empty
+Call ok(getVT(emp) = "VT_EMPTY*",            "getVT(emp) = " & getVT(emp))
+
+' Binary logical / bitwise ops coerce Empty to VT_I4 0 before evaluation, so
+' the operator's normal widening rules see a VT_I4 left/right operand.
+Call ok(getVT(Empty And Empty) = "VT_I4",    "getVT(Empty And Empty) = " & getVT(Empty And Empty))
+Call ok((Empty And Empty) = 0,               "Empty And Empty is not 0")
+Call ok(getVT(Empty And CInt(0)) = "VT_I4",  "getVT(Empty And CInt(0)) = " & getVT(Empty And CInt(0)))
+Call ok(getVT(Empty And CInt(5)) = "VT_I4",  "getVT(Empty And CInt(5)) = " & getVT(Empty And CInt(5)))
+Call ok(getVT(Empty And False) = "VT_I4",    "getVT(Empty And False) = " & getVT(Empty And False))
+Call ok(getVT(Empty And Null) = "VT_I4",     "getVT(Empty And Null) = " & getVT(Empty And Null))
+
+Call ok(getVT(Empty Or Empty) = "VT_I4",     "getVT(Empty Or Empty) = " & getVT(Empty Or Empty))
+Call ok((Empty Or CInt(5)) = 5,              "Empty Or CInt(5) is not 5")
+Call ok(getVT(Empty Or CInt(5)) = "VT_I4",   "getVT(Empty Or CInt(5)) = " & getVT(Empty Or CInt(5)))
+Call ok(getVT(Empty Or False) = "VT_I4",     "getVT(Empty Or False) = " & getVT(Empty Or False))
+Call ok(isNull(Empty Or Null),               "Empty Or Null is not Null")
+
+Call ok(getVT(Empty Xor Empty) = "VT_I4",    "getVT(Empty Xor Empty) = " & getVT(Empty Xor Empty))
+Call ok((Empty Xor CInt(5)) = 5,             "Empty Xor CInt(5) is not 5")
+Call ok(getVT(Empty Xor CInt(5)) = "VT_I4",  "getVT(Empty Xor CInt(5)) = " & getVT(Empty Xor CInt(5)))
+Call ok(isNull(Empty Xor Null),              "Empty Xor Null is not Null")
+
+Call ok((Empty Eqv Empty) = -1,              "Empty Eqv Empty is not -1")
+Call ok(getVT(Empty Eqv Empty) = "VT_I4",    "getVT(Empty Eqv Empty) = " & getVT(Empty Eqv Empty))
+Call ok(isNull(Empty Eqv Null),              "Empty Eqv Null is not Null")
+
+Call ok((Empty Imp Empty) = -1,              "Empty Imp Empty is not -1")
+Call ok(getVT(Empty Imp Empty) = "VT_I4",    "getVT(Empty Imp Empty) = " & getVT(Empty Imp Empty))
+Call ok((Empty Imp False) = -1,              "Empty Imp False is not -1")
+Call ok((Empty Imp Null) = -1,               "Empty Imp Null is not -1")
+Call ok(getVT(Empty Imp Null) = "VT_I4",     "getVT(Empty Imp Null) = " & getVT(Empty Imp Null))
+
+Call ok((Not Empty) = -1,                    "Not Empty is not -1")
+Call ok(getVT(Not Empty) = "VT_I4",          "getVT(Not Empty) = " & getVT(Not Empty))
+
+' Arithmetic binary ops coerce Empty to VT_I2 0 — narrower than the logical
+' family — so the widening picks up whichever side has the larger numeric
+' type and the result reflects that.
+Call ok((Empty + Empty) = 0,                 "Empty + Empty is not 0")
+Call ok(getVT(Empty + Empty) = "VT_I2",      "getVT(Empty + Empty) = " & getVT(Empty + Empty))
+Call ok((Empty + CInt(5)) = 5,               "Empty + CInt(5) is not 5")
+Call ok(getVT(Empty + CInt(5)) = "VT_I2",    "getVT(Empty + CInt(5)) = " & getVT(Empty + CInt(5)))
+Call ok((Empty + CLng(123456)) = 123456,     "Empty + CLng(123456) is not 123456")
+Call ok(getVT(Empty + CLng(123456)) = "VT_I4",    "getVT(Empty + CLng(123456)) = " & getVT(Empty + CLng(123456)))
+Call ok(getVT(Empty + CDbl(1.5)) = "VT_R8",  "getVT(Empty + CDbl(1.5)) = " & getVT(Empty + CDbl(1.5)))
+Call ok(getVT(Empty + CCur(12.34)) = "VT_CY",     "getVT(Empty + CCur(12.34)) = " & getVT(Empty + CCur(12.34)))
+Call ok((Empty + False) = 0,                 "Empty + False is not 0")
+Call ok(getVT(Empty + False) = "VT_I2",      "getVT(Empty + False) = " & getVT(Empty + False))
+
+Call ok((Empty - CInt(5)) = -5,              "Empty - CInt(5) is not -5")
+Call ok(getVT(Empty - CInt(5)) = "VT_I2",    "getVT(Empty - CInt(5)) = " & getVT(Empty - CInt(5)))
+
+Call ok((Empty * CInt(5)) = 0,               "Empty * CInt(5) is not 0")
+Call ok(getVT(Empty * CInt(5)) = "VT_I2",    "getVT(Empty * CInt(5)) = " & getVT(Empty * CInt(5)))
+
+Call ok((Empty \ CInt(1)) = 0,               "Empty \\ CInt(1) is not 0")
+Call ok(getVT(Empty \ CInt(1)) = "VT_I2",    "getVT(Empty \\ CInt(1)) = " & getVT(Empty \ CInt(1)))
+
+Call ok((Empty Mod CInt(3)) = 0,             "Empty Mod CInt(3) is not 0")
+Call ok(getVT(Empty Mod CInt(3)) = "VT_I2",  "getVT(Empty Mod CInt(3)) = " & getVT(Empty Mod CInt(3)))
+
+Call ok((-Empty) = 0,                        "-Empty is not 0")
+Call ok(getVT(-Empty) = "VT_I2",             "getVT(-Empty) = " & getVT(-Empty))
+
+' Unary + and string concat do NOT coerce Empty. Unary + is essentially a
+' no-op, and & makes "" out of Empty inside the concat, not a number.
+Call ok(getVT(+Empty) = "VT_EMPTY",          "getVT(+Empty) = " & getVT(+Empty))
+Call ok((Empty & "foo") = "foo",             "Empty & 'foo' is not 'foo'")
+Call ok(getVT(Empty & "foo") = "VT_BSTR",    "getVT(Empty & 'foo') = " & getVT(Empty & "foo"))
+Call ok(("foo" & Empty) = "foo",             "'foo' & Empty is not 'foo'")
+
+' Reverse-order smoke tests: Empty on the right of commutative ops must
+' coerce too, otherwise a missing-r-coerce bug would only show up for
+' particular operand shapes. Values match the Empty-on-left rows above.
+Call ok((CInt(5) And Empty) = 0,             "CInt(5) And Empty is not 0")
+Call ok(getVT(CInt(5) And Empty) = "VT_I4",  "getVT(CInt(5) And Empty) = " & getVT(CInt(5) And Empty))
+Call ok((CInt(5) Or  Empty) = 5,             "CInt(5) Or Empty is not 5")
+Call ok(getVT(CInt(5) Or  Empty) = "VT_I4",  "getVT(CInt(5) Or Empty) = " & getVT(CInt(5) Or Empty))
+Call ok((CInt(5) Xor Empty) = 5,             "CInt(5) Xor Empty is not 5")
+Call ok(getVT(CInt(5) Xor Empty) = "VT_I4",  "getVT(CInt(5) Xor Empty) = " & getVT(CInt(5) Xor Empty))
+Call ok((CInt(5) +   Empty) = 5,             "CInt(5) + Empty is not 5")
+Call ok(getVT(CInt(5) +   Empty) = "VT_I2",  "getVT(CInt(5) + Empty) = " & getVT(CInt(5) + Empty))
+Call ok((CInt(5) *   Empty) = 0,             "CInt(5) * Empty is not 0")
+Call ok(getVT(CInt(5) *   Empty) = "VT_I2",  "getVT(CInt(5) * Empty) = " & getVT(CInt(5) * Empty))
+
+' Asymmetric-operator reverse-order tests. Imp is A Imp B = Not A Or B so
+' the result depends on the left operand's bit pattern. Subtraction and
+' exponent are also non-commutative and each direction is a separate case.
+Call ok((CInt(0) Imp Empty) = -1,            "CInt(0) Imp Empty is not -1")
+Call ok(getVT(CInt(0) Imp Empty) = "VT_I4",  "getVT(CInt(0) Imp Empty) = " & getVT(CInt(0) Imp Empty))
+Call ok((CInt(5) Imp Empty) = -6,            "CInt(5) Imp Empty is not -6")
+Call ok(getVT(CInt(5) Imp Empty) = "VT_I4",  "getVT(CInt(5) Imp Empty) = " & getVT(CInt(5) Imp Empty))
+Call ok((False Imp Empty) = -1,              "False Imp Empty is not -1")
+Call ok(getVT(False Imp Empty) = "VT_I4",    "getVT(False Imp Empty) = " & getVT(False Imp Empty))
+Call ok((True Imp Empty) = 0,                "True Imp Empty is not 0")
+Call ok(getVT(True Imp Empty) = "VT_I4",     "getVT(True Imp Empty) = " & getVT(True Imp Empty))
+Call ok(isNull(Null Imp Empty),              "Null Imp Empty is not Null")
+
+Call ok((CInt(5) - Empty) = 5,               "CInt(5) - Empty is not 5")
+Call ok(getVT(CInt(5) - Empty) = "VT_I2",    "getVT(CInt(5) - Empty) = " & getVT(CInt(5) - Empty))
+Call ok((CLng(7) - Empty) = 7,               "CLng(7) - Empty is not 7")
+Call ok(getVT(CLng(7) - Empty) = "VT_I4",    "getVT(CLng(7) - Empty) = " & getVT(CLng(7) - Empty))
+
+Call ok((Empty ^ CInt(2)) = 0,               "Empty ^ CInt(2) is not 0")
+Call ok(getVT(Empty ^ CInt(2)) = "VT_R8",    "getVT(Empty ^ CInt(2)) = " & getVT(Empty ^ CInt(2)))
+Call ok((CInt(2) ^ Empty) = 1,               "CInt(2) ^ Empty is not 1")
+Call ok(getVT(CInt(2) ^ Empty) = "VT_R8",    "getVT(CInt(2) ^ Empty) = " & getVT(CInt(2) ^ Empty))
+
+' Dividing BY Empty is dividing by zero once the arithmetic coercion runs,
+' so /, \ and Mod must raise runtime error 11 (division by zero).
+Dim div_r
+On Error Resume Next
+Err.Clear
+div_r = CInt(1) / Empty
+Call ok(Err.Number = 11, "CInt(1) / Empty should raise 11: " & Err.Number)
+Err.Clear
+div_r = CInt(1) \ Empty
+Call ok(Err.Number = 11, "CInt(1) \\ Empty should raise 11: " & Err.Number)
+Err.Clear
+div_r = CInt(3) Mod Empty
+Call ok(Err.Number = 11, "CInt(3) Mod Empty should raise 11: " & Err.Number)
+Err.Clear
+On Error Goto 0
 
 Call ok(2 >= 1, "! 2 >= 1")
 Call ok(2 >= 2, "! 2 >= 2")
@@ -1794,6 +2215,19 @@ Call ok(Err.number = 438, "obj.publicProp(0, 1) Err.number = " & Err.number)
 Err.Clear
 obj.publicProp("k") = 5
 Call ok(Err.number = 438, "obj.publicProp(""k"") = 5 Err.number = " & Err.number)
+
+' Empty parens on a variant-typed public property: native raises 5 on get
+' (not callable). Set with empty parens succeeds: the source-level () adds
+' no positional args, so DISPATCH_PROPERTYPUT receives just the value.
+Err.Clear
+x = obj.publicProp()
+Call ok(Err.number = 5, "obj.publicProp() Err.number = " & Err.number)
+Err.Clear
+x = obj.publicArrayProp()
+Call ok(Err.number = 5, "obj.publicArrayProp() Err.number = " & Err.number)
+Err.Clear
+obj.publicProp() = 7
+Call ok(Err.number = 0, "obj.publicProp() = 7 Err.number = " & Err.number)
 Err.Clear
 On Error Goto 0
 
@@ -2194,6 +2628,34 @@ call ok(x(0)(0) = 2, "x(0)(0) = " & x(0)(0))
 x = Array(Array(3))
 seta0 (x(0))
 call ok(x(0)(0) = 3, "x(0)(0) = " & x(0)(0))
+
+x = Array(Array("a", 0))
+x(0)(1) = 5
+call ok(x(0)(1) = 5, "x(0)(1) = " & x(0)(1))
+
+x = Array(Array(Empty, Empty))
+Set x(0)(1) = New EmptyClass
+call ok(getVT(x(0)(1)) = "VT_DISPATCH*", "getVT(x(0)(1)) = " & getVT(x(0)(1)))
+Set x(0)(0) = Nothing
+call ok(x(0)(0) Is Nothing, "x(0)(0) is not Nothing")
+
+On Error Resume Next
+x = Array(Nothing)
+x(0)(0) = 5
+call ok(Err.Number = 13, "assign to Nothing(0): Err.Number = " & Err.Number)
+Err.Clear
+x = Array(42)
+x(0)(0) = 5
+call ok(Err.Number = 13, "assign to Integer(0): Err.Number = " & Err.Number)
+Err.Clear
+x = Array(Empty)
+x(0)(0) = 5
+call ok(Err.Number = 13, "assign to Empty(0): Err.Number = " & Err.Number)
+Err.Clear
+x = Array(Null)
+x(0)(0) = 5
+call ok(Err.Number = 13, "assign to Null(0): Err.Number = " & Err.Number)
+On Error GoTo 0
 
 y = (seta0)(x)
 ok y = 1, "y = " & y
@@ -2756,6 +3218,29 @@ sub test_index_non_array
     err.clear
     x(0, 1) = 1
     call ok(err.number = 13, "assign int(0,1): err.number = " & err.number)
+
+    ' empty parens on a non-array Dim variable: native raises 13.
+    x = 42
+    err.clear
+    tmp = x()
+    call ok(err.number = 13, "read int(): err.number = " & err.number)
+
+    x = "hello"
+    err.clear
+    tmp = x()
+    call ok(err.number = 13, "read str(): err.number = " & err.number)
+
+    x = Empty
+    err.clear
+    tmp = x()
+    call ok(err.number = 13, "read empty(): err.number = " & err.number)
+
+    ' empty parens on a Dim array: native raises 9 (subscript out of range,
+    ' since () supplies zero indices for a multi-dim access).
+    Dim arr(2)
+    err.clear
+    tmp = arr()
+    call ok(err.number = 9, "read arr(): err.number = " & err.number)
 
     on error goto 0
 end sub
@@ -3598,6 +4083,15 @@ Sub TestExecuteReDim
     Call ok(dynArr(1) = 20, "Execute ReDim dynArr(1) = " & dynArr(1))
 End Sub
 Call TestExecuteReDim
+
+' Execute: fixed-size Dim array in caller's scope
+Sub TestExecuteFixedDim
+    Execute "Dim fixedArr(2) : fixedArr(0) = 1 : fixedArr(1) = 2 : fixedArr(2) = 3"
+    Call ok(fixedArr(0) = 1, "Execute Dim fixedArr(0) = " & fixedArr(0))
+    Call ok(fixedArr(2) = 3, "Execute Dim fixedArr(2) = " & fixedArr(2))
+    Call ok(UBound(fixedArr) = 2, "Execute Dim UBound(fixedArr) = " & UBound(fixedArr))
+End Sub
+Call TestExecuteFixedDim
 
 ' Option Explicit is per-compilation-unit in Execute/ExecuteGlobal
 On Error Resume Next

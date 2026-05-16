@@ -2274,8 +2274,14 @@ static void msl_generate_entrypoint(struct msl_generator *gen)
 
 static int msl_generator_generate(struct msl_generator *gen, struct vkd3d_shader_code *out)
 {
+    enum vsir_global_flags flags = gen->program->global_flags;
     struct vkd3d_shader_instruction *ins;
     struct vsir_program_iterator it;
+
+    static const uint64_t ignored_flags = VKD3DSGF_REFACTORING_ALLOWED
+            | VKD3DSGF_FORCE_EARLY_DEPTH_STENCIL
+            | VKD3DSGF_BIND_FOR_DURATION
+            | VKD3DSGF_ENABLE_STENCIL_REF;
 
     MESSAGE("Generating a MSL shader. This is unsupported; you get to keep all the pieces if it breaks.\n");
 
@@ -2283,10 +2289,15 @@ static int msl_generator_generate(struct msl_generator *gen, struct vkd3d_shader
     vkd3d_string_buffer_printf(gen->buffer, "#include <metal_stdlib>\n");
     vkd3d_string_buffer_printf(gen->buffer, "using namespace metal;\n\n");
 
-    if (gen->program->global_flags & ~(VKD3DSGF_REFACTORING_ALLOWED
-            | VKD3DSGF_FORCE_EARLY_DEPTH_STENCIL | VKD3DSGF_ENABLE_STENCIL_REF))
+    if (flags & ignored_flags)
+    {
+        TRACE("Ignoring global flags %#"PRIx64".\n", flags & ignored_flags);
+        flags &= ~ignored_flags;
+    }
+
+    if (flags)
         msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
-                "Internal compiler error: Unhandled global flags %#"PRIx64".", (uint64_t)gen->program->global_flags);
+                "Internal compiler error: Unhandled global flags %#"PRIx64".", (uint64_t)flags);
 
     if (gen->program->f16_denormal_mode != VKD3D_SHADER_DENORMAL_MODE_ANY
             || gen->program->f32_denormal_mode != VKD3D_SHADER_DENORMAL_MODE_ANY

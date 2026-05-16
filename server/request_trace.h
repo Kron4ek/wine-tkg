@@ -101,6 +101,7 @@ static void dump_new_thread_request( const struct new_thread_request *req )
     fprintf( stderr, ", access=%08x", req->access );
     fprintf( stderr, ", flags=%08x", req->flags );
     fprintf( stderr, ", request_fd=%d", req->request_fd );
+    fprintf( stderr, ", is_system=%d", req->is_system );
     dump_varargs_object_attributes( ", objattr=", cur_size );
 }
 
@@ -140,6 +141,7 @@ static void dump_init_first_thread_request( const struct init_first_thread_reque
     fprintf( stderr, ", debug_level=%d", req->debug_level );
     fprintf( stderr, ", reply_fd=%d", req->reply_fd );
     fprintf( stderr, ", wait_fd=%d", req->wait_fd );
+    fprintf( stderr, ", page_size=%08x", req->page_size );
 }
 
 static void dump_init_first_thread_reply( const struct init_first_thread_reply *req )
@@ -4581,6 +4583,7 @@ static const struct
     { "SHUTDOWN_IN_PROGRESS",        STATUS_SHUTDOWN_IN_PROGRESS },
     { "SUSPEND_COUNT_EXCEEDED",      STATUS_SUSPEND_COUNT_EXCEEDED },
     { "THREAD_IS_TERMINATING",       STATUS_THREAD_IS_TERMINATING },
+    { "THREAD_WAS_SUSPENDED",        STATUS_THREAD_WAS_SUSPENDED },
     { "TIMEOUT",                     STATUS_TIMEOUT },
     { "TOO_MANY_OPENED_FILES",       STATUS_TOO_MANY_OPENED_FILES },
     { "UNSUCCESSFUL",                STATUS_UNSUCCESSFUL },

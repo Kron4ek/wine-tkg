@@ -23,6 +23,21 @@
 #include <stdio.h>
 #include <math.h>
 
+float vkd3d_parse_float(const char *s, vkd3d_locale l)
+{
+#ifdef HAVE_STRTOF_L
+    return strtof_l(s, NULL, l);
+/* MinGW 14 has _strtof_l(), but it's broken. */
+#elif HAVE__STRTOF_L && (!__MINGW32__ || __GNUC__ > 14)
+    return _strtof_l(s, NULL, l);
+#elif HAVE__STRTOD_L
+    return _strtod_l(s, NULL, l);
+#else
+#warning "Neither strtof_l() no strtod_l() is available, using strtof()."
+    return strtof(s, NULL);
+#endif
+}
+
 static inline int char_to_int(char c)
 {
     if ('0' <= c && c <= '9')

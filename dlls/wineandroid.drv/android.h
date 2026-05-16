@@ -28,13 +28,15 @@
 #include <jni.h>
 #include <android/log.h>
 #include <android/input.h>
+#include <android/looper.h>
 #include <android/native_window_jni.h>
 
 #include "windef.h"
 #include "winbase.h"
 #include "ntgdi.h"
 #include "wine/gdi_driver.h"
-#include "unixlib.h"
+#include "ntuser.h"
+#include "wine/unixlib.h"
 #include "android_native.h"
 
 
@@ -58,6 +60,11 @@ DECL_FUNCPTR( AHardwareBuffer_unlock );
 DECL_FUNCPTR( AHardwareBuffer_recvHandleFromUnixSocket );
 DECL_FUNCPTR( AHardwareBuffer_sendHandleToUnixSocket );
 DECL_FUNCPTR( ANativeWindowBuffer_getHardwareBuffer );
+DECL_FUNCPTR( ALooper_acquire );
+DECL_FUNCPTR( ALooper_forThread );
+DECL_FUNCPTR( ALooper_addFd );
+DECL_FUNCPTR( ALooper_removeFd );
+DECL_FUNCPTR( ALooper_release );
 #endif
 
 #undef DECL_FUNCPTR
@@ -114,13 +121,6 @@ extern void ANDROID_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_h
 extern ANativeWindow *get_client_window( HWND hwnd );
 extern BOOL has_client_surface( HWND hwnd );
 
-/* unixlib interface */
-
-extern NTSTATUS android_dispatch_ioctl( void *arg );
-extern NTSTATUS android_java_init( void *arg );
-extern NTSTATUS android_java_uninit( void *arg );
-extern UINT64 start_device_callback;
-
 extern unsigned int screen_width;
 extern unsigned int screen_height;
 extern RECT virtual_screen_rect;
@@ -137,6 +137,7 @@ extern void set_screen_dpi( DWORD dpi );
 extern void update_keyboard_lock_state( WORD vkey, UINT state );
 
 /* JNI entry points */
+extern void looper_init( JNIEnv *env, jobject obj );
 extern void desktop_changed( JNIEnv *env, jobject obj, jint width, jint height );
 extern void config_changed( JNIEnv *env, jobject obj, jint dpi );
 extern void surface_changed( JNIEnv *env, jobject obj, jint win, jobject surface,
@@ -196,7 +197,6 @@ int send_event( const union event_data *data );
 
 extern JavaVM *java_vm;
 extern jobject java_object;
-extern unsigned short java_gdt_sel;
 
 /* string helpers */
 

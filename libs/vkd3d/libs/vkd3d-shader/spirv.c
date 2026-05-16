@@ -6174,6 +6174,7 @@ static void spirv_compiler_emit_global_flags(struct spirv_compiler *compiler, en
     static const uint64_t ignored_flags = VKD3DSGF_REFACTORING_ALLOWED
             | VKD3DSGF_ENABLE_RAW_AND_STRUCTURED_BUFFERS
             | VKD3DSGF_SKIP_OPTIMIZATION
+            | VKD3DSGF_BIND_FOR_DURATION
             | VKD3DSGF_ENABLE_VP_AND_RT_ARRAY_INDEX
             | VKD3DSGF_ENABLE_STENCIL_REF
             | VKD3DSGF_ENABLE_UAVS_AT_EVERY_STAGE

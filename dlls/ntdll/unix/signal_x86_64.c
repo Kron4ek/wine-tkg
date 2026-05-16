@@ -527,7 +527,8 @@ C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct amd64_thread_data, sys
 
 static inline struct amd64_thread_data *amd64_thread_data( struct thread_data *data )
 {
-    return (struct amd64_thread_data *)get_teb_data(data)->cpu_data;
+    if (!data->teb) return NULL;
+    return (struct amd64_thread_data *)get_teb_data( data )->cpu_data;
 }
 
 static unsigned int frame_size;
@@ -783,29 +784,25 @@ __ASM_GLOBAL_FUNC( clear_alignment_flag,
 static inline struct thread_data *init_handler( void *sigcontext )
 {
     struct thread_data *data = get_current_thread_data();
+    struct amd64_thread_data *amd64_data;
 
     clear_alignment_flag();
+    if (!(amd64_data = amd64_thread_data( data ))) return data;
 
 #ifdef __linux__
-    {
-        struct amd64_thread_data *thread_data = amd64_thread_data( data );
-        thread_data->syscall_dispatch = 0; /* SYSCALL_DISPATCH_FILTER_ALLOW */
-        if (fs32_sel) arch_prctl( ARCH_SET_FS, thread_data->pthread_teb );
-    }
+    amd64_data->syscall_dispatch = 0; /* SYSCALL_DISPATCH_FILTER_ALLOW */
+    if (fs32_sel) arch_prctl( ARCH_SET_FS, amd64_data->pthread_teb );
 #elif defined __APPLE__
-    {
-        struct amd64_thread_data *thread_data = amd64_thread_data( data );
-        _thread_set_tsd_base( (uint64_t)thread_data->pthread_teb );
+    _thread_set_tsd_base( (uint64_t)amd64_data->pthread_teb );
 
-        /* When in a syscall, CS will be the kernel's selector (0x07, SYSCALL_CS in xnu source)
-         * instead of the user selector (cs64_sel: 0x2b, USER64_CS).
-         * Fix up sigcontext so later code can compare it to cs64_sel.
-         *
-         * Only applies on Intel, not under Rosetta.
-         */
-        if (CS_sig((ucontext_t *)sigcontext) == 0x07 /* SYSCALL_CS */)
-            CS_sig((ucontext_t *)sigcontext) = cs64_sel;
-    }
+    /* When in a syscall, CS will be the kernel's selector (0x07, SYSCALL_CS in xnu source)
+     * instead of the user selector (cs64_sel: 0x2b, USER64_CS).
+     * Fix up sigcontext so later code can compare it to cs64_sel.
+     *
+     * Only applies on Intel, not under Rosetta.
+     */
+    if (CS_sig((ucontext_t *)sigcontext) == 0x07 /* SYSCALL_CS */)
+        CS_sig((ucontext_t *)sigcontext) = cs64_sel;
 #endif
     return data;
 }
@@ -816,12 +813,14 @@ static inline struct thread_data *init_handler( void *sigcontext )
  */
 static inline void leave_handler( struct thread_data *data, ucontext_t *sigcontext )
 {
+    struct amd64_thread_data *amd64_data = amd64_thread_data( data );
+
+    if (!amd64_data) return;
 #ifdef __linux__
-    struct amd64_thread_data *thread_data = amd64_thread_data( data );
     if (!is_inside_signal_stack( data, (void *)RSP_sig(sigcontext )) &&
         !is_inside_syscall( data, RSP_sig(sigcontext) ))
     {
-        thread_data->syscall_dispatch = 1;  /* SYSCALL_DISPATCH_FILTER_BLOCK */
+        amd64_data->syscall_dispatch = 1;  /* SYSCALL_DISPATCH_FILTER_BLOCK */
         if (fs32_sel) __asm__ volatile( "movw %0,%%fs" :: "r" (fs32_sel) );
     }
 #elif defined __APPLE__
@@ -879,12 +878,17 @@ static void save_context( struct thread_data *data, struct xcontext *xcontext,
     context->SegEs  = ds64_sel;
     context->SegGs  = ds64_sel;
     context->SegSs  = ds64_sel;
-    context->Dr0    = amd64_data->dr0;
-    context->Dr1    = amd64_data->dr1;
-    context->Dr2    = amd64_data->dr2;
-    context->Dr3    = amd64_data->dr3;
-    context->Dr6    = amd64_data->dr6;
-    context->Dr7    = amd64_data->dr7;
+    if (amd64_data)
+    {
+        context->Dr0 = amd64_data->dr0;
+        context->Dr1 = amd64_data->dr1;
+        context->Dr2 = amd64_data->dr2;
+        context->Dr3 = amd64_data->dr3;
+        context->Dr6 = amd64_data->dr6;
+        context->Dr7 = amd64_data->dr7;
+    }
+    else context->Dr7 = 0;
+
     if (FPU_sig(sigcontext))
     {
         XSAVE_AREA_HEADER *xs;
@@ -950,12 +954,15 @@ static void restore_context( struct thread_data *data, const struct xcontext *xc
     const CONTEXT *context = &xcontext->c;
     struct amd64_thread_data *amd64_data = amd64_thread_data( data );
 
-    amd64_data->dr0 = context->Dr0;
-    amd64_data->dr1 = context->Dr1;
-    amd64_data->dr2 = context->Dr2;
-    amd64_data->dr3 = context->Dr3;
-    amd64_data->dr6 = context->Dr6;
-    amd64_data->dr7 = context->Dr7;
+    if (amd64_data)
+    {
+        amd64_data->dr0 = context->Dr0;
+        amd64_data->dr1 = context->Dr1;
+        amd64_data->dr2 = context->Dr2;
+        amd64_data->dr3 = context->Dr3;
+        amd64_data->dr6 = context->Dr6;
+        amd64_data->dr7 = context->Dr7;
+    }
     set_sigcontext( context, sigcontext );
     if (FPU_sig(sigcontext)) memcpy( FPU_sig(sigcontext), &context->FltSave, sizeof(context->FltSave) );
     leave_handler( data, sigcontext );
@@ -990,7 +997,7 @@ void *get_native_context( CONTEXT *context )
 void *get_wow_context( CONTEXT *context )
 {
     if (context->SegCs != cs64_sel) return NULL;
-    return get_cpu_area( IMAGE_FILE_MACHINE_I386 );
+    return get_cpu_area( get_thread_data(), IMAGE_FILE_MACHINE_I386 );
 }
 
 
@@ -1006,6 +1013,8 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
     struct thread_data *data = get_thread_data();
     struct syscall_frame *frame = get_syscall_frame( data );
     struct amd64_thread_data *amd64_data = amd64_thread_data( data );
+
+    if (self && !frame) return STATUS_ACCESS_DENIED;
 
     if ((flags & CONTEXT_XSTATE) && xstate_extended_features)
     {
@@ -1107,6 +1116,8 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
     struct amd64_thread_data *amd64_data = amd64_thread_data( data );
     DWORD needed_flags = context->ContextFlags & ~CONTEXT_AMD64;
     BOOL self = (handle == GetCurrentThread());
+
+    if (self && !frame) return STATUS_ACCESS_DENIED;
 
     /* debug registers require a server call */
     if (needed_flags & CONTEXT_DEBUG_REGISTERS) self = FALSE;
@@ -1250,6 +1261,7 @@ NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
     DWORD flags = context->ContextFlags & ~CONTEXT_i386;
 
     if (size != sizeof(I386_CONTEXT)) return STATUS_INFO_LENGTH_MISMATCH;
+    if (self && !frame) return STATUS_ACCESS_DENIED;
 
     /* debug registers require a server call */
     if (self && (flags & CONTEXT_I386_DEBUG_REGISTERS))
@@ -1276,7 +1288,7 @@ NTSTATUS set_thread_wow64_context( HANDLE handle, const void *ctx, ULONG size )
         if (!(flags & ~CONTEXT_I386_DEBUG_REGISTERS)) return ret;
     }
 
-    if (!(wow_frame = get_cpu_area( IMAGE_FILE_MACHINE_I386 ))) return STATUS_INVALID_PARAMETER;
+    if (!(wow_frame = get_cpu_area( data, IMAGE_FILE_MACHINE_I386 ))) return STATUS_INVALID_PARAMETER;
 
     if (flags & CONTEXT_I386_INTEGER)
     {
@@ -1354,6 +1366,7 @@ NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
     BOOL self = (handle == GetCurrentThread());
 
     if (size != sizeof(I386_CONTEXT)) return STATUS_INFO_LENGTH_MISMATCH;
+    if (self && !frame) return STATUS_ACCESS_DENIED;
 
     needed_flags = context->ContextFlags & ~CONTEXT_i386;
 
@@ -1377,7 +1390,7 @@ NTSTATUS get_thread_wow64_context( HANDLE handle, void *ctx, ULONG size )
         if (!(needed_flags & ~CONTEXT_I386_DEBUG_REGISTERS)) return ret;
     }
 
-    if (!(wow_frame = get_cpu_area( IMAGE_FILE_MACHINE_I386 ))) return STATUS_INVALID_PARAMETER;
+    if (!(wow_frame = get_cpu_area( data, IMAGE_FILE_MACHINE_I386 ))) return STATUS_INVALID_PARAMETER;
 
     if (needed_flags & CONTEXT_I386_INTEGER)
     {
@@ -1469,24 +1482,7 @@ static void setup_raise_exception( struct thread_data *data, ucontext_t *sigcont
     XSAVE_AREA_HEADER *src_xs;
     void *callback;
 
-    if (rec->ExceptionCode == EXCEPTION_SINGLE_STEP)
-    {
-        /* when single stepping can't tell whether this is a hw bp or a
-         * single step interrupt. try to avoid as much overhead as possible
-         * and only do a server call if there is any hw bp enabled. */
-
-        if (!(context->EFlags & 0x100) || (context->Dr7 & 0xff))
-        {
-            /* (possible) hardware breakpoint, fetch the debug registers */
-            DWORD saved_flags = context->ContextFlags;
-            context->ContextFlags = CONTEXT_DEBUG_REGISTERS;
-            NtGetContextThread(GetCurrentThread(), context);
-            context->ContextFlags |= saved_flags;  /* restore flags */
-        }
-        context->EFlags &= ~0x100;  /* clear single-step flag */
-    }
-
-    status = send_debug_event( rec, context, TRUE, TRUE );
+    status = send_debug_event( data, rec, context, TRUE, TRUE );
     if (status == DBG_CONTINUE || status == DBG_EXCEPTION_HANDLED)
     {
         restore_context( data, xcontext, sigcontext );
@@ -1587,18 +1583,17 @@ NTSTATUS call_user_apc_dispatcher( CONTEXT *context, unsigned int flags, ULONG_P
 /***********************************************************************
  *           call_raise_user_exception_dispatcher
  */
-void call_raise_user_exception_dispatcher(void)
+void call_raise_user_exception_dispatcher( struct thread_data *data )
 {
-    get_syscall_frame(get_thread_data())->rip = (UINT64)pKiRaiseUserExceptionDispatcher;
+    get_syscall_frame(data)->rip = (UINT64)pKiRaiseUserExceptionDispatcher;
 }
 
 
 /***********************************************************************
  *           call_user_exception_dispatcher
  */
-NTSTATUS call_user_exception_dispatcher( EXCEPTION_RECORD *rec, CONTEXT *context )
+NTSTATUS call_user_exception_dispatcher( struct thread_data *data, EXCEPTION_RECORD *rec, CONTEXT *context )
 {
-    struct thread_data *data = get_thread_data();
     struct syscall_frame *frame = get_syscall_frame( data );
     struct exc_stack_layout *stack;
     NTSTATUS status = NtSetContextThread( GetCurrentThread(), context );
@@ -2090,7 +2085,7 @@ static BOOL check_atl_thunk( struct thread_data *data, ucontext_t *sigcontext,
  */
 static BOOL handle_syscall_fault( struct thread_data *data, ucontext_t *sigcontext, EXCEPTION_RECORD *rec, CONTEXT *context )
 {
-    struct syscall_frame *frame = get_syscall_frame( data );
+    struct syscall_frame *frame;
     DWORD i;
 
     if (!is_inside_syscall( data, RSP_sig(sigcontext) )) return FALSE;
@@ -2115,16 +2110,18 @@ static BOOL handle_syscall_fault( struct thread_data *data, ucontext_t *sigconte
         RSI_sig(sigcontext) = 1;
         RIP_sig(sigcontext) = (ULONG_PTR)longjmp;
         data->jmp_buf = NULL;
+        return TRUE;
     }
-    else
+    if ((frame = get_syscall_frame( data )))
     {
         TRACE_(seh)( "returning to user mode ip=%016lx ret=%08x\n", frame->rip, rec->ExceptionCode );
         RAX_sig(sigcontext) = rec->ExceptionCode;
         R13_sig(sigcontext) = (ULONG_PTR)data->teb;
         RSP_sig(sigcontext) = (ULONG_PTR)frame;
         RIP_sig(sigcontext) = (ULONG_PTR)__wine_syscall_dispatcher_return;
+        return TRUE;
     }
-    return TRUE;
+    return FALSE;
 }
 
 
@@ -2191,6 +2188,7 @@ static inline BOOL check_invalid_gsbase( struct thread_data *data, ucontext_t *u
     unsigned int i, len, prefix_count = 0;
     ULONG_PTR cur_gsbase = 0;
 
+    if (!data->teb) return FALSE;
     if (CS_sig(ucontext) != cs64_sel) return FALSE;
     if (((ERROR_sig(ucontext) >> 1) & 0x09) == EXCEPTION_EXECUTE_FAULT) return FALSE;
 
@@ -2382,6 +2380,19 @@ static void trap_handler( int signal, siginfo_t *siginfo, void *_sigcontext )
     {
     case TRAP_x86_TRCTRAP:
         rec.ExceptionCode = EXCEPTION_SINGLE_STEP;
+
+        /* when single stepping can't tell whether this is a hw bp or a
+         * single step interrupt. try to avoid as much overhead as possible
+         * and only do a server call if there is any hw bp enabled. */
+        if (!(context.c.EFlags & 0x100) || (context.c.Dr7 & 0xff))
+        {
+            /* (possible) hardware breakpoint, fetch the debug registers */
+            DWORD saved_flags = context.c.ContextFlags;
+            context.c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+            NtGetContextThread(GetCurrentThread(), &context.c);
+            context.c.ContextFlags |= saved_flags;  /* restore flags */
+        }
+        context.c.EFlags &= ~0x100;  /* clear single-step flag */
         break;
     case TRAP_x86_BPTFLT:
         rec.ExceptionAddress = (char *)rec.ExceptionAddress - 1;  /* back up over the int3 instruction */
@@ -2518,7 +2529,11 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *_sigcontext )
     ucontext_t *sigcontext = _sigcontext;
     struct thread_data *data = init_handler( sigcontext );
 
-    if (is_inside_syscall( data, RSP_sig(sigcontext) ))
+    if (!data->teb)
+    {
+        server_select( NULL, 0, SELECT_INTERRUPTIBLE, 0, NULL, NULL );
+    }
+    else if (is_inside_syscall( data, RSP_sig(sigcontext) ))
     {
         struct syscall_frame *frame = get_syscall_frame( data );
         ULONG64 saved_compaction = 0;
@@ -2554,7 +2569,7 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *_sigcontext )
             context->c.ContextFlags &= ~0x40;
             frame->restore_flags |= 0x40;
         }
-        if ((wow_context = get_cpu_area( IMAGE_FILE_MACHINE_I386 ))
+        if ((wow_context = get_cpu_area( data, IMAGE_FILE_MACHINE_I386 ))
              && (wow_context->ContextFlags & CONTEXT_I386_CONTROL) == CONTEXT_I386_CONTROL)
         {
             WOW64_CPURESERVED *cpu = data->teb->TlsSlots[WOW64_TLS_CPURESERVED];
@@ -2652,7 +2667,6 @@ NTSTATUS get_thread_ldt_entry( HANDLE handle, THREAD_DESCRIPTOR_INFORMATION *inf
 {
     THREAD_BASIC_INFORMATION tbi;
     NTSTATUS status;
-    TEB *teb = NtCurrentTeb();
 
     if (len != sizeof(*info)) return STATUS_INFO_LENGTH_MISMATCH;
     if (info->Selector >> 16) return STATUS_UNSUCCESSFUL;
@@ -2663,8 +2677,12 @@ NTSTATUS get_thread_ldt_entry( HANDLE handle, THREAD_DESCRIPTOR_INFORMATION *inf
         status = NtQueryInformationThread( handle, ThreadBasicInformation, &tbi, sizeof(tbi), NULL );
         if (status) return status;
     }
-    else tbi.ClientId = teb->ClientId;
-
+    else
+    {
+        TEB *teb = NtCurrentTeb();
+        if (!teb) return STATUS_ACCESS_DENIED;
+        tbi.ClientId = teb->ClientId;
+    }
     return ldt_get_entry( info->Selector, tbi.ClientId, &info->Entry );
 }
 
@@ -2755,10 +2773,10 @@ static int libc_addr_cb( struct dl_phdr_info *info, size_t size, void *arg )
 /**********************************************************************
  *		signal_init_process
  */
-void signal_init_process(void)
+void signal_init_process( TEB *teb )
 {
     struct sigaction sig_act;
-    WOW_TEB *wow_teb = get_wow_teb( NtCurrentTeb() );
+    WOW_TEB *wow_teb = get_wow_teb( teb );
     void *ptr;
 
     if (user_shared_data->XState.Size) xstate_size = user_shared_data->XState.Size - sizeof(XSAVE_FORMAT);
@@ -2792,7 +2810,7 @@ void signal_init_process(void)
 #endif
 
     alloc_syscall_frame( (frame_size + 63) & ~63 );
-    signal_alloc_thread( NtCurrentTeb() );
+    signal_alloc_thread( teb );
 
     sig_act.sa_mask = server_block_set;
     sig_act.sa_flags = SA_SIGINFO | SA_RESTART | SA_ONSTACK;
@@ -2828,11 +2846,11 @@ void signal_init_process(void)
 /***********************************************************************
  *           init_syscall_frame
  */
-void init_syscall_frame( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, TEB *teb )
+void init_syscall_frame( LPTHREAD_START_ROUTINE entry, void *arg, TEB *teb )
 {
     struct thread_data *data = get_thread_data();
     struct syscall_frame *frame = get_syscall_frame( data );
-    struct amd64_thread_data *thread_data = (struct amd64_thread_data *)&teb->GdiTebBatch;
+    struct amd64_thread_data *thread_data = amd64_thread_data( data );
     CONTEXT *ctx, context = { 0 };
     I386_CONTEXT *wow_context;
     void *callback;
@@ -2875,7 +2893,7 @@ void init_syscall_frame( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, 
     context.FltSave.ControlWord = 0x27f;
     context.FltSave.MxCsr = context.MxCsr = 0x1f80;
 
-    if ((wow_context = get_cpu_area( IMAGE_FILE_MACHINE_I386 )))
+    if ((wow_context = get_cpu_area( data, IMAGE_FILE_MACHINE_I386 )))
     {
         wow_context->ContextFlags = CONTEXT_I386_ALL;
         wow_context->Eax = (ULONG_PTR)entry;
@@ -2893,7 +2911,7 @@ void init_syscall_frame( LPTHREAD_START_ROUTINE entry, void *arg, BOOL suspend, 
         *(XSAVE_FORMAT *)wow_context->ExtendedRegisters = context.FltSave;
     }
 
-    if (suspend) wait_suspend( &context );
+    if (data->suspend) wait_suspend( &context );
 
     ctx = (CONTEXT *)((ULONG_PTR)context.Rsp & ~15) - 1;
     *ctx = context;
@@ -2940,20 +2958,20 @@ __ASM_GLOBAL_FUNC( signal_start_thread,
                    __ASM_CFI(".cfi_rel_offset %r15,-0x28\n\t")
                    "leaq 0x10(%rbp),%r9\n\t"       /* syscall_cfa */
                    /* set syscall frame */
-                   "movq 0x378(%rcx),%r8\n\t"      /* thread_data->syscall_frame */
+                   "movq 0x378(%rdx),%r8\n\t"      /* thread_data->syscall_frame */
                    "orq %r8,%r8\n\t"
                    "jnz 1f\n\t"
                    "movq %rsp,%r8\n\t"
-                   "subq 0x328(%rcx),%r8\n\t"      /* amd64_thread_data()->frame_size */
+                   "subq 0x328(%rdx),%r8\n\t"      /* amd64_thread_data()->frame_size */
                    "andq $~63,%r8\n\t"
-                   "movq %r8,0x378(%rcx)\n"        /* thread_data->syscall_frame */
+                   "movq %r8,0x378(%rdx)\n"        /* thread_data->syscall_frame */
                    "1:\tmovq $0,0xa0(%r8)\n\t"     /* frame->prev_frame */
                    "movq %r9,0xa8(%r8)\n\t"        /* frame->syscall_cfa */
                    "movl $0,0xb4(%r8)\n\t"         /* frame->restore_flags */
-                   "stmxcsr 0x33c(%rcx)\n\t"       /* amd64_thread_data()->mxcsr */
+                   "stmxcsr 0x33c(%rdx)\n\t"       /* amd64_thread_data()->mxcsr */
                    /* switch to kernel stack */
                    "movq %r8,%rsp\n\t"
-                   "movq %rcx,%r13\n\t"            /* teb */
+                   "movq %rdx,%r13\n\t"            /* teb */
                    "call " __ASM_NAME("init_syscall_frame") "\n\t"
                    "movq %rsp,%rcx\n\t"            /* frame */
                    "jmp " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") )

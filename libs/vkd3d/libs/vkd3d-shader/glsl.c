@@ -2323,13 +2323,21 @@ static void shader_glsl_generate_output_declarations(struct vkd3d_glsl_generator
 static void shader_glsl_handle_global_flags(struct vkd3d_string_buffer *buffer,
         struct vkd3d_glsl_generator *gen, enum vsir_global_flags flags)
 {
+    static const uint64_t ignored_flags = VKD3DSGF_REFACTORING_ALLOWED | VKD3DSGF_BIND_FOR_DURATION;
+
     if (flags & VKD3DSGF_FORCE_EARLY_DEPTH_STENCIL)
     {
         vkd3d_string_buffer_printf(buffer, "layout(early_fragment_tests) in;\n");
         flags &= ~VKD3DSGF_FORCE_EARLY_DEPTH_STENCIL;
     }
 
-    if (flags & ~VKD3DSGF_REFACTORING_ALLOWED)
+    if (flags & ignored_flags)
+    {
+        TRACE("Ignoring global flags %#"PRIx64".\n", flags & ignored_flags);
+        flags &= ~ignored_flags;
+    }
+
+    if (flags)
         vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
                 "Internal compiler error: Unhandled global flags %#"PRIx64".", (uint64_t)flags);
 
