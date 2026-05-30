@@ -27,8 +27,7 @@ float vkd3d_parse_float(const char *s, vkd3d_locale l)
 {
 #ifdef HAVE_STRTOF_L
     return strtof_l(s, NULL, l);
-/* MinGW 14 has _strtof_l(), but it's broken. */
-#elif HAVE__STRTOF_L && (!__MINGW32__ || __GNUC__ > 14)
+#elif HAVE__STRTOF_L
     return _strtof_l(s, NULL, l);
 #elif HAVE__STRTOD_L
     return _strtod_l(s, NULL, l);
@@ -1221,8 +1220,8 @@ static bool vkd3d_shader_instruction_is_uav_read(const struct vkd3d_shader_instr
     return (VSIR_OP_ATOMIC_AND <= opcode && opcode <= VSIR_OP_ATOMIC_XOR)
             || (VSIR_OP_IMM_ATOMIC_ALLOC <= opcode && opcode <= VSIR_OP_IMM_ATOMIC_XOR)
             || opcode == VSIR_OP_LD_UAV_TYPED
-            || (opcode == VSIR_OP_LD_RAW && instruction->src[1].reg.type == VKD3DSPR_UAV)
-            || (opcode == VSIR_OP_LD_STRUCTURED && instruction->src[2].reg.type == VKD3DSPR_UAV);
+            || (opcode == VSIR_OP_LD_RAW && instruction->src[1].reg.type == VSIR_REGISTER_UAV)
+            || (opcode == VSIR_OP_LD_STRUCTURED && instruction->src[2].reg.type == VSIR_REGISTER_UAV);
 }
 
 static void vkd3d_shader_scan_record_uav_read(struct vkd3d_shader_scan_context *context,
@@ -1342,14 +1341,14 @@ static void vkd3d_shader_scan_combined_sampler_usage(struct vkd3d_shader_scan_co
     if (!(info = context->combined_sampler_info))
         return;
 
-    if (resource->type == VKD3DSPR_RESOURCE)
+    if (resource->type == VSIR_REGISTER_RESOURCE)
         resource_idx = resource->idx[1].offset;
     else
         resource_idx = resource->idx[0].offset;
 
     if (!sampler)
         sampler_idx = VKD3D_SHADER_DUMMY_SAMPLER_INDEX;
-    else if (sampler->type == VKD3DSPR_SAMPLER)
+    else if (sampler->type == VSIR_REGISTER_SAMPLER)
         sampler_idx = sampler->idx[1].offset;
     else
         sampler_idx = sampler->idx[0].offset;
@@ -1409,7 +1408,7 @@ static void vkd3d_shader_scan_resource_declaration(struct vkd3d_shader_scan_cont
     struct vkd3d_shader_descriptor_info1 *d;
     enum vkd3d_shader_descriptor_type type;
 
-    if (resource->reg.reg.type == VKD3DSPR_UAV)
+    if (resource->reg.reg.type == VSIR_REGISTER_UAV)
         type = VKD3D_SHADER_DESCRIPTOR_TYPE_UAV;
     else
         type = VKD3D_SHADER_DESCRIPTOR_TYPE_SRV;
@@ -1459,7 +1458,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             break;
         case VSIR_OP_DCL:
             if (instruction->declaration.semantic.resource_type == VKD3D_SHADER_RESOURCE_NONE
-                    || instruction->declaration.semantic.resource.reg.reg.type == VKD3DSPR_COMBINED_SAMPLER)
+                    || instruction->declaration.semantic.resource.reg.reg.type == VSIR_REGISTER_COMBINED_SAMPLER)
                 break;
             /* fall through */
         case VSIR_OP_DCL_UAV_TYPED:
@@ -1644,16 +1643,16 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
             break;
         case VSIR_OP_BUFINFO:
         case VSIR_OP_SAMPLE_INFO:
-            if (instruction->src[0].reg.type == VKD3DSPR_RESOURCE)
+            if (instruction->src[0].reg.type == VSIR_REGISTER_RESOURCE)
                 vkd3d_shader_scan_combined_sampler_usage(context, &instruction->src[0].reg, NULL);
             break;
         case VSIR_OP_LD_RAW:
         case VSIR_OP_RESINFO:
-            if (instruction->src[1].reg.type == VKD3DSPR_RESOURCE)
+            if (instruction->src[1].reg.type == VSIR_REGISTER_RESOURCE)
                 vkd3d_shader_scan_combined_sampler_usage(context, &instruction->src[1].reg, NULL);
             break;
         case VSIR_OP_LD_STRUCTURED:
-            if (instruction->src[2].reg.type == VKD3DSPR_RESOURCE)
+            if (instruction->src[2].reg.type == VSIR_REGISTER_RESOURCE)
                 vkd3d_shader_scan_combined_sampler_usage(context, &instruction->src[2].reg, NULL);
             break;
         default:
@@ -1664,12 +1663,12 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
     {
         for (i = 0; i < instruction->dst_count; ++i)
         {
-            if (instruction->dst[i].reg.type == VKD3DSPR_UAV)
+            if (instruction->dst[i].reg.type == VSIR_REGISTER_UAV)
                 vkd3d_shader_scan_record_uav_read(context, &instruction->dst[i].reg);
         }
         for (i = 0; i < instruction->src_count; ++i)
         {
-            if (instruction->src[i].reg.type == VKD3DSPR_UAV)
+            if (instruction->src[i].reg.type == VSIR_REGISTER_UAV)
                 vkd3d_shader_scan_record_uav_read(context, &instruction->src[i].reg);
         }
     }
@@ -1681,7 +1680,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
     {
         for (i = 0; i < instruction->dst_count; ++i)
         {
-            if (instruction->dst[i].reg.type == VKD3DSPR_UAV)
+            if (instruction->dst[i].reg.type == VSIR_REGISTER_UAV)
                 vkd3d_shader_scan_record_uav_atomic_op(context, &instruction->dst[i].reg);
         }
     }
@@ -1898,29 +1897,70 @@ int vkd3d_shader_scan(const struct vkd3d_shader_compile_info *compile_info, char
     return ret;
 }
 
+static int vsir_program_disassemble(struct vsir_program *program, const struct vkd3d_shader_code *reflection_data,
+        uint64_t config_flags, const struct vkd3d_shader_compile_info *compile_info,
+        struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context)
+{
+    struct vkd3d_shader_compile_info info2 = *compile_info;
+    struct vkd3d_shader_code byte_code;
+    struct vsir_program program2;
+    int ret;
+
+    if ((ret = vsir_program_scan(program, &info2, message_context, true)) < 0)
+        return ret;
+
+    if (program->shader_version.major >= 6 || compile_info->source_type == VKD3D_SHADER_SOURCE_DXBC_TPF
+            || compile_info->source_type == VKD3D_SHADER_SOURCE_D3D_BYTECODE)
+        return d3d_asm_compile(program, compile_info, out, VSIR_ASM_FLAG_NONE, message_context);
+
+    if (program->shader_version.major >= 4)
+    {
+        info2.target_type = VKD3D_SHADER_TARGET_DXBC_TPF;
+        if ((ret = tpf_compile(program, config_flags, &info2, reflection_data, &byte_code, message_context)) < 0)
+            return ret;
+
+        info2.source_type = VKD3D_SHADER_SOURCE_DXBC_TPF;
+        info2.target_type = VKD3D_SHADER_TARGET_D3D_ASM;
+        info2.source = byte_code;
+        ret = tpf_parse(&info2, config_flags, message_context, &program2);
+    }
+    else
+    {
+        info2.target_type = VKD3D_SHADER_TARGET_D3D_BYTECODE;
+        if ((ret = d3dbc_compile(program, config_flags, &info2, reflection_data, &byte_code, message_context)) < 0)
+            return ret;
+
+        info2.source_type = VKD3D_SHADER_SOURCE_D3D_BYTECODE;
+        info2.target_type = VKD3D_SHADER_TARGET_D3D_ASM;
+        info2.source = byte_code;
+        ret = d3dbc_parse(&info2, config_flags, message_context, &program2);
+    }
+
+    if (ret < 0)
+    {
+        vkd3d_shader_free_shader_code(&byte_code);
+        return ret;
+    }
+
+    ret = d3d_asm_compile(&program2, &info2, out, VSIR_ASM_FLAG_NONE, message_context);
+    vsir_program_cleanup(&program2);
+    vkd3d_shader_free_shader_code(&byte_code);
+
+    return ret;
+}
+
 int vsir_program_compile(struct vsir_program *program, const struct vkd3d_shader_code *reflection_data,
         uint64_t config_flags, const struct vkd3d_shader_compile_info *compile_info,
         struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context)
 {
     struct vkd3d_shader_scan_combined_resource_sampler_info combined_sampler_info;
     struct vkd3d_shader_compile_info scan_info;
-    enum vsir_asm_flags asm_flags;
     int ret;
 
     scan_info = *compile_info;
 
     switch (compile_info->target_type)
     {
-        case VKD3D_SHADER_TARGET_D3D_ASM:
-            if ((ret = vsir_program_scan(program, &scan_info, message_context, true)) < 0)
-                return ret;
-            asm_flags = VSIR_ASM_FLAG_NONE;
-            if (program->shader_version.major < 6 && compile_info->source_type != VKD3D_SHADER_SOURCE_DXBC_TPF
-                    && compile_info->source_type != VKD3D_SHADER_SOURCE_D3D_BYTECODE)
-                asm_flags |= VSIR_ASM_FLAG_ALLOCATE_TEMPS;
-            ret = d3d_asm_compile(program, compile_info, out, asm_flags, message_context);
-            break;
-
         case VKD3D_SHADER_TARGET_D3D_BYTECODE:
             if ((ret = vsir_program_scan(program, &scan_info, message_context, true)) < 0)
                 return ret;
@@ -2030,7 +2070,12 @@ int vkd3d_shader_compile(const struct vkd3d_shader_compile_info *compile_info,
         if (!(ret = vsir_parse(compile_info, config_flags, &dump_data,
                 &message_context, &program, &reflection_data)))
         {
-            ret = vsir_program_compile(&program, &reflection_data, config_flags, compile_info, out, &message_context);
+            if (compile_info->target_type == VKD3D_SHADER_TARGET_D3D_ASM)
+                ret = vsir_program_disassemble(&program, &reflection_data,
+                        config_flags, compile_info, out, &message_context);
+            else
+                ret = vsir_program_compile(&program, &reflection_data,
+                        config_flags, compile_info, out, &message_context);
             vkd3d_shader_free_shader_code(&reflection_data);
             vsir_program_cleanup(&program);
         }

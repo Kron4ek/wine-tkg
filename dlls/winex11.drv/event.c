@@ -620,7 +620,7 @@ static void set_input_focus( struct x11drv_win_data *data )
     if (EVENT_x11_time_to_win32_time(0))
         /* ICCCM says don't use CurrentTime, so try to use last message time if possible */
         /* FIXME: this is not entirely correct */
-        timestamp = NtUserGetThreadInfo()->message_time - EVENT_x11_time_to_win32_time(0);
+        timestamp = NtUserGetThreadState(UserThreadStateMessageTime) - EVENT_x11_time_to_win32_time(0);
     else
         timestamp = CurrentTime;
 
@@ -1182,7 +1182,7 @@ static int get_window_wm_state( Display *display, Window window )
         XID     icon;
     } *state;
     Atom type;
-    int format, ret = -1;
+    int format, ret = WithdrawnState;
     unsigned long count, remaining;
 
     if (!XGetWindowProperty( display, window, x11drv_atom(WM_STATE), 0,

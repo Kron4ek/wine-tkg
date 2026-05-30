@@ -4460,6 +4460,18 @@ static void test_ReplaceFileW(void)
         "ReplaceFileW: unexpected error %ld\n", GetLastError());
     DeleteFileW( replacement );
 
+    ret = GetTempFileNameW(temp_path, prefix, 0, replacement);
+    ok(ret, "GetTempFileNameW error (replacement) %ld\n", GetLastError());
+    ret = CreateDirectoryW(replaced, NULL);
+    ok(ret, "CreateDirectoryW error %ld\n", GetLastError());
+    SetLastError(0xdeadbeef);
+    ret = pReplaceFileW(replaced, replacement, NULL, 0, 0, 0);
+    ok(!ret, "expected failure\n");
+    ok(GetLastError() == ERROR_ACCESS_DENIED, "got error %lu\n", GetLastError());
+    ret = RemoveDirectoryW(replaced);
+    ok(ret, "RemoveDirectoryW error %ld\n", GetLastError());
+    DeleteFileW(replacement);
+
     if (removeBackup)
     {
         ret = DeleteFileW(backup);

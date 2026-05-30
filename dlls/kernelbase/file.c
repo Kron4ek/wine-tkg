@@ -2825,7 +2825,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH ReplaceFileW( const WCHAR *replaced, const WCHAR *
     RtlFreeUnicodeString(&nt_replaced_name);
     if (!set_ntstatus( status )) return FALSE;
 
-    if (info.FileAttributes & FILE_ATTRIBUTE_READONLY)
+    if (info.FileAttributes & ( FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_DIRECTORY ))
     {
         SetLastError( ERROR_ACCESS_DENIED );
         return FALSE;

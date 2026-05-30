@@ -108,6 +108,7 @@ SOURCES = \
 	cryptdlg.h \
 	cryptuiapi.h \
 	cryptxml.h \
+	ctffunc.idl \
 	ctfutb.idl \
 	ctxtcall.idl \
 	custcntl.h \
@@ -730,6 +731,8 @@ SOURCES = \
 	natupnp.idl \
 	nb30.h \
 	ncrypt.h \
+	ndattrib.idl \
+	ndfapi.h \
 	ndrtypes.h \
 	netcfgx.idl \
 	netcon.idl \
@@ -862,6 +865,7 @@ SOURCES = \
 	rstvw.idl \
 	rstxsc.idl \
 	rtlsupportapi.h \
+	rtscom.idl \
 	rtutils.h \
 	rtworkq.idl \
 	sal.h \
@@ -943,7 +947,7 @@ SOURCES = \
 	tlogstg.idl \
 	tmschema.h \
 	tom.idl \
-	tpcshrd.h \
+	tpcshrd.idl \
 	traffic.h \
 	transact.idl \
 	trnjoi.idl \

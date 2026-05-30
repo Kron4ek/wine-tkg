@@ -646,8 +646,10 @@ static void swapchain_gl_present(struct wined3d_swapchain *swapchain,
 
         wined3d_texture_load_location(back_buffer, 0, context, back_buffer->resource.draw_binding);
 
-        swapchain_blit(swapchain, context, src_rect, dst_rect);
+        if (gl_info->supported[ARB_FRAMEBUFFER_SRGB])
+            gl_info->gl_ops.gl.p_glDisable(GL_FRAMEBUFFER_SRGB);
 
+        swapchain_blit(swapchain, context, src_rect, dst_rect);
         if (swapchain->device->context_count > 1)
         {
             WARN_(d3d_perf)("Multiple contexts, calling glFinish() to enforce ordering.\n");
@@ -661,7 +663,9 @@ static void swapchain_gl_present(struct wined3d_swapchain *swapchain,
     if (context->d3d_info->fences)
         wined3d_context_gl_submit_command_fence(context_gl);
 
-    wined3d_swapchain_gl_rotate(swapchain, context);
+    /* Skip wined3d_swapchain_gl_rotate() to fix flickering for swapchain buffer_count > 1
+     * required for support of DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL 0x3
+     * https://gitlab.winehq.org/wine/wine/-/merge_requests/10567 */
 
     TRACE("SwapBuffers called, Starting new frame\n");
 
@@ -1288,8 +1292,9 @@ static void swapchain_vk_present(struct wined3d_swapchain *swapchain, const RECT
         }
     }
 
-    wined3d_swapchain_vk_rotate(swapchain, context_vk);
-
+    /* Skip wined3d_swapchain_vk_rotate() to fix flickering for swapchain buffer_count > 1
+     * required for support of DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL 0x3
+     * https://gitlab.winehq.org/wine/wine/-/merge_requests/10567 */
     wined3d_texture_validate_location(swapchain->front_buffer, 0, WINED3D_LOCATION_DRAWABLE);
     wined3d_texture_invalidate_location(swapchain->front_buffer, 0, ~WINED3D_LOCATION_DRAWABLE);
 
@@ -1550,12 +1555,6 @@ static HRESULT wined3d_swapchain_init(struct wined3d_swapchain *swapchain, struc
     HWND window;
 
     wined3d_mutex_lock();
-
-    if (desc->backbuffer_count > 1)
-    {
-        FIXME("The application requested more than one back buffer, this is not properly supported.\n"
-                "Please configure the application to use double buffering (1 back buffer) if possible.\n");
-    }
 
     if (desc->swap_effect != WINED3D_SWAP_EFFECT_DISCARD
             && desc->swap_effect != WINED3D_SWAP_EFFECT_SEQUENTIAL

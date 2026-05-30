@@ -312,7 +312,7 @@ struct hlsl_reg
     /* Whether the register has been allocated. */
     bool allocated;
     /* Currently only used for numeric registers. */
-    enum vkd3d_shader_register_type type;
+    enum vsir_register_type type;
 };
 
 /* Types of instruction nodes for the IR.

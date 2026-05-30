@@ -332,6 +332,9 @@ Call ok(Lbound(arr2, 1) = 0, "Lbound(x) = " & Lbound(x))
 Call ok(Lbound(arr2, 2) = 0, "Lbound(x) = " & Lbound(x))
 
 sub testLBoundError()
+    Dim nothingObj : Set nothingObj = Nothing
+    Dim emptyObj   : Set emptyObj   = new EmptyClass
+    Dim dictObj    : Set dictObj    = CreateObject("Scripting.Dictionary")
     on error resume next
     call Err.clear()
     call LBound()
@@ -343,6 +346,27 @@ sub testLBoundError()
     call LBound(Null)
     call ok(Err.number = 13, "Err.number = " & Err.number)
     call Err.clear()
+    call LBound(42)
+    call ok(Err.number = 13, "LBound(int) Err.number = " & Err.number)
+    call Err.clear()
+    call LBound("str")
+    call ok(Err.number = 13, "LBound(string) Err.number = " & Err.number)
+    call Err.clear()
+    call LBound(True)
+    call ok(Err.number = 13, "LBound(bool) Err.number = " & Err.number)
+    call Err.clear()
+    call LBound(3.14)
+    call ok(Err.number = 13, "LBound(double) Err.number = " & Err.number)
+    call Err.clear()
+    call LBound(nothingObj)
+    call ok(Err.number = 91, "LBound(Nothing) Err.number = " & Err.number)
+    call Err.clear()
+    call LBound(emptyObj)
+    call ok(Err.number = 438, "LBound(no-default-object) Err.number = " & Err.number)
+    call Err.clear()
+    call LBound(dictObj)
+    call ok(Err.number = 450, "LBound(default-needs-arg) Err.number = " & Err.number)
+    call Err.clear()
     call LBound(arr, 1, 2)
     call ok(Err.number = 450, "Err.number = " & Err.number)
     if isEnglishLang then call ok(Err.description = "Wrong number of arguments or invalid property assignment", _
@@ -350,6 +374,9 @@ sub testLBoundError()
 end sub
 
 sub testUBoundError()
+    Dim nothingObj : Set nothingObj = Nothing
+    Dim emptyObj   : Set emptyObj   = new EmptyClass
+    Dim dictObj    : Set dictObj    = CreateObject("Scripting.Dictionary")
     on error resume next
     call Err.clear()
     call UBound()
@@ -361,6 +388,27 @@ sub testUBoundError()
     call UBound(Null)
     call ok(Err.number = 13, "Err.number = " & Err.number)
     call Err.clear()
+    call UBound(42)
+    call ok(Err.number = 13, "UBound(int) Err.number = " & Err.number)
+    call Err.clear()
+    call UBound("str")
+    call ok(Err.number = 13, "UBound(string) Err.number = " & Err.number)
+    call Err.clear()
+    call UBound(True)
+    call ok(Err.number = 13, "UBound(bool) Err.number = " & Err.number)
+    call Err.clear()
+    call UBound(3.14)
+    call ok(Err.number = 13, "UBound(double) Err.number = " & Err.number)
+    call Err.clear()
+    call UBound(nothingObj)
+    call ok(Err.number = 91, "UBound(Nothing) Err.number = " & Err.number)
+    call Err.clear()
+    call UBound(emptyObj)
+    call ok(Err.number = 438, "UBound(no-default-object) Err.number = " & Err.number)
+    call Err.clear()
+    call UBound(dictObj)
+    call ok(Err.number = 450, "UBound(default-needs-arg) Err.number = " & Err.number)
+    call Err.clear()
     call UBound(arr, 1, 2)
     call ok(Err.number = 450, "Err.number = " & Err.number)
     if isEnglishLang then call ok(Err.description = "Wrong number of arguments or invalid property assignment", _
@@ -369,6 +417,35 @@ end sub
 
 call testLBoundError()
 call testUBoundError()
+
+Class ArrayDefaultClass
+    Public Default Function GetArr
+        GetArr = Array(10, 20, 30)
+    End Function
+End Class
+
+Class ScalarDefaultClass
+    Public Default Function GetIt
+        GetIt = 42
+    End Function
+End Class
+
+sub testBoundDispatchDefault()
+    Dim arrObj    : Set arrObj    = new ArrayDefaultClass
+    Dim scalarObj : Set scalarObj = new ScalarDefaultClass
+
+    call ok(LBound(arrObj) = 0, "LBound(array-default) = " & LBound(arrObj))
+    call ok(UBound(arrObj) = 2, "UBound(array-default) = " & UBound(arrObj))
+
+    on error resume next
+    call LBound(scalarObj)
+    call ok(Err.number = 13, "LBound(scalar-default) Err.number = " & Err.number)
+    Err.Clear()
+    call UBound(scalarObj)
+    call ok(Err.number = 13, "UBound(scalar-default) Err.number = " & Err.number)
+end sub
+
+call testBoundDispatchDefault()
 
 sub testBoundUninitArray()
     Dim u()

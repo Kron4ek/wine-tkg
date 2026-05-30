@@ -2853,6 +2853,12 @@ static void test_devnode(void)
     ok(!ret, "got %#lx\n", ret);
     ok(!strcmp(buffer, "ROOT\\LEGACY_BOGUS\\0000"), "got %s\n", buffer);
 
+    /* CM_Get_Parent parameter validation. The CR_SUCCESS path requires a
+     * PnP-managed device with DEVPKEY_Device_Parent populated by the bus
+     * driver, which is exercised in ntoskrnl/tests/ntoskrnl.c::test_pnp_devices. */
+    ret = CM_Get_Parent(NULL, device.DevInst, 0);
+    ok(ret == CR_INVALID_POINTER, "got %#lx\n", ret);
+
     SetupDiDestroyDeviceInfoList(set);
 }
 
@@ -4645,6 +4651,13 @@ static void test_copy_oem_inf(struct testsign_context *ctx)
     /* try a relative nonexistent SourceInfFileName */
     SetLastError(0xdeadbeef);
     ret = SetupCopyOEMInfA("nonexistent", NULL, 0, SP_COPY_NOOVERWRITE, NULL, 0, NULL, NULL);
+    ok(!ret, "Got %d.\n", ret);
+    ok(GetLastError() == ERROR_FILE_NOT_FOUND, "Got error %#lx.\n", GetLastError());
+
+    /* try a relative nonexistent SourceInfFileName, with dest parameter */
+    memset(dest, 0xcc, sizeof(dest));
+    SetLastError(0xdeadbeef);
+    ret = SetupCopyOEMInfA("nonexistent", NULL, 0, SP_COPY_NOOVERWRITE, dest, sizeof(dest), NULL, NULL);
     ok(!ret, "Got %d.\n", ret);
     ok(GetLastError() == ERROR_FILE_NOT_FOUND, "Got error %#lx.\n", GetLastError());
 

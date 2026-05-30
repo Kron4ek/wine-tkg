@@ -92,8 +92,6 @@ struct window
     int              prop_inuse;      /* number of in-use window properties */
     int              prop_alloc;      /* number of allocated window properties */
     struct property *properties;      /* window properties array */
-    int              private_off;     /* offset of private extra bytes range */
-    int              private_len;     /* length of private extra bytes range */
     int              nb_extra_bytes;  /* number of extra bytes */
     char            *extra_bytes;     /* extra bytes storage */
     window_shm_t    *shared;          /* window in session shared memory */
@@ -689,8 +687,10 @@ static struct window *create_window( struct window *parent, struct window *owner
     if (!(win->shared = alloc_shared_object( sizeof(*win->shared) ))) goto failed;
     SHARED_WRITE_BEGIN( win->shared, window_shm_t )
     {
-        shared->class       = class_locator;
-        shared->dpi_context = NTUSER_DPI_PER_MONITOR_AWARE;
+        shared->class           = class_locator;
+        shared->dpi_context     = NTUSER_DPI_PER_MONITOR_AWARE;
+        shared->fnid            = 0;
+        shared->private_size    = 0;
     }
     SHARED_WRITE_END;
 
@@ -2275,9 +2275,27 @@ DECL_HANDLER(create_window)
     reply->class_ptr   = get_class_client_ptr( win->class );
 }
 
-static BOOL in_private_data_range( const struct window *win, int offset, int size )
+
+/* Set the window builtin class FNID */
+DECL_HANDLER(set_window_fnid)
 {
-    return offset < win->private_off + win->private_len && offset + size >= win->private_off;
+    struct obj_locator class_locator;
+    struct window_class *class;
+    struct window *win;
+    int extra_bytes;
+
+    if (!(win = get_window( req->handle ))) return;
+    if (is_desktop_window( win ) && win->thread != current) return set_error( STATUS_ACCESS_DENIED );
+    if (win->shared->fnid && win->shared->fnid != req->fnid) return set_error( STATUS_INVALID_PARAMETER );
+
+    if (!(class = grab_class( current->process, req->atom, 0, &extra_bytes, &class_locator ))) return;
+    SHARED_WRITE_BEGIN( win->shared, window_shm_t )
+    {
+        shared->fnid            = req->fnid;
+        shared->private_size    = extra_bytes;
+    }
+    SHARED_WRITE_END;
+    release_class( class );
 }
 
 
@@ -2404,7 +2422,7 @@ DECL_HANDLER(get_window_info)
     default:
         if (req->size > sizeof(reply->info) || req->offset < 0 ||
             req->offset > win->nb_extra_bytes - (int)req->size ||
-            in_private_data_range( win, req->offset, req->size ))
+            req->offset < win->shared->private_size)
         {
             set_win32_error( ERROR_INVALID_INDEX );
             break;
@@ -2470,10 +2488,6 @@ DECL_HANDLER(set_window_info)
     case GWLP_USERDATA:
         reply->old_info = win->user_data;
         win->user_data = req->new_info;
-        break;
-    case GWLP_FNID_INTERNAL:
-        win->private_off = FNID_OFF(req->new_info);
-        win->private_len = FNID_LEN(req->new_info);
         break;
     default:
         if (req->size > sizeof(req->new_info) || req->offset < 0 ||

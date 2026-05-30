@@ -155,6 +155,12 @@
 @ stdcall -syscall NtAllocateUuids(ptr ptr ptr ptr)
 @ stdcall -syscall=0x0018 NtAllocateVirtualMemory(long ptr long ptr long long)
 @ stdcall -syscall NtAllocateVirtualMemoryEx(long ptr ptr long long ptr long)
+@ stdcall -syscall NtAlpcAcceptConnectPort(ptr ptr long ptr ptr ptr ptr ptr long)
+@ stdcall -syscall NtAlpcConnectPort(ptr ptr ptr ptr long ptr ptr ptr ptr ptr ptr)
+@ stdcall -syscall NtAlpcCreatePort(ptr ptr ptr)
+@ stdcall -syscall NtAlpcDisconnectPort(ptr long)
+@ stdcall -syscall NtAlpcImpersonateClientOfPort(ptr ptr ptr)
+@ stdcall -syscall NtAlpcSendWaitReceivePort(ptr long ptr ptr ptr ptr ptr ptr)
 @ stub -syscall=0x004c NtApphelpCacheControl
 @ stdcall -syscall NtAreMappedFilesTheSame(ptr ptr)
 @ stdcall -syscall NtAssignProcessToJobObject(long long)
@@ -1192,6 +1198,7 @@
 @ stdcall TpSetPoolMinThreads(ptr long)
 @ stdcall TpSetPoolStackInformation(ptr ptr)
 @ stdcall TpSetTimer(ptr ptr long long)
+@ stdcall TpSetTimerEx(ptr ptr long long)
 @ stdcall TpSetWait(ptr long ptr)
 @ stdcall TpSimpleTryPost(ptr ptr ptr)
 @ stdcall TpStartAsyncIoOperation(ptr)
@@ -1229,6 +1236,12 @@
 @ stdcall -private ZwAllocateUuids(ptr ptr ptr ptr) NtAllocateUuids
 @ stdcall -private ZwAllocateVirtualMemory(long ptr long ptr long long) NtAllocateVirtualMemory
 @ stdcall -private ZwAllocateVirtualMemoryEx(long ptr ptr long long ptr long) NtAllocateVirtualMemoryEx
+@ stdcall -private ZwAlpcAcceptConnectPort(ptr ptr long ptr ptr ptr ptr ptr long) NtAlpcAcceptConnectPort
+@ stdcall -private ZwAlpcConnectPort(ptr ptr ptr ptr long ptr ptr ptr ptr ptr ptr) NtAlpcConnectPort
+@ stdcall -private ZwAlpcCreatePort(ptr ptr ptr) NtAlpcCreatePort
+@ stdcall -private ZwAlpcDisconnectPort(ptr long) NtAlpcDisconnectPort
+@ stdcall -private ZwAlpcImpersonateClientOfPort(ptr ptr ptr) NtAlpcImpersonateClientOfPort
+@ stdcall -private ZwAlpcSendWaitReceivePort(ptr long ptr ptr ptr ptr ptr ptr) NtAlpcSendWaitReceivePort
 @ stdcall -private ZwApphelpCacheControl() NtApphelpCacheControl
 @ stdcall -private ZwAreMappedFilesTheSame(ptr ptr) NtAreMappedFilesTheSame
 @ stdcall -private ZwAssignProcessToJobObject(long long) NtAssignProcessToJobObject
@@ -1771,6 +1784,3 @@
 @ cdecl wine_get_version()
 @ cdecl wine_get_build_id()
 @ cdecl wine_get_host_version(ptr ptr)
-
-# Filesystem
-@ stdcall -syscall wine_nt_to_unix_file_name(ptr ptr ptr long)

@@ -16,7 +16,7 @@ AC_PREREQ([2.69d],[AC_CONFIG_AUX_DIR(tools)],
 
 dnl **** Command-line arguments ****
 
-AC_ARG_ENABLE(archs, AS_HELP_STRING([--enable-archs={i386,x86_64,arm,aarch64}],[enable multiple architectures for PE compilation]))
+AC_ARG_ENABLE(archs, AS_HELP_STRING([--enable-archs={i386,x86_64,arm,aarch64,arm64ec,none}],[enable multiple architectures for PE compilation]))
 AC_ARG_ENABLE(win16, AS_HELP_STRING([--disable-win16],[do not include Win16 support]))
 AC_ARG_ENABLE(win64, AS_HELP_STRING([--enable-win64],[build a Win64 emulator on AMD64 (won't run Win32 binaries)]))
 AC_ARG_ENABLE(tests, AS_HELP_STRING([--disable-tests],[do not build the regression tests]))
@@ -2077,13 +2077,7 @@ fi
 
 dnl **** Platform-specific checks ****
 
-case "$HOST_ARCH,$PE_ARCHS" in
-  x86_64,i386) wine_binary="wine" ;;
-  x86_64,*) wine_binary="wine64" ;;
-  *) wine_binary="wine" ;;
-esac
-test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine)
-AC_SUBST(WINELOADER_PROGRAMS,"$wine_binary")
+AC_SUBST(WINELOADER_PROGRAMS,"wine")
 
 case $host_os in
   linux*)
@@ -2096,8 +2090,7 @@ esac
 
 if test "$wine_use_preloader" = "yes"
 then
-  test "$wine_binary" = wine || WINE_IGNORE_FILE(loader/wine-preloader)
-  WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS $wine_binary-preloader"
+  WINELOADER_PROGRAMS="$WINELOADER_PROGRAMS wine-preloader"
   AC_DEFINE(HAVE_WINE_PRELOADER, 1, [Define to 1 if the Wine preloader is being used.])
 fi
 
@@ -3033,6 +3026,7 @@ WINE_CONFIG_MAKEFILE(dlls/mtxdm)
 WINE_CONFIG_MAKEFILE(dlls/ncrypt)
 WINE_CONFIG_MAKEFILE(dlls/ncrypt/tests)
 WINE_CONFIG_MAKEFILE(dlls/nddeapi)
+WINE_CONFIG_MAKEFILE(dlls/ndfapi)
 WINE_CONFIG_MAKEFILE(dlls/ndis.sys)
 WINE_CONFIG_MAKEFILE(dlls/ndis.sys/tests)
 WINE_CONFIG_MAKEFILE(dlls/netapi32)
@@ -3147,6 +3141,7 @@ WINE_CONFIG_MAKEFILE(dlls/rsabase)
 WINE_CONFIG_MAKEFILE(dlls/rsaenh)
 WINE_CONFIG_MAKEFILE(dlls/rsaenh/tests)
 WINE_CONFIG_MAKEFILE(dlls/rstrtmgr)
+WINE_CONFIG_MAKEFILE(dlls/rtscom)
 WINE_CONFIG_MAKEFILE(dlls/rtutils)
 WINE_CONFIG_MAKEFILE(dlls/rtworkq)
 WINE_CONFIG_MAKEFILE(dlls/rtworkq/tests)
@@ -3227,6 +3222,9 @@ WINE_CONFIG_MAKEFILE(dlls/tdh/tests)
 WINE_CONFIG_MAKEFILE(dlls/tdi.sys)
 WINE_CONFIG_MAKEFILE(dlls/threadpoolwinrt)
 WINE_CONFIG_MAKEFILE(dlls/threadpoolwinrt/tests)
+WINE_CONFIG_MAKEFILE(dlls/thumbcache)
+WINE_CONFIG_MAKEFILE(dlls/thumbcache/tests)
+WINE_CONFIG_MAKEFILE(dlls/tiptsf)
 WINE_CONFIG_MAKEFILE(dlls/toolhelp.dll16)
 WINE_CONFIG_MAKEFILE(dlls/traffic)
 WINE_CONFIG_MAKEFILE(dlls/twain.dll16)
@@ -3427,6 +3425,7 @@ WINE_CONFIG_MAKEFILE(dlls/wintrust/tests)
 WINE_CONFIG_MAKEFILE(dlls/wintypes)
 WINE_CONFIG_MAKEFILE(dlls/wintypes/tests)
 WINE_CONFIG_MAKEFILE(dlls/winusb)
+WINE_CONFIG_MAKEFILE(dlls/wkscli)
 WINE_CONFIG_MAKEFILE(dlls/wlanapi)
 WINE_CONFIG_MAKEFILE(dlls/wlanapi/tests)
 WINE_CONFIG_MAKEFILE(dlls/wlanui)
@@ -3801,7 +3800,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-11.9.r0.g4f9a1be5\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-11.10.r0.gf45e84d7\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 dlls/wineandroid.drv/wine-debug.apk: dlls/wineandroid.drv/build.gradle ${wine_srcdir}dlls/wineandroid.drv/AndroidManifest.xml ${wine_srcdir}dlls/wineandroid.drv/WineActivity.java ${wine_srcdir}dlls/wineandroid.drv/wine.svg

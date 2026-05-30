@@ -49,6 +49,7 @@
 
 #include "msxml_private.h"
 #include "saxreader_extensions.h"
+#include "xpath.h"
 
 #include "wine/debug.h"
 
@@ -358,12 +359,35 @@ static struct domnode *node_from_entry(struct list *entry)
     return entry ? LIST_ENTRY(entry, struct domnode, entry) : NULL;
 }
 
+struct domnode * domnode_get_root_element(struct domnode *doc)
+{
+    struct domnode *node;
+
+    LIST_FOR_EACH_ENTRY(node, &doc->children, struct domnode, entry)
+    {
+        if (node->type == NODE_ELEMENT)
+            return node;
+    }
+
+    return NULL;
+}
+
 struct domnode *domnode_get_first_child(struct domnode *node)
 {
     return node_from_entry(list_head(&node->children));
 }
 
-static struct domnode *domnode_get_previous_sibling(struct domnode *node)
+struct domnode *domnode_get_last_child(struct domnode *node)
+{
+    return node_from_entry(list_tail(&node->children));
+}
+
+struct domnode *domnode_get_first_attribute(struct domnode *node)
+{
+    return node_from_entry(list_head(&node->attributes));
+}
+
+struct domnode *domnode_get_previous_sibling(struct domnode *node)
 {
     if (node->parent)
         return node_from_entry(list_prev(&node->parent->children, &node->entry));
@@ -378,7 +402,7 @@ HRESULT node_get_first_child(struct domnode *node, IXMLDOMNode **ret)
 
 HRESULT node_get_last_child(struct domnode *node, IXMLDOMNode **ret)
 {
-    return get_node(node_from_entry(list_tail(&node->children)), ret);
+    return get_node(domnode_get_last_child(node), ret);
 }
 
 HRESULT node_get_previous_sibling(struct domnode *node, IXMLDOMNode **ret)
@@ -394,6 +418,14 @@ struct domnode *domnode_get_next_sibling(struct domnode *node)
 {
     if (node->parent)
         return node_from_entry(list_next(&node->parent->children, &node->entry));
+
+    return NULL;
+}
+
+struct domnode *domnode_get_next_attribute_sibling(struct domnode *node)
+{
+    if (node->parent)
+        return node_from_entry(list_next(&node->parent->attributes, &node->entry));
 
     return NULL;
 }
@@ -1041,10 +1073,40 @@ HRESULT node_remove_attribute(struct domnode *node, const WCHAR *name, IXMLDOMNo
     return hr;
 }
 
+static bool is_same_namespace_prefix(const struct domnode *node, const WCHAR *prefix)
+{
+    if (node->prefix)
+        return prefix && !wcscmp(node->prefix, prefix);
+
+    return !prefix;
+}
+
+static bool domnode_has_namespace_declaration_name(const struct domnode *node)
+{
+    if (!wcscmp(node->qname, L"xmlns"))
+        return true;
+    if (is_same_namespace_prefix(node, L"xmlns"))
+        return true;
+    return false;
+}
+
+static void domnode_insert_attribute(struct domnode *parent, struct domnode *node, struct domnode *ref_node)
+{
+    domnode_unlink_attribute(node);
+
+    if (ref_node)
+        list_add_before(&ref_node->entry, &node->entry);
+    else
+        list_add_tail(&parent->attributes, &node->entry);
+    node->parent = parent;
+    domnode_add_refs(node->parent, node->refcount);
+    domnode_set_owner(node, parent);
+}
+
 HRESULT domnode_create(DOMNodeType type, const WCHAR *name, int name_len, const WCHAR *uri, int uri_len,
         struct domnode *owner, struct domnode **node)
 {
-    struct domnode *object;
+    struct domnode *object, *xmlns_xml;
     WCHAR *p;
 
     *node = NULL;
@@ -1102,6 +1164,17 @@ HRESULT domnode_create(DOMNodeType type, const WCHAR *name, int name_len, const 
             if (!wcscmp(object->name, L"xml"))
                 object->flags |= DOMNODE_READONLY_VALUE;
             break;
+        case NODE_ATTRIBUTE:
+            if (domnode_has_namespace_declaration_name(object))
+                object->flags |= DOMNODE_NS_DECL;
+            break;
+        case NODE_DOCUMENT:
+            /* Stash implicit namespace as a document attribute, without a parent. */
+            domnode_create(NODE_ATTRIBUTE, L"xmlns:xml", 9, NULL, 0, object, &xmlns_xml);
+            node_put_data(xmlns_xml, L"http://www.w3.org/XML/1998/namespace");
+            xmlns_xml->flags |= DOMNODE_READONLY_VALUE | DOMNODE_NO_PARENT;
+            domnode_insert_attribute(object, xmlns_xml, NULL);
+            break;
         default:
             ;
     }
@@ -1109,19 +1182,6 @@ HRESULT domnode_create(DOMNodeType type, const WCHAR *name, int name_len, const 
     *node = object;
 
     return S_OK;
-}
-
-static void domnode_insert_attribute(struct domnode *parent, struct domnode *node, struct domnode *ref_node)
-{
-    domnode_unlink_attribute(node);
-
-    if (ref_node)
-        list_add_before(&ref_node->entry, &node->entry);
-    else
-        list_add_tail(&parent->attributes, &node->entry);
-    node->parent = parent;
-    domnode_add_refs(node->parent, node->refcount);
-    domnode_set_owner(node, parent);
 }
 
 static HRESULT parse_xml_decl_append_attribute(struct domnode *pi, const WCHAR *name, BSTR value)
@@ -1243,14 +1303,12 @@ struct domnode *domnode_addref(struct domnode *node)
 
 struct domdoc_properties *domdoc_create_properties(MSXML_VERSION version)
 {
-    struct domdoc_properties *properties = malloc(sizeof(*properties));
+    struct domdoc_properties *properties = calloc(1, sizeof(*properties));
 
-    list_init(&properties->selectNsList);
+    list_init(&properties->namespaces.entries);
     properties->preserving = VARIANT_FALSE;
     properties->validating = VARIANT_TRUE;
     properties->schemaCache = NULL;
-    properties->selectNsStr = calloc(1, sizeof(xmlChar));
-    properties->selectNsStr_len = 0;
 
     /* properties that are dependent on object versions */
     properties->version = version;
@@ -1259,9 +1317,6 @@ struct domdoc_properties *domdoc_create_properties(MSXML_VERSION version)
     properties->normalize_attribute_values = false;
     properties->max_element_depth = version > MSXML3 ? 256 : 5000;
 
-    /* document uri */
-    properties->uri = NULL;
-
     return properties;
 }
 
@@ -1269,8 +1324,9 @@ static void domdoc_properties_destroy(struct domdoc_properties *properties)
 {
     if (properties->schemaCache)
         IXMLDOMSchemaCollection2_Release(properties->schemaCache);
-    domdoc_properties_clear_selection_namespaces(&properties->selectNsList);
-    free((xmlChar*)properties->selectNsStr);
+    domdoc_properties_clear_selection_namespaces(properties);
+    SysFreeString(properties->namespaces.value);
+    properties->namespaces.value = NULL;
     if (properties->uri)
         IUri_Release(properties->uri);
     free(properties);
@@ -1279,10 +1335,6 @@ static void domdoc_properties_destroy(struct domdoc_properties *properties)
 static struct domdoc_properties* domdoc_properties_clone(struct domdoc_properties const* properties)
 {
     struct domdoc_properties* pcopy = malloc(sizeof(*pcopy));
-    select_ns_entry const* ns = NULL;
-    select_ns_entry* new_ns = NULL;
-    int len = (properties->selectNsStr_len+1)*sizeof(xmlChar);
-    ptrdiff_t offset;
 
     if (pcopy)
     {
@@ -1296,20 +1348,10 @@ static struct domdoc_properties* domdoc_properties_clone(struct domdoc_propertie
             IXMLDOMSchemaCollection2_AddRef(pcopy->schemaCache);
         pcopy->XPath = properties->XPath;
         pcopy->max_element_depth = properties->max_element_depth;
-        pcopy->selectNsStr_len = properties->selectNsStr_len;
-        list_init( &pcopy->selectNsList );
-        pcopy->selectNsStr = malloc(len);
-        memcpy((xmlChar*)pcopy->selectNsStr, properties->selectNsStr, len);
-        offset = pcopy->selectNsStr - properties->selectNsStr;
-
-        LIST_FOR_EACH_ENTRY( ns, (&properties->selectNsList), select_ns_entry, entry )
-        {
-            new_ns = malloc(sizeof(select_ns_entry));
-            memcpy(new_ns, ns, sizeof(select_ns_entry));
-            new_ns->href += offset;
-            new_ns->prefix += offset;
-            list_add_tail(&pcopy->selectNsList, &new_ns->entry);
-        }
+        list_init(&pcopy->namespaces.entries);
+        pcopy->namespaces.value = SysAllocString(properties->namespaces.value);
+        if (pcopy->namespaces.value)
+            xpath_parse_selection_namespaces(pcopy->namespaces.value, pcopy);
 
         pcopy->uri = properties->uri;
         if (pcopy->uri)
@@ -1887,21 +1929,9 @@ static void node_dump_qualified_name(struct node_dump_context *context, struct d
     node_dump_append(context, node->qname, SysStringLen(node->qname));
 }
 
-static bool is_same_namespace_prefix(const struct domnode *node, const WCHAR *prefix)
+bool domnode_is_namespace_declaration(const struct domnode *node)
 {
-    if (node->prefix)
-        return prefix && !wcscmp(node->prefix, prefix);
-
-    return !prefix;
-}
-
-static bool is_namespace_definition(struct domnode *node)
-{
-    if (!wcscmp(node->qname, L"xmlns"))
-        return true;
-    if (is_same_namespace_prefix(node, L"xmlns"))
-        return true;
-    return false;
+    return node->flags & DOMNODE_NS_DECL;
 }
 
 static bool is_namespace_defined(struct node_dump_context *context, struct domnode *node)
@@ -1951,7 +1981,7 @@ static void node_dump_element_attributes(struct node_dump_context *context, stru
     /* Collect explicitly defined namespaces */
     LIST_FOR_EACH_ENTRY(attr, &node->attributes, struct domnode, entry)
     {
-        if (is_namespace_definition(attr))
+        if (domnode_is_namespace_declaration(attr))
         {
             node_get_text(attr, &text);
             node_dump_push_namespace(context, node_dump_get_namespace_prefix(attr), text, true);
@@ -1966,7 +1996,7 @@ static void node_dump_element_attributes(struct node_dump_context *context, stru
 
     LIST_FOR_EACH_ENTRY(attr, &node->attributes, struct domnode, entry)
     {
-        if (is_namespace_definition(attr))
+        if (domnode_is_namespace_declaration(attr))
             continue;
 
         if (!is_namespace_defined(context, attr))
@@ -3523,8 +3553,8 @@ HRESULT node_set_attribute_value(struct domnode *node, const WCHAR *name, const 
         hr = node_put_data(attr, attr_value);
     VariantClear(&v);
 
-    /* Allow setting namespace definition node once. */
-    if (attr && is_namespace_definition(attr))
+    /* Allow setting namespace declaration node once. */
+    if (attr && domnode_is_namespace_declaration(attr))
         attr->flags |= DOMNODE_READONLY_VALUE;
 
     return hr;
@@ -3821,7 +3851,7 @@ static HRESULT WINAPI parse_content_handler_startElement(ISAXContentHandler *ifa
             if (attr)
             {
                 attr->flags |= DOMNODE_PARSED_VALUE;
-                if (is_namespace_definition(attr))
+                if (domnode_is_namespace_declaration(attr))
                     attr->flags |= DOMNODE_READONLY_VALUE;
             }
         }
@@ -4805,4 +4835,38 @@ HRESULT node_get_data_length(struct domnode *node, LONG *length)
 
     *length = SysStringLen(node->data);
     return S_OK;
+}
+
+WCHAR *xpath_translate_function(const WCHAR *to, const WCHAR *from, const WCHAR *str)
+{
+    struct string_buffer buffer;
+    const WCHAR *point, *cptr;
+    int offset, max;
+    int ch;
+
+    string_buffer_init(&buffer);
+
+    max = wcslen(to);
+    for (cptr = str; (ch = *cptr);)
+    {
+        point = wcschr(from, *cptr);
+        offset = point ? point - from : -1;
+
+        if (offset >= 0)
+        {
+            if (offset < max)
+                string_append(&buffer, &to[offset], 1);
+        }
+        else
+        {
+            string_append(&buffer, cptr, 1);
+        }
+
+        cptr++;
+    }
+
+    if (buffer.status != S_OK)
+        string_buffer_cleanup(&buffer);
+
+    return buffer.data;
 }

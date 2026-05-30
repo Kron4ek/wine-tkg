@@ -273,7 +273,8 @@ static void close_include(const struct vkd3d_shader_code *code, void *context)
 {
     ID3DInclude *iface = context;
 
-    ID3DInclude_Close(iface, code->code);
+    if (code->code)
+        ID3DInclude_Close(iface, code->code);
 }
 
 static enum vkd3d_shader_target_type get_target_for_profile(const char *profile)

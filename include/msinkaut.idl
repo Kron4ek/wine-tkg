@@ -693,19 +693,19 @@ cpp_quote("#endif /* _WINGDI_ */")
             [in] IInkRectangle *Rectangle,
             [in] InkClipboardFormats ClipboardFormats,
             [in] InkClipboardModes ClipboardModes,
-            [out, retval] IDataObject **DataObject);
+            [out, retval] /*IDataObject*/ IUnknown **DataObject);
         HRESULT ClipboardCopy(
             [in] IInkStrokes *strokes,
             [in] InkClipboardFormats ClipboardFormats,
             [in] InkClipboardModes ClipboardModes,
-            [out, retval] IDataObject **DataObject);
+            [out, retval] /*IDataObject*/ IUnknown **DataObject);
         HRESULT CanPaste(
-            [in] IDataObject *DataObject,
+            [in] /*IDataObject*/ IUnknown *DataObject,
             [out, retval] VARIANT_BOOL *CanPaste);
         HRESULT ClipboardPaste(
             [in] long x,
             [in] long y,
-            [in, unique] IDataObject *DataObject,
+            [in, unique] /*IDataObject*/ IUnknown *DataObject,
             [out, retval] IInkStrokes **Strokes);
     }
 

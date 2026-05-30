@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Alistair Leslie-Hughes
+* Copyright 2026 Alistair Leslie-Hughes
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -15,17 +15,35 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-#ifndef __WISPSHRD_H
-#define __WISPSHRD_H
 
-#define TABLET_DISABLE_PRESSANDHOLD        0x00000001
+#define COBJMACROS
+#define CONST_VTABLE
 
-#define WM_TABLET_DEFBASE                  0x02c0
-#define WM_TABLET_MAXOFFSET                0x20
-#define WM_TABLET_ADDED                    (WM_TABLET_DEFBASE + 8)
-#define WM_TABLET_DELETED                  (WM_TABLET_DEFBASE + 9)
-#define WM_TABLET_FLICK                    (WM_TABLET_DEFBASE + 11)
-#define WM_TABLET_QUERYSYSTEMGESTURESTATUS (WM_TABLET_DEFBASE + 12)
+#include "thumbcache.h"
 
+#include "wine/test.h"
 
-#endif /* __WISPSHRD_H */
+static void test_create_thumbnailcache(void)
+{
+    HRESULT hr;
+    IThumbnailCache *cache;
+
+    hr = CoCreateInstance( &CLSID_LocalThumbnailCache, NULL, CLSCTX_INPROC_SERVER, &IID_IThumbnailCache,
+                           (void **)&cache );
+    ok( hr == S_OK, "got 0x%lx\n", hr);
+
+    IThumbnailCache_Release(cache);
+}
+
+START_TEST(thumbcache)
+{
+    HRESULT hr;
+
+    hr = CoInitialize( NULL );
+    ok( hr == S_OK, "failed to init com\n");
+    if (hr != S_OK) return;
+
+    test_create_thumbnailcache();
+
+    CoUninitialize();
+}

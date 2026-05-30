@@ -620,12 +620,6 @@ static void wined3d_render_target_view_gl_cs_init(void *object)
                         debug_d3dformat(resource->format->id), debug_d3dformat(view_gl->v.format->id));
                 return;
             }
-            if (texture_gl->t.swapchain && texture_gl->t.swapchain->state.desc.backbuffer_count > 1)
-            {
-                FIXME("Swapchain views not supported.\n");
-                return;
-            }
-
             create_texture_view(&view_gl->gl_view, texture_gl->target, desc, texture_gl, view_gl->v.format);
         }
     }
@@ -927,12 +921,6 @@ static void wined3d_render_target_view_vk_cs_init(void *object)
             && is_identity_fixup(format_vk->f.color_fixup))
     {
         TRACE("Creating identity render target view.\n");
-        return;
-    }
-
-    if (texture_vk->t.swapchain && texture_vk->t.swapchain->state.desc.backbuffer_count > 1)
-    {
-        FIXME("Swapchain views not supported.\n");
         return;
     }
 

@@ -3790,10 +3790,9 @@ static void test_CreateDirectoryA(void)
     error = GetNamedSecurityInfoA(tmpfile, SE_FILE_OBJECT,
                                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
                                    (PSID *)&owner, NULL, &pDacl, NULL, &pSD);
-    ok(error == ERROR_SUCCESS, "GetNamedSecurityInfo failed with error %d\n", error);
+    ok(error == ERROR_SUCCESS, "GetNamedSecurityInfo failed with error %ld\n", error);
     bret = GetAclInformation(pDacl, &acl_size, sizeof(acl_size), AclSizeInformation);
     ok(bret, "GetAclInformation failed\n");
-    todo_wine
     ok(acl_size.AceCount == 0, "GetAclInformation returned unexpected entry count (%ld != 0).\n",
                                acl_size.AceCount);
     LocalFree(pSD);
@@ -3877,9 +3876,10 @@ static void test_CreateDirectoryA(void)
     error = GetSecurityInfo(hTemp, SE_FILE_OBJECT,
                              OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
                              (PSID *)&owner, NULL, &pDacl, NULL, &pSD);
-    ok(error == ERROR_SUCCESS, "GetNamedSecurityInfo failed with error %d\n", error);
+    ok(error == ERROR_SUCCESS, "GetNamedSecurityInfo failed with error %ld\n", error);
     bret = GetAclInformation(pDacl, &acl_size, sizeof(acl_size), AclSizeInformation);
     ok(bret, "GetAclInformation failed\n");
+    todo_wine
     ok(acl_size.AceCount == 0, "GetAclInformation returned unexpected entry count (%ld != 0).\n",
                                acl_size.AceCount);
     LocalFree(pSD);
@@ -4411,6 +4411,16 @@ static void test_ConvertStringSecurityDescriptor(void)
         "D:P(A;;GRGW;;;BA)(A;;GRGW;;;S-1-5-21-0-0-0-1000)S:(ML;;NWNR;;;S-1-16-12288)", SDDL_REVISION_1, &pSD, NULL);
     ok(ret || broken(!ret && GetLastError() == ERROR_INVALID_DATATYPE) /* win2k */,
        "ConvertStringSecurityDescriptorToSecurityDescriptor failed with error %lu\n", GetLastError());
+    if (ret) LocalFree(pSD);
+
+    SetLastError(0xdeadbeef);
+    ret = ConvertStringSecurityDescriptorToSecurityDescriptorA(
+        "D: (D;OICI;GA;;;BG) (D;OICI;GA;;;AN) (A;OICI;GAGRGWGX;;;AU) (A;OICI;GA;;;BA)", SDDL_REVISION_1, &pSD, NULL);
+    ok(ret || broken(!ret && GetLastError() == ERROR_INVALID_DATATYPE) /* win2k */,
+       "ConvertStringSecurityDescriptorToSecurityDescriptor failed with error %lu\n", GetLastError());
+    acl = (ACL *)((char *)pSD + sizeof(SECURITY_DESCRIPTOR_RELATIVE));
+    ok(acl->AclSize == sizeof(*acl) * 12 /* 96 */, "got %u\n", acl->AclSize);
+    ok(acl->AceCount = 4, "got %u\n", acl->AceCount);
     if (ret) LocalFree(pSD);
 
     /* empty DACL */

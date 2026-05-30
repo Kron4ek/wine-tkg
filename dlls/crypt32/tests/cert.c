@@ -549,17 +549,17 @@ static void testCertProperties(void)
         HCRYPTPROV_OR_NCRYPT_KEY_HANDLE retrievedHandle = 0;
 
         ret = CertSetCertificateContextProperty(context,
-         CERT_NCRYPT_KEY_HANDLE_PROP_ID, 0, &ncryptHandle);
+         CERT_NCRYPT_KEY_HANDLE_PROP_ID, 0, (void *)ncryptHandle);
         ok(ret, "CertSetCertificateContextProperty failed: %08lx\n", GetLastError());
 
         /* Verify the key context was set with CERT_NCRYPT_KEY_SPEC */
         size = sizeof(keyContext);
-        keyContext.hCryptProv = keyContext.dwKeySpec = 0;
+        keyContext.hNCryptKey = keyContext.dwKeySpec = 0;
         ret = CertGetCertificateContextProperty(context,
          CERT_KEY_CONTEXT_PROP_ID, &keyContext, &size);
         ok(ret, "CertGetCertificateContextProperty failed: %08lx\n", GetLastError());
-        ok(keyContext.hCryptProv != 0,
-         "Expected non-zero hCryptProv, got 0\n");
+        ok(keyContext.hNCryptKey == ncryptHandle,
+         "Expected key context to now be hNCryptKey, got something else\n");
         ok(keyContext.dwKeySpec == CERT_NCRYPT_KEY_SPEC,
          "Expected dwKeySpec CERT_NCRYPT_KEY_SPEC, got %lx\n", keyContext.dwKeySpec);
 
@@ -568,8 +568,8 @@ static void testCertProperties(void)
         ret = CertGetCertificateContextProperty(context,
          CERT_NCRYPT_KEY_HANDLE_PROP_ID, &retrievedHandle, &size);
         ok(ret, "CertGetCertificateContextProperty failed: %08lx\n", GetLastError());
-        ok(retrievedHandle == keyContext.hCryptProv,
-         "Expected handle %Ix, got %Ix\n", keyContext.hCryptProv, retrievedHandle);
+        ok(retrievedHandle == keyContext.hNCryptKey,
+         "Expected handle %Ix, got %Ix\n", keyContext.hNCryptKey, retrievedHandle);
         ok(size == sizeof(retrievedHandle),
          "Expected size %Iu, got %lu\n", sizeof(retrievedHandle), size);
 

@@ -148,6 +148,8 @@ DEFINE_EXPECT(OnLeaveScript);
 #define DISPID_GLOBAL_THROWEXCEPTION  1027
 #define DISPID_GLOBAL_ISARRAYFIXED    1028
 #define DISPID_GLOBAL_MAXCHARSIZE     1029
+#define DISPID_GLOBAL_INVOKEDISP      1030
+#define DISPID_GLOBAL_INVOKEMETHOD    1031
 
 #define DISPID_TESTOBJ_PROPGET      2000
 #define DISPID_TESTOBJ_PROPPUT      2001
@@ -1242,6 +1244,8 @@ static HRESULT WINAPI Global_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD 
         { L"MaxCharSize",     DISPID_GLOBAL_MAXCHARSIZE },
         { L"firstDayOfWeek",  DISPID_GLOBAL_WEEKSTARTDAY },
         { L"globalCallback",  DISPID_GLOBAL_GLOBALCALLBACK },
+        { L"invokeDisp",      DISPID_GLOBAL_INVOKEDISP },
+        { L"invokeMethod",    DISPID_GLOBAL_INVOKEMETHOD },
         { L"testObj",         DISPID_GLOBAL_TESTOBJ },
         { L"collectionObj" ,  DISPID_GLOBAL_COLLOBJ },
         { L"vbvar",           DISPID_GLOBAL_VBVAR, REF_EXPECT(global_vbvar_d) },
@@ -1366,6 +1370,63 @@ static HRESULT WINAPI Global_InvokeEx(IDispatchEx *iface, DISPID id, LCID lcid, 
         V_VT(pvarRes) = VT_I4;
         V_I4(pvarRes) = MaxCharSize;
         return S_OK;
+
+    case DISPID_GLOBAL_INVOKEDISP: {
+        DISPPARAMS params = { NULL, NULL, 0, 0 };
+        VARIANT *arg = pdp->rgvarg;
+        EXCEPINFO ei;
+        HRESULT hr;
+
+        ok(wFlags == INVOKE_FUNC || wFlags == (INVOKE_FUNC|INVOKE_PROPERTYGET), "wFlags = %x\n", wFlags);
+        ok(pdp != NULL, "pdp == NULL\n");
+        ok(pdp->cArgs == 1, "cArgs = %d\n", pdp->cArgs);
+        if(V_VT(arg) == (VT_VARIANT|VT_BYREF))
+            arg = V_VARIANTREF(arg);
+        ok(V_VT(arg) == VT_DISPATCH, "V_VT(arg) = %d\n", V_VT(arg));
+
+        /* Mimic an external object invoking a function reference back into the
+         * engine while a script frame is on the stack. With the host leaving
+         * the error unhandled, native returns SCRIPT_E_RECORDED to the caller;
+         * Wine returns the raw error code instead. */
+        memset(&ei, 0, sizeof(ei));
+        hr = IDispatch_Invoke(V_DISPATCH(arg), DISPID_VALUE, &IID_NULL, 0,
+                              DISPATCH_METHOD, &params, NULL, &ei, NULL);
+        todo_wine ok(hr == SCRIPT_E_RECORDED, "inner Invoke returned %08lx\n", hr);
+        return S_OK;
+    }
+
+    case DISPID_GLOBAL_INVOKEMETHOD: {
+        DISPPARAMS params = { NULL, NULL, 0, 0 };
+        VARIANT *arg = pdp->rgvarg;
+        IDispatchEx *dispex;
+        EXCEPINFO ei;
+        VARIANT v;
+        DISPID did;
+        BSTR str;
+        HRESULT hr;
+
+        ok(pdp->cArgs == 1, "cArgs = %d\n", pdp->cArgs);
+        if(V_VT(arg) == (VT_VARIANT|VT_BYREF))
+            arg = V_VARIANTREF(arg);
+        ok(V_VT(arg) == VT_DISPATCH, "V_VT(arg) = %d\n", V_VT(arg));
+
+        hr = IDispatch_QueryInterface(V_DISPATCH(arg), &IID_IDispatchEx, (void**)&dispex);
+        ok(hr == S_OK, "QueryInterface(IDispatchEx) returned %08lx\n", hr);
+        str = SysAllocString(L"raiser");
+        hr = IDispatchEx_GetDispID(dispex, str, fdexNameCaseInsensitive, &did);
+        ok(hr == S_OK, "GetDispID(raiser) returned %08lx\n", hr);
+        SysFreeString(str);
+
+        /* As above, but for a class method invoked by an external object. With
+         * the host leaving the error unhandled, native returns DISP_E_EXCEPTION
+         * to the caller; Wine returns the raw error code instead. */
+        memset(&ei, 0, sizeof(ei));
+        V_VT(&v) = VT_EMPTY;
+        hr = IDispatchEx_InvokeEx(dispex, did, 0, DISPATCH_METHOD, &params, &v, &ei, NULL);
+        todo_wine ok(hr == DISP_E_EXCEPTION, "inner InvokeEx returned %08lx\n", hr);
+        IDispatchEx_Release(dispex);
+        return S_OK;
+    }
 
     case DISPID_GLOBAL_WEEKSTARTDAY:
         V_VT(pvarRes) = VT_I4;
@@ -2971,6 +3032,12 @@ static void test_parse_errors(void)
             NULL, S_OK, 1041
         },
         {
+            /* A global Sub collides with a global Dim of the same name - error 1041 */
+            L"Dim s\nSub S\nEnd Sub\n",
+            1, 4,
+            NULL, S_OK, 1041
+        },
+        {
             /* Expected identifier - error 1010 */
             L"Dim If\n",
             0, 4,
@@ -3517,6 +3584,99 @@ static void test_parse_errors(void)
     }
     SysFreeString(error_source_line);
     error_source_line = NULL;
+}
+
+static void test_redefine_scope(void)
+{
+    static const WCHAR *valid[] = {
+        /* a local Dim may shadow a global Sub */
+        L"Sub S\nEnd Sub\nSub Other\nDim s\nEnd Sub\n",
+        /* a local Const may shadow a global Sub */
+        L"Sub S\nEnd Sub\nSub Other\nConst s = 1\nEnd Sub\n",
+        /* a Class name does not collide with a local Dim of another Sub */
+        L"Class S\nEnd Class\nSub Other\nDim s\nEnd Sub\n",
+        L"Sub Other\nDim s\nEnd Sub\nClass S\nEnd Class\n",
+    };
+    /* A class member lives in a separate namespace, so its name may collide
+     * with a global Dim or Const. Each script also calls the member to prove
+     * it stays usable. */
+    static const WCHAR *valid_class_member[] = {
+        L"Class C\nPublic Function M\nM = 42\nEnd Function\nEnd Class\n"
+        L"Dim M\nDim o : Set o = New C\nCall ok(o.M = 42, \"o.M = \" & o.M)\n",
+        L"Class C\nPublic Function M\nM = 42\nEnd Function\nEnd Class\n"
+        L"Const M = 7\nDim o : Set o = New C\nCall ok(o.M = 42, \"o.M = \" & o.M)\n",
+    };
+    HRESULT hres;
+    unsigned i;
+
+    for (i = 0; i < ARRAY_SIZE(valid); i++) {
+        hres = parse_script_wr(valid[i]);
+        ok(hres == S_OK, "[%u] parse returned %08lx\n", i, hres);
+    }
+
+    for (i = 0; i < ARRAY_SIZE(valid_class_member); i++) {
+        hres = parse_script_wr(valid_class_member[i]);
+        ok(hres == S_OK, "[%u] class member parse returned %08lx\n", i, hres);
+    }
+}
+
+static void test_getref_error_reporting(void)
+{
+    /* An error raised inside a function reference obtained from GetRef, when
+     * the reference is called from script under the caller's On Error Resume
+     * Next, must propagate to that caller rather than be reported to the host. */
+    static const WCHAR *src =
+        L"Dim cb : Set cb = GetRef(\"RaisesError\")\n"
+        L"Sub CallIndirect\n"
+        L"    On Error Resume Next\n"
+        L"    cb\n"
+        L"    On Error Goto 0\n"
+        L"End Sub\n"
+        L"Sub RaisesError\n"
+        L"    Err.Raise 5\n"
+        L"End Sub\n"
+        L"CallIndirect\n";
+    HRESULT hres;
+
+    SET_EXPECT(OnScriptError);
+    hres = parse_script_wr(src);
+    ok(hres == S_OK, "parse_script_wr returned %08lx\n", hres);
+    ok(!called_OnScriptError,
+        "error in a GetRef reference under the caller's On Error Resume Next was reported to the host\n");
+    CLEAR_CALLED(OnScriptError);
+}
+
+static void test_getref_external_caller_error(void)
+{
+    static const WCHAR *src =
+        L"Dim cb : Set cb = GetRef(\"RaisesError\")\n"
+        L"Sub RaisesError\n"
+        L"    Err.Raise 5\n"
+        L"End Sub\n"
+        L"Call invokeDisp(cb)\n";
+    HRESULT hres;
+
+    SET_EXPECT(OnScriptError);
+    hres = parse_script_wr(src);
+    ok(hres == S_OK, "parse_script_wr returned %08lx\n", hres);
+    CHECK_CALLED(OnScriptError);
+}
+
+static void test_external_caller_method_error(void)
+{
+    static const WCHAR *src =
+        L"Class C\n"
+        L"    Public Sub raiser\n"
+        L"        Err.Raise 5\n"
+        L"    End Sub\n"
+        L"End Class\n"
+        L"Call invokeMethod(new C)\n";
+    HRESULT hres;
+
+    SET_EXPECT(OnScriptError);
+    hres = parse_script_wr(src);
+    ok(hres == S_OK, "parse_script_wr returned %08lx\n", hres);
+    CHECK_CALLED(OnScriptError);
 }
 
 static void test_msgbox(void)
@@ -4215,6 +4375,10 @@ static void run_tests(void)
     test_isexpression();
     test_option_explicit_errors();
     test_parse_errors();
+    test_redefine_scope();
+    test_getref_error_reporting();
+    test_getref_external_caller_error();
+    test_external_caller_method_error();
     test_parse_context();
     test_callbacks();
     test_multiple_parse();

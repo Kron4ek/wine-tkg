@@ -1,0 +1,6 @@
+MODULE    = rtscom.dll
+IMPORTS   = uuid
+
+SOURCES = \
+	rtscom_main.c \
+	rtscom_reg.idl

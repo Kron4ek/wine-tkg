@@ -87,6 +87,29 @@ Call ok(&h0& = 0, "&h0& <> 0")
 Call ok(&h00 = 0, "&h00 <> 0")
 Call ok(&h000000000 = 0, "&h000000000 <> 0")
 
+' Octal literals (&O...)
+Call ok(&O0 = 0, "&O0 <> 0")
+Call ok(&O17 = 15, "&O17 <> 15")
+Call ok(&o17 = 15, "&o17 (lowercase) <> 15")
+Call ok(&O77 = 63, "&O77 <> 63")
+Call ok(&O777 = 511, "&O777 <> 511")
+Call ok(&O177777 = -1, "&O177777 <> -1")
+Call ok(&O200000 = 65536, "&O200000 <> 65536")
+Call ok(&O17777777777 = 2147483647, "&O17777777777 <> 2147483647")
+Call ok(&O37777777777 = -1, "&O37777777777 <> -1")
+Call ok(&O17& = 15, "&O17& <> 15")
+Call ok(&O177777& = 65535, "&O177777& <> 65535")
+Call ok(getVT(&O77) = "VT_I2", "getVT(&O77) is not VT_I2")
+Call ok(getVT(&O200000) = "VT_I4", "getVT(&O200000) is not VT_I4")
+Call ok(getVT(&O177777&) = "VT_I4", "getVT(&O177777&) is not VT_I4")
+
+sub testOctalLiteralErrors()
+    Dim oct
+    on error resume next
+    Err.Clear : oct = Eval("&O8") : call ok(Err.number = 1002, "&O8 should be syntax error, got err=" & Err.number)
+end sub
+call testOctalLiteralErrors()
+
 ' Test concat when no space and var begins with h
 hi = "y"
 x = "x" &hi
@@ -439,6 +462,36 @@ Call ok(getVT(# 1/1/2011 #) = "VT_DATE", "getVT(# 1/1/2011 #) is not VT_DATE")
 Call ok(getVT(1e2) = "VT_R8", "getVT(1e2) is not VT_R8")
 Call ok(getVT(1e0) = "VT_R8", "getVT(1e0) is not VT_R8")
 Call ok(getVT(0.1e2) = "VT_R8", "getVT(0.1e2) is not VT_R8")
+' Subnormal doubles: literals smaller than DBL_MIN (~1e-308) parse as positive
+' subnormals down to ~5e-324; anything smaller rounds to zero.
+Call ok(1e-309 > 0, "1e-309 should be subnormal positive, got " & 1e-309)
+Call ok(1e-320 > 0, "1e-320 should be subnormal positive, got " & 1e-320)
+Call ok(5e-324 > 0, "5e-324 should be subnormal positive, got " & 5e-324)
+Call ok(-1e-309 < 0, "-1e-309 should be subnormal negative, got " & -1e-309)
+Call ok(getVT(1e-309) = "VT_R8", "getVT(1e-309) = " & getVT(1e-309))
+Call ok(1e-400 = 0, "1e-400 should round to 0, got " & 1e-400)
+' Boundary at DBL_MAX: the parser must not collapse e308 to infinity.
+Call ok(1e308 > 0, "1e308 should be finite positive, got " & 1e308)
+Call ok(1.7976931348623157e308 > 1e307, "DBL_MAX should be larger than 1e307")
+Call ok(getVT(1.7976931348623157e308) = "VT_R8", "getVT(DBL_MAX) is not VT_R8")
+Call ok(1.00000000000000000000000000000000000000000000000000000000000000000000000000000000 = 1, "long 1.0 literal should equal 1")
+Call ok(0.00000000000000000000000000000000000000000000000000000000000000000000000000000001 > 0, "long fractional literal should be positive subnormal/small")
+Call ok(00000000000000000000000000000000000000000000000000000000000000000000000000000001 = 1, "long leading-zero integer literal should equal 1")
+Call ok(getVT(00000000000000000000000000000000000000000000000000000000000000000000000000000001) = "VT_I2", "long leading-zero integer literal should stay VT_I2")
+Call ok(00000000000000000000000000000000000000000000000000000000000000000000000000000000.5 = 0.5, "long leading-zero decimal literal should equal 0.5")
+
+' Above DBL_MAX must raise err 1031 (Invalid number) at compile time, not
+' silently overflow to infinity.
+Sub TestNumericOverflow
+    On Error Resume Next
+    Err.Clear : Execute "Dim r : r = 1e309"
+    Call ok(Err.Number = 1031, "1e309 should err 1031, got " & Err.Number)
+    Err.Clear : Execute "Dim r : r = -1e309"
+    Call ok(Err.Number = 1031, "-1e309 should err 1031, got " & Err.Number)
+    Err.Clear : Execute "Dim r : r = 1.8e308"
+    Call ok(Err.Number = 1031, "1.8e308 should err 1031, got " & Err.Number)
+End Sub
+Call TestNumericOverflow
 Call ok(getVT(1 & 100000) = "VT_BSTR", "getVT(1 & 100000) is not VT_BSTR")
 Call ok(getVT(-empty) = "VT_I2", "getVT(-empty) = " & getVT(-empty))
 Call ok(getVT(-null) = "VT_NULL", "getVT(-null) = " & getVT(-null))
@@ -562,6 +615,34 @@ Call ok(getVT(Empty Imp Null) = "VT_I4",     "getVT(Empty Imp Null) = " & getVT(
 
 Call ok((Not Empty) = -1,                    "Not Empty is not -1")
 Call ok(getVT(Not Empty) = "VT_I4",          "getVT(Not Empty) = " & getVT(Not Empty))
+
+' Logical/bitwise ops with BSTR operands coerce the string to a number when
+' parseable (matching VarXor), giving a Long result instead of treating the
+' string as a Boolean.
+Call ok(("1" And "2") = 0,                   """1"" And ""2"" is not 0")
+Call ok(("5" And "3") = 1,                   """5"" And ""3"" is not 1")
+Call ok(getVT("1" And "2") = "VT_I4",        "getVT(""1"" And ""2"") = " & getVT("1" And "2"))
+Call ok(("1" Or "2") = 3,                    """1"" Or ""2"" is not 3")
+Call ok(("5" Or "3") = 7,                    """5"" Or ""3"" is not 7")
+Call ok(getVT("1" Or "2") = "VT_I4",         "getVT(""1"" Or ""2"") = " & getVT("1" Or "2"))
+Call ok(("1" Imp "2") = -2,                  """1"" Imp ""2"" is not -2")
+Call ok(getVT("1" Imp "2") = "VT_I4",        "getVT(""1"" Imp ""2"") = " & getVT("1" Imp "2"))
+
+' Mixed BSTR + numeric stays Long.
+Call ok((5 And "3") = 1,                     "5 And ""3"" is not 1")
+Call ok(("5" And 3) = 1,                     """5"" And 3 is not 1")
+Call ok(getVT(5 And "3") = "VT_I4",          "getVT(5 And ""3"") = " & getVT(5 And "3"))
+
+' BSTR with non-numeric content falls back to Boolean conversion, which
+' fails with type mismatch for arbitrary text.
+Sub testLogicalBstrErr
+    Dim r
+    on error resume next
+    Err.Clear : r = "abc" And "2" : call ok(Err.Number = 13, """abc"" And ""2"" err=" & Err.Number)
+    Err.Clear : r = "abc" Or  "2" : call ok(Err.Number = 13, """abc"" Or ""2"" err=" & Err.Number)
+    Err.Clear : r = "abc" Imp "2" : call ok(Err.Number = 13, """abc"" Imp ""2"" err=" & Err.Number)
+End Sub
+Call testLogicalBstrErr
 
 ' Arithmetic binary ops coerce Empty to VT_I2 0 — narrower than the logical
 ' family — so the widening picks up whichever side has the larger numeric
@@ -2799,6 +2880,103 @@ sub TestRedimInputArg
 end sub
 Call TestRedimInputArg
 
+sub TestExecuteGlobalRedim
+    on error resume next
+
+    ' Dim arr() already declared as a dynamic array in a prior compile unit.
+    err.clear : ExecuteGlobal "Dim egDynArr()"
+    call ok(err.number = 0, "first Dim egDynArr() err=" & err.number)
+
+    err.clear : ExecuteGlobal "Dim egDynArr()"
+    call ok(err.number = 13, "second Dim egDynArr() err=" & err.number)
+
+    err.clear : ExecuteGlobal "Dim egDynArr() : ReDim egDynArr(5)"
+    call ok(err.number = 13, "Dim+ReDim egDynArr() err=" & err.number)
+
+    ' Dim arr(N) already declared as a fixed array in a prior compile unit.
+    err.clear : ExecuteGlobal "Dim egFixArr(2)"
+    call ok(err.number = 0, "first Dim egFixArr(2) err=" & err.number)
+
+    err.clear : ExecuteGlobal "Dim egFixArr(2)"
+    call ok(err.number = 13, "second Dim egFixArr(2) err=" & err.number)
+
+    err.clear : ExecuteGlobal "Dim egFixArr()"
+    call ok(err.number = 13, "second Dim egFixArr() err=" & err.number)
+
+    ' Re-Dim'ing a previously scalar Dim is allowed.
+    err.clear : ExecuteGlobal "Dim egScalar"
+    call ok(err.number = 0, "first Dim egScalar err=" & err.number)
+
+    err.clear : ExecuteGlobal "Dim egScalar"
+    call ok(err.number = 0, "second Dim egScalar (scalar) err=" & err.number)
+
+    err.clear : ExecuteGlobal "Dim egScalar()"
+    call ok(err.number = 0, "second Dim egScalar() (array) err=" & err.number)
+end sub
+Call TestExecuteGlobalRedim
+
+Class FixedClassArr
+    Private mArr(2)
+    Public LastErr
+    Public Sub Resize(n)
+        On Error Resume Next
+        Err.Clear : ReDim mArr(n) : LastErr = Err.Number
+    End Sub
+    Public Sub ResizePreserve(n)
+        On Error Resume Next
+        Err.Clear : ReDim Preserve mArr(n) : LastErr = Err.Number
+    End Sub
+End Class
+
+Class FixedClassArr2D
+    Private mArr(2, 3)
+    Public LastErr
+    Public Sub Resize(a, b)
+        On Error Resume Next
+        Err.Clear : ReDim mArr(a, b) : LastErr = Err.Number
+    End Sub
+End Class
+
+Class DynamicClassArr
+    Private mArr()
+    Public LastErr
+    Public Function UB : UB = UBound(mArr) : End Function
+    Public Sub Resize(n)
+        On Error Resume Next
+        Err.Clear : ReDim mArr(n) : LastErr = Err.Number
+    End Sub
+End Class
+
+Class ScalarClassMember
+    Private mArr
+    Public LastErr
+    Public Function UB : UB = UBound(mArr) : End Function
+    Public Sub Resize(n)
+        On Error Resume Next
+        Err.Clear : ReDim mArr(n) : LastErr = Err.Number
+    End Sub
+End Class
+
+dim cFix : Set cFix = New FixedClassArr
+cFix.Resize 5
+call ok(cFix.LastErr = 10, "ReDim fixed class member err = " & cFix.LastErr)
+cFix.ResizePreserve 5
+call ok(cFix.LastErr = 10, "ReDim Preserve fixed class member err = " & cFix.LastErr)
+
+dim cFix2D : Set cFix2D = New FixedClassArr2D
+cFix2D.Resize 5, 7
+call ok(cFix2D.LastErr = 10, "ReDim fixed 2D class member err = " & cFix2D.LastErr)
+
+dim cDyn : Set cDyn = New DynamicClassArr
+cDyn.Resize 5
+call ok(cDyn.LastErr = 0, "ReDim dynamic class member err = " & cDyn.LastErr)
+call ok(cDyn.UB = 5, "ReDim dynamic class member UB = " & cDyn.UB)
+
+dim cScalar : Set cScalar = New ScalarClassMember
+cScalar.Resize 5
+call ok(cScalar.LastErr = 0, "ReDim scalar->array class member err = " & cScalar.LastErr)
+call ok(cScalar.UB = 5, "ReDim scalar->array class member UB = " & cScalar.UB)
+
 sub TestReDimList
     dim x, y
 
@@ -4284,7 +4462,30 @@ Call ok(Err.Number = 11, "division by zero: err.number = " & Err.Number)
 Err.Clear
 Dim nullResult
 nullResult = CLng(Null)
-todo_wine_ok Err.Number = 94, "CLng(Null): err.number = " & Err.Number
+call ok(Err.Number = 94, "CLng(Null): err.number = " & Err.Number)
+
+' Each Cxxx coercion raises err 94 on Null and err 91 on Nothing.
+Sub testCoerceNullNothing
+    Dim nothingObj : Set nothingObj = Nothing
+    on error resume next
+
+    Err.Clear : call CInt(Null)        : call ok(Err.Number = 94, "CInt(Null) err=" & Err.Number)
+    Err.Clear : call CInt(nothingObj)  : call ok(Err.Number = 91, "CInt(Nothing) err=" & Err.Number)
+    Err.Clear : call CLng(nothingObj)  : call ok(Err.Number = 91, "CLng(Nothing) err=" & Err.Number)
+    Err.Clear : call CBool(Null)       : call ok(Err.Number = 94, "CBool(Null) err=" & Err.Number)
+    Err.Clear : call CBool(nothingObj) : call ok(Err.Number = 91, "CBool(Nothing) err=" & Err.Number)
+    Err.Clear : call CByte(Null)       : call ok(Err.Number = 94, "CByte(Null) err=" & Err.Number)
+    Err.Clear : call CByte(nothingObj) : call ok(Err.Number = 91, "CByte(Nothing) err=" & Err.Number)
+    Err.Clear : call CDbl(Null)        : call ok(Err.Number = 94, "CDbl(Null) err=" & Err.Number)
+    Err.Clear : call CDbl(nothingObj)  : call ok(Err.Number = 91, "CDbl(Nothing) err=" & Err.Number)
+    Err.Clear : call CSng(Null)        : call ok(Err.Number = 94, "CSng(Null) err=" & Err.Number)
+    Err.Clear : call CSng(nothingObj)  : call ok(Err.Number = 91, "CSng(Nothing) err=" & Err.Number)
+    Err.Clear : call CCur(Null)        : call ok(Err.Number = 94, "CCur(Null) err=" & Err.Number)
+    Err.Clear : call CCur(nothingObj)  : call ok(Err.Number = 91, "CCur(Nothing) err=" & Err.Number)
+    Err.Clear : call CDate(nothingObj) : call ok(Err.Number = 91, "CDate(Nothing) err=" & Err.Number)
+    Err.Clear : call CStr(nothingObj)  : call ok(Err.Number = 91, "CStr(Nothing) err=" & Err.Number)
+End Sub
+Call testCoerceNullNothing
 
 ' Error 429: ActiveX component can't create object
 Err.Clear

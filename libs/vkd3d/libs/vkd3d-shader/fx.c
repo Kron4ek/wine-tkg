@@ -2426,7 +2426,10 @@ static uint32_t write_shader_blob(const struct hlsl_ir_compile *compile, struct 
     ret = hlsl_emit_vsir(ctx, &compile_info, compile->decl, &compile->initializers, &program, &rdef);
     ctx->profile = profile;
     if (ret < 0)
+    {
+        vsir_program_cleanup(&program);
         return 0;
+    }
 
     ret = vsir_program_compile(&program, &rdef, vkd3d_shader_init_config_flags(),
             &compile_info, &source, ctx->message_context);

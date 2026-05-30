@@ -21,6 +21,7 @@ static void dump_varargs_acl( const char *prefix, data_size_t size );
 static void dump_varargs_apc_call( const char *prefix, data_size_t size );
 static void dump_varargs_apc_result( const char *prefix, data_size_t size );
 static void dump_varargs_bytes( const char *prefix, data_size_t size );
+static void dump_varargs_class_info( const char *prefix, data_size_t size );
 static void dump_varargs_contexts( const char *prefix, data_size_t size );
 static void dump_varargs_cursor_positions( const char *prefix, data_size_t size );
 static void dump_varargs_debug_event( const char *prefix, data_size_t size );
@@ -1767,6 +1768,13 @@ static void dump_set_window_info_reply( const struct set_window_info_reply *req 
     dump_uint64( " old_info=", &req->old_info );
 }
 
+static void dump_set_window_fnid_request( const struct set_window_fnid_request *req )
+{
+    fprintf( stderr, " handle=%08x", req->handle );
+    fprintf( stderr, ", atom=%04x", req->atom );
+    fprintf( stderr, ", fnid=%08x", req->fnid );
+}
+
 static void dump_set_parent_request( const struct set_parent_request *req )
 {
     fprintf( stderr, " handle=%08x", req->handle );
@@ -2395,12 +2403,9 @@ static void dump_create_class_request( const struct create_class_request *req )
 {
     fprintf( stderr, " local=%d", req->local );
     fprintf( stderr, ", atom=%04x", req->atom );
-    fprintf( stderr, ", style=%08x", req->style );
-    dump_uint64( ", instance=", &req->instance );
     dump_uint64( ", client_ptr=", &req->client_ptr );
-    fprintf( stderr, ", cls_extra=%d", req->cls_extra );
-    fprintf( stderr, ", win_extra=%d", req->win_extra );
     fprintf( stderr, ", name_offset=%u", req->name_offset );
+    dump_varargs_class_info( ", info=", cur_size );
     dump_varargs_unicode_str( ", name=", cur_size );
 }
 
@@ -2420,6 +2425,8 @@ static void dump_destroy_class_request( const struct destroy_class_request *req 
 static void dump_destroy_class_reply( const struct destroy_class_reply *req )
 {
     dump_uint64( " client_ptr=", &req->client_ptr );
+    fprintf( stderr, ", background=%08x", req->background );
+    dump_uint64( ", menu_name=", &req->menu_name );
 }
 
 static void dump_set_class_info_request( const struct set_class_info_request *req )
@@ -3667,6 +3674,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_window_info_request,
     (dump_func)dump_init_window_info_request,
     (dump_func)dump_set_window_info_request,
+    (dump_func)dump_set_window_fnid_request,
     (dump_func)dump_set_parent_request,
     (dump_func)dump_get_window_parents_request,
     (dump_func)dump_get_window_list_request,
@@ -3977,6 +3985,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_window_info_reply,
     NULL,
     (dump_func)dump_set_window_info_reply,
+    NULL,
     (dump_func)dump_set_parent_reply,
     (dump_func)dump_get_window_parents_reply,
     (dump_func)dump_get_window_list_reply,
@@ -4287,6 +4296,7 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "get_window_info",
     "init_window_info",
     "set_window_info",
+    "set_window_fnid",
     "set_parent",
     "get_window_parents",
     "get_window_list",

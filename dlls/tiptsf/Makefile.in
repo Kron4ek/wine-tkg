@@ -1,0 +1,6 @@
+MODULE    = tiptsf.dll
+IMPORTS   =
+
+SOURCES = \
+	tiptsf.idl \
+	tiptsf_main.c

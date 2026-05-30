@@ -1456,6 +1456,7 @@ const char *gpu_device_name( UINT16 vendor, UINT16 device, const char *default_n
     case MAKELONG(0x8086, 0x193d): return "Intel(R) Iris(TM) Pro Graphics P580";
     case MAKELONG(0x8086, 0x87c0): return "Intel(R) UHD Graphics 617";
     case MAKELONG(0x8086, 0x3ea0): return "Intel(R) UHD Graphics 620";
+    case MAKELONG(0x8086, 0x5917): return "Intel(R) UHD Graphics 620";
     case MAKELONG(0x8086, 0x591e): return "Intel(R) HD Graphics 615";
     case MAKELONG(0x8086, 0x5916): return "Intel(R) HD Graphics 620";
     case MAKELONG(0x8086, 0x5912): return "Intel(R) HD Graphics 630";
@@ -3173,10 +3174,11 @@ static BOOL is_valid_dpi_awareness_context( UINT context, UINT dpi )
 
 UINT get_thread_dpi_awareness_context(void)
 {
-    struct ntuser_thread_info *info = NtUserGetThreadInfo();
+    struct user_thread_info *info = get_user_thread_info();
     UINT context;
 
-    if (!(context = info->dpi_context)) context = ReadNoFence( &dpi_context );
+    if (!info->client_info || !(context = info->client_info->dpi_context))
+        context = ReadNoFence( &dpi_context );
     return context ? context : NTUSER_DPI_UNAWARE;
 }
 
@@ -3209,7 +3211,7 @@ UINT get_system_dpi(void)
 /* keep in sync with user32 */
 UINT set_thread_dpi_awareness_context( UINT context )
 {
-    struct ntuser_thread_info *info = NtUserGetThreadInfo();
+    struct user_thread_info *info = get_user_thread_info();
     UINT prev;
 
     if (!is_valid_dpi_awareness_context( context, system_dpi ))
@@ -3218,9 +3220,11 @@ UINT set_thread_dpi_awareness_context( UINT context )
         return 0;
     }
 
-    if (!(prev = info->dpi_context)) prev = NtUserGetProcessDpiAwarenessContext( GetCurrentProcess() ) | NTUSER_DPI_CONTEXT_FLAG_PROCESS;
-    if (NTUSER_DPI_CONTEXT_GET_FLAGS( context ) & NTUSER_DPI_CONTEXT_FLAG_PROCESS) info->dpi_context = 0;
-    else info->dpi_context = context;
+    if (!info->client_info) return 0;
+    if (!(prev = info->client_info->dpi_context))
+        prev = NtUserGetProcessDpiAwarenessContext( GetCurrentProcess() ) | NTUSER_DPI_CONTEXT_FLAG_PROCESS;
+    if (NTUSER_DPI_CONTEXT_GET_FLAGS( context ) & NTUSER_DPI_CONTEXT_FLAG_PROCESS) info->client_info->dpi_context = 0;
+    else info->client_info->dpi_context = context;
 
     return prev;
 }
@@ -7467,6 +7471,7 @@ static void thread_detach(void)
     if (thread_info->idle_event) NtClose( thread_info->idle_event );
     free( thread_info->session_data );
     free( thread_info->mouse_tracking_info );
+    free( thread_info );
 
     exiting_thread_id = 0;
 }

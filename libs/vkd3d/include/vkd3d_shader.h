@@ -62,6 +62,7 @@ enum vkd3d_shader_api_version
     VKD3D_SHADER_API_VERSION_1_17,
     VKD3D_SHADER_API_VERSION_1_18,
     VKD3D_SHADER_API_VERSION_1_19,
+    VKD3D_SHADER_API_VERSION_2_0,
 
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_API_VERSION),
 };
@@ -213,7 +214,9 @@ enum vkd3d_shader_compile_option_backward_compatibility
      *  - POSITION to SV_Position for vertex shader outputs, pixel shader inputs,
      *    and geometry shader inputs and outputs;
      *  - COLORN to SV_TargetN for pixel shader outputs;
-     *  - DEPTH to SV_Depth for pixel shader outputs.
+     *  - DEPTH to SV_Depth for pixel shader outputs;
+     *  - VFACE to SV_IsFrontFace for pixel shader inputs;
+     *  - VPOS to SV_Position for pixel shader inputs.
      */
     VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_MAP_SEMANTIC_NAMES = 0x00000001,
     /**

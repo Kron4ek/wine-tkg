@@ -3075,10 +3075,19 @@ BOOL WINAPI TpSetPoolMinThreads( TP_POOL *pool, DWORD minimum )
  */
 VOID WINAPI TpSetTimer( TP_TIMER *timer, LARGE_INTEGER *timeout, LONG period, LONG window_length )
 {
+    TpSetTimerEx(timer, timeout, period, window_length);
+}
+
+/***********************************************************************
+ *           TpSetTimerEx    (NTDLL.@)
+ */
+BOOL WINAPI TpSetTimerEx( TP_TIMER *timer, LARGE_INTEGER *timeout, LONG period, LONG window_length )
+{
     struct threadpool_object *this = impl_from_TP_TIMER( timer );
     struct threadpool_object *other_timer;
     struct list *pending_timers;
     BOOL submit_timer = FALSE;
+    BOOL timer_previously_set = FALSE;
     ULONGLONG timestamp;
 
     TRACE( "%p %p %lu %lu\n", timer, timeout, period, window_length );
@@ -3122,6 +3131,7 @@ VOID WINAPI TpSetTimer( TP_TIMER *timer, LARGE_INTEGER *timeout, LONG period, LO
     /* First remove existing timeout. */
     if (this->u.timer.timer_pending)
     {
+        timer_previously_set = TRUE;
         list_remove( &this->u.timer.timer_entry );
         this->u.timer.timer_pending = FALSE;
     }
@@ -3157,6 +3167,8 @@ VOID WINAPI TpSetTimer( TP_TIMER *timer, LARGE_INTEGER *timeout, LONG period, LO
 
     if (submit_timer)
        tp_object_submit( this, FALSE );
+
+    return timer_previously_set;
 }
 
 /***********************************************************************

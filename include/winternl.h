@@ -5456,6 +5456,7 @@ NTSYSAPI void      WINAPI TpSetPoolMaxThreads(TP_POOL *,DWORD);
 NTSYSAPI BOOL      WINAPI TpSetPoolMinThreads(TP_POOL *,DWORD);
 NTSYSAPI NTSTATUS  WINAPI TpSetPoolStackInformation(TP_POOL *, TP_POOL_STACK_INFORMATION *stack_info);
 NTSYSAPI void      WINAPI TpSetTimer(TP_TIMER *, LARGE_INTEGER *,LONG,LONG);
+NTSYSAPI BOOL      WINAPI TpSetTimerEx(TP_TIMER *, LARGE_INTEGER *,LONG,LONG);
 NTSYSAPI void      WINAPI TpSetWait(TP_WAIT *,HANDLE,LARGE_INTEGER *);
 NTSYSAPI NTSTATUS  WINAPI TpSimpleTryPost(PTP_SIMPLE_CALLBACK,PVOID,TP_CALLBACK_ENVIRON *);
 NTSYSAPI void      WINAPI TpStartAsyncIoOperation(TP_IO *);
@@ -5585,11 +5586,6 @@ static inline PLIST_ENTRY RemoveTailList(PLIST_ENTRY le)
     if (e != le) e->Flink = e->Blink = NULL;
     return e;
 }
-
-/* Wine internal functions */
-
-NTSYSAPI NTSTATUS WINAPI wine_nt_to_unix_file_name( const OBJECT_ATTRIBUTES *attr, char *nameA, ULONG *size,
-                                                    UINT disposition );
 
 
 #ifdef __WINESRC__

@@ -25,6 +25,7 @@
 
 #define COBJMACROS
 #include "winuser.h"
+#include "initguid.h"
 #include "ole2.h"
 #include "msinkaut.h"
 

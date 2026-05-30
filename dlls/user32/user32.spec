@@ -613,7 +613,7 @@
 @ stdcall GetMenuStringW(long long ptr long long)
 @ stdcall GetMessageA(ptr long long long)
 @ stdcall GetMessageExtraInfo()
-@ stdcall GetMessagePos()
+@ stdcall GetMessagePos() NtUserGetMessagePos
 @ stdcall GetMessageTime()
 @ stdcall GetMessageW(ptr long long long)
 @ stdcall GetMonitorInfoA(long ptr)
@@ -1064,7 +1064,7 @@
 @ stdcall SetMenuItemBitmaps(long long long long long)
 @ stdcall SetMenuItemInfoA(long long long ptr)
 @ stdcall SetMenuItemInfoW(long long long ptr)
-@ stdcall SetMessageExtraInfo(long)
+@ stdcall SetMessageExtraInfo(long) NtUserSetMessageExtraInfo
 @ stdcall SetMessageQueue(long)
 # @ stub SetMirrorRendering
 @ stdcall SetParent(long long) NtUserSetParent

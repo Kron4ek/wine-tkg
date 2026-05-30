@@ -871,8 +871,16 @@ DWORD WINAPI NtUserGetQueueStatus( UINT flags )
     return ret;
 }
 
+/***********************************************************************
+ *           NtUserGetMessagePos (win32u.@)
+ */
+DWORD WINAPI NtUserGetMessagePos(void)
+{
+    return get_user_thread_info()->message_pos;
+}
+
 /*******************************************************************
- *           NtUserGetThreadInfo (win32u.@)
+ *           NtUserGetThreadState (win32u.@)
  */
 ULONG_PTR WINAPI NtUserGetThreadState( USERTHREADSTATECLASS cls )
 {
@@ -899,7 +907,7 @@ ULONG_PTR WINAPI NtUserGetThreadState( USERTHREADSTATECLASS cls )
         return (ULONG_PTR)get_default_ime_window( 0 );
 
     case UserThreadStateDefaultInputContext:
-        return NtUserGetThreadInfo()->default_imc;
+        return (ULONG_PTR)get_default_input_context();
 
     case UserThreadStateInputState:
         return get_input_state();
@@ -908,19 +916,30 @@ ULONG_PTR WINAPI NtUserGetThreadState( USERTHREADSTATECLASS cls )
         return (ULONG_PTR)NtUserGetCursor();
 
     case UserThreadStateExtraInfo:
-        return NtUserGetThreadInfo()->message_extra;
+        return get_user_thread_info()->message_extra;
 
     case UserThreadStateInSendMessage:
-        return NtUserGetThreadInfo()->receive_flags;
+        return get_send_message_flags();
 
     case UserThreadStateMessageTime:
-        return NtUserGetThreadInfo()->message_time;
+        return get_user_thread_info()->message_time;
 
     case UserThreadStateIsForeground:
     default:
         WARN( "unsupported class %u\n", cls );
         return 0;
     }
+}
+
+/***********************************************************************
+ *           NtUserSetMessageExtraInfo (win32u.@)
+ */
+LPARAM WINAPI NtUserSetMessageExtraInfo( LPARAM lparam )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    LPARAM old_value = thread_info->message_extra;
+    thread_info->message_extra = lparam;
+    return old_value;
 }
 
 /***********************************************************************
@@ -977,9 +996,6 @@ static HKL get_locale_kbd_layout(void)
 
 /***********************************************************************
  *	     NtUserGetKeyboardLayout    (win32u.@)
- *
- * Device handle for keyboard layout defaulted to
- * the language id. This is the way Windows default works.
  */
 HKL WINAPI NtUserGetKeyboardLayout( DWORD thread_id )
 {
@@ -1426,11 +1442,10 @@ BOOL WINAPI NtUserGetKeyboardLayoutName( WCHAR *name )
 
     layout = NtUserGetKeyboardLayout( 0 );
     id = HandleToUlong( layout );
-    if (HIWORD( id ) == LOWORD( id )) id = LOWORD( id );
+    if (!(HIWORD( id ) & 0xf000)) id = HIWORD( id );
     snprintf( buffer, sizeof(buffer), "%08X", id );
     asciiz_to_unicode( name, buffer );
-
-    if ((hkey = reg_open_key( NULL, keyboard_layouts_keyW, sizeof(keyboard_layouts_keyW) )))
+    if ((HIWORD( id ) & 0x1000) && (hkey = reg_open_key( NULL, keyboard_layouts_keyW, sizeof(keyboard_layouts_keyW) )))
     {
         while (!NtEnumerateKey( hkey, i++, KeyNodeInformation, key,
                                 sizeof(buffer) - sizeof(WCHAR), &len ))

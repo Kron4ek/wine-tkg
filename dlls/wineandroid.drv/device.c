@@ -72,6 +72,9 @@ static int log_flags;
 
 WINE_DEFAULT_DEBUG_CHANNEL(android);
 
+static int desktop_client_fd = -1;
+static jobject java_object;
+
 #ifndef SYNC_IOC_WAIT
 #define SYNC_IOC_WAIT _IOW('>', 0, __s32)
 #endif
@@ -79,6 +82,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(android);
 static HWND capture_window;
 static HWND desktop_window;
 
+int event_sink = -1;
 static pthread_mutex_t dispatch_ioctl_lock = PTHREAD_MUTEX_INITIALIZER;
 
 #define ANDROIDCONTROLTYPE  ((ULONG)'A')
@@ -86,6 +90,7 @@ static pthread_mutex_t dispatch_ioctl_lock = PTHREAD_MUTEX_INITIALIZER;
 
 enum android_ioctl
 {
+    IOCTL_CREATE_DESKTOP_VIEW,
     IOCTL_CREATE_WINDOW,
     IOCTL_DESTROY_WINDOW,
     IOCTL_WINDOW_POS_CHANGED,
@@ -145,6 +150,12 @@ struct ioctl_header
 {
     int  hwnd;
     BOOL opengl;
+};
+
+struct ioctl_android_create_desktop_view
+{
+    struct ioctl_header hdr;
+    int                 log_flags;
 };
 
 struct ioctl_android_create_window
@@ -467,14 +478,32 @@ static jobject load_java_method( JNIEnv* env, jmethodID *method, const char *nam
     return java_object;
 }
 
-static void create_desktop_view( JNIEnv* env )
+static int createDesktopView_ioctl( JNIEnv* env, void *data, DWORD in_size, DWORD out_size, ULONG_PTR *ret_size, int *reply_fd )
 {
+    static int event_pipe[2];
     static jmethodID method;
     jobject object;
+    struct ioctl_android_create_desktop_view *res = data;
 
-    if (!(object = load_java_method( env, &method, "createDesktopView", "()V" ))) return;
+    if (in_size < sizeof(*res)) return -EINVAL;
+
+    if (event_sink != -1) close(event_sink);
+
+    if (pipe2( event_pipe, O_CLOEXEC | O_NONBLOCK ) == -1)
+    {
+        LOG( ERR, "could not create data event pipe\n" );
+        return -1;
+    }
+
+    event_sink = event_pipe[1];
+    *reply_fd = event_pipe[0];
+
+    log_flags = res->log_flags; /* Copy logging levels from client */
+
+    if (!(object = load_java_method( env, &method, "createDesktopView", "()V" ))) return -ENOSYS;
 
     (*env)->CallVoidMethod( env, object, method );
+    return 0;
 }
 
 static int createWindow_ioctl( JNIEnv* env, void *data, DWORD in_size, DWORD out_size, ULONG_PTR *ret_size, int *reply_fd )
@@ -821,6 +850,7 @@ static int setCursor_ioctl( JNIEnv* env, void *data, DWORD in_size, DWORD out_si
 typedef int (*ioctl_func)( JNIEnv* env, void *in, DWORD in_size, DWORD out_size, ULONG_PTR *ret_size, int *reply_fd );
 static const ioctl_func ioctl_funcs[] =
 {
+    createDesktopView_ioctl,    /* IOCTL_CREATE_DESKTOP_VIEW */
     createWindow_ioctl,         /* IOCTL_CREATE_WINDOW */
     destroyWindow_ioctl,        /* IOCTL_DESTROY_WINDOW */
     windowPosChanged_ioctl,     /* IOCTL_WINDOW_POS_CHANGED */
@@ -837,17 +867,6 @@ static const ioctl_func ioctl_funcs[] =
 
 static ALooper *looper;
 static JNIEnv *looper_env; /* JNIEnv for the main thread looper. Must only be used from that thread. */
-
-void looper_init( JNIEnv* env, jobject obj )
-{
-    looper_env = env;
-    if (!(looper = pALooper_forThread()))
-    {
-        LOG( ERR, "No looper for current thread\n" );
-        abort();
-    }
-    pALooper_acquire( looper );
-}
 
 /* Handle a single ioctl request from a client socket.
  * Returns 0 if a request was handled successfully and the caller may
@@ -883,6 +902,8 @@ static int handle_ioctl_message( JNIEnv *env, int fd )
         {
             pthread_mutex_lock( &dispatch_ioctl_lock );
             status = ioctl_funcs[code]( env, buffer, ret, sizeof(buffer), &reply_size, &reply_fd );
+            if (IOCTL_CREATE_DESKTOP_VIEW == code) /* special case: desktop client */
+                desktop_client_fd = fd;
             pthread_mutex_unlock( &dispatch_ioctl_lock );
         }
     }
@@ -922,6 +943,8 @@ static int looper_handle_client( int fd, int events, void *data )
         {
             pALooper_removeFd( looper, fd );
             close( fd );
+            if (fd == desktop_client_fd) /* our explorer process died */
+                _exit(0);
         }
         break;
     }
@@ -952,25 +975,19 @@ static int looper_handle_listen( int fd, int events, void *data )
     return 1;
 }
 
-static void *bootstrap_looper_thread( void *arg )
+/* main Wine initialisation */
+void wine_init_jni( JNIEnv *env, jobject obj )
 {
-    JNIEnv *env;
-    jmethodID method = NULL;
-    jobject object = NULL;
     int sockfd;
 
-    if (!java_vm || (*java_vm)->AttachCurrentThread( java_vm, &env, 0 ) != JNI_OK)
+    java_object = (*env)->NewGlobalRef( env, obj );
+    looper_env = env;
+    if (!(looper = pALooper_forThread()))
     {
-        LOG( ERR,  "Failed to attach current thread\n" );
-        return NULL;
-    }
-
-    if (!(object = load_java_method( env, &method, "obtainLooper", "()V" )))
-    {
-        LOG( ERR,  "Failed to obtain looper\n" );
+        LOG( ERR, "No looper for current thread\n");
         abort();
     }
-    (*env)->CallVoidMethod( env, object, method );
+    pALooper_acquire( looper );
 
     sockfd = socket( AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0 );
     if (sockfd < 0)
@@ -990,31 +1007,6 @@ static void *bootstrap_looper_thread( void *arg )
     if (pALooper_addFd( looper, sockfd, sockfd, ALOOPER_EVENT_INPUT, looper_handle_listen, NULL ) != 1) {
         LOG( ERR, "Failed to add listening socket to main looper\n" );
         close(sockfd);
-        abort();
-    }
-
-    create_desktop_view( env );
-
-    (*java_vm)->DetachCurrentThread( java_vm );
-    return NULL;
-}
-
-void start_android_device(void)
-{
-    pthread_t t;
-
-    log_flags = __wine_dbg_get_channel_flags(&__wine_dbch_android);
-
-    /* Use a temporary bootstrap thread to request the main thread looper
-     * without interfering with the current Wine/JVM execution context
-     * (including register and thread-state assumptions). Actual ioctl
-     * dispatch then runs from the main thread looper.
-     */
-    if (!pthread_create( &t, NULL, bootstrap_looper_thread, NULL ))
-        pthread_join(t, NULL);
-    else
-    {
-        LOG( ERR, "Failed to spawn looper bootstrap thread\n" );
         abort();
     }
 }
@@ -1093,6 +1085,13 @@ static void win_decRef( struct android_native_base_t *base )
 {
     struct native_win_wrapper *win = (struct native_win_wrapper *)base;
     InterlockedDecrement( &win->ref );
+}
+
+void createDesktopView( int *event_source )
+{
+    struct ioctl_android_create_desktop_view res = { 0 };
+    res.log_flags = __wine_dbg_get_channel_flags(&__wine_dbch_android);
+    android_ioctl( IOCTL_CREATE_DESKTOP_VIEW, &res, sizeof(res), NULL, NULL, event_source );
 }
 
 static int dequeueBuffer( struct ANativeWindow *window, struct ANativeWindowBuffer **buffer, int *fence )

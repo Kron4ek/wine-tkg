@@ -657,7 +657,7 @@ struct vkd3d_sm4_lookup_tables
     const struct vkd3d_sm4_opcode_info *opcode_info_from_sm4[VKD3D_SM4_OP_COUNT];
     const struct vkd3d_sm4_opcode_info *opcode_info_from_vsir[VSIR_OP_COUNT];
     const struct vkd3d_sm4_register_type_info *register_type_info_from_sm4[VKD3D_SM4_REGISTER_TYPE_COUNT];
-    const struct vkd3d_sm4_register_type_info *register_type_info_from_vkd3d[VKD3DSPR_COUNT];
+    const struct vkd3d_sm4_register_type_info *register_type_info_from_vsir[VSIR_REGISTER_TYPE_COUNT];
     const struct vkd3d_sm4_stat_field_info *stat_field_from_sm4[VKD3D_SM4_OP_COUNT];
 };
 
@@ -806,7 +806,7 @@ static void shader_sm4_read_case_condition(struct vkd3d_shader_instruction *ins,
         uint32_t opcode_token, const uint32_t *tokens, unsigned int token_count, struct vkd3d_shader_sm4_parser *tpf)
 {
     tpf_read_src_operand(tpf, &tokens, &tokens[token_count], VSIR_DATA_U32, &ins->src[0]);
-    if (ins->src[0].reg.type != VKD3DSPR_IMMCONST)
+    if (ins->src[0].reg.type != VSIR_REGISTER_IMMCONST)
         vkd3d_shader_parser_error(&tpf->p, VKD3D_SHADER_ERROR_TPF_INVALID_CASE_VALUE,
                 "Switch case value is not a 32-bit immediate constant register.");
 }
@@ -964,8 +964,8 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
     struct vsir_program *program = priv->program;
     unsigned int i, register_idx, register_count;
     const struct shader_signature *signature;
-    enum vkd3d_shader_register_type type;
     struct sm4_index_range_array *ranges;
+    enum vsir_register_type type;
     unsigned int *io_masks;
     uint32_t write_mask;
 
@@ -978,13 +978,13 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
 
     switch ((type = index_range->dst.reg.type))
     {
-        case VKD3DSPR_INPUT:
-        case VKD3DSPR_INCONTROLPOINT:
+        case VSIR_REGISTER_INPUT:
+        case VSIR_REGISTER_INCONTROLPOINT:
             io_masks = priv->input_register_masks;
             ranges = &priv->input_index_ranges;
             signature = &program->input_signature;
             break;
-        case VKD3DSPR_OUTPUT:
+        case VSIR_REGISTER_OUTPUT:
             if (vsir_opcode_is_fork_or_join_phase(priv->phase))
             {
                 io_masks = priv->patch_constant_register_masks;
@@ -998,13 +998,13 @@ static void shader_sm4_read_dcl_index_range(struct vkd3d_shader_instruction *ins
                 signature = &program->output_signature;
             }
             break;
-        case VKD3DSPR_COLOROUT:
-        case VKD3DSPR_OUTCONTROLPOINT:
+        case VSIR_REGISTER_COLOROUT:
+        case VSIR_REGISTER_OUTCONTROLPOINT:
             io_masks = priv->output_register_masks;
             ranges = &priv->output_index_ranges;
             signature = &program->output_signature;
             break;
-        case VKD3DSPR_PATCHCONST:
+        case VSIR_REGISTER_PATCHCONST:
             io_masks = priv->patch_constant_register_masks;
             ranges = &priv->patch_constant_index_ranges;
             signature = &program->patch_constant_signature;
@@ -1364,7 +1364,7 @@ static void shader_sm5_read_sync(struct vkd3d_shader_instruction *ins, uint32_t 
 struct vkd3d_sm4_register_type_info
 {
     enum vkd3d_sm4_register_type sm4_type;
-    enum vkd3d_shader_register_type vkd3d_type;
+    enum vsir_register_type vsir_type;
 
     /* Swizzle type to be used for src registers when their dimension is VKD3D_SM4_DIMENSION_VEC4. */
     enum vkd3d_sm4_swizzle_type default_src_swizzle_type;
@@ -1702,42 +1702,42 @@ static void init_sm4_lookup_tables(struct vkd3d_sm4_lookup_tables *lookup)
 
     static const struct vkd3d_sm4_register_type_info register_type_table[] =
     {
-        {VKD3D_SM4_RT_TEMP,                    VKD3DSPR_TEMP,            VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM4_RT_INPUT,                   VKD3DSPR_INPUT,           VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM4_RT_OUTPUT,                  VKD3DSPR_OUTPUT,          VKD3D_SM4_SWIZZLE_INVALID},
-        {VKD3D_SM4_RT_INDEXABLE_TEMP,          VKD3DSPR_IDXTEMP,         VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM4_RT_IMMCONST,                VKD3DSPR_IMMCONST,        VKD3D_SM4_SWIZZLE_NONE},
-        {VKD3D_SM4_RT_IMMCONST64,              VKD3DSPR_IMMCONST64,      VKD3D_SM4_SWIZZLE_NONE},
-        {VKD3D_SM4_RT_SAMPLER,                 VKD3DSPR_SAMPLER,         VKD3D_SM4_SWIZZLE_SCALAR},
-        {VKD3D_SM4_RT_RESOURCE,                VKD3DSPR_RESOURCE,        VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM4_RT_CONSTBUFFER,             VKD3DSPR_CONSTBUFFER,     VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM4_RT_IMMCONSTBUFFER,          VKD3DSPR_IMMCONSTBUFFER,  VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM4_RT_PRIMID,                  VKD3DSPR_PRIMID,          VKD3D_SM4_SWIZZLE_NONE},
-        {VKD3D_SM4_RT_DEPTHOUT,                VKD3DSPR_DEPTHOUT,        VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM4_RT_NULL,                    VKD3DSPR_NULL,            VKD3D_SM4_SWIZZLE_INVALID},
-        {VKD3D_SM4_RT_RASTERIZER,              VKD3DSPR_RASTERIZER,      VKD3D_SM4_SWIZZLE_SCALAR},
-        {VKD3D_SM4_RT_OMASK,                   VKD3DSPR_SAMPLEMASK,      VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_STREAM,                  VKD3DSPR_STREAM,          VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_FUNCTION_BODY,           VKD3DSPR_FUNCTIONBODY,    VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_FUNCTION_POINTER,        VKD3DSPR_FUNCTIONPOINTER, VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_OUTPUT_CONTROL_POINT_ID, VKD3DSPR_OUTPOINTID,      VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_FORK_INSTANCE_ID,        VKD3DSPR_FORKINSTID,      VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_JOIN_INSTANCE_ID,        VKD3DSPR_JOININSTID,      VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_INPUT_CONTROL_POINT,     VKD3DSPR_INCONTROLPOINT,  VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_OUTPUT_CONTROL_POINT,    VKD3DSPR_OUTCONTROLPOINT, VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_PATCH_CONSTANT_DATA,     VKD3DSPR_PATCHCONST,      VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_DOMAIN_LOCATION,         VKD3DSPR_TESSCOORD,       VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_UAV,                     VKD3DSPR_UAV,             VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_SHARED_MEMORY,           VKD3DSPR_GROUPSHAREDMEM,  VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_THREAD_ID,               VKD3DSPR_THREADID,        VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_THREAD_GROUP_ID,         VKD3DSPR_THREADGROUPID,   VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_LOCAL_THREAD_ID,         VKD3DSPR_LOCALTHREADID,   VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_COVERAGE,                VKD3DSPR_COVERAGE,        VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_LOCAL_THREAD_INDEX,      VKD3DSPR_LOCALTHREADINDEX,VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_GS_INSTANCE_ID,          VKD3DSPR_GSINSTID,        VKD3D_SM4_SWIZZLE_SCALAR},
-        {VKD3D_SM5_RT_DEPTHOUT_GREATER_EQUAL,  VKD3DSPR_DEPTHOUTGE,      VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_DEPTHOUT_LESS_EQUAL,     VKD3DSPR_DEPTHOUTLE,      VKD3D_SM4_SWIZZLE_VEC4},
-        {VKD3D_SM5_RT_OUTPUT_STENCIL_REF,      VKD3DSPR_OUTSTENCILREF,   VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM4_RT_TEMP,                    VSIR_REGISTER_TEMP,             VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM4_RT_INPUT,                   VSIR_REGISTER_INPUT,            VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM4_RT_OUTPUT,                  VSIR_REGISTER_OUTPUT,           VKD3D_SM4_SWIZZLE_INVALID},
+        {VKD3D_SM4_RT_INDEXABLE_TEMP,          VSIR_REGISTER_IDXTEMP,          VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM4_RT_IMMCONST,                VSIR_REGISTER_IMMCONST,         VKD3D_SM4_SWIZZLE_NONE},
+        {VKD3D_SM4_RT_IMMCONST64,              VSIR_REGISTER_IMMCONST64,       VKD3D_SM4_SWIZZLE_NONE},
+        {VKD3D_SM4_RT_SAMPLER,                 VSIR_REGISTER_SAMPLER,          VKD3D_SM4_SWIZZLE_SCALAR},
+        {VKD3D_SM4_RT_RESOURCE,                VSIR_REGISTER_RESOURCE,         VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM4_RT_CONSTBUFFER,             VSIR_REGISTER_CONSTBUFFER,      VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM4_RT_IMMCONSTBUFFER,          VSIR_REGISTER_IMMCONSTBUFFER,   VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM4_RT_PRIMID,                  VSIR_REGISTER_PRIMID,           VKD3D_SM4_SWIZZLE_NONE},
+        {VKD3D_SM4_RT_DEPTHOUT,                VSIR_REGISTER_DEPTHOUT,         VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM4_RT_NULL,                    VSIR_REGISTER_NULL,             VKD3D_SM4_SWIZZLE_INVALID},
+        {VKD3D_SM4_RT_RASTERIZER,              VSIR_REGISTER_RASTERIZER,       VKD3D_SM4_SWIZZLE_SCALAR},
+        {VKD3D_SM4_RT_OMASK,                   VSIR_REGISTER_SAMPLEMASK,       VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_STREAM,                  VSIR_REGISTER_STREAM,           VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_FUNCTION_BODY,           VSIR_REGISTER_FUNCTIONBODY,     VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_FUNCTION_POINTER,        VSIR_REGISTER_FUNCTIONPOINTER,  VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_OUTPUT_CONTROL_POINT_ID, VSIR_REGISTER_OUTPOINTID,       VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_FORK_INSTANCE_ID,        VSIR_REGISTER_FORKINSTID,       VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_JOIN_INSTANCE_ID,        VSIR_REGISTER_JOININSTID,       VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_INPUT_CONTROL_POINT,     VSIR_REGISTER_INCONTROLPOINT,   VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_OUTPUT_CONTROL_POINT,    VSIR_REGISTER_OUTCONTROLPOINT,  VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_PATCH_CONSTANT_DATA,     VSIR_REGISTER_PATCHCONST,       VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_DOMAIN_LOCATION,         VSIR_REGISTER_TESSCOORD,        VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_UAV,                     VSIR_REGISTER_UAV,              VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_SHARED_MEMORY,           VSIR_REGISTER_GROUPSHAREDMEM,   VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_THREAD_ID,               VSIR_REGISTER_THREADID,         VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_THREAD_GROUP_ID,         VSIR_REGISTER_THREADGROUPID,    VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_LOCAL_THREAD_ID,         VSIR_REGISTER_LOCALTHREADID,    VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_COVERAGE,                VSIR_REGISTER_COVERAGE,         VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_LOCAL_THREAD_INDEX,      VSIR_REGISTER_LOCALTHREADINDEX, VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_GS_INSTANCE_ID,          VSIR_REGISTER_GSINSTID,         VKD3D_SM4_SWIZZLE_SCALAR},
+        {VKD3D_SM5_RT_DEPTHOUT_GREATER_EQUAL,  VSIR_REGISTER_DEPTHOUTGE,       VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_DEPTHOUT_LESS_EQUAL,     VSIR_REGISTER_DEPTHOUTLE,       VKD3D_SM4_SWIZZLE_VEC4},
+        {VKD3D_SM5_RT_OUTPUT_STENCIL_REF,      VSIR_REGISTER_OUTSTENCILREF,    VKD3D_SM4_SWIZZLE_VEC4},
     };
 
     static const struct vkd3d_sm4_stat_field_info stat_field_table[] =
@@ -1910,7 +1910,7 @@ static void init_sm4_lookup_tables(struct vkd3d_sm4_lookup_tables *lookup)
         const struct vkd3d_sm4_register_type_info *info = &register_type_table[i];
 
         lookup->register_type_info_from_sm4[info->sm4_type] = info;
-        lookup->register_type_info_from_vkd3d[info->vkd3d_type] = info;
+        lookup->register_type_info_from_vsir[info->vsir_type] = info;
     }
 
     for (i = 0; i < ARRAY_SIZE(stat_field_table); ++i)
@@ -1955,12 +1955,12 @@ static const struct vkd3d_sm4_register_type_info *get_info_from_sm4_register_typ
     return lookup->register_type_info_from_sm4[sm4_type];
 }
 
-static const struct vkd3d_sm4_register_type_info *get_info_from_vkd3d_register_type(
-        const struct vkd3d_sm4_lookup_tables *lookup, enum vkd3d_shader_register_type vkd3d_type)
+static const struct vkd3d_sm4_register_type_info *get_info_from_vsir_register_type(
+        const struct vkd3d_sm4_lookup_tables *lookup, enum vsir_register_type vsir_type)
 {
-    if (vkd3d_type >= VKD3DSPR_COUNT)
+    if (vsir_type >= VSIR_REGISTER_TYPE_COUNT)
         return NULL;
-    return lookup->register_type_info_from_vkd3d[vkd3d_type];
+    return lookup->register_type_info_from_vsir[vsir_type];
 }
 
 static enum vkd3d_sm4_stat_field get_stat_field_from_sm4_opcode(
@@ -2027,10 +2027,10 @@ static bool shader_sm4_read_param(struct vkd3d_shader_sm4_parser *priv, const ui
         enum vsir_data_type data_type, struct vsir_operand *param, enum vkd3d_shader_src_modifier *modifier)
 {
     const struct vkd3d_sm4_register_type_info *register_type_info;
-    enum vkd3d_shader_register_type vsir_register_type;
     enum vkd3d_sm4_register_precision precision;
     uint32_t token, order, extended, addressing;
     enum vkd3d_sm4_register_type register_type;
+    enum vsir_register_type vsir_register_type;
     enum vkd3d_sm4_extended_operand_type type;
     enum vkd3d_sm4_dimension sm4_dimension;
     enum vkd3d_sm4_register_modifier m;
@@ -2047,11 +2047,11 @@ static bool shader_sm4_read_param(struct vkd3d_shader_sm4_parser *priv, const ui
     if (!register_type_info)
     {
         FIXME("Unhandled register type %#x.\n", register_type);
-        vsir_register_type = VKD3DSPR_TEMP;
+        vsir_register_type = VSIR_REGISTER_TEMP;
     }
     else
     {
-        vsir_register_type = register_type_info->vkd3d_type;
+        vsir_register_type = register_type_info->vsir_type;
     }
 
     order = (token & VKD3D_SM4_REGISTER_ORDER_MASK) >> VKD3D_SM4_REGISTER_ORDER_SHIFT;
@@ -2218,17 +2218,17 @@ static bool shader_sm4_read_param(struct vkd3d_shader_sm4_parser *priv, const ui
     return true;
 }
 
-bool shader_sm4_is_scalar_register(const struct vsir_operand *reg)
+bool shader_sm4_is_scalar_register(const struct vsir_operand *operand)
 {
-    switch (reg->type)
+    switch (operand->type)
     {
-        case VKD3DSPR_DEPTHOUT:
-        case VKD3DSPR_DEPTHOUTGE:
-        case VKD3DSPR_DEPTHOUTLE:
-        case VKD3DSPR_OUTPOINTID:
-        case VKD3DSPR_PRIMID:
-        case VKD3DSPR_SAMPLEMASK:
-        case VKD3DSPR_OUTSTENCILREF:
+        case VSIR_REGISTER_DEPTHOUT:
+        case VSIR_REGISTER_DEPTHOUTGE:
+        case VSIR_REGISTER_DEPTHOUTLE:
+        case VSIR_REGISTER_OUTPOINTID:
+        case VSIR_REGISTER_PRIMID:
+        case VSIR_REGISTER_SAMPLEMASK:
+        case VSIR_REGISTER_OUTSTENCILREF:
             return true;
         default:
             return false;
@@ -2250,16 +2250,16 @@ static uint32_t swizzle_to_sm4(uint32_t s)
     return ret;
 }
 
-static bool register_is_input_output(const struct vsir_operand *reg)
+static bool register_is_input_output(const struct vsir_operand *operand)
 {
-    switch (reg->type)
+    switch (operand->type)
     {
-        case VKD3DSPR_INPUT:
-        case VKD3DSPR_OUTPUT:
-        case VKD3DSPR_COLOROUT:
-        case VKD3DSPR_INCONTROLPOINT:
-        case VKD3DSPR_OUTCONTROLPOINT:
-        case VKD3DSPR_PATCHCONST:
+        case VSIR_REGISTER_INPUT:
+        case VSIR_REGISTER_OUTPUT:
+        case VSIR_REGISTER_COLOROUT:
+        case VSIR_REGISTER_INCONTROLPOINT:
+        case VSIR_REGISTER_OUTCONTROLPOINT:
+        case VSIR_REGISTER_PATCHCONST:
             return true;
 
         default:
@@ -2270,8 +2270,8 @@ static bool register_is_input_output(const struct vsir_operand *reg)
 static bool register_is_control_point_input(const struct vsir_operand *reg,
         const struct vkd3d_shader_sm4_parser *priv)
 {
-    return reg->type == VKD3DSPR_INCONTROLPOINT || reg->type == VKD3DSPR_OUTCONTROLPOINT
-            || (reg->type == VKD3DSPR_INPUT && (vsir_opcode_is_control_point_phase(priv->phase)
+    return reg->type == VSIR_REGISTER_INCONTROLPOINT || reg->type == VSIR_REGISTER_OUTCONTROLPOINT
+            || (reg->type == VSIR_REGISTER_INPUT && (vsir_opcode_is_control_point_phase(priv->phase)
             || priv->program->shader_version.type == VKD3D_SHADER_TYPE_GEOMETRY));
 }
 
@@ -2300,19 +2300,19 @@ static bool shader_sm4_validate_input_output_register(struct vkd3d_shader_sm4_pa
 
     switch (reg->type)
     {
-        case VKD3DSPR_INPUT:
-        case VKD3DSPR_INCONTROLPOINT:
+        case VSIR_REGISTER_INPUT:
+        case VSIR_REGISTER_INCONTROLPOINT:
             masks = priv->input_register_masks;
             break;
-        case VKD3DSPR_OUTPUT:
+        case VSIR_REGISTER_OUTPUT:
             masks = vsir_opcode_is_fork_or_join_phase(priv->phase)
                     ? priv->patch_constant_register_masks : priv->output_register_masks;
             break;
-        case VKD3DSPR_COLOROUT:
-        case VKD3DSPR_OUTCONTROLPOINT:
+        case VSIR_REGISTER_COLOROUT:
+        case VSIR_REGISTER_OUTCONTROLPOINT:
             masks = priv->output_register_masks;
             break;
-        case VKD3DSPR_PATCHCONST:
+        case VSIR_REGISTER_PATCHCONST:
             masks = priv->patch_constant_register_masks;
             break;
 
@@ -2955,7 +2955,7 @@ int tpf_parse(const struct vkd3d_shader_compile_info *compile_info, uint64_t con
 }
 
 bool sm4_register_from_semantic_name(const struct vkd3d_shader_version *version,
-        const char *semantic_name, bool output, enum vkd3d_shader_register_type *type, bool *has_idx)
+        const char *semantic_name, bool output, enum vsir_register_type *type, bool *has_idx)
 {
     unsigned int i;
 
@@ -2964,34 +2964,34 @@ bool sm4_register_from_semantic_name(const struct vkd3d_shader_version *version,
         const char *semantic;
         bool output;
         enum vkd3d_shader_type shader_type;
-        enum vkd3d_shader_register_type type;
+        enum vsir_register_type type;
         bool has_idx;
     }
     register_table[] =
     {
-        {"sv_dispatchthreadid", false, VKD3D_SHADER_TYPE_COMPUTE,  VKD3DSPR_THREADID,         false},
-        {"sv_groupid",          false, VKD3D_SHADER_TYPE_COMPUTE,  VKD3DSPR_THREADGROUPID,    false},
-        {"sv_groupindex",       false, VKD3D_SHADER_TYPE_COMPUTE,  VKD3DSPR_LOCALTHREADINDEX, false},
-        {"sv_groupthreadid",    false, VKD3D_SHADER_TYPE_COMPUTE,  VKD3DSPR_LOCALTHREADID,    false},
+        {"sv_dispatchthreadid",     false, VKD3D_SHADER_TYPE_COMPUTE,  VSIR_REGISTER_THREADID,         false},
+        {"sv_groupid",              false, VKD3D_SHADER_TYPE_COMPUTE,  VSIR_REGISTER_THREADGROUPID,    false},
+        {"sv_groupindex",           false, VKD3D_SHADER_TYPE_COMPUTE,  VSIR_REGISTER_LOCALTHREADINDEX, false},
+        {"sv_groupthreadid",        false, VKD3D_SHADER_TYPE_COMPUTE,  VSIR_REGISTER_LOCALTHREADID,    false},
 
-        {"sv_domainlocation",   false, VKD3D_SHADER_TYPE_DOMAIN,   VKD3DSPR_TESSCOORD,     false},
-        {"sv_primitiveid",      false, VKD3D_SHADER_TYPE_DOMAIN,   VKD3DSPR_PRIMID,        false},
+        {"sv_domainlocation",       false, VKD3D_SHADER_TYPE_DOMAIN,   VSIR_REGISTER_TESSCOORD,        false},
+        {"sv_primitiveid",          false, VKD3D_SHADER_TYPE_DOMAIN,   VSIR_REGISTER_PRIMID,           false},
 
-        {"sv_primitiveid",      false, VKD3D_SHADER_TYPE_GEOMETRY, VKD3DSPR_PRIMID,        false},
-        {"sv_gsinstanceid",     false, VKD3D_SHADER_TYPE_GEOMETRY, VKD3DSPR_GSINSTID,      false},
+        {"sv_primitiveid",          false, VKD3D_SHADER_TYPE_GEOMETRY, VSIR_REGISTER_PRIMID,           false},
+        {"sv_gsinstanceid",         false, VKD3D_SHADER_TYPE_GEOMETRY, VSIR_REGISTER_GSINSTID,         false},
 
-        {"sv_outputcontrolpointid", false, VKD3D_SHADER_TYPE_HULL, VKD3DSPR_OUTPOINTID,    false},
-        {"sv_primitiveid",          false, VKD3D_SHADER_TYPE_HULL, VKD3DSPR_PRIMID,        false},
+        {"sv_outputcontrolpointid", false, VKD3D_SHADER_TYPE_HULL,     VSIR_REGISTER_OUTPOINTID,       false},
+        {"sv_primitiveid",          false, VKD3D_SHADER_TYPE_HULL,     VSIR_REGISTER_PRIMID,           false},
 
         /* Put sv_target in this table, instead of letting it fall through to
          * default varying allocation, so that the register index matches the
          * usage index. */
-        {"color",               true,  VKD3D_SHADER_TYPE_PIXEL,    VKD3DSPR_OUTPUT,        true},
-        {"depth",               true,  VKD3D_SHADER_TYPE_PIXEL,    VKD3DSPR_DEPTHOUT,      false},
-        {"sv_depth",            true,  VKD3D_SHADER_TYPE_PIXEL,    VKD3DSPR_DEPTHOUT,      false},
-        {"sv_target",           true,  VKD3D_SHADER_TYPE_PIXEL,    VKD3DSPR_OUTPUT,        true},
-        {"sv_coverage",         true,  VKD3D_SHADER_TYPE_PIXEL,    VKD3DSPR_SAMPLEMASK,    false},
-        {"sv_stencilref",       true,  VKD3D_SHADER_TYPE_PIXEL,    VKD3DSPR_OUTSTENCILREF, false},
+        {"color",                   true,  VKD3D_SHADER_TYPE_PIXEL,    VSIR_REGISTER_OUTPUT,           true},
+        {"depth",                   true,  VKD3D_SHADER_TYPE_PIXEL,    VSIR_REGISTER_DEPTHOUT,         false},
+        {"sv_depth",                true,  VKD3D_SHADER_TYPE_PIXEL,    VSIR_REGISTER_DEPTHOUT,         false},
+        {"sv_target",               true,  VKD3D_SHADER_TYPE_PIXEL,    VSIR_REGISTER_OUTPUT,           true},
+        {"sv_coverage",             true,  VKD3D_SHADER_TYPE_PIXEL,    VSIR_REGISTER_SAMPLEMASK,       false},
+        {"sv_stencilref",           true,  VKD3D_SHADER_TYPE_PIXEL,    VSIR_REGISTER_OUTSTENCILREF,    false},
     };
 
     for (i = 0; i < ARRAY_SIZE(register_table); ++i)
@@ -3446,7 +3446,7 @@ static uint32_t sm4_encode_register(const struct tpf_compiler *tpf, const struct
     uint32_t sm4_reg_type, sm4_reg_dim;
     uint32_t token = 0;
 
-    register_type_info = get_info_from_vkd3d_register_type(&tpf->lookup, reg->type);
+    register_type_info = get_info_from_vsir_register_type(&tpf->lookup, reg->type);
     if (!register_type_info)
     {
         FIXME("Unhandled vkd3d-shader register type %#x.\n", reg->type);
@@ -3518,7 +3518,7 @@ static void sm4_write_register_index(const struct tpf_compiler *tpf, const struc
 
         VKD3D_ASSERT(idx_src);
         VKD3D_ASSERT(!idx_src->modifiers);
-        VKD3D_ASSERT(idx_src->reg.type != VKD3DSPR_IMMCONST);
+        VKD3D_ASSERT(idx_src->reg.type != VSIR_REGISTER_IMMCONST);
         idx_src_token = sm4_encode_register(tpf, &idx_src->reg, VKD3D_SM4_SWIZZLE_SCALAR, idx_src->swizzle);
 
         put_u32(buffer, idx_src_token);
@@ -3592,7 +3592,7 @@ static void sm4_write_src_register(struct tpf_compiler *tpf, const struct vsir_s
     for (j = 0; j < src->reg.idx_count; ++j)
         sm4_write_register_index(tpf, &src->reg, j);
 
-    if (src->reg.type == VKD3DSPR_IMMCONST)
+    if (src->reg.type == VSIR_REGISTER_IMMCONST)
     {
         put_u32(buffer, src->reg.u.immconst_u32[0]);
         if (src->reg.dimension == VSIR_DIMENSION_VEC4)
@@ -3808,7 +3808,7 @@ static void tpf_dcl_sampler(struct tpf_compiler *tpf, const struct vkd3d_shader_
         .opcode = VKD3D_SM4_OP_DCL_SAMPLER,
         .extra_bits = ins->flags << VKD3D_SM4_SAMPLER_MODE_SHIFT,
 
-        .dsts[0].reg.type = VKD3DSPR_SAMPLER,
+        .dsts[0].reg.type = VSIR_REGISTER_SAMPLER,
         .dst_count = 1,
     };
 
@@ -4084,15 +4084,15 @@ static void rewrite_descriptor_register(const struct tpf_compiler *tpf, struct v
 
     switch (reg->type)
     {
-        case VKD3DSPR_CONSTBUFFER:
+        case VSIR_REGISTER_CONSTBUFFER:
             reg->idx[0] = reg->idx[1];
             reg->idx[1] = reg->idx[2];
             reg->idx_count = 2;
             break;
 
-        case VKD3DSPR_RESOURCE:
-        case VKD3DSPR_SAMPLER:
-        case VKD3DSPR_UAV:
+        case VSIR_REGISTER_RESOURCE:
+        case VSIR_REGISTER_SAMPLER:
+        case VSIR_REGISTER_UAV:
             reg->idx[0] = reg->idx[1];
             reg->idx_count = 1;
             break;
@@ -4563,10 +4563,7 @@ int tpf_compile(struct vsir_program *program, uint64_t config_flags,
     if ((ret = vsir_program_optimize(program, config_flags, compile_info, message_context)))
         return ret;
 
-    if ((ret = vsir_allocate_temp_registers(program, message_context)))
-        return ret;
-
-    if ((ret = vsir_update_dcl_temps(program, message_context)))
+    if ((ret = vsir_program_allocate_temp_registers(program, config_flags, compile_info, message_context)) < 0)
         return ret;
 
     tpf.program = program;

@@ -47,6 +47,7 @@ SOURCES = \
 	resources/ietoolbar.svg \
 	resources/ietoolbar_small.svg \
 	resources/image.svg \
+	resources/info.svg \
 	resources/internet.svg \
 	resources/log_off.svg \
 	resources/menu.svg \

@@ -55,6 +55,7 @@
 #include "kbd.h"
 #include "wine/server.h"
 #include "wine/debug.h"
+#include "wine/list.h"
 
 /* log format (add 0-padding as appropriate):
     keycode  %u  as in output from xev
@@ -65,6 +66,18 @@
 WINE_DEFAULT_DEBUG_CHANNEL(keyboard);
 WINE_DECLARE_DEBUG_CHANNEL(key);
 
+struct layout
+{
+    struct list entry;
+
+    int xkb_group;
+    char *xkb_layout;
+
+    LANGID lang;
+    DWORD klid;
+    WORD layout_id;
+};
+
 static const unsigned int ControlMask = 1 << 2;
 
 static int min_keycode, max_keycode, keysyms_per_keycode;
@@ -73,8 +86,96 @@ static WORD keyc2vkey[256], keyc2scan[256];
 static int NumLockMask, ScrollLockMask, AltGrMask; /* mask in the XKeyEvent state */
 
 static pthread_mutex_t kbd_mutex = PTHREAD_MUTEX_INITIALIZER;
+static struct list xkb_layouts = LIST_INIT( xkb_layouts );
 
 static char KEYBOARD_MapDeadKeysym(KeySym keysym);
+
+static const WCHAR keyboard_layouts_keyW[] =
+{
+    '\\','R','e','g','i','s','t','r','y',
+    '\\','M','a','c','h','i','n','e',
+    '\\','S','y','s','t','e','m',
+    '\\','C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t',
+    '\\','C','o','n','t','r','o','l',
+    '\\','K','e','y','b','o','a','r','d',' ','L','a','y','o','u','t','s'
+};
+
+static ULONG query_reg_ascii_value( HKEY hkey, const char *name, KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size )
+{
+    WCHAR nameW[64];
+
+    asciiz_to_unicode( nameW, name );
+    return query_reg_value( hkey, nameW, info, size );
+}
+
+static WORD get_layout_id_from_klid( DWORD klid )
+{
+    static WORD next_layout_id = 0x100;
+
+    char buffer[2048];
+    KEY_VALUE_PARTIAL_INFORMATION *value = (KEY_VALUE_PARTIAL_INFORMATION *)buffer;
+    WORD layout_id = 0;
+    HKEY hkey = NULL, subkey;
+    WCHAR name[16];
+
+    TRACE( "klid %08x\n", klid );
+
+    if (!HIWORD(klid)) return 0;
+    if (klid == -1) goto done;
+
+    snprintf( buffer, sizeof(buffer), "%08x", klid );
+    asciiz_to_unicode( name, buffer );
+
+    if (!(hkey = reg_open_key( NULL, keyboard_layouts_keyW, sizeof(keyboard_layouts_keyW) ))) goto done;
+
+    if (!(subkey = reg_open_key( hkey, name, 8 * sizeof(WCHAR) ))) goto done;
+
+    if (query_reg_ascii_value( subkey, "Layout Id", value, sizeof(buffer) ) && value->Type == REG_SZ)
+        layout_id = wcstoul( (const WCHAR *)value->Data, NULL, 16 );
+    NtClose( subkey );
+
+done:
+    if (hkey) NtClose( hkey );
+    if (!layout_id) layout_id = next_layout_id++;
+    TRACE( "layout_id %04x\n", layout_id );
+    return layout_id;
+}
+
+static void create_layout_from_xkb( int xkb_group, const char *xkb_layout, LANGID lang, DWORD klid )
+{
+    struct layout *layout;
+    WORD index = 0;
+
+    TRACE( "xkb_group %u, xkb_layout %s, lang %04x, klid %08x\n", xkb_group, xkb_layout, lang, klid );
+
+    LIST_FOR_EACH_ENTRY( layout, &xkb_layouts, struct layout, entry )
+    {
+        if (!strcmp( layout->xkb_layout, xkb_layout ))
+        {
+            TRACE( "Found existing layout entry %p, lang %04x, klid %08x, layout_id %04x\n",
+                   layout, layout->lang, layout->klid, layout->layout_id );
+            if (layout->xkb_group == -1) layout->xkb_group = xkb_group;
+            return;
+        }
+        if (lang == layout->lang && HIWORD(layout->klid) >= 0x20) index++;
+    }
+
+    if (!(layout = calloc( 1, sizeof(*layout) + strlen( xkb_layout ) + 1 )))
+    {
+        WARN( "Failed to allocate memory for Xkb layout entry\n" );
+        return;
+    }
+    list_add_tail( &xkb_layouts, &layout->entry );
+
+    layout->xkb_group = xkb_group;
+    layout->xkb_layout = strcpy( (char *)(layout + 1), xkb_layout );
+
+    layout->lang = lang;
+    layout->klid = !klid ? MAKELONG(lang, 0) : (klid == -1) ? MAKELONG(lang, index + 0x20) : klid;
+    layout->layout_id = get_layout_id_from_klid( klid );
+
+    TRACE( "Created layout entry %p, lang %04x, klid %08x, layout_id %04x\n", layout, layout->lang, layout->klid, layout->layout_id );
+}
 
 /* Keyboard translation tables */
 #define MAIN_LEN 49
@@ -1588,7 +1689,7 @@ static int layout_id_map_cmp( const void *key, const void *element )
 
 static LANGID langid_from_xkb_layout( const char *layout )
 {
-    struct layout_id_map_entry *entry;
+    const struct layout_id_map_entry *entry;
 
     entry = bsearch( layout, layout_ids, ARRAY_SIZE(layout_ids), sizeof(*layout_ids), layout_id_map_cmp );
     if (entry) return entry->langid;
@@ -1596,6 +1697,43 @@ static LANGID langid_from_xkb_layout( const char *layout )
     FIXME( "Unknown layout %s\n", debugstr_a(layout) );
     return MAKELANGID(LANG_NEUTRAL, SUBLANG_CUSTOM_UNSPECIFIED);
 };
+
+static const struct klid_map_entry
+{
+    const char *layout;
+    const char *variant;
+    DWORD klid;
+} klid_map[] =
+{
+    { "us", "dvorak", 0x00010409 },
+    { "us", "dvorak-l", 0x00030409 },
+    { "us", "dvorak-r", 0x00040409 },
+};
+
+static int klid_map_cmp( const void *key, const void *element )
+{
+    const struct klid_map_entry *map_key = key;
+    const struct klid_map_entry *entry = element;
+    int c;
+
+    if ((c = strcmp( map_key->layout, entry->layout ))) return c;
+    return strcmp( map_key->variant, entry->variant );
+}
+
+static DWORD klid_from_xkb_layout( const char *layout, const char *variant )
+{
+    struct klid_map_entry key = { layout, variant };
+    const struct klid_map_entry *entry;
+
+    if (!variant)
+        return 0;
+
+    entry = bsearch( &key, klid_map, ARRAY_SIZE(klid_map), sizeof(*klid_map), klid_map_cmp );
+    if (entry) return entry->klid;
+
+    FIXME( "Unknown variant %s\n", debugstr_a(variant) );
+    return -1;
+}
 
 /* fuzzy layout detection through keysym / keycode matching, kbd_section must be held */
 static void detect_keyboard_layout( Display *display, XModifierKeymap *modmap, unsigned int xkb_group )
@@ -1960,6 +2098,7 @@ void init_keyboard_layouts( Display *display )
     XkbStateRec xkb_state;
     XModifierKeymap *mmp;
     XkbDescRec *xkb_desc;
+    struct layout *entry;
     LANGID xkb_lang = 0;
     Status status;
     KeyCode *kcp;
@@ -1990,6 +2129,10 @@ void init_keyboard_layouts( Display *display )
         }
     }
 
+    /* Flag any previously created Xkb layout as invalid */
+    LIST_FOR_EACH_ENTRY( entry, &xkb_layouts, struct layout, entry )
+        entry->xkb_group = -1;
+
     status = XkbGetState( display, XkbUseCoreKbd, &xkb_state );
     xkb_group = status ? 0 : xkb_state.group;
     TRACE( "current group %u (status %#x)\n", xkb_group, status );
@@ -2004,19 +2147,26 @@ void init_keyboard_layouts( Display *display )
             if (!xkb_desc->names->groups[count]) break;
 
         if (!XGetAtomNames( display, xkb_desc->names->groups, count, names )) count = 0;
+        TRACE("Found %u group names\n", count);
         for (int i = 0; i < count; i++)
         {
             const char *layout, *variant = NULL;
+            char buffer[1024];
+            DWORD klid;
             LANGID lang;
 
             if (!names[i]) continue;
             if (find_xkb_layout_variant( names[i], &layout, &variant ))
             {
                 lang = langid_from_xkb_layout( layout );
+                klid = klid_from_xkb_layout( layout, variant );
                 if (i == xkb_group) xkb_lang = lang;
 
-                TRACE( "Found group %u with name %s -> layout %s:%s, lang %04x\n", i, debugstr_a(names[i]),
-                       debugstr_a(layout), debugstr_a(variant), lang );
+                TRACE( "Found group %u with name %s -> layout %s:%s, lang %04x, klid %08x\n", i, debugstr_a(names[i]),
+                       debugstr_a(layout), debugstr_a(variant), lang, klid );
+
+                snprintf( buffer, ARRAY_SIZE(buffer), "%s:%s", layout, variant );
+                create_layout_from_xkb( i, buffer, lang, klid );
             }
             XFree( names[i] );
         }
