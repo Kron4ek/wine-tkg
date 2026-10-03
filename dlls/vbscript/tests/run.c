@@ -3001,7 +3001,19 @@ static void test_parse_errors(void)
             /* Hex literal overflow */
             L"x = &H100000001\n",
             0, 4,
-            L"x = &H100000001", S_OK
+            L"x = &H100000001", S_OK, 1002
+        },
+        {
+            /* Octal literal overflow */
+            L"x = &O40000000000\n",
+            0, 4,
+            L"x = &O40000000000", S_OK, 1002
+        },
+        {
+            /* Overflowing literal at the start of a statement */
+            L"x = 1\n&H100000000\n",
+            1, 0,
+            L"&H100000000", S_OK, -1024
         },
         {
             /* Unterminated string constant - error 1033 */
@@ -3538,6 +3550,143 @@ static void test_parse_errors(void)
             L"Dim x\nFor Each x.y In Array(1)\nNext\n",
             1, 13,
             NULL, S_OK, 1040
+        },
+        {
+            /* Assignment to an expression in parentheses - error 1024 */
+            L"Dim x\n  (x) = 1\n",
+            1, 2,
+            L"  (x) = 1", S_OK, 1024
+        },
+        {
+            /* Duplicate parameter name - error 1041 */
+            L"Sub S(a, A)\nEnd Sub\n",
+            0, 9,
+            L"Sub S(a, A)", S_OK, 1041
+        },
+        {
+            L"Sub S(ByVal a, ByRef a)\nEnd Sub\n",
+            0, 21,
+            L"Sub S(ByVal a, ByRef a)", S_OK, 1041
+        },
+        {
+            /* Parameter named like its procedure - error 1041 */
+            L"Function F(F)\nEnd Function\n",
+            0, 11,
+            L"Function F(F)", S_OK, 1041
+        },
+        {
+            L"Sub S(a, b, s)\nEnd Sub\n",
+            0, 12,
+            L"Sub S(a, b, s)", S_OK, 1041
+        },
+        {
+            L"Class C\n  Public Property Let P(a, P)\n  End Property\nEnd Class\n",
+            1, 27,
+            L"  Public Property Let P(a, P)", S_OK, 1041
+        },
+        {
+            /* Variable declared twice in one Dim statement - error 1041 */
+            L"Sub S\n  Dim a, b, A\nEnd Sub\n",
+            1, 12,
+            L"  Dim a, b, A", S_OK, 1041
+        },
+        {
+            L"Dim a(1), a\n",
+            0, 10,
+            L"Dim a(1), a", S_OK, 1041
+        },
+        {
+            /* Local variable named like its function - error 1041 */
+            L"Function F\n  Dim F\nEnd Function\n",
+            1, 6,
+            L"  Dim F", S_OK, 1041
+        },
+        {
+            L"Function F\n  Const F = 1\nEnd Function\n",
+            1, 8,
+            L"  Const F = 1", S_OK, 1041
+        },
+        {
+            L"Class C\n  Property Let P(v)\n    Dim P\n  End Property\nEnd Class\n",
+            2, 8,
+            L"    Dim P", S_OK, 1041
+        },
+        {
+            /* Class variable declared twice - error 1041 */
+            L"Class C\n  Public a\n  Public A\nEnd Class\n",
+            2, 9,
+            L"  Public A", S_OK, 1041
+        },
+        {
+            L"Class C\n  Public a\n  Dim a\nEnd Class\n",
+            2, 6,
+            L"  Dim a", S_OK, 1041
+        },
+        {
+            L"Class C\n  Dim a, a\nEnd Class\n",
+            1, 9,
+            L"  Dim a, a", S_OK, 1041
+        },
+        {
+            L"Class C\n  Public a(2)\n  Private a\nEnd Class\n",
+            2, 10,
+            L"  Private a", S_OK, 1041
+        },
+        {
+            /* Declaration of a name that a ReDim declared - error 1041 */
+            L"Sub S\n  ReDim a(2)\n  Dim a\nEnd Sub\n",
+            2, 6,
+            L"  Dim a", S_OK, 1041
+        },
+        {
+            L"Sub S\n  ReDim Preserve a(2), b(3)\n  Dim B\nEnd Sub\n",
+            2, 6,
+            L"  Dim B", S_OK, 1041
+        },
+        {
+            L"Sub S\n  ReDim a(1)\n  ReDim a(2)\n  Const a = 1\nEnd Sub\n",
+            3, 8,
+            L"  Const a = 1", S_OK, 1041
+        },
+        {
+            L"Dim g\nSub S\n  ReDim g(2)\n  Dim g\nEnd Sub\n",
+            3, 6,
+            L"  Dim g", S_OK, 1041
+        },
+        {
+            L"Class C\n  Public a\n  Sub S\n    ReDim a(2)\n    Dim a\n  End Sub\nEnd Class\n",
+            4, 8,
+            L"    Dim a", S_OK, 1041
+        },
+        {
+            L"ReDim a(2)\nDim a\n",
+            1, 4,
+            L"Dim a", S_OK, 1041
+        },
+        {
+            L"ReDim a(2)\nConst a = 1\n",
+            1, 6,
+            L"Const a = 1", S_OK, 1041
+        },
+        {
+            L"ReDim a(2)\nSub a\nEnd Sub\n",
+            1, 4,
+            L"Sub a", S_OK, 1041
+        },
+        {
+            L"Sub a\nEnd Sub\nReDim a(2)\n",
+            2, 6,
+            L"ReDim a(2)", S_OK, 1041
+        },
+        {
+            L"ReDim a(2)\nClass a\nEnd Class\n",
+            1, 6,
+            L"Class a", S_OK, 1041
+        },
+        {
+            L"Class a\nEnd Class\nReDim a(2)\n",
+            2, 6,
+            L"ReDim a(2)", S_OK, 1041
         }
     };
     HRESULT hres;
@@ -3586,6 +3735,19 @@ static void test_redefine_scope(void)
         /* a Class name does not collide with a local Dim of another Sub */
         L"Class S\nEnd Class\nSub Other\nDim s\nEnd Sub\n",
         L"Sub Other\nDim s\nEnd Sub\nClass S\nEnd Class\n",
+        /* a class method may be named like a local of another method */
+        L"Class C\nSub A\nDim b\nConst c = 1\nEnd Sub\nSub b\nEnd Sub\nSub c\nEnd Sub\nEnd Class\n",
+        L"Class C\nSub A\nReDim b(1)\nEnd Sub\nSub b\nEnd Sub\nEnd Class\n",
+        /* a ReDim of a declared name does not declare it again */
+        L"Sub S\nDim a()\nReDim a(2)\nReDim a(3), a(4)\nEnd Sub\n",
+        L"Sub S(a)\nReDim a(2)\nEnd Sub\n",
+        L"Sub S\nConst a = 1\nReDim a(2)\nEnd Sub\n",
+        L"Function F\nReDim F(2)\nEnd Function\nSub S\nDim F\nEnd Sub\n",
+        L"Sub S\nReDim S(2)\nEnd Sub\n",
+        /* a class property may follow a method of the same name */
+        L"Class C\nSub a\nEnd Sub\nProperty Get a\nEnd Property\nProperty Let a(v)\nEnd Property\nEnd Class\n",
+        L"Class C\nFunction a(x, y)\nEnd Function\nProperty Get a\nEnd Property\nEnd Class\n",
+        L"Class C\nSub a\nEnd Sub\nProperty Set a(v)\nEnd Property\nEnd Class\n",
     };
     /* A class member lives in a separate namespace, so its name may collide
      * with a global Dim or Const. Each script also calls the member to prove

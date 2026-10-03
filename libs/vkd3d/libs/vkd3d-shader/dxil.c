@@ -3030,28 +3030,24 @@ static void dst_param_init(struct vsir_dst_operand *param)
 {
     param->write_mask = VKD3DSP_WRITEMASK_0;
     param->modifiers = 0;
-    param->shift = 0;
 }
 
 static void dst_param_init_with_mask(struct vsir_dst_operand *param, unsigned int mask)
 {
     param->write_mask = mask;
     param->modifiers = 0;
-    param->shift = 0;
 }
 
 static inline void dst_param_init_scalar(struct vsir_dst_operand *param, unsigned int component_idx)
 {
     param->write_mask = 1u << component_idx;
     param->modifiers = 0;
-    param->shift = 0;
 }
 
 static void dst_param_init_vector(struct vsir_dst_operand *param, unsigned int component_count)
 {
     param->write_mask = (1u << component_count) - 1;
     param->modifiers = 0;
-    param->shift = 0;
 }
 
 static inline void src_param_init(struct vsir_src_operand *param)
@@ -4559,7 +4555,6 @@ static void dst_param_io_init(struct vsir_dst_operand *param, const struct vsir_
 
     param->write_mask = e->mask;
     param->modifiers = 0;
-    param->shift = 0;
     /* DXIL types do not have signedness. Load signed elements as unsigned. */
     component_type = e->component_type == VKD3D_SHADER_COMPONENT_INT ? VKD3D_SHADER_COMPONENT_UINT : e->component_type;
     vsir_operand_init(&param->reg, reg_type, vsir_data_type_from_component_type(component_type), 0);
@@ -10304,7 +10299,6 @@ static void init_resource_declaration(struct vkd3d_shader_resource *resource, en
     struct vsir_dst_operand *param = &resource->reg;
 
     param->modifiers = 0;
-    param->shift = 0;
     vsir_operand_init(&param->reg, reg_type, data_type, 3);
     param->reg.idx[0].offset = id;
     param->reg.idx[1].offset = range->first;
@@ -11694,6 +11688,7 @@ static enum vkd3d_result sm6_parser_init(struct sm6_parser *sm6, struct vsir_pro
     if (!vsir_program_init(program, compile_info, &version,
             (count + (count >> 2)) / 2u + 10, VSIR_CF_BLOCKS, VSIR_NORMALISED_SM6))
         return VKD3D_ERROR_OUT_OF_MEMORY;
+    program->normalisation_flags.normalised_io = true;
     vkd3d_shader_parser_init(&sm6->p, message_context, compile_info->source_name);
     sm6->ptr = &sm6->start[1];
     sm6->bitpos = 2;

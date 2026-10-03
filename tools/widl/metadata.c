@@ -267,11 +267,15 @@ static struct winmd
     struct buffer userstrings, userstrings_idx;
     struct buffer blobs, blobs_idx;
     struct buffer guids;
-    struct buffer tables[TABLE_MAX], tables_idx[TABLE_MAX];
+    struct buffer tables[TABLE_MAX], tables_idx[TABLE_MAX], tables_merge_idx[TABLE_MAX];
     char         *name;
     char        **imports;
     UINT          num_imports;
 } **winmd_list, *current_winmd;
+
+#define FOR_EACH_TABLE_ROW(winmd, table, type, cursor) \
+    for (const type *cursor = (const type *)(winmd)->tables[table].ptr; \
+         (BYTE *)cursor < (winmd)->tables[table].ptr + sizeof(type) * (winmd)->tables[table].count; cursor++)
 
 static void *grow_buffer( struct buffer *buf, UINT size )
 {
@@ -494,6 +498,58 @@ static UINT add_row( enum table table, const BYTE *row, UINT row_size )
     return tables[table].count;
 }
 
+static inline int cmp_typename( const char *name, const char *namespace, const char *name2, const char *namespace2 )
+{
+    int ret;
+    if ((ret = strcmp( namespace, namespace2 ))) return ret;
+    return strcmp( name, name2 );
+}
+
+static const struct index *find_merge_index( const struct buffer *buf_idx, const struct buffer *buf_data,
+                                             const struct buffer *strings, const char *name, const char *namespace,
+                                             UINT row_offset_name, UINT row_offset_namespace, UINT *insert_idx )
+{
+    int i, c, min = 0, max = buf_idx->count - 1;
+    const struct index *idx, *base = (const struct index *)buf_idx->ptr;
+    const char *name2, *namespace2;
+    UINT offset;
+
+    while (min <= max)
+    {
+        i = (min + max) / 2;
+        idx = &base[i];
+
+        offset = *(UINT *)(buf_data->ptr + idx->offset + row_offset_name);
+        name2 = (const char *)&strings->ptr[offset];
+
+        offset = *(UINT *)(buf_data->ptr + idx->offset + row_offset_namespace);
+        namespace2 = (const char *)&strings->ptr[offset];
+
+        c = cmp_typename( name, namespace, name2, namespace2 );
+
+        if (c < 0) max = i - 1;
+        else if (c > 0) min = i + 1;
+        else return idx;
+    }
+
+    if (insert_idx) *insert_idx = max + 1;
+    return NULL;
+}
+
+/* add index sorted by name and namespace to speed up merge lookups */
+static void add_merge_index( enum table table, UINT name_offset, UINT namespace_offset, UINT row, UINT row_size,
+                             UINT row_offset_name, UINT row_offset_namespace )
+{
+    const char *name = (const char *)&current_winmd->strings.ptr[name_offset];
+    const char *namespace = (const char *)&current_winmd->strings.ptr[namespace_offset];
+    UINT insert_idx;
+
+    if (find_merge_index( &current_winmd->tables_merge_idx[table], &current_winmd->tables[table],
+                          &current_winmd->strings, name, namespace, row_offset_name, row_offset_namespace,
+                          &insert_idx )) return;
+    insert_index( &current_winmd->tables_merge_idx[table], insert_idx, (row - 1) * row_size, row_size );
+}
+
 static void add_bytes( struct buffer *buf, const BYTE *data, UINT size )
 {
     grow_buffer( buf, size );
@@ -681,7 +737,20 @@ struct typeref_row
 static UINT add_typeref_row( UINT scope, UINT name, UINT namespace )
 {
     struct typeref_row row = { scope, name, namespace };
-    return add_row( TABLE_TYPEREF, (const BYTE *)&row, sizeof(row) );
+    UINT rownum = add_row( TABLE_TYPEREF, (const BYTE *)&row, sizeof(row) );
+    add_merge_index( TABLE_TYPEREF, name, namespace, rownum, sizeof(row), FIELD_OFFSET(struct typeref_row, name),
+                     FIELD_OFFSET(struct typeref_row, namespace) );
+    return rownum;
+}
+
+static UINT winmd_find_typeref_row( const struct winmd *winmd, const char *name, const char *namespace )
+{
+    const struct index *idx;
+
+    idx = find_merge_index( &winmd->tables_merge_idx[TABLE_TYPEREF], &winmd->tables[TABLE_TYPEREF], &winmd->strings,
+                            name, namespace, FIELD_OFFSET( struct typeref_row, name ),
+                            FIELD_OFFSET( struct typeref_row, namespace ), NULL );
+    return idx ? idx->offset / sizeof(struct typeref_row) + 1 : 0;
 }
 
 static void serialize_typeref_table( void )
@@ -711,10 +780,25 @@ struct typedef_row
 static UINT add_typedef_row( UINT flags, UINT name, UINT namespace, UINT extends, UINT fieldlist, UINT methodlist )
 {
     struct typedef_row row = { flags, name, namespace, extends, fieldlist, methodlist };
+    UINT rownum;
 
     if (!row.fieldlist) row.fieldlist = current_winmd->tables[TABLE_FIELD].count + 1;
     if (!row.methodlist) row.methodlist = current_winmd->tables[TABLE_METHODDEF].count + 1;
-    return add_row( TABLE_TYPEDEF, (const BYTE *)&row, sizeof(row) );
+
+    rownum = add_row( TABLE_TYPEDEF, (const BYTE *)&row, sizeof(row) );
+    add_merge_index( TABLE_TYPEDEF, name, namespace, rownum, sizeof(row), FIELD_OFFSET(struct typedef_row, name),
+                     FIELD_OFFSET(struct typedef_row, namespace) );
+    return rownum;
+}
+
+static UINT winmd_find_typedef_row( const struct winmd *winmd, const char *name, const char *namespace )
+{
+    const struct index *idx;
+
+    idx = find_merge_index( &winmd->tables_merge_idx[TABLE_TYPEDEF], &winmd->tables[TABLE_TYPEDEF], &winmd->strings,
+                            name, namespace, FIELD_OFFSET( struct typedef_row, name ),
+                            FIELD_OFFSET( struct typedef_row, namespace ), NULL );
+    return idx ? idx->offset / sizeof(struct typedef_row) + 1 : 0;
 }
 
 /* FIXME: enclosing classes should come before enclosed classes */
@@ -1247,6 +1331,11 @@ static UINT resolution_scope( enum table table, UINT row )
     case TABLE_TYPEREF: return row << 2 | 3;
     default: assert( 0 );
     }
+}
+
+static UINT resolution_scope_to_row( UINT token )
+{
+    return token >> 2;
 }
 
 static UINT has_constant( enum table table, UINT row )
@@ -2885,7 +2974,7 @@ static UINT make_static_value( const expr_t *attr, BYTE *buf )
 
 static void add_static_attr_step1( const type_t *type )
 {
-    UINT assemblyref, scope, typeref, typeref_type, class, sig_size;
+    UINT assemblyref, scope, typeref, typeref_type, class, sig_size, memberref;
     BYTE sig[32];
     attr_t *attr;
 
@@ -2900,7 +2989,10 @@ static void add_static_attr_step1( const type_t *type )
 
     class = memberref_parent( TABLE_TYPEREF, typeref );
     sig_size = make_member_sig3( typedef_or_ref(TABLE_TYPEREF, typeref_type), sig );
-    attr->md_member = add_memberref_row( class, add_string(".ctor"), add_blob(sig, sig_size) );
+    memberref = add_memberref_row( class, add_string(".ctor"), add_blob(sig, sig_size) );
+
+    LIST_FOR_EACH_ENTRY( attr, type->attrs, attr_t, entry )
+        if (attr->type == ATTR_STATIC) attr->md_member = memberref;
 }
 
 static void add_static_attr_step2( const type_t *type )
@@ -3579,7 +3671,7 @@ static void build_tables( const statement_list_t *stmt_list )
     }
 }
 
-static void build_table_stream( const statement_list_t *stmts )
+static void build_table_stream( void )
 {
     UINT i;
 
@@ -3617,12 +3709,12 @@ static void build_table_stream( const statement_list_t *stmts )
     serialize_assemblyref_table();
 }
 
-static void build_streams( const statement_list_t *stmts )
+static void build_streams( void )
 {
     static const BYTE pad[4];
     UINT i, len, offset = sizeof(metadata_header);
 
-    build_table_stream( stmts );
+    build_table_stream();
 
     len = (tables_disk.offset + 3) & ~3;
     add_bytes( &tables_disk, pad, len - tables_disk.offset );
@@ -3674,10 +3766,11 @@ static void write_streams( void )
     }
 }
 
+static const BYTE mscorlib_token[] = { 0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89 };
+
 static void init_winmd( struct winmd *winmd )
 {
     static const GUID guid = { 0x9ddc04c6, 0x04ca, 0x04cc, { 0x52, 0x85, 0x4b, 0x50, 0xb2, 0x60, 0x1d, 0xa8 } };
-    static const BYTE token[] = { 0xb7, 0x7a, 0x5c, 0x56, 0x19, 0x34, 0xe0, 0x89 };
     static const USHORT space = 0x20;
     char *ptr;
 
@@ -3694,7 +3787,7 @@ static void init_winmd( struct winmd *winmd )
     add_typedef_row( 0, add_string("<Module>"), 0, 0, 1, 1 );
     add_assembly_row( add_string(winmd->name) );
     add_module_row( add_string(metadata_name), add_guid(&guid) );
-    add_assemblyref_row( 0, add_blob(token, sizeof(token)), add_string("mscorlib") );
+    add_assemblyref_row( 0, add_blob(mscorlib_token, sizeof(mscorlib_token)), add_string("mscorlib") );
 }
 
 static void add_winmd( void )
@@ -3708,15 +3801,24 @@ static void add_winmd( void )
 
 void write_metadata( const statement_list_t *stmts )
 {
-    static const BYTE pad[FILE_ALIGNMENT];
-    UINT image_size, file_size, i;
-
     if (!do_metadata || !winrt_mode) return;
 
     add_winmd();
 
     build_tables( stmts );
-    build_streams( stmts );
+}
+
+static void merge_tables( void );
+
+void finalize_metadata( void )
+{
+    static const BYTE pad[FILE_ALIGNMENT];
+    UINT image_size, file_size, i;
+
+    if (!do_metadata || !winrt_mode) return;
+
+    merge_tables();
+    build_streams();
 
     image_size = FILE_ALIGNMENT + sizeof(cor_header) + 8 + sizeof(metadata_header);
     for (i = 0; i < WINMD_STREAM_MAX; i++) image_size += streams[i].header_size + streams[i].data_size;
@@ -3730,4 +3832,102 @@ void write_metadata( const statement_list_t *stmts )
     put_data( pad, file_size - image_size );
 
     flush_output_buffer( metadata_name );
+}
+
+static const char *winmd_get_string( const struct winmd *winmd, UINT offset )
+{
+    return (const char *)&winmd->strings.ptr[offset];
+}
+
+static const BYTE *winmd_get_blob( const struct winmd *winmd, UINT idx, UINT *size )
+{
+    UINT size_len = 0;
+    const BYTE *bytes = &winmd->blobs.ptr[idx];
+
+    *size = decode_int(bytes, &size_len);
+    return bytes + size_len;
+}
+
+static bool winmd_list_find_typedef_row( const char *name, const char *namespace )
+{
+    UINT i;
+
+    for (i = 0; i < winmd_count - 1; i++)
+        if (winmd_find_typedef_row( winmd_list[i], name, namespace )) return true;
+    return false;
+}
+
+static UINT merge_assemblyref( const struct winmd *winmd, UINT assemblyref_row )
+{
+    const struct assemblyref_row *row = &((const struct assemblyref_row *)winmd->tables[TABLE_ASSEMBLYREF].ptr)[assemblyref_row - 1];
+    const BYTE *pubkey;
+    const char *name;
+    UINT key_len;
+
+    name = winmd_get_string( winmd, row->name );
+    pubkey = winmd_get_blob( winmd, row->publickey, &key_len );
+    return add_assemblyref_row( row->flags, add_blob( pubkey, key_len ), add_string( name ) );
+}
+
+static void merge_typerefs( void )
+{
+    UINT i;
+
+    for (i = 0; i < winmd_count - 1; i++)
+    {
+        const struct winmd *winmd = winmd_list[i];
+
+        FOR_EACH_TABLE_ROW( winmd, TABLE_TYPEREF, struct typeref_row, typeref )
+        {
+            UINT scope_row, new_scope_row, new_scope;
+            enum table scope_table, new_scope_table;
+            const char *name, *namespace;
+
+            name = winmd_get_string( winmd, typeref->name );
+            namespace = winmd_get_string( winmd, typeref->namespace );
+            if (winmd_find_typeref_row( current_winmd, name, namespace )) continue;
+
+            scope_table = resolution_scope_to_table( typeref->scope );
+            scope_row = resolution_scope_to_row( typeref->scope );
+
+            if (scope_table == TABLE_MODULE)
+            {
+                assert( scope_row == MODULE_ROW );
+                new_scope_table = TABLE_MODULE;
+                new_scope_row = MODULE_ROW;
+            }
+            else if (scope_table == TABLE_ASSEMBLYREF)
+            {
+                if (winmd_list_find_typedef_row( name, namespace ))
+                {
+                    /* Reference to a type that is defined in one of the winmds, so the new scope is the final merged
+                     * winmd. */
+                    new_scope_table = TABLE_MODULE;
+                    new_scope_row = MODULE_ROW;
+                }
+                else
+                {
+                    new_scope_table = TABLE_ASSEMBLYREF;
+                    new_scope_row = merge_assemblyref( winmd,scope_row );
+                }
+            }
+            else
+            {
+                fprintf( stderr, "%s: unsupported ResolutionScope table: %#x\n", winmd->name, scope_table );
+                exit( 1 );
+            }
+
+            new_scope = resolution_scope( new_scope_table, new_scope_row );
+            add_typeref_row( new_scope, add_string( name ), add_string( namespace ) );
+        }
+    }
+}
+
+static void merge_tables( void )
+{
+    if (winmd_count <= 1) return;
+
+    add_winmd();
+
+    merge_typerefs();
 }

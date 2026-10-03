@@ -220,12 +220,6 @@ const char *debugstr_w(const WCHAR *wstr, size_t wchar_size);
 #define VKD3D_DBG_PRINTF_ERR(...) VKD3D_DBG_PRINTF(__VA_ARGS__)
 #endif
 
-/* Used by vkd3d_unreachable(). */
-#ifdef VKD3D_CROSSTEST
-#undef ERR
-#define ERR(...) do { fprintf(stderr, __VA_ARGS__); abort(); } while (0)
-#endif
-
 #ifndef TRACE
 #define TRACE        VKD3D_DBG_LOG(TRACE, vkd3d_debug_channel_default)
 #define TRACE_(ch)   VKD3D_DBG_LOG(TRACE, &vkd3d_debug_channel__##ch)

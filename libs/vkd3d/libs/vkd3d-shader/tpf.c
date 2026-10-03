@@ -2507,7 +2507,6 @@ static bool tpf_read_dst_operand(struct vkd3d_shader_sm4_parser *tpf, const uint
     if (!dst->write_mask && shader_sm4_is_scalar_register(&dst->reg))
         dst->write_mask = VKD3DSP_WRITEMASK_0;
     dst->modifiers = 0;
-    dst->shift = 0;
 
     if (register_is_input_output(&dst->reg)
             && !shader_sm4_validate_input_output_register(tpf, &dst->reg, dst->write_mask))
@@ -2656,10 +2655,8 @@ static void shader_sm4_read_instruction(struct vkd3d_shader_sm4_parser *sm4, str
         sm4->phase = ins->opcode;
     sm4->has_control_point_phase |= vsir_opcode_is_control_point_phase(ins->opcode);
     ins->flags = 0;
-    ins->coissue = false;
     ins->raw = false;
     ins->structured = false;
-    ins->predicate = NULL;
     ins->dst_count = opcode_info_get_dst_count(opcode_info);
     ins->src_count = opcode_info_get_src_count(opcode_info);
     ins->src = src = vsir_program_get_src_operands(program, ins->src_count);

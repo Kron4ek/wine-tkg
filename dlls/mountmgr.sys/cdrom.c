@@ -31,12 +31,36 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#ifdef MAJOR_IN_MKDEV
+# include <sys/mkdev.h>
+#elif defined(MAJOR_IN_SYSMACROS)
+# include <sys/sysmacros.h>
+#endif
+#include <sys/types.h>
 #include <sys/ioctl.h>
+#ifdef HAVE_SCSI_SG_H
+# include <scsi/sg.h>
+#endif
+#ifdef HAVE_SCSI_SCSI_H
+# include <scsi/scsi.h>
+# undef REASSIGN_BLOCKS  /* avoid conflict with winioctl.h */
+# undef FAILED           /* avoid conflict with winerror.h */
+#endif
+#ifdef HAVE_SCSI_SCSI_IOCTL_H
+# include <scsi/scsi_ioctl.h>
+#endif
 #ifdef HAVE_LINUX_CDROM_H
 # include <linux/cdrom.h>
 #endif
+#ifdef HAVE_LINUX_MAJOR_H
+# include <linux/major.h>
+#endif
 #ifdef HAVE_SYS_CDIO_H
 # include <sys/cdio.h>
+#endif
+#ifdef HAVE_SYS_SCSIIO_H
+# include <sys/scsiio.h>
 #endif
 #ifdef __APPLE__
 # include <libkern/OSByteOrder.h>
@@ -45,6 +69,37 @@
 # include <IOKit/storage/IOMedia.h>
 # include <IOKit/storage/IOCDMediaBSDClient.h>
 # include <IOKit/storage/IODVDMediaBSDClient.h>
+# include <IOKit/scsi/SCSITask.h>
+# include <IOKit/scsi/SCSICmds_REQUEST_SENSE_Defs.h>
+# define SENSEBUFLEN kSenseDefaultSize
+
+typedef struct
+{
+    uint32_t attribute;
+    uint32_t timeout;
+    uint32_t response;
+    uint32_t status;
+    uint8_t direction;
+    uint8_t cdbSize;
+    uint8_t reserved0144[2];
+    uint8_t cdb[16];
+    void *buffer;
+    uint64_t bufferSize;
+    void *sense;
+    uint64_t senseLen;
+} dk_scsi_command_t;
+
+typedef struct
+{
+    uint64_t bus;
+    uint64_t port;
+    uint64_t target;
+    uint64_t lun;
+} dk_scsi_identify_t;
+
+#define DKIOCSCSICOMMAND _IOWR('d', 253, dk_scsi_command_t)
+#define DKIOCSCSIIDENTIFY _IOR('d', 254, dk_scsi_identify_t)
+
 #endif
 
 /* Linux defines these; other systems do not. */
@@ -61,6 +116,61 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(cdrom);
+
+/* The documented format of DVD_LAYER_DESCRIPTOR is wrong. Even the format in
+ * the DDK's header is wrong. There are four bytes at the start defined by
+ * MMC-5. The first two are the size of the structure in big-endian order as
+ * defined by MMC-5. The other two are reserved.
+ */
+struct dvd_layer_descriptor
+{
+    DVD_DESCRIPTOR_HEADER Header;
+    DVD_LAYER_DESCRIPTOR Descriptor;
+    UCHAR Padding;
+};
+C_ASSERT(sizeof(struct dvd_layer_descriptor) == 22);
+
+struct dvd_manufacturer_descriptor
+{
+    DVD_DESCRIPTOR_HEADER Header;
+    DVD_MANUFACTURER_DESCRIPTOR Descriptor;
+    UCHAR Padding;
+};
+C_ASSERT(sizeof(struct dvd_manufacturer_descriptor) == 2053);
+
+typedef struct _SCSI_PASS_THROUGH32
+{
+    USHORT Length;
+    UCHAR ScsiStatus;
+    UCHAR PathId;
+    UCHAR TargetId;
+    UCHAR Lun;
+    UCHAR CdbLength;
+    UCHAR SenseInfoLength;
+    UCHAR DataIn;
+    ULONG DataTransferLength;
+    ULONG TimeOutValue;
+    ULONG DataBufferOffset;
+    ULONG SenseInfoOffset;
+    UCHAR Cdb[16];
+} SCSI_PASS_THROUGH32;
+
+typedef struct _SCSI_PASS_THROUGH_DIRECT32
+{
+    USHORT Length;
+    UCHAR ScsiStatus;
+    UCHAR PathId;
+    UCHAR TargetId;
+    UCHAR Lun;
+    UCHAR CdbLength;
+    UCHAR SenseInfoLength;
+    UCHAR DataIn;
+    ULONG DataTransferLength;
+    ULONG TimeOutValue;
+    ULONG DataBuffer;
+    ULONG SenseInfoOffset;
+    UCHAR Cdb[16];
+} SCSI_PASS_THROUGH_DIRECT32;
 
 struct cdrom
 {
@@ -340,7 +450,7 @@ static NTSTATUS seek_audio_msf( struct cdrom *cdrom, const CDROM_SEEK_AUDIO_MSF 
         msf.start_s = params->S;
         msf.start_f = params->F;
         final_frame = track_to_frame( &cdrom->toc, cdrom->toc.LastTrack + 1 ) - 1;
-        frame_to_msf( msf.end_m, final_frame );
+        frame_to_msf( &msf.end_m, final_frame );
         if (ioctl( cdrom->fd, CDIOCPLAYMSF, &msf ) < 0)
             return errno_to_status( errno );
     }
@@ -392,14 +502,14 @@ static NTSTATUS play_audio_msf( struct cdrom *cdrom, const CDROM_PLAY_AUDIO_MSF 
         WARN( "failed to start: %s\n", strerror( errno ));
         return errno_to_status( errno );
     }
-    if (ioctl( cdrom->fd, CDROMPLAYMSF, &msf ) == -1)
+    if (ioctl( cdrom->fd, CDIOCPLAYMSF, &msf ) == -1)
     {
         WARN( "failed to play: %s\n", strerror( errno ));
         return errno_to_status( errno );
     }
     TRACE( "playing %d:%d:%d to %d:%d:%d\n",
-            msf.cdmsf_min0, msf.cdmsf_sec0, msf.cdmsf_frame0,
-            msf.cdmsf_min1, msf.cdmsf_sec1, msf.cdmsf_frame1 );
+            msf.start_m, msf.start_s, msf.start_f,
+            msf.end_m, msf.end_s, msf.end_f );
     return STATUS_SUCCESS;
 #else
     FIXME( "not implemented for this platform\n" );
@@ -1015,6 +1125,31 @@ static NTSTATUS reset_device( struct cdrom *cdrom )
 #endif
 }
 
+static NTSTATUS check_verify( struct cdrom *cdrom )
+{
+#if defined(linux)
+    int ret;
+
+    if ((ret = ioctl( cdrom->fd, CDROM_DRIVE_STATUS, NULL )) == -1)
+        return errno_to_status( errno );
+    else if (ret == CDS_DISC_OK)
+        return STATUS_SUCCESS;
+    else
+        return STATUS_NO_MEDIA_IN_DEVICE;
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__DragonFly__)
+    if (!ioctl( cdrom->fd, CDIOCSTART, NULL ))
+        return STATUS_SUCCESS;
+    else
+        return STATUS_NO_MEDIA_IN_DEVICE;
+#elif defined(__APPLE__)
+    /* Mac OS X only creates the device file when media is present. */
+    return STATUS_SUCCESS;
+#else
+    FIXME( "not implemented for this platform\n" );
+    return STATUS_NOT_SUPPORTED;
+#endif
+}
+
 static NTSTATUS dvd_start_session( struct cdrom *cdrom, DVD_SESSION_ID *id )
 {
 #if defined(linux)
@@ -1038,6 +1173,32 @@ static NTSTATUS dvd_start_session( struct cdrom *cdrom, DVD_SESSION_ID *id )
     if (ioctl( cdrom->fd, DKIOCDVDREPORTKEY, &dvdrk ))
         return errno_to_status( errno );
     *id = agid_info.grantID;
+    return STATUS_SUCCESS;
+#else
+    FIXME( "not implemented for this platform\n" );
+    return STATUS_NOT_SUPPORTED;
+#endif
+}
+
+static NTSTATUS dvd_end_session( struct cdrom *cdrom, const DVD_SESSION_ID *id )
+{
+#if defined(linux)
+    dvd_authinfo auth_info;
+
+    memset( &auth_info, 0, sizeof( auth_info ) );
+    auth_info.type = DVD_INVALIDATE_AGID;
+    auth_info.lsa.agid = *id;
+    if (ioctl( cdrom->fd, DVD_AUTH, &auth_info ))
+        return errno_to_status( errno );
+    return STATUS_SUCCESS;
+#elif defined(__APPLE__)
+    dk_dvd_send_key_t dvdsk;
+
+    dvdsk.format = kDVDKeyFormatAGID_Invalidate;
+    dvdsk.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+    dvdsk.grantID = *id;
+    if (ioctl( cdrom->fd, DKIOCDVDSENDKEY, &dvdsk ))
+        return errno_to_status( errno );
     return STATUS_SUCCESS;
 #else
     FIXME( "not implemented for this platform\n" );
@@ -1277,6 +1438,946 @@ static NTSTATUS dvd_read_key( struct cdrom *cdrom, const DVD_COPY_PROTECT_KEY *i
 #endif
 }
 
+static NTSTATUS dvd_send_key( struct cdrom *cdrom, const DVD_COPY_PROTECT_KEY *key )
+{
+#if defined(linux)
+    dvd_authinfo auth_info;
+
+    memset( &auth_info, 0, sizeof( auth_info ) );
+    switch (key->KeyType)
+    {
+    case DvdChallengeKey:
+        TRACE( "DvdChallengeKey\n" );
+        auth_info.type = DVD_HOST_SEND_CHALLENGE;
+        auth_info.hsc.agid = key->SessionId;
+        memcpy( auth_info.hsc.chal, key->KeyData, DVD_CHALLENGE_SIZE );
+        if (ioctl( cdrom->fd, DVD_AUTH, &auth_info ))
+            return errno_to_status( errno );
+        return STATUS_SUCCESS;
+    case DvdBusKey2:
+        TRACE( "DvdBusKey2\n" );
+        auth_info.type = DVD_HOST_SEND_KEY2;
+        auth_info.hsk.agid = key->SessionId;
+        memcpy( auth_info.hsk.key, key->KeyData, DVD_KEY_SIZE );
+        if (ioctl( cdrom->fd, DVD_AUTH, &auth_info ))
+            return errno_to_status( errno );
+        return STATUS_SUCCESS;
+
+    default:
+        FIXME( "unhandled key type %#x\n", key->KeyType );
+        return STATUS_NOT_IMPLEMENTED;
+    }
+
+#elif defined(__APPLE__)
+    dk_dvd_send_key_t dvdsk;
+    DVDChallengeKeyInfo chal;
+    DVDKey2Info key2;
+
+    dvdsk.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+    dvdsk.grantID = key->SessionId;
+
+    switch (key->KeyType)
+    {
+    case DvdChallengeKey:
+        dvdsk.format = kDVDKeyFormatChallengeKey;
+        dvdsk.bufferLength = sizeof(chal);
+        dvdsk.buffer = &chal;
+        OSWriteBigInt16( chal.dataLength, 0, key->KeyLength );
+        memcpy( chal.challengeKeyValue, key->KeyData, key->KeyLength );
+        break;
+
+    case DvdBusKey2:
+        dvdsk.format = kDVDKeyFormatKey2;
+        dvdsk.bufferLength = sizeof(key2);
+        dvdsk.buffer = &key2;
+        OSWriteBigInt16( key2.dataLength, 0, key->KeyLength );
+        memcpy( key2.key2Value, key->KeyData, key->KeyLength );
+        break;
+
+    case DvdInvalidateAGID:
+        dvdsk.format = kDVDKeyFormatAGID_Invalidate;
+        break;
+
+    default:
+        FIXME( "unhandled key type %#x\n", key->KeyType );
+        return STATUS_NOT_IMPLEMENTED;
+    }
+
+    if (ioctl( cdrom->fd, DKIOCDVDSENDKEY, &dvdsk ))
+        return errno_to_status( errno );
+    return STATUS_SUCCESS;
+#else
+    FIXME( "not implemented for this platform\n" );
+    return STATUS_NOT_SUPPORTED;
+#endif
+}
+
+static NTSTATUS dvd_get_region( struct cdrom *cdrom, DVD_REGION *region )
+{
+#if defined(linux)
+    dvd_struct dvd;
+    dvd_authinfo auth_info;
+
+    dvd.type = DVD_STRUCT_COPYRIGHT;
+    dvd.copyright.layer_num = 0;
+    auth_info.type = DVD_LU_SEND_RPC_STATE;
+
+    if (ioctl( cdrom->fd, DVD_AUTH, &auth_info ) || ioctl( cdrom->fd, DVD_READ_STRUCT, &dvd ))
+        return errno_to_status( errno );
+    region->CopySystem = dvd.copyright.cpst;
+    region->RegionData = dvd.copyright.rmi;
+    region->SystemRegion = auth_info.lrpcs.region_mask;
+    region->ResetCount = auth_info.lrpcs.ucca;
+    return STATUS_SUCCESS;
+#elif defined(__APPLE__)
+    dk_dvd_report_key_t key;
+    dk_dvd_read_structure_t dvd;
+    DVDRegionPlaybackControlInfo rpc;
+    DVDCopyrightInfo copy;
+
+    key.format = kDVDKeyFormatRegionState;
+    key.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
+    key.bufferLength = sizeof(rpc);
+    key.buffer = &rpc;
+    dvd.format = kDVDStructureFormatCopyrightInfo;
+    dvd.bufferLength = sizeof(copy);
+    dvd.buffer = &copy;
+
+    if (ioctl( cdrom->fd, DKIOCDVDREPORTKEY, &key ) || ioctl( cdrom->fd, DKIOCDVDREADSTRUCTURE, &dvd ))
+        return errno_to_status( errno );
+    region->CopySystem = copy.copyrightProtectionSystemType;
+    region->RegionData = copy.regionMask;
+    region->SystemRegion = rpc.driveRegion;
+    region->ResetCount = rpc.numberUserResets;
+    return STATUS_SUCCESS;
+#else
+    FIXME( "not implemented for this platform\n" );
+    return STATUS_NOT_SUPPORTED;
+#endif
+}
+
+static NTSTATUS dvd_read_structure( struct cdrom *cdrom, const DVD_READ_STRUCTURE *structure,
+                                    unsigned int size, void *buffer, unsigned int *ret_size )
+{
+#ifdef DVD_READ_STRUCT
+    if (structure->BlockByteOffset.QuadPart)
+        FIXME( "ignoring offset\n" );
+
+    switch (structure->Format)
+    {
+    case DvdPhysicalDescriptor:
+    {
+        struct dvd_layer_descriptor *desc = buffer;
+        const struct dvd_layer *layer;
+        struct dvd_physical physical;
+
+        if (size < sizeof(*desc))
+            return STATUS_INVALID_PARAMETER;
+
+        physical.type = DVD_STRUCT_PHYSICAL;
+        physical.layer_num = structure->LayerNumber;
+        if (ioctl( cdrom->fd, DVD_READ_STRUCT, &physical ) < 0)
+            return errno_to_status( errno );
+        layer = &physical.layer[physical.layer_num];
+        desc->Header.Length = 0x0802;
+        desc->Header.Reserved[0] = 0;
+        desc->Header.Reserved[1] = 0;
+        desc->Descriptor.BookVersion = layer->book_version;
+        desc->Descriptor.BookType = layer->book_type;
+        desc->Descriptor.MinimumRate = layer->min_rate;
+        desc->Descriptor.DiskSize = layer->disc_size;
+        desc->Descriptor.LayerType = layer->layer_type;
+        desc->Descriptor.TrackPath = layer->track_path;
+        desc->Descriptor.NumberOfLayers = layer->nlayers;
+        desc->Descriptor.Reserved1 = 0;
+        desc->Descriptor.TrackDensity = layer->track_density;
+        desc->Descriptor.LinearDensity = layer->linear_density;
+        desc->Descriptor.StartingDataSector = layer->start_sector;
+        desc->Descriptor.EndDataSector = layer->end_sector;
+        desc->Descriptor.EndLayerZeroSector = layer->end_sector_l0;
+        desc->Descriptor.Reserved5 = 0;
+        desc->Descriptor.BCAFlag = layer->bca;
+        *ret_size = sizeof(*desc);
+        return STATUS_SUCCESS;
+    }
+
+    case DvdCopyrightDescriptor:
+    {
+        DVD_COPYRIGHT_DESCRIPTOR *desc = buffer;
+        struct dvd_copyright copyright;
+
+        if (size < sizeof(*desc))
+            return STATUS_INVALID_PARAMETER;
+
+        copyright.type = DVD_STRUCT_COPYRIGHT;
+        copyright.layer_num = structure->LayerNumber;
+        if (ioctl( cdrom->fd, DVD_READ_STRUCT, &copyright ) < 0)
+            return errno_to_status( errno );
+        desc->CopyrightProtectionType = copyright.cpst;
+        desc->RegionManagementInformation = copyright.rmi;
+        desc->Reserved = 0;
+        *ret_size = sizeof(*desc);
+        return STATUS_SUCCESS;
+    }
+
+    case DvdDiskKeyDescriptor:
+    {
+        DVD_DISK_KEY_DESCRIPTOR *desc = buffer;
+        struct dvd_disckey disckey;
+
+        if (size < sizeof(*desc))
+            return STATUS_INVALID_PARAMETER;
+
+        disckey.type = DVD_STRUCT_DISCKEY;
+        disckey.agid = structure->SessionId;
+        if (ioctl( cdrom->fd, DVD_READ_STRUCT, &disckey ) < 0)
+            return errno_to_status( errno );
+        memcpy( desc->DiskKeyData, disckey.value, 2048 );
+        *ret_size = sizeof(*desc);
+        return STATUS_SUCCESS;
+    }
+
+    case DvdBCADescriptor:
+    {
+        DVD_BCA_DESCRIPTOR *desc = buffer;
+        struct dvd_bca bca;
+
+        if (size < sizeof(*desc))
+            return STATUS_INVALID_PARAMETER;
+
+        bca.type = DVD_STRUCT_BCA;
+        if (ioctl( cdrom->fd, DVD_READ_STRUCT, &bca ) < 0)
+            return errno_to_status( errno );
+        memcpy( desc->BCAInformation, bca.value, bca.len );
+        *ret_size = sizeof(*desc);
+        return STATUS_SUCCESS;
+    }
+
+    case DvdManufacturerDescriptor:
+    {
+        struct dvd_manufacturer_descriptor *desc = buffer;
+        struct dvd_manufact manufact;
+
+        if (size < sizeof(*desc))
+            return STATUS_INVALID_PARAMETER;
+
+        manufact.type = DVD_STRUCT_MANUFACT;
+        manufact.layer_num = structure->LayerNumber;
+        if (ioctl( cdrom->fd, DVD_READ_STRUCT, &manufact ) < 0)
+            return errno_to_status( errno );
+        desc->Header.Length = 0x0802;
+        desc->Header.Reserved[0] = 0;
+        desc->Header.Reserved[1] = 0;
+        memcpy( desc->Descriptor.ManufacturingInformation, manufact.value, 2048 );
+        *ret_size = sizeof(*desc);
+        return STATUS_SUCCESS;
+    }
+
+    default:
+        FIXME( "unhandled structure %#x\n", structure->Format );
+        return STATUS_NOT_IMPLEMENTED;
+    }
+#elif defined(__APPLE__)
+    dk_dvd_read_structure_t dvdrs;
+
+    memset( &dvdrs, 0, sizeof(dvdrs) );
+    dvdrs.address = structure->BlockByteOffset.QuadPart >> 11;
+    dvdrs.grantID = structure->SessionId;
+    dvdrs.layer = structure->LayerNumber;
+
+    switch (structure->Format)
+    {
+    case DvdPhysicalDescriptor:
+    {
+        struct dvd_layer_descriptor *desc = buffer;
+        DVDPhysicalFormatInfo phys;
+
+        if (size < sizeof(*desc))
+            return STATUS_INVALID_PARAMETER;
+
+        dvdrs.format = kDVDStructureFormatPhysicalFormatInfo;
+        dvdrs.bufferLength = sizeof(phys);
+        dvdrs.buffer = &phys;
+        if (ioctl( cdrom->fd, DKIOCDVDREADSTRUCTURE, &dvdrs ))
+            return errno_to_status( errno );
+        desc->Header.Length = 0x0802;
+        desc->Header.Reserved[0] = 0;
+        desc->Header.Reserved[1] = 0;
+        desc->Descriptor.BookVersion = phys.partVersion;
+        desc->Descriptor.BookType = phys.bookType;
+        desc->Descriptor.MinimumRate = phys.minimumRate;
+        desc->Descriptor.DiskSize = phys.discSize;
+        desc->Descriptor.LayerType = phys.layerType;
+        desc->Descriptor.TrackPath = phys.trackPath;
+        desc->Descriptor.NumberOfLayers = phys.numberOfLayers;
+        desc->Descriptor.Reserved1 = 0;
+        desc->Descriptor.TrackDensity = phys.trackDensity;
+        desc->Descriptor.LinearDensity = phys.linearDensity;
+        desc->Descriptor.StartingDataSector = *(ULONG *)&phys.zero1;
+        desc->Descriptor.EndDataSector = *(ULONG *)&phys.zero2;
+        desc->Descriptor.EndLayerZeroSector = *(ULONG *)&phys.zero3;
+        desc->Descriptor.Reserved5 = 0;
+        desc->Descriptor.BCAFlag = phys.bcaFlag;
+        *ret_size = sizeof(*desc);
+        return STATUS_SUCCESS;
+    }
+
+    case DvdCopyrightDescriptor:
+    {
+        DVD_COPYRIGHT_DESCRIPTOR *desc = buffer;
+        DVDCopyrightInfo copy;
+
+        if (size < sizeof(*desc))
+            return STATUS_INVALID_PARAMETER;
+
+        dvdrs.format = kDVDStructureFormatCopyrightInfo;
+        dvdrs.bufferLength = sizeof(copy);
+        dvdrs.buffer = &copy;
+        if (ioctl( cdrom->fd, DKIOCDVDREADSTRUCTURE, &dvdrs ))
+            return errno_to_status( errno );
+        desc->CopyrightProtectionType = copy.copyrightProtectionSystemType;
+        desc->RegionManagementInformation = copy.regionMask;
+        desc->Reserved = 0;
+        *ret_size = sizeof(*desc);
+        return STATUS_SUCCESS;
+    }
+
+    case DvdDiskKeyDescriptor:
+    {
+        DVD_DISK_KEY_DESCRIPTOR *desc = buffer;
+        DVDDiscKeyInfo disk_key;
+
+        if (size < sizeof(*desc))
+            return STATUS_INVALID_PARAMETER;
+
+        dvdrs.format = kDVDStructureFormatDiscKeyInfo;
+        dvdrs.bufferLength = sizeof(disk_key);
+        dvdrs.buffer = &disk_key;
+        if (ioctl( cdrom->fd, DKIOCDVDREADSTRUCTURE, &dvdrs ))
+            return errno_to_status( errno );
+        memcpy( desc->DiskKeyData, disk_key.discKeyStructures, 2048 );
+        *ret_size = sizeof(*desc);
+        return STATUS_SUCCESS;
+    }
+
+    case DvdManufacturerDescriptor:
+    {
+        struct dvd_manufacturer_descriptor *desc = buffer;
+        DVDManufacturingInfo manf;
+
+        if (size < sizeof(*desc))
+            return STATUS_INVALID_PARAMETER;
+
+        dvdrs.format = kDVDStructureFormatManufacturingInfo;
+        dvdrs.bufferLength = sizeof(manf);
+        dvdrs.buffer = &manf;
+        if (ioctl( cdrom->fd, DKIOCDVDREADSTRUCTURE, &dvdrs ))
+            return errno_to_status( errno );
+        desc->Header.Length = 0x0802;
+        desc->Header.Reserved[0] = 0;
+        desc->Header.Reserved[1] = 0;
+        memcpy( desc->Descriptor.ManufacturingInformation, manf.discManufacturingInfo, 2048 );
+        *ret_size = sizeof(*desc);
+        return STATUS_SUCCESS;
+    }
+
+    default:
+        FIXME( "unhandled structure %#x\n", structure->Format );
+        return STATUS_NOT_IMPLEMENTED;
+    }
+#else
+    FIXME( "not implemented for this platform\n" );
+    return STATUS_NOT_SUPPORTED;
+#endif
+}
+
+static NTSTATUS scsi_pass_through( struct cdrom *cdrom, const SCSI_PASS_THROUGH *in_pkt, SCSI_PASS_THROUGH *out_pkt )
+{
+#ifdef HAVE_SG_IO_HDR_T_INTERFACE_ID
+    sg_io_hdr_t cmd;
+#elif defined __APPLE__
+    dk_scsi_command_t cmd;
+    int ret;
+#endif
+
+    if (in_pkt->Length < sizeof(SCSI_PASS_THROUGH))
+        return STATUS_BUFFER_TOO_SMALL;
+
+    if (in_pkt->CdbLength > 16)
+        return STATUS_INVALID_PARAMETER;
+
+#ifdef SENSEBUFLEN
+    if (in_pkt->SenseInfoLength > SENSEBUFLEN)
+        return STATUS_INVALID_PARAMETER;
+#endif
+
+    if (in_pkt->DataTransferLength > 0 && in_pkt->DataBufferOffset < sizeof(SCSI_PASS_THROUGH))
+        return STATUS_INVALID_PARAMETER;
+
+#ifdef HAVE_SG_IO_HDR_T_INTERFACE_ID
+    memset( &cmd, 0, sizeof(cmd) );
+
+    cmd.interface_id = 'S';
+    cmd.dxfer_len = in_pkt->DataTransferLength;
+    cmd.cmd_len = in_pkt->CdbLength;
+    cmd.cmdp = (unsigned char *)in_pkt->Cdb;
+    cmd.mx_sb_len = in_pkt->SenseInfoLength;
+    cmd.timeout = in_pkt->TimeOutValue * 1000;
+
+    if (cmd.mx_sb_len > 0)
+        cmd.sbp = (unsigned char *)out_pkt + in_pkt->SenseInfoOffset;
+
+    switch (in_pkt->DataIn)
+    {
+    case SCSI_IOCTL_DATA_IN:
+        cmd.dxferp = (char *)out_pkt + in_pkt->DataBufferOffset;
+        cmd.dxfer_direction = SG_DXFER_FROM_DEV;
+        break;
+    case SCSI_IOCTL_DATA_OUT:
+        cmd.dxferp = (char *)in_pkt + in_pkt->DataBufferOffset;
+        cmd.dxfer_direction = SG_DXFER_TO_DEV;
+        break;
+    case SCSI_IOCTL_DATA_UNSPECIFIED:
+        cmd.dxfer_direction = SG_DXFER_NONE;
+        break;
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (ioctl( cdrom->fd, SG_IO, &cmd ))
+        return errno_to_status( errno );
+
+    out_pkt->ScsiStatus = cmd.status;
+    out_pkt->DataTransferLength = in_pkt->DataTransferLength - cmd.resid;
+    out_pkt->SenseInfoLength = cmd.sb_len_wr;
+#elif defined(__APPLE__)
+    memset( &cmd, 0, sizeof(cmd) );
+    memcpy( cmd.cdb, in_pkt->Cdb, in_pkt->CdbLength );
+
+    cmd.cdbSize = in_pkt->CdbLength;
+    cmd.bufferSize = in_pkt->DataTransferLength;
+    cmd.sense = (char *)out_pkt + in_pkt->SenseInfoOffset;
+    cmd.senseLen = in_pkt->SenseInfoLength;
+    cmd.timeout = in_pkt->TimeOutValue * 1000; /* in milliseconds */
+
+    switch (in_pkt->DataIn)
+    {
+    case SCSI_IOCTL_DATA_OUT:
+        cmd.buffer = (char *)in_pkt + in_pkt->DataBufferOffset;
+        cmd.direction = kSCSIDataTransfer_FromInitiatorToTarget;
+        break;
+    case SCSI_IOCTL_DATA_IN:
+        cmd.buffer = (char *)out_pkt + in_pkt->DataBufferOffset;
+        cmd.direction = kSCSIDataTransfer_FromTargetToInitiator;
+        break;
+    case SCSI_IOCTL_DATA_UNSPECIFIED:
+        cmd.direction = kSCSIDataTransfer_NoDataTransfer;
+        break;
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ret = ioctl( cdrom->fd, DKIOCSCSICOMMAND, &cmd );
+
+    if (cmd.response == kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE)
+    {
+        /* Command failed */
+        switch (cmd.status)
+        {
+        case kSCSITaskStatus_TaskTimeoutOccurred:
+            return STATUS_TIMEOUT;
+        case kSCSITaskStatus_ProtocolTimeoutOccurred:
+            return STATUS_IO_TIMEOUT;
+        case kSCSITaskStatus_DeviceNotResponding:
+            return STATUS_DEVICE_BUSY;
+        case kSCSITaskStatus_DeviceNotPresent:
+            return STATUS_NO_SUCH_DEVICE;
+        case kSCSITaskStatus_DeliveryFailure:
+            return STATUS_DEVICE_PROTOCOL_ERROR;
+        case kSCSITaskStatus_No_Status:
+        default:
+            return STATUS_UNSUCCESSFUL;
+        }
+    }
+
+    if (cmd.status != kSCSITaskStatus_No_Status)
+        out_pkt->ScsiStatus = cmd.status;
+
+    if (ret)
+        return errno_to_status( errno );
+
+    /* FIXME: Update DataTransferLength and SenseInfoLength */
+#else
+    FIXME( "not implemented for this platform\n" );
+    return STATUS_NOT_SUPPORTED;
+#endif
+
+    out_pkt->Length = sizeof(*out_pkt);
+    out_pkt->CdbLength = in_pkt->CdbLength;
+    out_pkt->DataIn = in_pkt->DataIn;
+    out_pkt->TimeOutValue = in_pkt->TimeOutValue;
+    out_pkt->DataBufferOffset = in_pkt->DataBufferOffset;
+    out_pkt->SenseInfoOffset = in_pkt->SenseInfoOffset;
+    memmove( out_pkt->Cdb, in_pkt->Cdb, sizeof(in_pkt->Cdb) );
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS scsi_pass_through_32( struct cdrom *cdrom, const SCSI_PASS_THROUGH32 *in_pkt32,
+                                      SCSI_PASS_THROUGH32 *out_pkt32 )
+{
+    SCSI_PASS_THROUGH *pkt;
+    NTSTATUS status;
+    ULONG_PTR ptr;
+
+    if (in_pkt32->Length < sizeof(SCSI_PASS_THROUGH32))
+        return STATUS_BUFFER_TOO_SMALL;
+
+    if (in_pkt32->CdbLength > sizeof(in_pkt32->Cdb))
+        return STATUS_INVALID_PARAMETER;
+
+    if (in_pkt32->DataTransferLength > 0)
+    {
+        if (in_pkt32->DataBufferOffset < sizeof(SCSI_PASS_THROUGH32))
+            return STATUS_INVALID_PARAMETER;
+        ptr = (ULONG_PTR)in_pkt32 + in_pkt32->DataBufferOffset;
+        if (ptr < (ULONG_PTR)in_pkt32)
+            return STATUS_INVALID_PARAMETER;
+        if ((ptr + in_pkt32->DataTransferLength) < ptr)
+            return STATUS_INVALID_PARAMETER;
+    }
+
+    if (in_pkt32->SenseInfoLength > 0)
+    {
+        if (in_pkt32->SenseInfoOffset < sizeof(SCSI_PASS_THROUGH32))
+            return STATUS_INVALID_PARAMETER;
+        ptr = (ULONG_PTR)in_pkt32 + in_pkt32->SenseInfoOffset;
+        if (ptr < (ULONG_PTR)in_pkt32)
+            return STATUS_INVALID_PARAMETER;
+        if ((ptr + in_pkt32->SenseInfoLength) < ptr)
+            return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!(pkt = calloc( 1, sizeof(SCSI_PASS_THROUGH) + in_pkt32->SenseInfoLength + in_pkt32->DataTransferLength )))
+        return STATUS_NO_MEMORY;
+
+    pkt->Length = sizeof(SCSI_PASS_THROUGH);
+    pkt->CdbLength = in_pkt32->CdbLength;
+    pkt->SenseInfoLength = in_pkt32->SenseInfoLength;
+    pkt->DataIn = in_pkt32->DataIn;
+    pkt->DataTransferLength = in_pkt32->DataTransferLength;
+    pkt->TimeOutValue = in_pkt32->TimeOutValue;
+    pkt->DataBufferOffset = sizeof(SCSI_PASS_THROUGH) + in_pkt32->SenseInfoLength;
+    pkt->SenseInfoOffset = sizeof(SCSI_PASS_THROUGH);
+    memcpy( pkt->Cdb, in_pkt32->Cdb, sizeof(pkt->Cdb) );
+    if (pkt->DataIn == SCSI_IOCTL_DATA_OUT)
+        memcpy( (char *)pkt + pkt->DataBufferOffset,
+                (const char *)in_pkt32 + in_pkt32->DataBufferOffset,
+                in_pkt32->DataTransferLength );
+
+    if ((status = scsi_pass_through( cdrom, pkt, pkt )))
+        goto done;
+
+    out_pkt32->Length = sizeof(SCSI_PASS_THROUGH32);
+    out_pkt32->ScsiStatus = pkt->ScsiStatus;
+    out_pkt32->PathId = pkt->PathId;
+    out_pkt32->TargetId = pkt->TargetId;
+    out_pkt32->Lun = pkt->Lun;
+    out_pkt32->CdbLength = pkt->CdbLength;
+    out_pkt32->SenseInfoLength = pkt->SenseInfoLength;
+    out_pkt32->DataIn = pkt->DataIn;
+    out_pkt32->DataTransferLength = pkt->DataTransferLength;
+    out_pkt32->TimeOutValue = pkt->TimeOutValue;
+    out_pkt32->DataBufferOffset = in_pkt32->DataBufferOffset;
+    out_pkt32->SenseInfoOffset = in_pkt32->SenseInfoOffset;
+    memcpy(out_pkt32->Cdb, pkt->Cdb, sizeof(out_pkt32->Cdb));
+    memcpy( (char *)out_pkt32 + out_pkt32->SenseInfoOffset,
+            (const char *)pkt + pkt->SenseInfoOffset, pkt->SenseInfoLength );
+    if (pkt->DataIn == SCSI_IOCTL_DATA_IN)
+        memcpy( (char *)out_pkt32 + out_pkt32->DataBufferOffset,
+                (const char *)pkt + pkt->DataBufferOffset, pkt->DataTransferLength );
+
+done:
+    free( pkt );
+    return status;
+}
+
+static NTSTATUS scsi_pass_through_direct( struct cdrom *cdrom, const SCSI_PASS_THROUGH_DIRECT *in_pkt,
+                                          SCSI_PASS_THROUGH_DIRECT *out_pkt )
+{
+#ifdef HAVE_SG_IO_HDR_T_INTERFACE_ID
+    sg_io_hdr_t cmd;
+#elif defined __APPLE__
+    dk_scsi_command_t cmd;
+    int ret;
+#endif
+
+    if (in_pkt->Length < sizeof(SCSI_PASS_THROUGH_DIRECT))
+        return STATUS_BUFFER_TOO_SMALL;
+
+    if (in_pkt->CdbLength > 16)
+        return STATUS_INVALID_PARAMETER;
+
+#ifdef SENSEBUFLEN
+    if (in_pkt->SenseInfoLength > SENSEBUFLEN)
+        return STATUS_INVALID_PARAMETER;
+#endif
+
+    if (in_pkt->DataTransferLength > 0 && !in_pkt->DataBuffer)
+        return STATUS_INVALID_PARAMETER;
+
+#ifdef HAVE_SG_IO_HDR_T_INTERFACE_ID
+    memset( &cmd, 0, sizeof(cmd) );
+
+    cmd.interface_id = 'S';
+    cmd.cmd_len      = in_pkt->CdbLength;
+    cmd.mx_sb_len    = in_pkt->SenseInfoLength;
+    cmd.dxfer_len    = in_pkt->DataTransferLength;
+    cmd.dxferp       = in_pkt->DataBuffer;
+    cmd.cmdp         = (unsigned char *)in_pkt->Cdb;
+    cmd.sbp          = (unsigned char *)out_pkt + in_pkt->SenseInfoOffset;
+    cmd.timeout      = in_pkt->TimeOutValue * 1000;
+
+    switch (in_pkt->DataIn)
+    {
+    case SCSI_IOCTL_DATA_IN:
+        cmd.dxfer_direction = SG_DXFER_FROM_DEV;
+        break;
+    case SCSI_IOCTL_DATA_OUT:
+        cmd.dxfer_direction = SG_DXFER_TO_DEV;
+        break;
+    case SCSI_IOCTL_DATA_UNSPECIFIED:
+        cmd.dxfer_direction = SG_DXFER_NONE;
+        break;
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (ioctl( cdrom->fd, SG_IO, &cmd ))
+        return errno_to_status( errno );
+
+    out_pkt->ScsiStatus         = cmd.status;
+    out_pkt->DataTransferLength = in_pkt->DataTransferLength - cmd.resid;
+    out_pkt->SenseInfoLength    = cmd.sb_len_wr;
+#elif defined(__APPLE__)
+    memset( &cmd, 0, sizeof(cmd) );
+    memcpy( cmd.cdb, in_pkt->Cdb, in_pkt->CdbLength );
+
+    cmd.cdbSize = in_pkt->CdbLength;
+    cmd.buffer = in_pkt->DataBuffer;
+    cmd.bufferSize = in_pkt->DataTransferLength;
+    cmd.sense = (char *)out_pkt + in_pkt->SenseInfoOffset;
+    cmd.senseLen = in_pkt->SenseInfoLength;
+    cmd.timeout = in_pkt->TimeOutValue * 1000; /* in milliseconds */
+
+    switch (in_pkt->DataIn)
+    {
+    case SCSI_IOCTL_DATA_OUT:
+        cmd.direction = kSCSIDataTransfer_FromInitiatorToTarget;
+        break;
+    case SCSI_IOCTL_DATA_IN:
+        cmd.direction = kSCSIDataTransfer_FromTargetToInitiator;
+        break;
+    case SCSI_IOCTL_DATA_UNSPECIFIED:
+        cmd.direction = kSCSIDataTransfer_NoDataTransfer;
+        break;
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ret = ioctl( cdrom->fd, DKIOCSCSICOMMAND, &cmd );
+
+    if (cmd.response == kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE)
+    {
+        switch (cmd.status)
+        {
+        case kSCSITaskStatus_TaskTimeoutOccurred:
+            return STATUS_TIMEOUT;
+        case kSCSITaskStatus_ProtocolTimeoutOccurred:
+            return STATUS_IO_TIMEOUT;
+        case kSCSITaskStatus_DeviceNotResponding:
+            return STATUS_DEVICE_BUSY;
+        case kSCSITaskStatus_DeviceNotPresent:
+            return STATUS_NO_SUCH_DEVICE;
+        case kSCSITaskStatus_DeliveryFailure:
+            return STATUS_DEVICE_PROTOCOL_ERROR;
+        case kSCSITaskStatus_No_Status:
+        default:
+            return STATUS_UNSUCCESSFUL;
+        }
+    }
+
+    if (ret)
+        return errno_to_status( errno );
+
+    if (cmd.status != kSCSITaskStatus_No_Status)
+        out_pkt->ScsiStatus = cmd.status;
+
+    /* FIXME: Update DataTransferLength and SenseInfoLength */
+#else
+    FIXME( "not implemented for this platform\n" );
+    return STATUS_NOT_SUPPORTED;
+#endif
+    out_pkt->Length = sizeof(*out_pkt);
+    out_pkt->CdbLength = in_pkt->CdbLength;
+    out_pkt->DataIn = in_pkt->DataIn;
+    out_pkt->TimeOutValue = in_pkt->TimeOutValue;
+    out_pkt->DataBuffer = in_pkt->DataBuffer;
+    out_pkt->SenseInfoOffset = in_pkt->SenseInfoOffset;
+    memmove( out_pkt->Cdb, in_pkt->Cdb, sizeof(in_pkt->Cdb) );
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS scsi_pass_through_direct_32( struct cdrom *cdrom, const SCSI_PASS_THROUGH_DIRECT32 *in_pkt32,
+                                             SCSI_PASS_THROUGH_DIRECT32 *out_pkt32 )
+{
+    SCSI_PASS_THROUGH_DIRECT *pkt;
+    NTSTATUS status;
+    ULONG_PTR ptr;
+
+    if (in_pkt32->Length < sizeof(SCSI_PASS_THROUGH_DIRECT32))
+        return STATUS_BUFFER_TOO_SMALL;
+
+    if (in_pkt32->CdbLength > 16)
+        return STATUS_INVALID_PARAMETER;
+
+#ifdef SENSEBUFLEN
+    if (in_pkt32->SenseInfoLength > SENSEBUFLEN)
+        return STATUS_INVALID_PARAMETER;
+#endif
+
+    if (in_pkt32->SenseInfoLength > 0)
+    {
+        if (in_pkt32->SenseInfoOffset < sizeof(SCSI_PASS_THROUGH_DIRECT32))
+            return STATUS_INVALID_PARAMETER;
+        ptr = (ULONG_PTR)in_pkt32 + in_pkt32->SenseInfoOffset;
+        if (ptr < (ULONG_PTR)in_pkt32)
+            return STATUS_INVALID_PARAMETER;
+        if ((ptr + in_pkt32->SenseInfoLength) < ptr)
+            return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!(pkt = calloc( 1, sizeof(SCSI_PASS_THROUGH_DIRECT) + in_pkt32->SenseInfoLength )))
+        return STATUS_NO_MEMORY;
+
+    pkt->Length = sizeof(SCSI_PASS_THROUGH_DIRECT);
+    pkt->CdbLength = in_pkt32->CdbLength;
+    pkt->SenseInfoLength = in_pkt32->SenseInfoLength;
+    pkt->DataIn = in_pkt32->DataIn;
+    pkt->DataTransferLength = in_pkt32->DataTransferLength;
+    pkt->TimeOutValue = in_pkt32->TimeOutValue;
+    pkt->DataBuffer = ULongToPtr(in_pkt32->DataBuffer);
+    pkt->SenseInfoOffset = sizeof(SCSI_PASS_THROUGH_DIRECT);
+    memcpy( pkt->Cdb, in_pkt32->Cdb, sizeof(pkt->Cdb) );
+
+    if ((status = scsi_pass_through_direct( cdrom, pkt, pkt )))
+        goto done;
+
+    out_pkt32->Length = sizeof(SCSI_PASS_THROUGH_DIRECT32);
+    out_pkt32->ScsiStatus = pkt->ScsiStatus;
+    out_pkt32->PathId = pkt->PathId;
+    out_pkt32->TargetId = pkt->TargetId;
+    out_pkt32->Lun = pkt->Lun;
+    out_pkt32->CdbLength = pkt->CdbLength;
+    out_pkt32->SenseInfoLength = pkt->SenseInfoLength;
+    out_pkt32->DataIn = pkt->DataIn;
+    out_pkt32->DataTransferLength = pkt->DataTransferLength;
+    out_pkt32->TimeOutValue = pkt->TimeOutValue;
+    out_pkt32->DataBuffer = in_pkt32->DataBuffer;
+    out_pkt32->SenseInfoOffset = in_pkt32->SenseInfoOffset;
+    memcpy( out_pkt32->Cdb, pkt->Cdb, sizeof(out_pkt32->Cdb) );
+    memcpy( (char *)out_pkt32 + out_pkt32->SenseInfoOffset,
+            (const char *)pkt + pkt->SenseInfoOffset, pkt->SenseInfoLength );
+
+done:
+    free( pkt );
+    return status;
+}
+
+static NTSTATUS scsi_get_address( struct cdrom *cdrom, SCSI_ADDRESS *address )
+{
+#if defined(linux)
+    struct stat st;
+
+    if (fstat( cdrom->fd, &st ) == -1)
+        return errno_to_status( errno );
+    if (!S_ISBLK(st.st_mode))
+        return STATUS_INVALID_DEVICE_REQUEST;
+    memset( address, 0, sizeof(SCSI_ADDRESS) );
+    address->Length = sizeof(SCSI_ADDRESS);
+    switch (major( st.st_rdev ))
+    {
+    case IDE0_MAJOR: address->PortNumber = 0; break;
+    case IDE1_MAJOR: address->PortNumber = 1; break;
+    case IDE2_MAJOR: address->PortNumber = 2; break;
+    case IDE3_MAJOR: address->PortNumber = 3; break;
+    case IDE4_MAJOR: address->PortNumber = 4; break;
+    case IDE5_MAJOR: address->PortNumber = 5; break;
+    case IDE6_MAJOR: address->PortNumber = 6; break;
+    case IDE7_MAJOR: address->PortNumber = 7; break;
+    default: address->PathId = 1; break;
+    }
+
+    if (address->PathId == 0)
+        address->TargetId = (minor( st.st_rdev ) >> 6);
+    else
+    {
+#ifdef SCSI_IOCTL_GET_IDLUN
+        __u32 idlun[2];
+        if (ioctl( cdrom->fd, SCSI_IOCTL_GET_IDLUN, idlun ) != -1)
+        {
+            address->PathId = (idlun[0] >> 24) & 0xff;
+            address->PortNumber = ((idlun[0] >> 16) & 0xff) + 2;
+            address->TargetId = idlun[0] & 0xff;
+            address->Lun = (idlun[0] >> 8) & 0xff;
+        }
+        else
+#endif
+        {
+            WARN( "CD-ROM device (%u, %u) not supported\n", major( st.st_rdev ), minor( st.st_rdev ));
+            return STATUS_NOT_SUPPORTED;
+        }
+    }
+    return STATUS_SUCCESS;
+#elif defined(__NetBSD__)
+    struct scsi_addr addr;
+
+    if (ioctl( cdrom->fd, SCIOCIDENTIFY, &addr ) == -1)
+        return errno_to_status( errno );
+    switch (addr.type)
+    {
+    case TYPE_SCSI:
+        address->PathId = 1;
+        address->PortNumber = addr.addr.scsi.scbus;
+        address->TargetId = addr.addr.scsi.target;
+        address->Lun = addr.addr.scsi.lun;
+        return STATUS_SUCCESS;
+    case TYPE_ATAPI:
+        address->PathId = 0;
+        address->PortNumber = addr.addr.atapi.atbus;
+        address->TargetId = addr.addr.atapi.drive;
+        address->Lun = 0;
+        return STATUS_SUCCESS;
+    default:
+        FIXME( "unhandled type %#x\n", addr.type );
+        return STATUS_NOT_IMPLEMENTED;
+    }
+#elif defined(__APPLE__)
+    dk_scsi_identify_t addr;
+
+    if (ioctl( cdrom->fd, DKIOCSCSIIDENTIFY, &addr ) == -1)
+        return errno_to_status( errno );
+    address->PathId = addr.bus;
+    address->PortNumber = addr.port;
+    address->TargetId = addr.target;
+    address->Lun = addr.lun;
+    return STATUS_SUCCESS;
+#else
+    FIXME( "not implemented for this platform\n" );
+    return STATUS_NOT_IMPLEMENTED;
+#endif
+}
+
+static NTSTATUS scsi_get_capabilities( struct cdrom *cdrom, IO_SCSI_CAPABILITIES *caps )
+{
+#ifdef SG_SCATTER_SZ
+    caps->Length = sizeof(*caps);
+    caps->MaximumTransferLength = SG_SCATTER_SZ; /* FIXME */
+    caps->MaximumPhysicalPages = SG_SCATTER_SZ / 0x1000;
+    caps->SupportedAsynchronousEvents = TRUE;
+    caps->AlignmentMask = 0x1000;
+    caps->TaggedQueuing = FALSE; /* we could check that it works and answer TRUE */
+    caps->AdapterScansDown = FALSE; /* FIXME ? */
+    caps->AdapterUsesPio = FALSE; /* FIXME ? */
+    return STATUS_SUCCESS;
+#elif defined __APPLE__
+    uint64_t bytesr, bytesw, align;
+
+    if (ioctl( cdrom->fd, DKIOCGETMAXBYTECOUNTREAD, &bytesr ) ||
+        ioctl( cdrom->fd, DKIOCGETMAXBYTECOUNTWRITE, &bytesw ) ||
+        ioctl( cdrom->fd, DKIOCGETMINSEGMENTALIGNMENTBYTECOUNT, &align ))
+        return errno_to_status( errno );
+    caps->Length = sizeof(*caps);
+    caps->MaximumTransferLength = min( bytesr, bytesw );
+    caps->MaximumPhysicalPages = caps->MaximumTransferLength / 0x1000;
+    caps->SupportedAsynchronousEvents = TRUE;
+    caps->AlignmentMask = align - 1;
+    caps->TaggedQueuing = FALSE; /* we could check that it works and answer TRUE */
+    caps->AdapterScansDown = FALSE; /* FIXME ? */
+    caps->AdapterUsesPio = FALSE; /* FIXME ? */
+    return STATUS_SUCCESS;
+#else
+    FIXME( "not implemented for this platform\n" );
+    return STATUS_NOT_IMPLEMENTED;
+#endif
+}
+
+#define INQ_CMD_LEN 6
+#define INQ_REPLY_LEN 36
+
+static NTSTATUS scsi_get_inquiry_data( struct cdrom *cdrom, unsigned int size,
+                                       SCSI_ADAPTER_BUS_INFO *info, unsigned int *ret_size )
+{
+#ifdef HAVE_SG_IO_HDR_T_INTERFACE_ID
+    UCHAR inquiry[INQ_CMD_LEN] = {INQUIRY, 0, 0, 0, INQ_REPLY_LEN, 0};
+    SCSI_INQUIRY_DATA *inq_data;
+    unsigned int needed_size;
+    UCHAR sense_buffer[32];
+    SCSI_ADDRESS address;
+    sg_io_hdr_t cmd;
+    NTSTATUS status;
+    int version;
+
+    needed_size = offsetof( SCSI_ADAPTER_BUS_INFO, BusData[1] );
+    needed_size += offsetof( SCSI_INQUIRY_DATA, InquiryData[INQ_REPLY_LEN] );
+    needed_size = (needed_size + 3) & ~3;
+    if (size < needed_size)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Check we have a SCSI device and a supported driver */
+    if (ioctl( cdrom->fd, SG_GET_VERSION_NUM, &version ))
+        return errno_to_status( errno );
+    if (version < 30000)
+        return STATUS_NOT_SUPPORTED;
+
+    /* FIXME: Enumerate devices on the bus */
+    info->NumberOfBuses = 1;
+    info->BusData[0].NumberOfLogicalUnits = 1;
+    info->BusData[0].InquiryDataOffset = sizeof(SCSI_ADAPTER_BUS_INFO);
+
+    inq_data = (SCSI_INQUIRY_DATA *)&info->BusData[1];
+
+    memset( &cmd, 0, sizeof(cmd) );
+    cmd.interface_id = 'S';
+    cmd.cmd_len = sizeof(inquiry);
+    cmd.mx_sb_len = sizeof(sense_buffer);
+    cmd.dxfer_direction = SG_DXFER_FROM_DEV;
+    cmd.dxfer_len = INQ_REPLY_LEN;
+    cmd.dxferp = inq_data->InquiryData;
+    cmd.cmdp = inquiry;
+    cmd.sbp = sense_buffer;
+    cmd.timeout = 1000;
+
+    if (ioctl( cdrom->fd, SG_IO, &cmd ))
+        WARN( "failed to send SCSI command: %s\n", strerror( errno ));
+
+    if ((status = scsi_get_address( cdrom, &address )))
+        return status;
+    info->BusData[0].InitiatorBusId = address.PortNumber;
+    inq_data->PathId = address.PathId;
+    inq_data->TargetId = address.TargetId;
+    inq_data->Lun = address.Lun;
+    inq_data->DeviceClaimed = TRUE;
+    inq_data->InquiryDataLength = INQ_REPLY_LEN;
+    inq_data->NextInquiryDataOffset = 0;
+    *ret_size = needed_size;
+    return STATUS_SUCCESS;
+#else
+    FIXME( "not implemented for this platform\n" );
+    return STATUS_NOT_SUPPORTED;
+#endif
+}
+
 NTSTATUS cdrom_ioctl( void *args )
 {
     struct cdrom_ioctl_params *params = args;
@@ -1367,6 +2468,23 @@ NTSTATUS cdrom_ioctl( void *args )
         case IOCTL_CDROM_STOP_AUDIO:
             return stop_audio( params->cdrom );
 
+        case IOCTL_CDROM_CHECK_VERIFY:
+        case IOCTL_DISK_CHECK_VERIFY:
+        case IOCTL_STORAGE_CHECK_VERIFY:
+        case IOCTL_STORAGE_CHECK_VERIFY2:
+            return check_verify( params->cdrom );
+
+        case IOCTL_DVD_END_SESSION:
+            if (params->input_size < sizeof(DVD_SESSION_ID))
+                return STATUS_INVALID_PARAMETER;
+            return dvd_end_session( params->cdrom, params->input );
+
+        case IOCTL_DVD_GET_REGION:
+            if (params->output_size < sizeof(DVD_REGION))
+                return STATUS_BUFFER_TOO_SMALL;
+            params->ret_size = sizeof(DVD_REGION);
+            return dvd_get_region( params->cdrom, params->output );
+
         case IOCTL_DVD_READ_KEY:
             if (params->input_size < sizeof(DVD_COPY_PROTECT_KEY))
                 return STATUS_INVALID_PARAMETER;
@@ -1375,11 +2493,78 @@ NTSTATUS cdrom_ioctl( void *args )
             params->ret_size = sizeof(DVD_COPY_PROTECT_KEY);
             return dvd_read_key( params->cdrom, params->input, params->output );
 
+        case IOCTL_DVD_READ_STRUCTURE:
+            if (params->input_size < sizeof(DVD_READ_STRUCTURE))
+                return STATUS_INVALID_PARAMETER;
+            return dvd_read_structure( params->cdrom, params->input, params->output_size,
+                                       params->output, &params->ret_size );
+
+        case IOCTL_DVD_SEND_KEY:
+            if (params->input_size < sizeof(DVD_COPY_PROTECT_KEY))
+                return STATUS_INVALID_PARAMETER;
+            return dvd_send_key( params->cdrom, params->input );
+
         case IOCTL_DVD_START_SESSION:
             if (params->output_size < sizeof(DVD_SESSION_ID))
                 return STATUS_BUFFER_TOO_SMALL;
             params->ret_size = sizeof(DVD_SESSION_ID);
             return dvd_start_session( params->cdrom, params->output );
+
+        case IOCTL_SCSI_GET_ADDRESS:
+            if (params->output_size < sizeof(SCSI_ADDRESS))
+                return STATUS_BUFFER_TOO_SMALL;
+            params->ret_size = sizeof(SCSI_ADDRESS);
+            return scsi_get_address( params->cdrom, params->output );
+
+        case IOCTL_SCSI_GET_CAPABILITIES:
+            if (params->output_size < sizeof(IO_SCSI_CAPABILITIES))
+                return STATUS_BUFFER_TOO_SMALL;
+            params->ret_size = sizeof(IO_SCSI_CAPABILITIES);
+            return scsi_get_capabilities( params->cdrom, params->output );
+
+        case IOCTL_SCSI_GET_INQUIRY_DATA:
+            return scsi_get_inquiry_data( params->cdrom, params->output_size,
+                                          params->output, &params->ret_size );
+
+        case IOCTL_SCSI_PASS_THROUGH:
+            if (params->wow64)
+            {
+                if (params->input_size < sizeof(SCSI_PASS_THROUGH32))
+                    return STATUS_INVALID_PARAMETER;
+                if (params->output_size < sizeof(SCSI_PASS_THROUGH32))
+                    return STATUS_BUFFER_TOO_SMALL;
+                params->ret_size = sizeof(SCSI_PASS_THROUGH32);
+                return scsi_pass_through_32( params->cdrom, params->input, params->output );
+            }
+            else
+            {
+                if (params->input_size < sizeof(SCSI_PASS_THROUGH))
+                    return STATUS_INVALID_PARAMETER;
+                if (params->output_size < sizeof(SCSI_PASS_THROUGH))
+                    return STATUS_BUFFER_TOO_SMALL;
+                params->ret_size = sizeof(SCSI_PASS_THROUGH);
+                return scsi_pass_through( params->cdrom, params->input, params->output );
+            }
+
+        case IOCTL_SCSI_PASS_THROUGH_DIRECT:
+            if (params->wow64)
+            {
+                if (params->input_size < sizeof(SCSI_PASS_THROUGH_DIRECT32))
+                    return STATUS_INVALID_PARAMETER;
+                if (params->output_size < sizeof(SCSI_PASS_THROUGH_DIRECT32))
+                    return STATUS_BUFFER_TOO_SMALL;
+                params->ret_size = sizeof(SCSI_PASS_THROUGH_DIRECT32);
+                return scsi_pass_through_direct_32( params->cdrom, params->input, params->output );
+            }
+            else
+            {
+                if (params->input_size < sizeof(SCSI_PASS_THROUGH_DIRECT))
+                    return STATUS_INVALID_PARAMETER;
+                if (params->output_size < sizeof(SCSI_PASS_THROUGH_DIRECT))
+                    return STATUS_BUFFER_TOO_SMALL;
+                params->ret_size = sizeof(SCSI_PASS_THROUGH_DIRECT);
+                return scsi_pass_through_direct( params->cdrom, params->input, params->output );
+            }
 
         default:
             FIXME("Unsupported ioctl %#x (device=%#x access=%#x func=%#x method=%#x)\n",

@@ -260,7 +260,7 @@ static HRESULT midi_parser_handle_program_change(struct midi_parser *parser, str
     MUSIC_TIME dmusic_time = (ULONGLONG)parser->time * DMUS_PPQ / parser->division;
     instrument.dwPChannel = event->status & 0xf;
     instrument.dwFlags = DMUS_IO_INST_PATCH;
-    instrument.dwPatch = event->data[0];
+    instrument.dwPatch = event->data[0] | (instrument.dwPChannel == 9 ? F_INSTRUMENT_DRUMS : 0);
     if (FAILED(hr = CoCreateInstance(&CLSID_DirectMusicBand, NULL, CLSCTX_INPROC_SERVER,
                        &IID_IDirectMusicBand, (void **)&band)))
         return hr;
@@ -282,7 +282,7 @@ static HRESULT midi_parser_handle_program_change(struct midi_parser *parser, str
 static HRESULT midi_parser_handle_note_on_off(struct midi_parser *parser, struct midi_event *event)
 {
     BYTE new_velocity = (event->status & 0xf0) == MIDI_NOTE_OFF ? 0 : event->data[1]; /* DirectMusic doesn't have noteoff velocity */
-    BYTE note = event->data[0], channel = event->status & 0xf;
+    BYTE note = event->data[0] & 0x7f, channel = event->status & 0xf;
     DWORD index = (DWORD)channel * 128 + note;
     MUSIC_TIME dmusic_time;
     struct midi_seqtrack_item *note_state = parser->note_states[index];
@@ -355,7 +355,9 @@ static HRESULT midi_parser_handle_control(struct midi_parser *parser, struct mid
 static int midi_seqtrack_item_compare(const void *a, const void *b)
 {
     const DMUS_IO_SEQ_ITEM *item_a = a, *item_b = b;
-    return item_a->mtTime - item_b->mtTime;
+    if (item_a->mtTime == item_b->mtTime)
+        return 0;
+    return item_a->mtTime > item_b->mtTime ? 1 : -1;
 }
 
 static HRESULT midi_parser_parse(struct midi_parser *parser, IDirectMusicSegment8 *segment)

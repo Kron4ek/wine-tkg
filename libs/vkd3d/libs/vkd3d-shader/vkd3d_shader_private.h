@@ -216,6 +216,11 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_D3DBC_INVALID_INDIRECT_ADDRESS   = 7012,
 
     VKD3D_SHADER_WARNING_D3DBC_IGNORED_INSTRUCTION_FLAGS= 7300,
+    VKD3D_SHADER_WARNING_D3DBC_INVALID_SOURCE_MODIFIER  = 7301,
+    VKD3D_SHADER_WARNING_D3DBC_INVALID_DESTINATION_MODIFIER = 7302,
+    VKD3D_SHADER_WARNING_D3DBC_INVALID_RESOURCE_TYPE    = 7303,
+    VKD3D_SHADER_WARNING_D3DBC_INVALID_USAGE            = 7304,
+    VKD3D_SHADER_WARNING_D3DBC_INVALID_REGISTER_TYPE    = 7305,
 
     VKD3D_SHADER_ERROR_DXIL_OUT_OF_MEMORY               = 8000,
     VKD3D_SHADER_ERROR_DXIL_INVALID_SIZE                = 8001,
@@ -548,7 +553,6 @@ enum vsir_opcode
     VSIR_OP_NRM,
     VSIR_OP_OR,
     VSIR_OP_ORD,
-    VSIR_OP_PHASE,
     VSIR_OP_PHI,
     VSIR_OP_POW,
     VSIR_OP_QUAD_READ_ACROSS_D,
@@ -696,7 +700,6 @@ enum vsir_register_type
     VSIR_REGISTER_COMBINED_SAMPLER,
     VSIR_REGISTER_CONSTBOOL,
     VSIR_REGISTER_LOOP,
-    VSIR_REGISTER_TEMPFLOAT16,
     VSIR_REGISTER_MISCTYPE,
     VSIR_REGISTER_LABEL,
     VSIR_REGISTER_PREDICATE,
@@ -1031,6 +1034,14 @@ struct vsir_normalisation_flags
     bool has_descriptor_info;
     bool has_no_modifiers;
     bool normalised_clip_cull_arrays;
+    /* If true, all I/O is in INPUT/OUTPUT/PATCHCONST, and the indices are in
+     * the following order:
+     *
+     *   - (optional) index within the element, if register_count > 1
+     *   - (optional) control point index
+     *   - index of the signature element, which must be constant/direct
+     */
+    bool normalised_io;
 };
 
 struct vkd3d_shader_immediate_constant_buffer
@@ -1152,13 +1163,13 @@ struct vsir_dst_operand
     struct vsir_operand reg;
     uint32_t write_mask;
     uint32_t modifiers;
-    unsigned int shift;
 };
 
 void vsir_dst_operand_init(struct vsir_dst_operand *dst, enum vsir_register_type reg_type,
         enum vsir_data_type data_type, unsigned int idx_count);
 void vsir_dst_operand_init_null(struct vsir_dst_operand *dst);
 void vsir_dst_operand_init_ssa_f32v4(struct vsir_dst_operand *dst, unsigned int idx);
+void vsir_dst_operand_init_temp_f32v4(struct vsir_dst_operand *dst, unsigned int idx);
 
 /* This structure is used by vsir_src_operand_compare(); changes to the
  * structure should be reflected by the comparison function as well. */
@@ -1174,8 +1185,10 @@ struct vsir_src_operand
 
 void vsir_src_operand_init(struct vsir_src_operand *src, enum vsir_register_type reg_type,
         enum vsir_data_type data_type, unsigned int idx_count);
+void vsir_src_operand_init_const_f32(struct vsir_src_operand *src, float value);
 void vsir_src_operand_init_label(struct vsir_src_operand *src, unsigned int label_id);
 void vsir_src_operand_init_ssa_f32v4(struct vsir_src_operand *src, unsigned int idx);
+void vsir_src_operand_init_temp_f32v4(struct vsir_src_operand *src, unsigned int idx);
 
 struct vkd3d_shader_index_range
 {
@@ -1210,7 +1223,8 @@ enum vkd3d_decl_usage
     VKD3D_DECL_USAGE_COLOR                = 10,
     VKD3D_DECL_USAGE_FOG                  = 11,
     VKD3D_DECL_USAGE_DEPTH                = 12,
-    VKD3D_DECL_USAGE_SAMPLE               = 13
+    VKD3D_DECL_USAGE_SAMPLE               = 13,
+    VKD3D_DECL_USAGE_COUNT
 };
 
 struct vkd3d_shader_semantic
@@ -1449,8 +1463,7 @@ struct vsir_instruction
     enum vkd3d_shader_resource_type resource_type;
     unsigned int resource_stride;
     enum vsir_data_type resource_data_type[VKD3D_VEC4_SIZE];
-    bool coissue, structured, raw;
-    const struct vsir_src_operand *predicate;
+    bool structured, raw;
     union
     {
         enum vsir_global_flags global_flags;
@@ -1996,6 +2009,8 @@ int shader_extract_from_dxbc(const struct vkd3d_shader_code *dxbc,
 int shader_parse_input_signature(const struct vkd3d_shader_code *dxbc,
         struct vkd3d_shader_message_context *message_context, struct vsir_signature *signature);
 
+enum vkd3d_result d3dbc_disassemble(const struct vkd3d_shader_compile_info *compile_info,
+        struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context);
 int d3dbc_compile(struct vsir_program *program, uint64_t config_flags,
         const struct vkd3d_shader_compile_info *compile_info, const struct vkd3d_shader_code *ctab,
         struct vkd3d_shader_code *out, struct vkd3d_shader_message_context *message_context);

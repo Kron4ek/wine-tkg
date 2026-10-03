@@ -315,7 +315,6 @@ typedef enum {
     X(hres,           1, ARG_UINT,    0)          \
     X(errmode,        1, ARG_INT,     0)          \
     X(eqv,            1, 0,           0)          \
-    X(erase,          1, ARG_BSTR,    0)          \
     X(exp,            1, 0,           0)          \
     X(gt,             1, ARG_UINT,    0)          \
     X(gteq,           1, ARG_UINT,    0)          \
@@ -366,6 +365,7 @@ typedef enum {
     X(stop,           1, 0,           0)          \
     X(string,         1, ARG_STR,     0)          \
     X(sub,            1, 0,           0)          \
+    X(throw,          1, ARG_UINT,    0)          \
     X(val,            1, 0,           0)          \
     X(vcall,          1, ARG_UINT,    0)          \
     X(vcallv,         1, ARG_UINT,    0)          \

@@ -450,6 +450,18 @@ void client_surface_update( struct client_surface *surface )
     pthread_mutex_unlock( &surfaces_lock );
 }
 
+BOOL client_surface_set_color_space( struct client_surface *surface, VkColorSpaceKHR color_space )
+{
+    BOOL ret;
+
+    pthread_mutex_lock( &surfaces_lock );
+    if (!surface->hwnd || !surface->funcs->set_color_space) ret = FALSE;
+    else ret = surface->funcs->set_color_space( surface, color_space );
+    pthread_mutex_unlock( &surfaces_lock );
+
+    return ret;
+}
+
 BOOL client_surface_get_size( struct client_surface *surface, SIZE *virtual_size, SIZE *monitor_size )
 {
     BOOL updated;
@@ -4584,7 +4596,7 @@ MINMAXINFO get_min_max_info( HWND hwnd )
 
     minmax.ptMaxSize.x = rc.right - rc.left;
     minmax.ptMaxSize.y = rc.bottom - rc.top;
-    if (style & (WS_DLGFRAME | WS_BORDER))
+    if (style & (WS_DLGFRAME | WS_BORDER) && !(exstyle &  WS_EX_TOOLWINDOW))
     {
         minmax.ptMinTrackSize.x = get_system_metrics( SM_CXMINTRACK );
         minmax.ptMinTrackSize.y = get_system_metrics( SM_CYMINTRACK );

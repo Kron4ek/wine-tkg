@@ -518,7 +518,18 @@ static BOOL x11drv_egl_describe_pixel_format( int format, struct wgl_pixel_forma
 static BOOL x11drv_egl_surface_create( struct client_surface *client, int format, struct opengl_drawable **drawable )
 {
     struct x11drv_client_surface *surface = impl_from_client_surface( client );
+    EGLint attribs[3], *attrib = attribs;
+    struct wgl_pixel_format desc;
     struct gl_drawable *gl;
+
+    p_egl_describe_pixel_format( format, &desc );
+
+    if (desc.framebuffer_srgb_capable)
+    {
+        *attrib++ = EGL_GL_COLORSPACE;
+        *attrib++ = EGL_GL_COLORSPACE_SRGB;
+    }
+    *attrib++ = EGL_NONE;
 
     if (!(gl = opengl_drawable_create( &x11drv_egl_surface_funcs, format, client, NULL ))) return FALSE;
 
@@ -1197,61 +1208,46 @@ static void x11drv_surface_flush( struct opengl_drawable *base, UINT flags )
 /***********************************************************************
  *		X11DRV_wglCreateContextAttribsARB
  */
-static struct opengl_context *x11drv_context_create( int format, struct opengl_context *share, const int *attribList, BOOL *shared )
+static struct opengl_context *x11drv_context_create( const struct opengl_context_attrs *attrs, struct opengl_context *share )
 {
     GLXContext host_share = share ? share->host_context : NULL;
-    int glx_attribs[16] = {0}, *pContextAttribList = glx_attribs;
+    int attribs[16], *attr = attribs;
     struct opengl_context *context;
     int err = 0;
 
-    TRACE("(%d %p %p)\n", format, share, attribList);
+    TRACE( "attrs %s, share %p\n", debugstr_opengl_context_attrs( attrs ), share );
 
-    if (attribList)
+    if (attrs->major != -1)
     {
-        /* attribList consists of pairs {token, value] terminated with 0 */
-        while(attribList[0] != 0)
-        {
-            TRACE("%#x %#x\n", attribList[0], attribList[1]);
-            switch(attribList[0])
-            {
-            case WGL_CONTEXT_MAJOR_VERSION_ARB:
-                pContextAttribList[0] = GLX_CONTEXT_MAJOR_VERSION_ARB;
-                pContextAttribList[1] = attribList[1];
-                pContextAttribList += 2;
-                break;
-            case WGL_CONTEXT_MINOR_VERSION_ARB:
-                pContextAttribList[0] = GLX_CONTEXT_MINOR_VERSION_ARB;
-                pContextAttribList[1] = attribList[1];
-                pContextAttribList += 2;
-                break;
-            case WGL_CONTEXT_LAYER_PLANE_ARB:
-                break;
-            case WGL_CONTEXT_FLAGS_ARB:
-                pContextAttribList[0] = GLX_CONTEXT_FLAGS_ARB;
-                pContextAttribList[1] = attribList[1];
-                pContextAttribList += 2;
-                break;
-            case WGL_CONTEXT_OPENGL_NO_ERROR_ARB:
-                pContextAttribList[0] = GLX_CONTEXT_OPENGL_NO_ERROR_ARB;
-                pContextAttribList[1] = attribList[1];
-                pContextAttribList += 2;
-                break;
-            case WGL_CONTEXT_PROFILE_MASK_ARB:
-                pContextAttribList[0] = GLX_CONTEXT_PROFILE_MASK_ARB;
-                pContextAttribList[1] = attribList[1];
-                pContextAttribList += 2;
-                break;
-            default:
-                ERR("Unhandled attribList pair: %#x %#x\n", attribList[0], attribList[1]);
-            }
-            attribList += 2;
-        }
+        *attr++ = GLX_CONTEXT_MAJOR_VERSION_ARB;
+        *attr++ = attrs->major;
     }
+    if (attrs->minor != -1)
+    {
+        *attr++ = GLX_CONTEXT_MINOR_VERSION_ARB;
+        *attr++ = attrs->minor;
+    }
+    if (attrs->flags)
+    {
+        *attr++ = GLX_CONTEXT_FLAGS_ARB;
+        *attr++ = attrs->flags;
+    }
+    if (attrs->profile)
+    {
+        *attr++ = GLX_CONTEXT_PROFILE_MASK_ARB;
+        *attr++ = attrs->profile;
+    }
+    if (attrs->no_error)
+    {
+        *attr++ = GLX_CONTEXT_OPENGL_NO_ERROR_ARB;
+        *attr++ = attrs->no_error;
+    }
+    *attr++ = 0;
 
     if (!(context = calloc( 1, sizeof(*context) ))) return NULL;
 
     X11DRV_expect_error(gdi_display, GLXErrorHandler, NULL);
-    context->host_context = create_glxcontext( format, host_share, attribList ? glx_attribs : NULL );
+    context->host_context = create_glxcontext( attrs->format, host_share, attribs );
     XSync(gdi_display, False);
     if ((err = X11DRV_check_error()) || !context->host_context)
     {
@@ -1313,16 +1309,6 @@ static void x11drv_pbuffer_destroy( struct opengl_drawable *base )
     TRACE( "drawable %s\n", debugstr_opengl_drawable( base ) );
 
     if (gl->drawable) pglXDestroyPbuffer( gdi_display, gl->drawable );
-}
-
-static BOOL x11drv_pbuffer_updated( HDC hdc, struct opengl_drawable *base, GLenum cube_face, GLint mipmap_level )
-{
-    return GL_TRUE;
-}
-
-static UINT x11drv_pbuffer_bind( HDC hdc, struct opengl_drawable *base, GLenum buffer )
-{
-    return -1; /* use default implementation */
 }
 
 static BOOL x11drv_null_surface_create( int format, struct opengl_drawable **drawable )
@@ -1527,8 +1513,6 @@ static struct opengl_driver_funcs x11drv_driver_funcs =
     .p_context_destroy = x11drv_context_destroy,
     .p_context_activate = x11drv_context_activate,
     .p_pbuffer_create = x11drv_pbuffer_create,
-    .p_pbuffer_updated = x11drv_pbuffer_updated,
-    .p_pbuffer_bind = x11drv_pbuffer_bind,
     .p_null_surface_create = x11drv_null_surface_create,
     .p_cleanup_thread = x11drv_cleanup_thread,
 };

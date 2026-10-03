@@ -562,10 +562,6 @@ static void VKD3D_PRINTF_FUNC(4, 0) shader_glsl_vprint_assignment(struct vkd3d_g
     struct vkd3d_string_buffer *buffer = gen->buffer;
     bool close = true;
 
-    if (dst->vsir->shift)
-        vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
-                "Internal compiler error: Unhandled destination shift %#x.", dst->vsir->shift);
-
     shader_glsl_print_indent(buffer, gen->indent);
     vkd3d_string_buffer_printf(buffer, "%s%s = ", dst->register_name->buffer, dst->mask->buffer);
 
@@ -1655,14 +1651,14 @@ static void shader_glsl_print_sysval_name(struct vkd3d_string_buffer *buffer, st
             if (version->type != VKD3D_SHADER_TYPE_VERTEX)
                 vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
                         "Internal compiler error: Unhandled SV_VERTEX_ID in shader type #%x.", version->type);
-            vkd3d_string_buffer_printf(buffer, "intBitsToFloat(ivec4(gl_VertexID, 0, 0, 0))");
+            vkd3d_string_buffer_printf(buffer, "intBitsToFloat(ivec4(gl_VertexID))");
             break;
 
         case VKD3D_SHADER_SV_INSTANCE_ID:
             if (version->type != VKD3D_SHADER_TYPE_VERTEX)
                 vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
                         "Internal compiler error: Unhandled SV_INSTANCE_ID in shader type #%x.", version->type);
-            vkd3d_string_buffer_printf(buffer, "intBitsToFloat(ivec4(gl_InstanceID, 0, 0, 0))");
+            vkd3d_string_buffer_printf(buffer, "intBitsToFloat(ivec4(gl_InstanceID))");
             break;
 
         case VKD3D_SHADER_SV_IS_FRONT_FACE:
@@ -1670,14 +1666,14 @@ static void shader_glsl_print_sysval_name(struct vkd3d_string_buffer *buffer, st
                 vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
                         "Internal compiler error: Unhandled SV_IS_FRONT_FACE in shader type #%x.", version->type);
             vkd3d_string_buffer_printf(buffer,
-                    "uintBitsToFloat(uvec4(gl_FrontFacing ? 0xffffffffu : 0u, 0u, 0u, 0u))");
+                    "uintBitsToFloat(uvec4(gl_FrontFacing ? 0xffffffffu : 0u))");
             break;
 
         case VKD3D_SHADER_SV_SAMPLE_INDEX:
             if (version->type != VKD3D_SHADER_TYPE_PIXEL)
                 vkd3d_glsl_compiler_error(gen, VKD3D_SHADER_ERROR_GLSL_INTERNAL,
                         "Internal compiler error: Unhandled SV_SAMPLE_INDEX in shader type #%x.", version->type);
-            vkd3d_string_buffer_printf(buffer, "intBitsToFloat(ivec4(gl_SampleID, 0, 0, 0))");
+            vkd3d_string_buffer_printf(buffer, "intBitsToFloat(ivec4(gl_SampleID))");
             break;
 
         case VKD3D_SHADER_SV_TARGET:
@@ -1700,17 +1696,19 @@ static void shader_glsl_shader_prologue(struct vkd3d_glsl_generator *gen)
     const struct vsir_signature *signature = &gen->program->input_signature;
     struct vkd3d_string_buffer *buffer = gen->buffer;
     const struct vsir_signature_element *e;
+    uint32_t write_mask;
     unsigned int i;
 
     for (i = 0; i < signature->element_count; ++i)
     {
         e = &signature->elements[i];
 
+        write_mask = vkd3d_write_mask_from_component_count(vsir_write_mask_component_count(e->mask));
         for (unsigned int j = 0; j < e->register_count; ++j)
         {
             shader_glsl_print_indent(buffer, gen->indent);
             vkd3d_string_buffer_printf(buffer, "%s_in_%u[%u]", gen->prefix, i, j);
-            shader_glsl_print_write_mask(buffer, e->mask);
+            shader_glsl_print_write_mask(buffer, write_mask);
             if (e->sysval_semantic == VKD3D_SHADER_SV_NONE)
             {
                 if (e->target_location == SIGNATURE_TARGET_LOCATION_UNUSED)

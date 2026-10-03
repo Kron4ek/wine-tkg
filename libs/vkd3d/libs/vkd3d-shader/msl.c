@@ -645,10 +645,6 @@ static void VKD3D_PRINTF_FUNC(3, 4) msl_print_assignment(
 {
     va_list args;
 
-    if (dst->vsir->shift)
-        msl_compiler_error(gen, VKD3D_SHADER_ERROR_MSL_INTERNAL,
-                "Internal compiler error: Unhandled destination shift %#x.", dst->vsir->shift);
-
     msl_print_indent(gen->buffer, gen->indent);
     vkd3d_string_buffer_printf(gen->buffer, "%s%s = ", dst->register_name->buffer, dst->mask->buffer);
 

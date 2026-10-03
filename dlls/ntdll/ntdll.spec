@@ -293,6 +293,7 @@
 @ stdcall -syscall NtOpenKeyedEvent(ptr long ptr)
 @ stdcall -syscall NtOpenMutant(ptr long ptr)
 # @ stub NtOpenObjectAuditAlarm
+@ stdcall -syscall NtOpenPrivateNamespace(ptr long ptr ptr)
 @ stdcall -syscall=0x0026 NtOpenProcess(ptr long ptr ptr)
 @ stdcall -syscall NtOpenProcessToken(long long ptr)
 @ stdcall -syscall=0x0030 NtOpenProcessTokenEx(long long long ptr)
@@ -1374,6 +1375,7 @@
 @ stdcall -private ZwOpenKeyedEvent(ptr long ptr) NtOpenKeyedEvent
 @ stdcall -private ZwOpenMutant(ptr long ptr) NtOpenMutant
 # @ stub ZwOpenObjectAuditAlarm
+@ stdcall -private ZwOpenPrivateNamespace(ptr long ptr ptr) NtOpenPrivateNamespace
 @ stdcall -private ZwOpenProcess(ptr long ptr ptr) NtOpenProcess
 @ stdcall -private ZwOpenProcessToken(long long ptr) NtOpenProcessToken
 @ stdcall -private ZwOpenProcessTokenEx(long long long ptr) NtOpenProcessTokenEx
@@ -1778,6 +1780,9 @@
 @ cdecl -norelay __wine_dbg_header(long long str)
 @ cdecl -norelay __wine_dbg_output(str)
 @ cdecl -norelay __wine_dbg_strdup(str)
+
+# Virtual memory
+@ stdcall -syscall __wine_needs_override_large_address_aware()
 
 # Version
 @ cdecl wine_get_version()

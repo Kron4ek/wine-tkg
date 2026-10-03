@@ -4240,7 +4240,8 @@ static HRESULT WINAPI d3dx_effect_BeginParameterBlock(ID3DXEffect *iface)
         return D3DERR_INVALIDCALL;
     }
 
-    effect->current_parameter_block = calloc(1, sizeof(*effect->current_parameter_block));
+    if (!(effect->current_parameter_block = calloc(1, sizeof(*effect->current_parameter_block))))
+        return E_OUTOFMEMORY;
     memcpy(effect->current_parameter_block->magic_string, parameter_block_magic_string,
             sizeof(parameter_block_magic_string));
     effect->current_parameter_block->effect = effect;
@@ -7118,7 +7119,8 @@ HRESULT WINAPI D3DXCreateEffectFromFileExA(struct IDirect3DDevice9 *device, cons
         return D3DERR_INVALIDCALL;
 
     len = MultiByteToWideChar(CP_ACP, 0, srcfile, -1, NULL, 0);
-    srcfileW = malloc(len * sizeof(*srcfileW));
+    if (!(srcfileW = malloc(len * sizeof(*srcfileW))))
+        return E_OUTOFMEMORY;
     MultiByteToWideChar(CP_ACP, 0, srcfile, -1, srcfileW, len);
 
     ret = D3DXCreateEffectFromFileExW(device, srcfileW, defines, include, skipconstants, flags, pool, effect, messages);
@@ -7254,7 +7256,8 @@ HRESULT WINAPI D3DXCreateEffectCompilerFromFileA(const char *srcfile, const D3DX
         return D3DERR_INVALIDCALL;
 
     len = MultiByteToWideChar(CP_ACP, 0, srcfile, -1, NULL, 0);
-    srcfileW = malloc(len * sizeof(*srcfileW));
+    if (!(srcfileW = malloc(len * sizeof(*srcfileW))))
+        return E_OUTOFMEMORY;
     MultiByteToWideChar(CP_ACP, 0, srcfile, -1, srcfileW, len);
 
     ret = D3DXCreateEffectCompilerFromFileW(srcfileW, defines, include, flags, compiler, messages);

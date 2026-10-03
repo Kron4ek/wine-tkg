@@ -2468,6 +2468,8 @@ struct compile_option_overrides
     enum vkd3d_shader_denormal_mode f16_denormal_mode;
     enum vkd3d_shader_denormal_mode f32_denormal_mode;
     enum vkd3d_shader_denormal_mode f64_denormal_mode;
+    uint32_t flags0_override_mask;
+    uint32_t flags0_override_value;
 };
 
 static HRESULT create_shader_stage(struct d3d12_device *device,
@@ -2493,8 +2495,8 @@ static HRESULT create_shader_stage(struct d3d12_device *device,
         {VKD3D_SHADER_COMPILE_OPTION_DENORMAL_MODE_F16, overrides->f16_denormal_mode},
         {VKD3D_SHADER_COMPILE_OPTION_DENORMAL_MODE_F32, overrides->f32_denormal_mode},
         {VKD3D_SHADER_COMPILE_OPTION_DENORMAL_MODE_F64, overrides->f64_denormal_mode},
-        {VKD3D_SHADER_COMPILE_OPTION_GLOBAL_FLAGS0_OVERRIDE_MASK, VKD3D_SHADER_GLOBAL_FLAGS0_REFACTORING_ALLOWED},
-        {VKD3D_SHADER_COMPILE_OPTION_GLOBAL_FLAGS0_OVERRIDE_VALUE, VKD3D_SHADER_GLOBAL_FLAGS0_REFACTORING_ALLOWED},
+        {VKD3D_SHADER_COMPILE_OPTION_GLOBAL_FLAGS0_OVERRIDE_MASK, overrides->flags0_override_mask},
+        {VKD3D_SHADER_COMPILE_OPTION_GLOBAL_FLAGS0_OVERRIDE_VALUE, overrides->flags0_override_value},
     };
 
     stage_desc->sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -2801,6 +2803,19 @@ static void d3d12_device_select_overrides(struct d3d12_device *device,
     if (overrides->f64_denormal_mode != denorm_info->f64_denormal_mode)
         WARN("Overriding f64 denormal mode from %s to %s.\n", debug_denormal_mode(denorm_info->f64_denormal_mode),
                 debug_denormal_mode(overrides->f64_denormal_mode));
+
+    overrides->flags0_override_mask = 0;
+    overrides->flags0_override_value = 0;
+
+    if (!device->vk_info.KHR_shader_float_controls
+            || !float_control_props->shaderSignedZeroInfNanPreserveFloat16
+            || !float_control_props->shaderSignedZeroInfNanPreserveFloat32
+            || !float_control_props->shaderSignedZeroInfNanPreserveFloat64)
+    {
+        overrides->flags0_override_mask |= VKD3D_SHADER_GLOBAL_FLAGS0_REFACTORING_ALLOWED;
+        overrides->flags0_override_value |= VKD3D_SHADER_GLOBAL_FLAGS0_REFACTORING_ALLOWED;
+        WARN("Overriding VKD3D_SHADER_GLOBAL_FLAGS0_REFACTORING_ALLOWED to 1.\n");
+    }
 }
 
 static HRESULT d3d12_pipeline_state_init_compute(struct d3d12_pipeline_state *state,
@@ -4482,6 +4497,8 @@ HRESULT vkd3d_uav_clear_state_init(struct vkd3d_uav_clear_state *state, struct d
             .f16_denormal_mode = VKD3D_SHADER_DENORMAL_MODE_ANY,
             .f32_denormal_mode = VKD3D_SHADER_DENORMAL_MODE_ANY,
             .f64_denormal_mode = VKD3D_SHADER_DENORMAL_MODE_ANY,
+            .flags0_override_mask = VKD3D_SHADER_GLOBAL_FLAGS0_REFACTORING_ALLOWED,
+            .flags0_override_value = VKD3D_SHADER_GLOBAL_FLAGS0_REFACTORING_ALLOWED,
         };
 
         struct vkd3d_shader_code dxbc;

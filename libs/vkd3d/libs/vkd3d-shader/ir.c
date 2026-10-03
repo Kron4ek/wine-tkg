@@ -418,7 +418,6 @@ const char *vsir_opcode_get_name(enum vsir_opcode op, const char *error)
         [VSIR_OP_NRM                             ] = "nrm",
         [VSIR_OP_OR                              ] = "or",
         [VSIR_OP_ORD                             ] = "ord",
-        [VSIR_OP_PHASE                           ] = "phase",
         [VSIR_OP_PHI                             ] = "phi",
         [VSIR_OP_POW                             ] = "pow",
         [VSIR_OP_QUAD_READ_ACROSS_D              ] = "quad_read_across_d",
@@ -1226,7 +1225,7 @@ void vsir_src_operand_init(struct vsir_src_operand *src, enum vsir_register_type
     src->owner_index = 0;
 }
 
-static void vsir_src_operand_init_const_f32(struct vsir_src_operand *src, float value)
+void vsir_src_operand_init_const_f32(struct vsir_src_operand *src, float value)
 {
     vsir_src_operand_init(src, VSIR_REGISTER_IMMCONST, VSIR_DATA_F32, 0);
     src->reg.u.immconst_f32[0] = value;
@@ -1336,7 +1335,7 @@ static void vsir_src_operand_init_temp_f32(struct vsir_src_operand *src, unsigne
     src->reg.idx[0].offset = idx;
 }
 
-static void vsir_src_operand_init_temp_f32v4(struct vsir_src_operand *src, unsigned int idx)
+void vsir_src_operand_init_temp_f32v4(struct vsir_src_operand *src, unsigned int idx)
 {
     vsir_src_operand_init(src, VSIR_REGISTER_TEMP, VSIR_DATA_F32, 1);
     src->reg.dimension = VSIR_DIMENSION_VEC4;
@@ -1356,7 +1355,6 @@ void vsir_dst_operand_init(struct vsir_dst_operand *dst, enum vsir_register_type
     vsir_operand_init(&dst->reg, reg_type, data_type, idx_count);
     dst->write_mask = VKD3DSP_WRITEMASK_0;
     dst->modifiers = VKD3DSPDM_NONE;
-    dst->shift = 0;
 }
 
 static void vsir_dst_operand_init_io(struct vsir_dst_operand *dst, enum vsir_register_type reg_type,
@@ -1414,7 +1412,7 @@ static void vsir_dst_operand_init_temp_bool(struct vsir_dst_operand *dst, unsign
     dst->reg.idx[0].offset = idx;
 }
 
-static void vsir_dst_operand_init_temp_f32v4(struct vsir_dst_operand *dst, unsigned int idx)
+void vsir_dst_operand_init_temp_f32v4(struct vsir_dst_operand *dst, unsigned int idx)
 {
     vsir_dst_operand_init(dst, VSIR_REGISTER_TEMP, VSIR_DATA_F32, 1);
     dst->reg.idx[0].offset = idx;
@@ -3019,8 +3017,7 @@ static enum vkd3d_result vsir_program_lower_tex(struct vsir_program *program,
             vkd3d_unreachable();
     }
 
-    /* We run before I/O normalization. */
-    VKD3D_ASSERT(program->normalisation_level < VSIR_NORMALISED_SM6);
+    VKD3D_ASSERT(!program->normalisation_flags.normalised_io);
 
     if (!(srcs = vsir_program_get_src_operands(program, 4)))
         return VKD3D_ERROR_OUT_OF_MEMORY;
@@ -3093,8 +3090,7 @@ static enum vkd3d_result vsir_program_lower_texcoord(struct vsir_program *progra
     /* texcoord t# -> saturate t#, t#
      * Note that the t# destination will subsequently be turned into a temp. */
 
-    /* We run before I/O normalization. */
-    VKD3D_ASSERT(program->normalisation_level < VSIR_NORMALISED_SM6);
+    VKD3D_ASSERT(!program->normalisation_flags.normalised_io);
 
     if (!(srcs = vsir_program_get_src_operands(program, 1)))
         return VKD3D_ERROR_OUT_OF_MEMORY;
@@ -3589,10 +3585,9 @@ static enum vkd3d_result vsir_program_lower_d3dbc_modifiers(struct vsir_program 
         struct vsir_program_iterator *it, struct vkd3d_shader_message_context *message_context)
 {
     struct vsir_instruction *ins = vsir_program_iterator_current(it);
-    unsigned int tmp_dst_id, tmp_src_id, i;
     struct vsir_program_iterator new_it;
     struct vsir_instruction *new_ins;
-    float scale;
+    unsigned int tmp_src_id, i;
 
     for (i = 0; i < ins->src_count; ++i)
     {
@@ -3703,59 +3698,6 @@ static enum vkd3d_result vsir_program_lower_d3dbc_modifiers(struct vsir_program 
         vsir_src_operand_init_ssa(src, tmp_src_id, src->reg.data_type, src->reg.dimension);
     }
 
-    for (i = 0; i < ins->dst_count; ++i)
-    {
-        struct vsir_dst_operand *dst = &ins->dst[i];
-
-        if (!dst->shift)
-            continue;
-
-        switch (dst->shift)
-        {
-            case 1: /* _x2 */
-                scale = 2.0f;
-                break;
-            case 2: /* _x4 */
-                scale = 4.0f;
-                break;
-            case 3: /* _x8 */
-                scale = 8.0f;
-                break;
-            case 13: /* _d8 */
-                scale = 0.125f;
-                break;
-            case 14: /* _d4 */
-                scale = 0.25f;
-                break;
-            case 15: /* _d2 */
-                scale = 0.5f;
-                break;
-            default:
-                vkd3d_shader_error(message_context, &ins->location, VKD3D_SHADER_ERROR_VSIR_NOT_IMPLEMENTED,
-                        "Unhandled destination shift %#x.", dst->shift);
-                return VKD3D_ERROR_NOT_IMPLEMENTED;
-        }
-
-        if (!vsir_program_iterator_insert_after(it, 1))
-            return VKD3D_ERROR_OUT_OF_MEMORY;
-        new_ins = vsir_program_iterator_next(it);
-        ins = vsir_program_iterator_prev(it);
-
-        if (!vsir_instruction_init_with_params(program, new_ins, &ins->location, VSIR_OP_MUL, 1, 2))
-        {
-            vsir_instruction_init(new_ins, &ins->location, VSIR_OP_NOP);
-            return VKD3D_ERROR_OUT_OF_MEMORY;
-        }
-
-        new_ins->dst[0] = *dst;
-        new_ins->dst[0].shift = 0;
-
-        tmp_dst_id = program->ssa_count++;
-        vsir_dst_operand_init_ssa(dst, tmp_dst_id, dst->reg.data_type, dst->reg.dimension);
-        vsir_src_operand_init_ssa(&new_ins->src[0], tmp_dst_id, dst->reg.data_type, dst->reg.dimension);
-        vsir_src_operand_init_const_f32(&new_ins->src[1], scale);
-    }
-
     return VKD3D_OK;
 
 fail:
@@ -3820,11 +3762,6 @@ static enum vkd3d_result vsir_program_lower_d3dbc_instructions(struct vsir_progr
 
             case VSIR_OP_NRM:
                 ret = vsir_program_lower_nrm(program, &it);
-                break;
-
-            case VSIR_OP_PHASE:
-                vsir_instruction_make_nop(ins);
-                ret = VKD3D_OK;
                 break;
 
             case VSIR_OP_POW:
@@ -4332,8 +4269,7 @@ static enum vkd3d_result vsir_program_lower_texture_writes(struct vsir_program *
     uint32_t texture_written_mask = 0;
     struct vsir_instruction *ins;
 
-    /* We run before I/O normalization. */
-    VKD3D_ASSERT(program->normalisation_level < VSIR_NORMALISED_SM6);
+    VKD3D_ASSERT(!program->normalisation_flags.normalised_io);
 
     for (ins = vsir_program_iterator_head(&it); ins; ins = vsir_program_iterator_next(&it))
     {
@@ -4404,8 +4340,7 @@ static enum vkd3d_result vsir_program_normalise_ps1_output(struct vsir_program *
     struct vkd3d_shader_location loc;
     struct vsir_instruction *ins;
 
-    /* Note we run before I/O normalization. */
-    VKD3D_ASSERT(program->normalisation_level == VSIR_NORMALISED_SM4);
+    VKD3D_ASSERT(!program->normalisation_flags.normalised_io);
 
     if (!(ins = vsir_program_iterator_tail(&it)))
         return VKD3D_OK;
@@ -5985,6 +5920,7 @@ static enum vkd3d_result vsir_program_normalise_io_registers(struct vsir_program
 
     program->use_vocp = normaliser.use_vocp;
     program->normalisation_level = VSIR_NORMALISED_SM6;
+    program->normalisation_flags.normalised_io = true;
     return normaliser.result;
 }
 
@@ -11834,7 +11770,6 @@ static bool vsir_src_is_masked(enum vsir_opcode opcode, unsigned int src_idx)
         case VSIR_OP_NOP:
         /* NRM writemask must be .xyz or .xyzw. */
         case VSIR_OP_NRM:
-        case VSIR_OP_PHASE:
         case VSIR_OP_REP:
         case VSIR_OP_RET:
         case VSIR_OP_RETP:
@@ -12985,7 +12920,7 @@ static const bool vsir_get_io_register_data(struct validation_context *ctx,
     if (ctx->program->shader_version.type >= ARRAY_SIZE(*signature_register_data))
         return NULL;
 
-    if (ctx->program->normalisation_level >= VSIR_NORMALISED_SM6)
+    if (ctx->program->normalisation_flags.normalised_io)
         signature_register_data = &vsir_sm6_io_register_data;
     else
         signature_register_data = &vsir_sm4_io_register_data;
@@ -13068,7 +13003,7 @@ static void vsir_validate_io_register(struct validation_context *ctx, const stru
     has_control_point = io_reg_data.flags & CONTROL_POINT_BIT;
     control_point_count = io_reg_data.control_point_count;
 
-    if (ctx->program->normalisation_level < VSIR_NORMALISED_SM6)
+    if (!ctx->program->normalisation_flags.normalised_io)
     {
         /* Indices are [register] or [control point, register]. Both are
          * allowed to have a relative address. */
@@ -13693,7 +13628,7 @@ static void vsir_validate_io_dst_operand(struct validation_context *ctx, const s
         return;
     }
 
-    if (ctx->program->normalisation_level >= VSIR_NORMALISED_SM6)
+    if (ctx->program->normalisation_flags.normalised_io)
     {
         if (!dst->reg.idx_count)
         {
@@ -13763,28 +13698,6 @@ static void vsir_validate_dst_operand(struct validation_context *ctx, const stru
                 break;
 
         }
-    }
-
-    switch (dst->shift)
-    {
-        case 0:
-            break;
-
-        case 1:
-        case 2:
-        case 3:
-        case 13:
-        case 14:
-        case 15:
-            if (dst->reg.data_type != VSIR_DATA_F32)
-                validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_DATA_TYPE,
-                        "Invalid data type \"%s\" (%#x) for destination with shift.",
-                        vsir_data_type_get_name(dst->reg.data_type, "<unknown>"), dst->reg.data_type);
-            break;
-
-        default:
-            validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SHIFT, "Destination has invalid shift %#x.",
-                    dst->shift);
     }
 
     switch (dst->reg.type)
@@ -14096,7 +14009,7 @@ static void vsir_validate_signature_element(struct validation_context *ctx,
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
                 "element %u of %s signature: Invalid zero register count.", idx, signature_type_name);
 
-    if (ctx->program->normalisation_level < VSIR_NORMALISED_SM6 && element->register_count != 1)
+    if (!ctx->program->normalisation_flags.normalised_io && element->register_count != 1)
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SIGNATURE,
                 "element %u of %s signature: Invalid register count %u.", idx, signature_type_name,
                 element->register_count);
@@ -14393,7 +14306,7 @@ static void vsir_validate_signature(struct validation_context *ctx, const struct
         }
 
         /* After I/O normalisation tessellation factors are merged in a single array. */
-        if (ctx->program->normalisation_level >= VSIR_NORMALISED_SM6)
+        if (ctx->program->normalisation_flags.normalised_io)
         {
             expected_outer_count = min(1, expected_outer_count);
             expected_inner_count = min(1, expected_inner_count);
@@ -14957,7 +14870,7 @@ static void vsir_validate_dcl_index_range(struct validation_context *ctx,
     const struct vsir_signature *signature;
     bool has_control_point;
 
-    if (ctx->program->normalisation_level >= VSIR_NORMALISED_SM6)
+    if (ctx->program->normalisation_flags.normalised_io)
     {
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_OPCODE,
                 "DCL_INDEX_RANGE is not allowed with fully normalised input/output.");
@@ -14967,10 +14880,6 @@ static void vsir_validate_dcl_index_range(struct validation_context *ctx,
     if (range->dst.modifiers != VKD3DSPDM_NONE)
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_MODIFIERS,
                 "Invalid modifier %#x on a DCL_INDEX_RANGE destination parameter.", range->dst.modifiers);
-
-    if (range->dst.shift != 0)
-        validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SHIFT,
-                "Invalid shift %u on a DCL_INDEX_RANGE destination parameter.", range->dst.shift);
 
     if (!vsir_get_io_register_data(ctx, range->dst.reg.type, &io_reg_data))
     {
@@ -15578,11 +15487,6 @@ static void vsir_validate_phi(struct validation_context *ctx, const struct vsir_
         validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_MODIFIERS,
                 "Invalid modifiers %#x for the destination of a PHI instruction, expected none.",
                 instruction->dst[0].modifiers);
-
-    if (instruction->dst[0].shift != 0)
-        validator_error(ctx, VKD3D_SHADER_ERROR_VSIR_INVALID_SHIFT,
-                "Invalid shift %#x for the destination of a PHI instruction, expected none.",
-                instruction->dst[0].shift);
 }
 
 static void vsir_validate_rep(struct validation_context *ctx, const struct vsir_instruction *instruction)
@@ -16540,7 +16444,6 @@ static bool vsir_instruction_has_side_effects(const struct vsir_instruction *ins
         case VSIR_OP_IMM_ATOMIC_XOR:
         case VSIR_OP_LABEL:
         case VSIR_OP_LOOP:
-        case VSIR_OP_PHASE:
         case VSIR_OP_REP:
         case VSIR_OP_RET:
         case VSIR_OP_RETP:
@@ -16659,7 +16562,6 @@ static bool is_read_only(const struct vsir_program *program, enum vsir_register_
         case VSIR_REGISTER_IDXTEMP:
         case VSIR_REGISTER_LOOP:
         case VSIR_REGISTER_TEMP:
-        case VSIR_REGISTER_TEMPFLOAT16:
             return false;
 
         case VSIR_REGISTER_TEXTURE:
@@ -16738,7 +16640,7 @@ static bool can_propagate_ssa_source(const struct vsir_program *program, const s
     /* TODO: Propagate copies for other register types. */
     if (ins->dst[0].reg.type != VSIR_REGISTER_SSA)
         return false;
-    if (ins->dst[0].modifiers || ins->dst[0].shift)
+    if (ins->dst[0].modifiers)
         return false;
 
     dst_data_type = ins->dst[0].reg.data_type;
@@ -16943,7 +16845,6 @@ static bool is_write_only(enum vsir_register_type type)
         case VSIR_REGISTER_IDXTEMP:
         case VSIR_REGISTER_LOOP:
         case VSIR_REGISTER_TEMP:
-        case VSIR_REGISTER_TEMPFLOAT16:
         case VSIR_REGISTER_TEXTURE:
             return false;
 
@@ -17048,7 +16949,7 @@ static void vsir_program_output_copy_hoisting_record_mov(
     if (!is_write_only(dst->reg.type))
         return;
     if (src->modifiers || (dst->modifiers & ~VKD3DSPDM_SATURATE)
-            || dst->shift || data_type_is_64_bit(src->reg.data_type))
+            || data_type_is_64_bit(src->reg.data_type))
         return;
     for (unsigned int i = 0; i < dst->reg.idx_count; ++i)
     {
@@ -17327,8 +17228,6 @@ static int vsir_cse_expr_key_compare(const void *key, const struct rb_entry *e)
     if ((ret = vkd3d_u32_compare(a->dst->write_mask, b->dst->write_mask)))
         return ret;
     if ((ret = vkd3d_u32_compare(a->dst->modifiers, b->dst->modifiers)))
-        return ret;
-    if ((ret = vkd3d_u32_compare(a->dst->shift, b->dst->shift)))
         return ret;
 
     VKD3D_ASSERT(a->src_count == b->src_count);

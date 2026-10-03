@@ -7347,6 +7347,23 @@ static void spirv_compiler_emit_bool_cast(struct spirv_compiler *compiler,
     spirv_compiler_emit_store_dst(compiler, dst, val_id);
 }
 
+static bool spirv_compiler_allow_contraction(const struct spirv_compiler *compiler,
+        const struct vsir_instruction *instruction)
+{
+    /* We enable SpvExecutionModeSignedZeroInfNanPreserve when
+     * VKD3DSGF_REFACTORING_ALLOWED isn't set, but that's not sufficient to
+     * ensure consistent results for NaN and Inf values, since GPUs/drivers
+     * can also perform instruction contractions that assume no NaN or Inf
+     * values are involved. To account for this, we additionally decorate
+     * arithmetic instructions with SpvDecorationNoContraction in this case,
+     * like we do for instructions that are explicitly marked as precise.
+     *
+     * If we had SPV_KHR_float_controls2, we could instead set
+     * FPFastMathDefault to None. */
+    return (compiler->program->global_flags & VKD3DSGF_REFACTORING_ALLOWED)
+            && !(instruction->flags & VKD3DSI_PRECISE_XYZW);
+}
+
 static void spirv_compiler_emit_alu_instruction(struct spirv_compiler *compiler,
         const struct vsir_instruction *instruction)
 {
@@ -7420,7 +7437,7 @@ static void spirv_compiler_emit_alu_instruction(struct spirv_compiler *compiler,
 
     val_id = vkd3d_spirv_build_op_trv(builder, &builder->function_stream, op, type_id,
             src_ids, instruction->src_count);
-    if (instruction->flags & VKD3DSI_PRECISE_XYZW)
+    if (!spirv_compiler_allow_contraction(compiler, instruction))
         vkd3d_spirv_build_op_decorate(builder, val_id, SpvDecorationNoContraction, NULL, 0);
 
     spirv_compiler_emit_store_dst(compiler, dst, val_id);
@@ -7688,7 +7705,7 @@ static void spirv_compiler_emit_dot(struct spirv_compiler *compiler, const struc
             SpvOpDot, type_id, src_ids[0], src_ids[1]);
     if (component_count > 1)
         val_id = spirv_compiler_emit_construct_vector(compiler, data_type, component_count, val_id, 0, 1);
-    if (instruction->flags & VKD3DSI_PRECISE_XYZW)
+    if (!spirv_compiler_allow_contraction(compiler, instruction))
         vkd3d_spirv_build_op_decorate(builder, val_id, SpvDecorationNoContraction, NULL, 0);
 
     spirv_compiler_emit_store_dst(compiler, dst, val_id);
@@ -7865,7 +7882,7 @@ static void spirv_compiler_emit_dtof(struct spirv_compiler *compiler, const stru
 
     type_id = spirv_get_type_id(compiler, VSIR_DATA_F32, component_count);
     val_id = vkd3d_spirv_build_op_tr1(builder, &builder->function_stream, SpvOpFConvert, type_id, src_id);
-    if (instruction->flags & VKD3DSI_PRECISE_XYZW)
+    if (!spirv_compiler_allow_contraction(compiler, instruction))
         vkd3d_spirv_build_op_decorate(builder, val_id, SpvDecorationNoContraction, NULL, 0);
 
     spirv_compiler_emit_store_dst(compiler, dst, val_id);
@@ -9590,7 +9607,7 @@ static void spirv_compiler_emit_resinfo(struct spirv_compiler *compiler, const s
         data_type = VSIR_DATA_F32;
         type_id = spirv_get_type_id(compiler, data_type, VKD3D_VEC4_SIZE);
         val_id = vkd3d_spirv_build_op_convert_utof(builder, type_id, val_id);
-        if (instruction->flags & VKD3DSI_PRECISE_XYZW)
+        if (!spirv_compiler_allow_contraction(compiler, instruction))
             vkd3d_spirv_build_op_decorate(builder, val_id, SpvDecorationNoContraction, NULL, 0);
     }
     val_id = spirv_compiler_emit_swizzle(compiler, val_id,
@@ -9653,7 +9670,7 @@ static void spirv_compiler_emit_sample_info(struct spirv_compiler *compiler,
         data_type = VSIR_DATA_F32;
         type_id = spirv_get_type_id(compiler, data_type, VKD3D_VEC4_SIZE);
         val_id = vkd3d_spirv_build_op_convert_utof(builder, type_id, val_id);
-        if (instruction->flags & VKD3DSI_PRECISE_XYZW)
+        if (!spirv_compiler_allow_contraction(compiler, instruction))
             vkd3d_spirv_build_op_decorate(builder, val_id, SpvDecorationNoContraction, NULL, 0);
     }
     val_id = spirv_compiler_emit_swizzle(compiler, val_id,

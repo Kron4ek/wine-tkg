@@ -4072,6 +4072,15 @@ static SQLRETURN set_connect_option_win32_a( struct connection *con, SQLUSMALLIN
 
         ret = con->hdr.win32_funcs->SQLSetConnectOptionW( con->hdr.win32_handle, attr, value );
     }
+
+    else if (con->hdr.win32_funcs->SQLSetConnectAttr)
+    {
+        ret = con->hdr.win32_funcs->SQLSetConnectAttr( con->hdr.win32_handle, attr, (SQLPOINTER)value, 0);
+    }
+    else if (con->hdr.win32_funcs->SQLSetConnectAttrW)
+    {
+        ret = con->hdr.win32_funcs->SQLSetConnectAttrW( con->hdr.win32_handle, attr, (SQLPOINTER)value, 0);
+    }
     return ret;
 }
 
@@ -4560,6 +4569,7 @@ static SQLRETURN set_stmt_option_win32( struct statement *stmt, SQLUSMALLINT opt
         {
             case SQL_QUERY_TIMEOUT:
             case SQL_MAX_LENGTH:
+            case SQL_ROWSET_SIZE:
                 return stmt->hdr.win32_funcs->SQLSetStmtAttrW( stmt->hdr.win32_handle, option, (SQLPOINTER)value, 0 );
             default:
                 FIXME("Unsupported option %d.\n", option);

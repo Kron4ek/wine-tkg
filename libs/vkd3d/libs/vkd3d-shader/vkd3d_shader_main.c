@@ -1636,8 +1636,7 @@ static int vsir_program_disassemble(struct vsir_program *program, const struct v
     if ((ret = vsir_program_scan(program, &info2, message_context, true)) < 0)
         return ret;
 
-    if (program->shader_version.major >= 6 || compile_info->source_type == VKD3D_SHADER_SOURCE_DXBC_TPF
-            || compile_info->source_type == VKD3D_SHADER_SOURCE_D3D_BYTECODE)
+    if (program->shader_version.major >= 6 || compile_info->source_type == VKD3D_SHADER_SOURCE_DXBC_TPF)
         return d3d_asm_compile(program, &vsir_compile_info, out, VSIR_ASM_FLAG_NONE, message_context);
 
     if (program->shader_version.major >= 4)
@@ -1650,6 +1649,14 @@ static int vsir_program_disassemble(struct vsir_program *program, const struct v
         info2.target_type = VKD3D_SHADER_TARGET_D3D_ASM;
         info2.source = byte_code;
         ret = tpf_parse(&info2, config_flags, message_context, &program2);
+        if (ret < 0)
+        {
+            vkd3d_shader_free_shader_code(&byte_code);
+            return ret;
+        }
+
+        ret = d3d_asm_compile(&program2, &vsir_compile_info, out, VSIR_ASM_FLAG_NONE, message_context);
+        vsir_program_cleanup(&program2);
     }
     else
     {
@@ -1660,17 +1667,9 @@ static int vsir_program_disassemble(struct vsir_program *program, const struct v
         info2.source_type = VKD3D_SHADER_SOURCE_D3D_BYTECODE;
         info2.target_type = VKD3D_SHADER_TARGET_D3D_ASM;
         info2.source = byte_code;
-        ret = d3dbc_parse(&info2, config_flags, message_context, &program2);
+        ret = d3dbc_disassemble(&info2, out, message_context);
     }
 
-    if (ret < 0)
-    {
-        vkd3d_shader_free_shader_code(&byte_code);
-        return ret;
-    }
-
-    ret = d3d_asm_compile(&program2, &vsir_compile_info, out, VSIR_ASM_FLAG_NONE, message_context);
-    vsir_program_cleanup(&program2);
     vkd3d_shader_free_shader_code(&byte_code);
 
     return ret;
@@ -1787,6 +1786,11 @@ int vkd3d_shader_compile(const struct vkd3d_shader_compile_info *compile_info,
     else if (compile_info->source_type == VKD3D_SHADER_SOURCE_TX)
     {
         ret = tx_parse(compile_info, out, &message_context);
+    }
+    else if (compile_info->source_type == VKD3D_SHADER_SOURCE_D3D_BYTECODE
+            && compile_info->target_type == VKD3D_SHADER_TARGET_D3D_ASM)
+    {
+        ret = d3dbc_disassemble(compile_info, out, &message_context);
     }
     else
     {

@@ -171,7 +171,7 @@ static DWORD get_device_index(struct device_desc *desc, struct list **before)
     /* The device list is sorted, so just increment the index until it doesn't match an index already in the list */
     LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
     {
-        if (ext->desc.vid == desc->vid && ext->desc.pid == desc->pid && ext->desc.input == desc->input)
+        if (ext->desc.vid == desc->vid && ext->desc.pid == desc->pid && ext->desc.interface == desc->interface)
         {
             if (ext->index != index)
             {
@@ -188,12 +188,13 @@ static DWORD get_device_index(struct device_desc *desc, struct list **before)
 static WCHAR *get_instance_id(DEVICE_OBJECT *device)
 {
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD len = wcslen(ext->desc.serialnumber) + 33;
+    const WCHAR *serial_str = !*ext->desc.serialnumber ? L"0000" : ext->desc.serialnumber;
+    DWORD len = wcslen(serial_str) + 33;
     WCHAR *dst;
 
     if ((dst = ExAllocatePool(PagedPool, len * sizeof(WCHAR))))
     {
-        swprintf(dst, len, L"%u&%s&%x&%u&%u", ext->desc.version, ext->desc.serialnumber,
+        swprintf(dst, len, L"%u&%s&%x&%u&%u", ext->desc.version, serial_str,
                  ext->desc.uid, ext->index, ext->desc.is_gamepad);
     }
 
@@ -209,23 +210,23 @@ static const WCHAR *bus_type_str[] =
 
 static WCHAR *get_device_id(DEVICE_OBJECT *device)
 {
-    static const WCHAR input_format[] = L"&MI_%02u";
+    static const WCHAR interface_format[] = L"&MI_%02u";
     static const WCHAR winebus_format[] = L"%s\\VID_%04X&PID_%04X";
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD pos = 0, len = 0, input_len = 0, winebus_len = 18;
+    DWORD pos = 0, len = 0, interface_len = 0, winebus_len = 18;
     const WCHAR *bus_str;
     WCHAR *dst;
 
     assert(ext->desc.bus_type < BUS_TYPE_COUNT);
     bus_str = bus_type_str[ext->desc.bus_type];
-    if (ext->desc.input != -1) input_len = 14;
+    if (ext->desc.interface != -1) interface_len = 14;
 
-    len += winebus_len + input_len + wcslen(bus_str) + 1;
+    len += winebus_len + interface_len + wcslen(bus_str) + 1;
 
     if ((dst = ExAllocatePool(PagedPool, len * sizeof(WCHAR))))
     {
         pos += swprintf(dst + pos, len - pos, winebus_format, bus_str, ext->desc.vid, ext->desc.pid);
-        if (input_len) pos += swprintf(dst + pos, len - pos, input_format, ext->desc.input);
+        if (interface_len) pos += swprintf(dst + pos, len - pos, interface_format, ext->desc.interface);
     }
 
     return dst;
@@ -233,20 +234,20 @@ static WCHAR *get_device_id(DEVICE_OBJECT *device)
 
 static WCHAR *get_hardware_ids(DEVICE_OBJECT *device)
 {
-    static const WCHAR input_format[] = L"&MI_%02u";
+    static const WCHAR interface_format[] = L"&MI_%02u";
     static const WCHAR winebus_format[] = L"WINEBUS\\VID_%04X&PID_%04X";
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD pos = 0, len = 0, input_len = 0, winebus_len = 25;
+    DWORD pos = 0, len = 0, interface_len = 0, winebus_len = 25;
     WCHAR *dst;
 
-    if (ext->desc.input != -1) input_len = 14;
+    if (ext->desc.interface != -1) interface_len = 14;
 
-    len += winebus_len + input_len + 1;
+    len += winebus_len + interface_len + 1;
 
     if ((dst = ExAllocatePool(PagedPool, (len + 1) * sizeof(WCHAR))))
     {
         pos += swprintf(dst + pos, len - pos, winebus_format, ext->desc.vid, ext->desc.pid);
-        if (input_len) pos += swprintf(dst + pos, len - pos, input_format, ext->desc.input);
+        if (interface_len) pos += swprintf(dst + pos, len - pos, interface_format, ext->desc.interface);
         pos += 1;
         dst[pos] = 0;
     }
@@ -317,24 +318,6 @@ static WCHAR *get_device_text(DEVICE_OBJECT *device)
     return dst;
 }
 
-#define GUID_STRING_LENGTH 39
-static WCHAR *get_container_id(DEVICE_OBJECT *device)
-{
-    struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    GUID *guid = &ext->container_id;
-    WCHAR *dst;
-
-    if ((dst = ExAllocatePool(PagedPool, GUID_STRING_LENGTH * sizeof(WCHAR))))
-    {
-        swprintf(dst, GUID_STRING_LENGTH, L"{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-                guid->Data1, guid->Data2, guid->Data3, guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
-                guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
-    }
-
-    TRACE("Returning container ID %s.\n", debugstr_w(dst));
-    return dst;
-}
-
 static IRP *pop_pending_read(struct device_extension *ext)
 {
     IRP *pending;
@@ -358,34 +341,6 @@ static void remove_pending_irps(DEVICE_OBJECT *device)
         pending->IoStatus.Information = 0;
         IoCompleteRequest(pending, IO_NO_INCREMENT);
     }
-}
-
-static void make_unique_serial(struct device_extension *device)
-{
-    struct device_extension *ext;
-
-    LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
-        if (!wcscmp(device->desc.serialnumber, ext->desc.serialnumber)) break;
-    if (&ext->entry == &device_list && *device->desc.serialnumber) return;
-
-    swprintf(device->desc.serialnumber, ARRAY_SIZE(device->desc.serialnumber), L"%04x%08x%04x%04x",
-             device->index, device->desc.input, device->desc.pid, device->desc.vid);
-}
-
-static void make_unique_container_id(struct device_extension *device)
-{
-    struct device_extension *ext;
-    LARGE_INTEGER ticks;
-
-    LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
-        if (IsEqualGUID(&device->container_id, &ext->container_id)) break;
-    if (&ext->entry == &device_list && !IsEqualGUID(&device->container_id, &GUID_NULL)) return;
-
-    device->container_id.Data1 = MAKELONG(device->desc.vid, device->desc.pid);
-    device->container_id.Data2 = device->index;
-    device->container_id.Data3 = device->desc.input;
-    QueryPerformanceCounter(&ticks);
-    memcpy(device->container_id.Data4, &ticks.QuadPart, sizeof(device->container_id.Data4));
 }
 
 static DEVICE_OBJECT *bus_create_hid_device(struct device_desc *desc, UINT64 unix_device)
@@ -431,17 +386,6 @@ static DEVICE_OBJECT *bus_create_hid_device(struct device_desc *desc, UINT64 uni
 
     InitializeCriticalSectionEx(&ext->cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO);
     ext->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": cs");
-
-    /* Overcooked! All You Can Eat only adds controllers with unique serial numbers
-     * Prefer keeping serial numbers unique over keeping them consistent across runs */
-    make_unique_serial(ext);
-
-    /*
-     * Some games use container ID to match the bus device to the HID
-     * device in order to get things like DEVPKEY_Device_BusReportedDeviceDesc.
-     * Create a unique container ID to facilitate this.
-     */
-    make_unique_container_id(ext);
 
     /* add to list of pnp devices */
     if (before)
@@ -821,8 +765,8 @@ static NTSTATUS handle_IRP_MN_QUERY_ID(DEVICE_OBJECT *device, IRP *irp)
             break;
         case BusQueryContainerID:
             TRACE("BusQueryContainerID\n");
-            irp->IoStatus.Information = (ULONG_PTR)get_container_id(device);
-            break;
+            irp->IoStatus.Information = 0;
+            return STATUS_NOT_SUPPORTED;
         default:
             WARN("Unhandled type %08x\n", type);
             return status;
@@ -1387,8 +1331,14 @@ static NTSTATUS pdo_pnp_dispatch(DEVICE_OBJECT *device, IRP *irp)
             break;
 
         case IRP_MN_QUERY_CAPABILITIES:
+        {
+            DEVICE_CAPABILITIES *caps = irpsp->Parameters.DeviceCapabilities.Capabilities;
+
+            caps->UniqueID = 1;
+            caps->Removable = 1;
             status = STATUS_SUCCESS;
             break;
+        }
 
         case IRP_MN_START_DEVICE:
             RtlEnterCriticalSection(&ext->cs);

@@ -985,12 +985,11 @@ case $host_os in
     WINELOADER_LDFLAGS="-Wl,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
 
     case $HOST_ARCH in
-      i386) wine_use_preloader=yes ;;
       x86_64)
         dnl If the -no_huge linker option is present (added in Xcode 15.3), use zerofill sections instead of the preloader
         WINE_TRY_CFLAGS([-Wl,-no_huge],
            [wine_use_preloader=no
-            WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-no_pie,-image_base,0x200000000,-no_huge,-no_fixup_chains,-segalign,0x1000,-segaddr,WINE_RESERVE,0x1000,-segaddr,WINE_TOP_DOWN,0x7ff000000000"],
+            WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-no_pie,-image_base,0x200000000,-no_huge,-no_fixup_chains,-segalign,0x1000,-segaddr,WINE_RESERVE,0x1000"],
            [wine_use_preloader=yes])
         ;;
       *)    wine_use_preloader=no ;;
@@ -1001,14 +1000,7 @@ case $host_os in
         WINEPRELOADER_LDFLAGS="-nostartfiles -nodefaultlibs -e _start -ldylib1.o -mmacosx-version-min=10.7 -Wl,-no_new_main,-segalign,0x1000,-pagezero_size,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
         WINE_TRY_CFLAGS([-Wl,-no_pie],
                         [WINEPRELOADER_LDFLAGS="-Wl,-no_pie $WINEPRELOADER_LDFLAGS"])
-        case $HOST_ARCH in
-          i386)
-            WINEPRELOADER_LDFLAGS="-Wl,-image_base,0x7d400000 $WINEPRELOADER_LDFLAGS"
-            ;;
-          x86_64)
-            WINEPRELOADER_LDFLAGS="-Wl,-image_base,0x200000000,-segalign,0x1000,-segaddr,WINE_RESERVE,0x1000 $WINEPRELOADER_LDFLAGS"
-            ;;
-        esac
+        WINEPRELOADER_LDFLAGS="-Wl,-image_base,0x200000000,-segalign,0x1000,-segaddr,WINE_RESERVE,0x1000 $WINEPRELOADER_LDFLAGS"
         dnl If preloader is used, the loader needs to be an LC_UNIXTHREAD binary to avoid AppKit/Core Animation problems.
         WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -mmacosx-version-min=10.7"
     fi
@@ -1483,8 +1475,7 @@ dnl **** Check for OpenCL ****
 if test "x$with_opencl" != "xno"
 then
     WINE_PACKAGE_FLAGS(OPENCL,[OpenCL],[-lOpenCL],,,
-        [AC_CHECK_HEADERS([CL/cl.h])
-         AC_CHECK_FUNC(clGetPlatformInfo,[:])])
+        [AC_CHECK_HEADERS([CL/cl.h],[AC_CHECK_FUNC(clGetPlatformInfo)])])
 fi
 WINE_NOTICE_WITH(opencl,[test "x$ac_cv_func_clGetPlatformInfo" != xyes],
                  [OpenCL ${notice_platform}development files not found, OpenCL won't be supported.],
@@ -1494,8 +1485,7 @@ dnl **** Check for libpcap ****
 if test "x$with_pcap" != "xno"
 then
     WINE_PACKAGE_FLAGS(PCAP,[libpcap],[-lpcap],,,
-        [AC_CHECK_HEADERS([pcap/pcap.h])
-         AC_CHECK_FUNC(pcap_init,[:],[PCAP_LIBS=""])])
+        [AC_CHECK_HEADER([pcap/pcap.h],[AC_CHECK_FUNC(pcap_init)])])
 fi
 WINE_NOTICE_WITH(pcap,[test "x$ac_cv_func_pcap_init" != xyes],
                  [pcap ${notice_platform}development files not found, wpcap won't be supported.],
@@ -1519,8 +1509,9 @@ dnl **** Check for inotify ****
 if test "x$with_inotify" != "xno"
 then
     WINE_PACKAGE_FLAGS(INOTIFY,[libinotify],[-linotify],,,
-        [AC_CHECK_HEADERS([sys/inotify.h])
-         AC_CHECK_FUNC(inotify_add_watch,[:],[INOTIFY_LIBS=""])])
+        [AC_CHECK_HEADERS([sys/inotify.h],
+            [AC_CHECK_FUNC(inotify_add_watch,,[INOTIFY_LIBS=""])],
+            [INOTIFY_LIBS=""])])
 fi
 WINE_NOTICE_WITH(inotify,[test "$ac_cv_header_sys_inotify_h" != "yes"],
                  [libinotify ${notice_platform}development files not found (or too old), filesystem change notifications won't be supported.])
@@ -1574,8 +1565,7 @@ dnl **** Check for SANE ****
 if test "x$with_sane" != "xno"
 then
     WINE_PACKAGE_FLAGS(SANE,[sane-backends],,[`${SANE_CONFIG:-sane-config} --cflags 2>/dev/null`],[`${SANE_CONFIG:-sane-config} --ldflags 2>/dev/null`],
-        [AC_CHECK_HEADER(sane/sane.h,
-            [AC_CHECK_FUNC(sane_init,[:])])])
+        [AC_CHECK_HEADER(sane/sane.h,[AC_CHECK_FUNC(sane_init)])])
 fi
 WINE_NOTICE_WITH(sane,[test "$ac_cv_func_sane_init" != "yes"],
                  [libsane ${notice_platform}development files not found, scanners won't be supported.],
@@ -1585,9 +1575,7 @@ dnl **** Check for libusb ****
 if test "x$with_usb" != "xno"
 then
     WINE_PACKAGE_FLAGS(USB,[libusb-1.0],[-lusb-1.0],,,
-        [AC_CHECK_HEADER([libusb.h],
-            [AC_CHECK_FUNC(libusb_interrupt_event_handler,[:],[USB_LIBS=""])],
-            [USB_LIBS=""])])
+        [AC_CHECK_HEADER([libusb.h],[AC_CHECK_FUNC(libusb_interrupt_event_handler)])])
 fi
 WINE_NOTICE_WITH(usb,[test "$ac_cv_func_libusb_interrupt_event_handler" != "yes"],
                  [libusb-1.0 ${notice_platform}development files not found (or too old), USB devices won't be supported.],
@@ -1724,11 +1712,9 @@ dnl **** Check for PulseAudio ****
 if test "x$with_pulse" != "xno";
 then
     WINE_PACKAGE_FLAGS(PULSE,[libpulse],,,,
-        [AC_CHECK_HEADER([pulse/pulseaudio.h],
-            [AC_CHECK_FUNC(pa_stream_is_corked,[:],[PULSE_LIBS=""])],
-            [PULSE_LIBS=""])])
+        [AC_CHECK_HEADER([pulse/pulseaudio.h],[AC_CHECK_FUNC(pa_stream_is_corked)])])
 fi
-WINE_NOTICE_WITH(pulse, [test -z "$PULSE_LIBS"],
+WINE_NOTICE_WITH(pulse, [test "x$ac_cv_func_pa_stream_is_corked" != xyes],
         [libpulse ${notice_platform}development files not found or too old, Pulse won't be supported.],
         [enable_winepulse_drv])
 
@@ -1777,9 +1763,9 @@ AC_SUBST(ALSA_LIBS,"")
 if test "x$with_alsa" != "xno"
 then
     WINE_PACKAGE_FLAGS(ALSA,[alsa],[-lasound],,,
-        [AC_CHECK_FUNC(snd_pcm_hw_params_get_access_mask,[:],[ALSA_LIBS=""])])
+        [AC_CHECK_FUNC(snd_pcm_hw_params_get_access_mask)])
 fi
-WINE_NOTICE_WITH(alsa,[test -z "$ALSA_LIBS"],
+WINE_NOTICE_WITH(alsa,[test "x$ac_cv_func_snd_pcm_hw_params_get_access_mask" != xyes],
                  [libasound ${notice_platform}development files not found, Alsa won't be supported.],
                  [enable_winealsa_drv])
 
@@ -1836,7 +1822,7 @@ then
     [AC_CHECK_HEADERS([capi20.h linux/capi.h],,,[#define __user])
     if test "$ac_cv_header_capi20_h" = "yes" -a "$ac_cv_header_linux_capi_h" = "yes"
     then
-        AC_CHECK_FUNC(capi20_register,[:],[CAPI20_LIBS=""])
+        AC_CHECK_FUNC(capi20_register)
     fi])
 fi
 WINE_NOTICE_WITH(capi,[test "x$ac_cv_func_capi20_register" != xyes],
@@ -1852,10 +1838,9 @@ then
                        [AC_CHECK_HEADERS(cups/cups.h cups/ppd.h)
                         if test "$ac_cv_header_cups_cups_h" = "yes"
                         then
-                            WINE_CHECK_SONAME(cups,cupsGetDefault,,[CUPS_LIBS=""])
+                            WINE_CHECK_SONAME(cups,cupsGetDefault,,[CUPS_CFLAGS=""])
                         else
                             CUPS_CFLAGS=""
-                            CUPS_LIBS=""
                         fi])
 fi
 WINE_NOTICE_WITH(cups,[test "x$ac_cv_lib_soname_cups" = "x"],
@@ -1878,17 +1863,11 @@ then
     WINE_PACKAGE_FLAGS(KRB5,[krb5],,
                        [`${KRB5_CONFIG:-krb5-config} --cflags 2>/dev/null`],
                        [`${KRB5_CONFIG:-krb5-config} --libs 2>/dev/null`],
-        [AC_CHECK_HEADERS([krb5/krb5.h])
-         if test "$ac_cv_header_krb5_krb5_h" = "yes"
-         then
-             WINE_CHECK_SONAME(krb5,krb5_is_config_principal,,[KRB5_CFLAGS=""])
-         else
-             KRB5_CFLAGS=""
-         fi])
+        [AC_CHECK_HEADER([krb5/krb5.h],[WINE_CHECK_SONAME(krb5,krb5_is_config_principal)])])
 fi
 WINE_NOTICE_WITH(krb5,[test "x$ac_cv_lib_soname_krb5" = "x"],
-                 [libkrb5 ${notice_platform}development files not found (or too old), Kerberos won't be supported.])
-test "x$ac_cv_lib_soname_krb5" != "x" || with_gssapi=${with_gssapi:-no}
+                 [libkrb5 ${notice_platform}development files not found (or too old), Kerberos won't be supported.],
+                 [enable_kerberos])
 
 dnl **** Check for gssapi ****
 if test "x$with_gssapi" != "xno"
@@ -1896,16 +1875,13 @@ then
     WINE_PACKAGE_FLAGS(GSSAPI,[krb5-gssapi],,
                        [`${KRB5_CONFIG:-krb5-config} --cflags gssapi 2>/dev/null`],
                        [`${KRB5_CONFIG:-krb5-config} --libs gssapi 2>/dev/null`],
-        [AC_CHECK_HEADERS([gssapi/gssapi.h gssapi/gssapi_ext.h])
-        if test "$ac_cv_header_gssapi_gssapi_h" = "yes" -a "$ac_cv_header_gssapi_gssapi_ext_h" = "yes"
-        then
-            WINE_CHECK_SONAME(gssapi_krb5, gss_init_sec_context,,[GSSAPI_CFLAGS=""])
-        else
-            GSSAPI_CFLAGS=""
-        fi])
+        [AC_CHECK_HEADER([gssapi/gssapi.h],
+             [AC_CHECK_HEADER([gssapi/gssapi_ext.h],
+                  [WINE_CHECK_SONAME(gssapi_krb5, gss_init_sec_context)])])])
 fi
 WINE_NOTICE_WITH(gssapi,[test "x$ac_cv_lib_soname_gssapi_krb5" = "x"],
-                 [libgssapi_krb5 ${notice_platform}development files not found (or too old), no Kerberos SSP support.])
+                 [libgssapi_krb5 ${notice_platform}development files not found (or too old), Kerberos won't be supported.],
+                 [enable_kerberos])
 
 dnl **** Check for libprocstat ****
 if test "$ac_cv_header_libprocstat_h" = "yes"
@@ -1925,8 +1901,7 @@ then
       [WINE_CHECK_SONAME(netapi,libnetapi_init,,[AC_DEFINE_UNQUOTED(SONAME_LIBNETAPI,["libnetapi.$LIBEXT"])])])
 fi
 WINE_NOTICE_WITH(netapi,[test "x$ac_cv_lib_soname_netapi" = "x"],
-                 [libnetapi not found, Samba NetAPI won't be supported.],
-                 [enable_netapi])
+                 [libnetapi not found, Samba NetAPI won't be supported.])
 
 
 dnl **** Check for any sound system ****
@@ -3850,7 +3825,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-11.18.r0.g627ccf4f\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-11.19.r0.g766285c4\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 dlls/wineandroid.drv/wine-debug.apk: dlls/wineandroid.drv/build.gradle ${wine_srcdir}dlls/wineandroid.drv/AndroidManifest.xml ${wine_srcdir}dlls/wineandroid.drv/WineActivity.java ${wine_srcdir}dlls/wineandroid.drv/wine.svg

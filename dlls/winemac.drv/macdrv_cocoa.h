@@ -33,16 +33,6 @@
 #define GetProcessInformation MacGetProcessInformation
 #define LoadResource MacLoadResource
 #define Polygon MacPolygon
-#ifdef __i386__
-#  define CheckMenuItem MacCheckMenuItem
-#  define DeleteMenu MacDeleteMenu
-#  define DrawMenuBar MacDrawMenuBar
-#  define EnableMenuItem MacEnableMenuItem
-#  define GetMenu MacGetMenu
-#  define IsWindowVisible MacIsWindowVisible
-#  define MoveWindow MacMoveWindow
-#  define ShowWindow MacShowWindow
-#endif
 
 #include <ApplicationServices/ApplicationServices.h>
 #include <Carbon/Carbon.h>
@@ -52,16 +42,6 @@
 #undef GetProcessInformation
 #undef LoadResource
 #undef Polygon
-#ifdef __i386__
-#  undef CheckMenuItem
-#  undef DeleteMenu
-#  undef DrawMenuBar
-#  undef EnableMenuItem
-#  undef GetMenu
-#  undef IsWindowVisible
-#  undef MoveWindow
-#  undef ShowWindow
-#endif
 
 #include <pthread.h>
 #include <stdbool.h>
@@ -101,10 +81,10 @@ enum {
 
 #ifdef __OBJC__
 #define DECLARE_CLASS(x) @class x
-#define DECLARE_PROTO(x) @protocol x; typedef id<x> id_ ## x
+#define DECLARE_PROTO(x) @protocol x; typedef id<x> x ## _id
 #else
 #define DECLARE_CLASS(x) typedef struct __ ## x x
-#define DECLARE_PROTO(x) typedef struct __ ## x *id_ ## x
+#define DECLARE_PROTO(x) typedef struct __ ## x *x ## _id
 #endif
 DECLARE_CLASS(WineContentView);
 DECLARE_CLASS(WineEventQueue);
@@ -121,7 +101,6 @@ struct macdrv_event;
 struct macdrv_query;
 
 /* main */
-extern bool macdrv_err_on;
 extern int topmost_float_inactive;
 extern bool capture_displays_for_fullscreen;
 extern bool left_option_is_alt;
@@ -227,10 +206,6 @@ extern int macdrv_clip_cursor(CGRect rect);
 
 /* display */
 
-/* Used DISPLAY_DEVICE.StateFlags for adapters */
-#define DISPLAY_DEVICE_ATTACHED_TO_DESKTOP      0x00000001
-#define DISPLAY_DEVICE_PRIMARY_DEVICE           0x00000004
-
 /* Represent a physical GPU in the PCI slots */
 struct macdrv_gpu
 {
@@ -283,7 +258,6 @@ enum {
     APP_QUIT_REQUESTED,
     DISPLAYS_CHANGED,
     HOTKEY_PRESS,
-    IM_SET_TEXT,
     KEY_PRESS,
     KEY_RELEASE,
     KEYBOARD_CHANGED,
@@ -341,13 +315,6 @@ typedef struct macdrv_event {
             unsigned int    keycode;
             unsigned long   time_ms;
         }                                           hotkey_press;
-        struct {
-            void           *himc;
-            CFStringRef     text;       /* new text or NULL if just completing existing text */
-            unsigned int    cursor_begin;
-            unsigned int    cursor_end;
-            bool            complete;   /* is completing text? */
-        }                                           im_set_text;
         struct {
             CGKeyCode                   keycode;
             CGEventFlags                modifiers;
@@ -531,15 +498,15 @@ extern void macdrv_set_view_superview(WineContentView *view, WineContentView *pa
 extern void macdrv_set_view_hidden(WineContentView *view, bool hidden);
 extern void macdrv_add_view_opengl_context(WineContentView *view, WineOpenGLContext *context);
 extern void macdrv_remove_view_opengl_context(WineContentView *view, WineOpenGLContext *context);
-extern id_MTLDevice macdrv_create_metal_device(void);
-extern void macdrv_release_metal_device(id_MTLDevice device);
-extern WineMetalView *macdrv_view_create_metal_view(WineContentView *view, id_MTLDevice device);
+extern MTLDevice_id macdrv_create_metal_device(void);
+extern void macdrv_release_metal_device(MTLDevice_id device);
+extern WineMetalView *macdrv_view_create_metal_view(WineContentView *view, MTLDevice_id device);
 extern CAMetalLayer *macdrv_view_get_metal_layer(WineMetalView *view);
 extern void macdrv_view_release_metal_view(WineMetalView *view);
-extern id_WineMetalSwapChain macdrv_create_view_swapchain(WineContentView *view);
-extern id_WineMetalSwapChain macdrv_create_offscreen_swapchain(void* hwnd, CGRect bounds);
-extern CAMetalLayer *macdrv_swapchain_get_layer(id_WineMetalSwapChain swapchain);
-extern void macdrv_destroy_swapchain(id_WineMetalSwapChain swapchain);
+extern WineMetalSwapChain_id macdrv_create_view_swapchain(WineContentView *view);
+extern WineMetalSwapChain_id macdrv_create_offscreen_swapchain(void* hwnd, CGRect bounds);
+extern CAMetalLayer *macdrv_swapchain_get_layer(WineMetalSwapChain_id swapchain);
+extern void macdrv_destroy_swapchain(WineMetalSwapChain_id swapchain);
 extern void macdrv_window_create_ca_layer_host_view(WineWindow *window, unsigned int context_id);
 extern void macdrv_window_release_ca_layer_host_view(WineWindow *window, unsigned int context_id);
 extern void macdrv_create_remote_layer(void* hwnd, unsigned int context_id);
@@ -547,7 +514,8 @@ extern void macdrv_release_remote_layer(void* hwnd, unsigned int context_id);
 extern bool macdrv_get_view_backing_size(WineContentView *view, int backing_size[2]);
 extern void macdrv_set_view_backing_size(WineContentView *view, const int backing_size[2]);
 extern uint32_t macdrv_window_background_color(void);
-extern bool macdrv_send_keydown_to_input_source(int keyc, unsigned int flags, int repeat, void *data);
+extern bool macdrv_send_keydown_to_input_source(int keyc, unsigned int flags, int repeat, void *update);
+extern void macdrv_clear_ime_text(void);
 extern bool macdrv_is_any_wine_window_visible(void);
 
 
@@ -568,7 +536,7 @@ extern CFDataRef macdrv_copy_pasteboard_data(CFTypeRef pasteboard, CFStringRef t
 extern bool macdrv_is_pasteboard_owner(WineWindow *window);
 extern bool macdrv_has_pasteboard_changed(void);
 extern void macdrv_clear_pasteboard(WineWindow *window);
-extern int macdrv_set_pasteboard_data(CFStringRef type, CFDataRef data, WineWindow *window);
+extern bool macdrv_set_pasteboard_data(CFStringRef type, CFDataRef data, WineWindow *window);
 
 
 /* opengl */
@@ -585,9 +553,5 @@ extern void macdrv_destroy_status_item(WineStatusItem *item);
 extern void macdrv_set_status_item_image(WineStatusItem *item, CGImageRef cgimage);
 extern void macdrv_set_status_item_tooltip(WineStatusItem *item, CFStringRef cftip);
 
-/* ime */
-extern pthread_mutex_t ime_composition_rect_mutex;
-extern CGRect ime_composition_rect;
-extern void macdrv_clear_ime_text(void);
 
 #endif  /* __WINE_MACDRV_COCOA_H */

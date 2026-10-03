@@ -1062,11 +1062,14 @@ NTSTATUS WINAPI NtQuerySemaphore( HANDLE handle, SEMAPHORE_INFORMATION_CLASS cla
 /******************************************************************************
  *              NtReleaseSemaphore (NTDLL.@)
  */
-NTSTATUS WINAPI NtReleaseSemaphore( HANDLE handle, ULONG count, ULONG *previous )
+NTSTATUS WINAPI NtReleaseSemaphore( HANDLE handle, LONG count, ULONG *previous )
 {
     unsigned int ret;
 
     TRACE( "handle %p, count %u, prev_count %p\n", handle, count, previous );
+
+    if (count <= 0)
+        return STATUS_INVALID_PARAMETER;
 
     if ((ret = inproc_release_semaphore( handle, count, previous )) != STATUS_NOT_IMPLEMENTED)
         return ret;
@@ -3715,4 +3718,14 @@ NTSTATUS WINAPI NtConvertBetweenAuxiliaryCounterAndPerformanceCounter( ULONG fla
     if (!from) return STATUS_ACCESS_VIOLATION;
 
     return STATUS_NOT_SUPPORTED;
+}
+
+/***********************************************************************
+ *           NtOpenPrivateNamespace (NTDLL.@)
+ */
+NTSTATUS WINAPI NtOpenPrivateNamespace( HANDLE *handle, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr, const OBJECT_BOUNDARY_DESCRIPTOR *descriptor )
+{
+    FIXME( "%p, %#x, %p, %p stub.\n", handle, access, attr, descriptor );
+
+    return STATUS_NOT_IMPLEMENTED;
 }

@@ -18,7 +18,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
+#import "config.h"
+#import "macdrv.h"
 
 #define GL_SILENCE_DEPRECATION
 #import <Metal/Metal.h>
@@ -27,13 +28,13 @@
 
 #import "cocoa_window.h"
 
-#include "macdrv_cocoa.h"
 #import "cocoa_app.h"
 #import "cocoa_event.h"
 #import "cocoa_opengl.h"
 
 #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
 
+WINE_DEFAULT_DEBUG_CHANNEL(macdrv);
 
 @interface NSWindow (PrivatePreventsActivation)
 
@@ -193,16 +194,6 @@ static inline BOOL stage_manager_enabled(void)
 @end
 
 
-#ifndef MAC_OS_X_VERSION_10_14
-@protocol NSViewLayerContentScaleDelegate <NSObject>
-@optional
-
-    - (BOOL) layer:(CALayer*)layer shouldInheritContentsScale:(CGFloat)newScale fromWindow:(NSWindow*)window;
-
-@end
-#endif
-
-
 @interface CAShapeLayer (WineShapeMaskExtensions)
 
 @property(readonly, nonatomic, getter=isEmptyShaped) BOOL emptyShaped;
@@ -289,7 +280,7 @@ static inline BOOL stage_manager_enabled(void)
 
 @property (nonatomic) BOOL usePerPixelAlpha;
 
-@property (assign, nonatomic) void* himc;
+@property (assign, nonatomic) void* ime_update;
 @property (nonatomic) BOOL commandDone;
 
 @property (readonly, copy, nonatomic) NSArray* childWineWindows;
@@ -612,22 +603,6 @@ static inline BOOL stage_manager_enabled(void)
         [self layer].contentsScale = mode ? 2.0 : 1.0;
         [self layer].minificationFilter = mode ? kCAFilterLinear : kCAFilterNearest;
         [self layer].magnificationFilter = mode ? kCAFilterLinear : kCAFilterNearest;
-
-        /* On macOS 10.13 and earlier, the desired minificationFilter seems to be
-         * ignored and "nearest" filtering is used, which looks terrible.
-         * Enabling rasterization seems to work around this, only enable
-         * it when there may be down-scaling (retina mode enabled).
-         */
-        if (floor(NSAppKitVersionNumber) < 1671 /*NSAppKitVersionNumber10_14*/)
-        {
-            if (mode)
-            {
-                [self layer].shouldRasterize = YES;
-                [self layer].rasterizationScale = 2.0;
-            }
-            else
-                [self layer].shouldRasterize = NO;
-        }
     }
 
     - (void) setRetinaMode:(BOOL)mode
@@ -692,18 +667,9 @@ static inline BOOL stage_manager_enabled(void)
 
     - (void) completeText:(NSString*)text
     {
-        macdrv_event* event;
         WineWindow* window = (WineWindow*)[self window];
 
-        event = macdrv_create_event(IM_SET_TEXT, window);
-        event->im_set_text.himc = [window himc];
-        event->im_set_text.text = (CFStringRef)[text copy];
-        event->im_set_text.complete = true;
-
-        [[window queue] postEvent:event];
-
-        macdrv_release_event(event);
-
+        macdrv_ime_set_text(window.hwnd, (CFStringRef)text, true, 0, 0, [window ime_update]);
         [self clearMarkedText];
     }
 
@@ -768,7 +734,6 @@ static inline BOOL stage_manager_enabled(void)
 
         if ([string isKindOfClass:[NSString class]])
         {
-            macdrv_event* event;
             WineWindow* window = (WineWindow*)[self window];
 
             if (replacementRange.location == NSNotFound)
@@ -778,16 +743,10 @@ static inline BOOL stage_manager_enabled(void)
             markedTextSelection = selectedRange;
             markedTextSelection.location += replacementRange.location;
 
-            event = macdrv_create_event(IM_SET_TEXT, window);
-            event->im_set_text.himc = [window himc];
-            event->im_set_text.text = (CFStringRef)[[markedText string] copy];
-            event->im_set_text.complete = false;
-            event->im_set_text.cursor_begin = markedTextSelection.location;
-            event->im_set_text.cursor_end = markedTextSelection.location + markedTextSelection.length;
-
-            [[window queue] postEvent:event];
-
-            macdrv_release_event(event);
+            macdrv_ime_set_text(window.hwnd, (CFStringRef)[markedText string], false,
+                                markedTextSelection.location,
+                                markedTextSelection.location + markedTextSelection.length,
+                                [window ime_update]);
 
             [[self inputContext] invalidateCharacterCoordinates];
         }
@@ -915,7 +874,7 @@ static inline BOOL stage_manager_enabled(void)
     @synthesize drawnSinceShown;
     @synthesize shapeChangedSinceLastDraw;
     @synthesize usePerPixelAlpha;
-    @synthesize himc, commandDone;
+    @synthesize ime_update, commandDone;
     @synthesize contentViewMaskLayer;
 
     + (WineWindow*) createWindowWithFeatures:(const struct macdrv_window_features*)wf
@@ -1443,7 +1402,7 @@ static inline BOOL stage_manager_enabled(void)
                         reordered = TRUE;
                     }
                     else
-                        ERR(@"shouldn't happen: %@ thinks %@ is a latent child, but it doesn't agree\n", self, child);
+                        ERR("shouldn't happen: %s thinks %s is a latent child, but it doesn't agree\n", debugstr_cf(self), debugstr_cf(child));
                     [indexesToRemove addIndex:i];
                 }
             }
@@ -1646,7 +1605,7 @@ static inline BOOL stage_manager_enabled(void)
             if (activate)
                 [controller tryToActivateIgnoringOtherApps:YES];
 
-            NSDisableScreenUpdates();
+            [NSAnimationContext beginGrouping];
 
             if ([self becameEligibleParentOrChild])
                 needAdjustWindowLevels = TRUE;
@@ -1733,7 +1692,7 @@ static inline BOOL stage_manager_enabled(void)
                 pendingMinimize = FALSE;
             }
 
-            NSEnableScreenUpdates();
+            [NSAnimationContext endGrouping];
 
             /* Cocoa may adjust the frame when the window is ordered onto the screen.
                Generate a frame-changed event just in case.  The back end will ignore
@@ -1867,7 +1826,7 @@ static inline BOOL stage_manager_enabled(void)
             if (!NSEqualRects(frame, oldFrame))
             {
                 BOOL equalSizes = NSEqualSizes(frame.size, oldFrame.size);
-                BOOL needEnableScreenUpdates = FALSE;
+                BOOL needAnimationContextEndGrouping = NO;
 
                 if ([self preventResizing])
                 {
@@ -1888,8 +1847,8 @@ static inline BOOL stage_manager_enabled(void)
                     NSRect bogusFrame = frame;
                     bogusFrame.size.width++;
 
-                    NSDisableScreenUpdates();
-                    needEnableScreenUpdates = TRUE;
+                    [NSAnimationContext beginGrouping];
+                    needAnimationContextEndGrouping = YES;
 
                     ignore_windowResize = TRUE;
                     [self setFrame:bogusFrame display:NO];
@@ -1903,8 +1862,8 @@ static inline BOOL stage_manager_enabled(void)
                     [self setContentMaxSize:contentRect.size];
                 }
 
-                if (needEnableScreenUpdates)
-                    NSEnableScreenUpdates();
+                if (needAnimationContextEndGrouping)
+                    [NSAnimationContext endGrouping];
 
                 if (!enteringFullScreen &&
                     [[NSProcessInfo processInfo] systemUptime] - enteredFullScreenTime > 1.0)
@@ -3933,7 +3892,7 @@ uint32_t macdrv_window_background_color(void)
  * processed by input sources (AKA IMEs). This is only called when there is an
  * active non-keyboard input source.
  */
-bool macdrv_send_keydown_to_input_source(int keyc, unsigned int flags, int repeat, void *himc)
+bool macdrv_send_keydown_to_input_source(int keyc, unsigned int flags, int repeat, void *update)
 {
     __block bool ret;
 
@@ -3952,7 +3911,7 @@ bool macdrv_send_keydown_to_input_source(int keyc, unsigned int flags, int repea
             CGEventRef c;
             NSEvent* event;
 
-            window.himc = himc;
+            window.ime_update = update;
             fix_device_modifiers_by_generic(&localFlags);
 
             // An NSEvent created with +keyEventWithType:... is internally marked
@@ -3966,6 +3925,7 @@ bool macdrv_send_keydown_to_input_source(int keyc, unsigned int flags, int repea
 
             window.commandDone = FALSE;
             ret = [[[window contentView] inputContext] handleEvent:event] && !window.commandDone;
+            window.ime_update = NULL;
         }
         else
             ret = false;
