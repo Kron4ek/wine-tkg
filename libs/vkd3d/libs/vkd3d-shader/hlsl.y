@@ -4227,6 +4227,16 @@ static bool intrinsic_fwidth(struct hlsl_ctx *ctx,
     return !!add_user_call(ctx, func, params, loc);
 }
 
+static bool intrinsic_isfinite(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_type *bool_type = hlsl_change_base_type(ctx, params->args[0]->data_type, HLSL_TYPE_BOOL);
+    struct hlsl_ir_node *args[HLSL_MAX_OPERANDS] = {0};
+
+    args[0] = params->args[0];
+    return !!add_expr(ctx, params->instrs, HLSL_OP1_ISFINITE, args, bool_type, loc);
+}
+
 static bool intrinsic_isinf(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
@@ -4535,33 +4545,6 @@ static bool intrinsic_noise(struct hlsl_ctx *ctx,
     return !!add_expr(ctx, params->instrs, HLSL_OP1_NOISE, args, ret_type, loc);
 }
 
-static bool intrinsic_normalize(struct hlsl_ctx *ctx,
-        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
-{
-    struct hlsl_type *type = params->args[0]->data_type;
-    struct hlsl_ir_node *dot, *rsq, *arg;
-
-    if (type->class == HLSL_CLASS_MATRIX)
-    {
-        struct vkd3d_string_buffer *string;
-
-        if ((string = hlsl_type_to_string(ctx, type)))
-            hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                    "Invalid type %s.", string->buffer);
-        hlsl_release_string_buffer(ctx, string);
-    }
-
-    arg = intrinsic_float_convert_arg(ctx, params, params->args[0], loc);
-
-    if (!(dot = add_binary_dot_expr(ctx, params->instrs, arg, arg, loc)))
-        return false;
-
-    if (!(rsq = add_unary_arithmetic_expr(ctx, params->instrs, HLSL_OP1_RSQ, dot, loc)))
-        return false;
-
-    return !!add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_MUL, rsq, arg, loc);
-}
-
 static bool intrinsic_pow(struct hlsl_ctx *ctx,
         const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
 {
@@ -4734,6 +4717,36 @@ static bool intrinsic_sign(struct hlsl_ctx *ctx,
 
     /* Adding these two together will make 1 when > 0, -1 when < 0, and 0 when neither */
     return !!add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_ADD, neg, op1, loc);
+}
+
+static bool intrinsic_normalize(struct hlsl_ctx *ctx,
+        const struct parse_initializer *params, const struct vkd3d_shader_location *loc)
+{
+    struct hlsl_type *type = params->args[0]->data_type;
+    struct hlsl_ir_node *dot, *rsq, *arg;
+
+    if (type->class == HLSL_CLASS_MATRIX)
+    {
+        struct vkd3d_string_buffer *string;
+
+        if ((string = hlsl_type_to_string(ctx, type)))
+            hlsl_error(ctx, loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                    "Invalid type %s.", string->buffer);
+        hlsl_release_string_buffer(ctx, string);
+    }
+
+    if (hlsl_version_lt(ctx, 4, 0) && (type->e.numeric.dimx == 1))
+        return intrinsic_sign(ctx, params, loc);
+
+    arg = intrinsic_float_convert_arg(ctx, params, params->args[0], loc);
+
+    if (!(dot = add_binary_dot_expr(ctx, params->instrs, arg, arg, loc)))
+        return false;
+
+    if (!(rsq = add_unary_arithmetic_expr(ctx, params->instrs, HLSL_OP1_RSQ, dot, loc)))
+        return false;
+
+    return !!add_binary_arithmetic_expr(ctx, params->instrs, HLSL_OP2_MUL, rsq, arg, loc);
 }
 
 static bool intrinsic_sin(struct hlsl_ctx *ctx,
@@ -5620,6 +5633,7 @@ intrinsic_functions[] =
     {"frac",                                1, true,  intrinsic_frac},
     {"frexp",                               2, true,  intrinsic_frexp},
     {"fwidth",                              1, true,  intrinsic_fwidth},
+    {"isfinite",                            1, true,  intrinsic_isfinite},
     {"isinf",                               1, true,  intrinsic_isinf},
     {"ldexp",                               2, true,  intrinsic_ldexp},
     {"length",                              1, true,  intrinsic_length},
@@ -6386,26 +6400,27 @@ static bool add_getdimensions_method_call(struct hlsl_ctx *ctx, struct hlsl_bloc
         enum hlsl_sampler_dim sampler_dim;
         unsigned int args_count;
         enum func_argument args[ARG_MAX_ARGS];
+        bool srv_only;
     }
     overloads[] =
     {
         { HLSL_SAMPLER_DIM_1D, 1, { ARG_WIDTH } },
-        { HLSL_SAMPLER_DIM_1D, 3, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_LEVEL_COUNT } },
+        { HLSL_SAMPLER_DIM_1D, 3, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_LEVEL_COUNT }, true },
         { HLSL_SAMPLER_DIM_1DARRAY, 2, { ARG_WIDTH, ARG_ELEMENT_COUNT } },
-        { HLSL_SAMPLER_DIM_1DARRAY, 4, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_ELEMENT_COUNT, ARG_LEVEL_COUNT } },
+        { HLSL_SAMPLER_DIM_1DARRAY, 4, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_ELEMENT_COUNT, ARG_LEVEL_COUNT }, true },
         { HLSL_SAMPLER_DIM_2D, 2, { ARG_WIDTH, ARG_HEIGHT } },
-        { HLSL_SAMPLER_DIM_2D, 4, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_HEIGHT, ARG_LEVEL_COUNT } },
+        { HLSL_SAMPLER_DIM_2D, 4, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_HEIGHT, ARG_LEVEL_COUNT }, true },
         { HLSL_SAMPLER_DIM_2DARRAY, 3, { ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT } },
-        { HLSL_SAMPLER_DIM_2DARRAY, 5, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT, ARG_LEVEL_COUNT } },
+        { HLSL_SAMPLER_DIM_2DARRAY, 5, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT, ARG_LEVEL_COUNT }, true },
         { HLSL_SAMPLER_DIM_3D, 3, { ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT } },
-        { HLSL_SAMPLER_DIM_3D, 5, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT, ARG_LEVEL_COUNT } },
+        { HLSL_SAMPLER_DIM_3D, 5, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT, ARG_LEVEL_COUNT }, true },
         { HLSL_SAMPLER_DIM_CUBE, 2, { ARG_WIDTH, ARG_HEIGHT } },
         { HLSL_SAMPLER_DIM_CUBE, 4, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_HEIGHT, ARG_LEVEL_COUNT } },
         { HLSL_SAMPLER_DIM_CUBEARRAY, 3, { ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT } },
         { HLSL_SAMPLER_DIM_CUBEARRAY, 5, { ARG_MIP_LEVEL, ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT, ARG_LEVEL_COUNT } },
         { HLSL_SAMPLER_DIM_2DMS, 3, { ARG_WIDTH, ARG_HEIGHT, ARG_SAMPLE_COUNT } },
         { HLSL_SAMPLER_DIM_2DMSARRAY, 4, { ARG_WIDTH, ARG_HEIGHT, ARG_ELEMENT_COUNT, ARG_SAMPLE_COUNT } },
-        { HLSL_SAMPLER_DIM_BUFFER, 1, { ARG_WIDTH} },
+        { HLSL_SAMPLER_DIM_BUFFER, 1, { ARG_WIDTH } },
     };
     const struct overload *o = NULL;
 
@@ -6421,6 +6436,9 @@ static bool add_getdimensions_method_call(struct hlsl_ctx *ctx, struct hlsl_bloc
     for (i = 0; i < ARRAY_SIZE(overloads); ++i)
     {
         const struct overload *iter = &overloads[i];
+
+        if (object_type->class == HLSL_CLASS_UAV && iter->srv_only)
+            continue;
 
         if (iter->sampler_dim == object_type->sampler_dim && iter->args_count == params->args_count)
         {
@@ -6736,10 +6754,12 @@ texture_methods[] =
 
 static const struct method_function uav_methods[] =
 {
-    { "Store",  add_store_method_call, "00000000000001" },
-    { "Store2", add_store_method_call, "00000000000001" },
-    { "Store3", add_store_method_call, "00000000000001" },
-    { "Store4", add_store_method_call, "00000000000001" },
+    { "GetDimensions", add_getdimensions_method_call, "00111011000000" },
+
+    { "Store",         add_store_method_call,         "00000000000001" },
+    { "Store2",        add_store_method_call,         "00000000000001" },
+    { "Store3",        add_store_method_call,         "00000000000001" },
+    { "Store4",        add_store_method_call,         "00000000000001" },
 };
 
 static const struct method_function so_methods[] =

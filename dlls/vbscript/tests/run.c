@@ -101,6 +101,7 @@ DEFINE_EXPECT(testobj_propput_d);
 DEFINE_EXPECT(testobj_propput_i);
 DEFINE_EXPECT(testobj_value_i);
 DEFINE_EXPECT(testobj_valueput_i);
+DEFINE_EXPECT(testobj_getclassinfo);
 DEFINE_EXPECT(global_propargput_d);
 DEFINE_EXPECT(global_propargput_i);
 DEFINE_EXPECT(global_propargput1_d);
@@ -1043,12 +1044,69 @@ static HRESULT WINAPI testObj_InvokeEx(IDispatchEx *iface, DISPID id, LCID lcid,
     return E_FAIL;
 }
 
+static HRESULT WINAPI ProvideClassInfo_QueryInterface(IProvideClassInfo *iface, REFIID riid, void **ppv)
+{
+    if(IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IProvideClassInfo)) {
+        *ppv = iface;
+        return S_OK;
+    }
+
+    *ppv = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI ProvideClassInfo_AddRef(IProvideClassInfo *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI ProvideClassInfo_Release(IProvideClassInfo *iface)
+{
+    return 1;
+}
+
+static BOOL testobj_classinfo;
+static int testobj_gettypeinfo_cnt;
+
+static HRESULT WINAPI ProvideClassInfo_GetClassInfo(IProvideClassInfo *iface, ITypeInfo **ppTI)
+{
+    CHECK_EXPECT(testobj_getclassinfo);
+    *ppTI = NULL;
+    return E_NOTIMPL;
+}
+
+static const IProvideClassInfoVtbl ProvideClassInfoVtbl = {
+    ProvideClassInfo_QueryInterface,
+    ProvideClassInfo_AddRef,
+    ProvideClassInfo_Release,
+    ProvideClassInfo_GetClassInfo
+};
+
+static IProvideClassInfo testObjClassInfo = { &ProvideClassInfoVtbl };
+
+static HRESULT WINAPI testObj_QueryInterface(IDispatchEx *iface, REFIID riid, void **ppv)
+{
+    if(testobj_classinfo && IsEqualGUID(riid, &IID_IProvideClassInfo)) {
+        *ppv = &testObjClassInfo;
+        return S_OK;
+    }
+
+    return DispatchEx_QueryInterface(iface, riid, ppv);
+}
+
+static HRESULT WINAPI testObj_GetTypeInfo(IDispatchEx *iface, UINT iTInfo, LCID lcid, ITypeInfo **ppTInfo)
+{
+    testobj_gettypeinfo_cnt++;
+    *ppTInfo = NULL;
+    return E_NOTIMPL;
+}
+
 static IDispatchExVtbl testObjVtbl = {
-    DispatchEx_QueryInterface,
+    testObj_QueryInterface,
     DispatchEx_AddRef,
     DispatchEx_Release,
     DispatchEx_GetTypeInfoCount,
-    DispatchEx_GetTypeInfo,
+    testObj_GetTypeInfo,
     DispatchEx_GetIDsOfNames,
     DispatchEx_Invoke,
     testObj_GetDispID,
@@ -3196,6 +3254,41 @@ static void test_parse_errors(void)
             NULL, S_OK, 1057
         },
         {
+            L"Class C\nDefault Sub f\nEnd Sub\nEnd Class\n",
+            1, 0,
+            NULL, S_OK, 1057
+        },
+        {
+            L"Class C\nDefault x\nEnd Class\n",
+            1, 0,
+            NULL, S_OK, 1057
+        },
+        {
+            L"Class C\nPublic Default Property x\nEnd Class\n",
+            1, 24,
+            NULL, S_OK, 1049
+        },
+        {
+            L"Class C\nPublic Default Property\nEnd Class\n",
+            1, 23,
+            NULL, S_OK, 1049
+        },
+        {
+            L"Public Property Get x\nEnd Property\n",
+            0, 16,
+            NULL, S_OK, 1048
+        },
+        {
+            L"Class C\n"
+            "Public Default Function f\n"
+            "End Function\n"
+            "Public Default Property Get p\n"
+            "End Property\n"
+            "End Class\n",
+            3, 15,
+            NULL, S_OK, 1052
+        },
+        {
             /* Unterminated date literal */
             L"x = #1/1/2000\n",
             0, 4,
@@ -3687,6 +3780,52 @@ static void test_parse_errors(void)
             L"Class a\nEnd Class\nReDim a(2)\n",
             2, 6,
             L"ReDim a(2)", S_OK, 1041
+        },
+        {
+            /* A dot separated from a literal is not a member access */
+            L"Dim x, y\nWith x\ny = \"s\" .p\nEnd With\n",
+            2, 8,
+            L"y = \"s\" .p", S_OK
+        },
+        {
+            /* Member access on a literal can't start a statement - error 1024 */
+            L"Dim x\n  \"s\".p = 1\n",
+            1, 2,
+            L"  \"s\".p = 1", S_OK, 1024
+        },
+        {
+            /* Arguments after a call with empty parentheses - error 1025 */
+            L"Sub f\nEnd Sub\nf(),0\n",
+            2, 3,
+            L"f(),0", S_OK, 1025
+        },
+        {
+            L"Sub f\nEnd Sub\nf() 0\n",
+            2, 4,
+            L"f() 0", S_OK, 1025
+        },
+        {
+            /* An operator after a call with empty parentheses - error 1025 */
+            L"Sub f\nEnd Sub\nf() + 1\n",
+            2, 4,
+            L"f() + 1", S_OK, 1025
+        },
+        {
+            /* Missing comma after a parenthesized first argument - error 1025 */
+            L"Sub f(a, b)\nEnd Sub\nf(1) 0\n",
+            2, 5,
+            L"f(1) 0", S_OK, 1025
+        },
+        {
+            L"Dim o\no.M(),0\n",
+            1, 5,
+            L"o.M(),0", S_OK, 1025
+        },
+        {
+            /* Whitespace between a with-statement dot and the member name */
+            L"With x\n. y = 1\nEnd With\n",
+            1, 2,
+            L". y = 1", S_OK, 1002
         }
     };
     HRESULT hres;
@@ -4544,6 +4683,18 @@ static void run_tests(void)
     CHECK_CALLED(collectionobj_newenum_i);
     CHECK_CALLED(Next);
     ok(next_cnt == 4, "next_cnt = %d\n", next_cnt);
+
+    testobj_classinfo = TRUE;
+    testobj_gettypeinfo_cnt = 0;
+    SET_EXPECT(testobj_getclassinfo);
+    parse_script_w(L"x = TypeName(testObj)\nCall ok(x = \"Object\", \"TypeName(testObj) = \" & x)");
+    CHECK_CALLED(testobj_getclassinfo);
+    ok(!testobj_gettypeinfo_cnt, "GetTypeInfo called %d times\n", testobj_gettypeinfo_cnt);
+
+    testobj_classinfo = FALSE;
+    testobj_gettypeinfo_cnt = 0;
+    parse_script_w(L"x = TypeName(testObj)\nCall ok(x = \"Object\", \"TypeName(testObj) = \" & x)");
+    ok(testobj_gettypeinfo_cnt == 1, "GetTypeInfo called %d times\n", testobj_gettypeinfo_cnt);
 
     parse_script_w(L"x = 1\n Call ok(x = 1, \"x = \" & x)");
 

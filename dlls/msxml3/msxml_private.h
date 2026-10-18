@@ -39,7 +39,18 @@ enum error_codes
     E_SAX_INFINITEREFLOOP = 0xc00ce003,
     E_SAX_UNPARSEDENTITYREF = 0xc00ce006,
     E_SAX_CONTAINSCOLON = 0xc00ce00c,
+
+    E_DOM_ELEMENT_UNDECLARED = 0xc00ce00d,
+    E_DOM_ROOT_NAME_MISMATCH = 0xc00ce013,
+    E_DOM_INVALID_CONTENT = 0xc00ce014,
+    E_DOM_ATTRIBUTE_NOT_DEFINED = 0xc00ce015,
+    E_DOM_ATTRIBUTE_FIXED = 0xc00ce016,
+    E_DOM_ATTRIBUTE_VALUE = 0xc00ce017,
+    E_DOM_ILLEGAL_TEXT = 0xc00ce018,
+
     E_SAX_UNDECLAREDPREFIX = 0xc00ce01d,
+
+    E_DOM_INVALIDTYPE = 0xc00ce208,
 
     E_SAX_MISSINGEQUALS = 0xc00ce501,
     E_SAX_MISSINGQUOTE = 0xc00ce502,
@@ -194,6 +205,7 @@ enum domnode_flags
     DOMNODE_PARSED_VALUE = 0x8,
     DOMNODE_NS_DECL = 0x10,
     DOMNODE_NO_PARENT = 0x20,
+    DOMNODE_USE_EMPTY_TAG = 0x40,
 };
 
 struct domdoc_properties
@@ -256,6 +268,7 @@ extern void domnode_destroy_tree(struct domnode *tree);
 extern struct domnode *domnode_addref(struct domnode *node);
 extern void domnode_release(struct domnode *node);
 extern struct domnode *domnode_get_root_element(struct domnode *doc);
+extern struct domnode *domnode_get_dtd(struct domnode *doc);
 extern struct domnode *domnode_get_first_attribute(struct domnode *node);
 extern struct domnode *domnode_get_next_attribute_sibling(struct domnode *node);
 extern struct domnode *domnode_get_first_child(struct domnode *node);
@@ -352,8 +365,19 @@ extern struct domnode *get_node_obj(void *iface);
 extern bool parser_is_valid_qualified_name(const WCHAR *name);
 extern HRESULT parse_xml_decl_body(const WCHAR *text, BSTR *version, BSTR *encoding, BSTR *standalone);
 
+struct validation_context
+{
+    LONG code;
+};
+
 extern struct dtd * parser_dtd_addref(struct dtd *dtd);
 extern void parser_dtd_release(struct dtd *dtd);
+extern struct element_decl * parser_dtd_get_element_decl(struct dtd *dtd, BSTR name);
+extern struct attlist_attr * parser_dtd_get_attr_decl(struct dtd *dtd, struct domnode *attr);
+extern bool parser_dtd_validate_attribute_value(struct validation_context *ctxt, struct dtd *dtd,
+         struct attlist_attr *decl, struct domnode *attr);
+extern bool parser_dtd_validate_element_content(struct validation_context *ctxt, struct dtd *dtd,
+        struct element_decl *decl, struct domnode *elem);
 
 extern HRESULT node_append_child(struct domnode*,IXMLDOMNode*,IXMLDOMNode**);
 extern HRESULT node_attribute_get_namespace_uri(struct domnode *, BSTR *);
@@ -525,8 +549,7 @@ static inline HRESULT return_var_false(VARIANT_BOOL *p)
     return S_FALSE;
 }
 
-extern IXMLDOMParseError *create_parseError( LONG code, BSTR url, BSTR reason, BSTR srcText,
-                                             LONG line, LONG linepos, LONG filepos );
+extern HRESULT create_parse_error(LONG code, BSTR reason, IXMLDOMParseError **err);
 extern HRESULT SchemaCache_create(MSXML_VERSION, void**);
 extern HRESULT XMLDocument_create(void**);
 extern HRESULT SAXXMLReader_create(MSXML_VERSION, void**);

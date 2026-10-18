@@ -109,6 +109,28 @@ HRESULT WINAPI Get(int vFunc, IWbemClassObject *ptr, LPCWSTR wszName, LONG lFlag
     return IWbemClassObject_Get(ptr, wszName, lFlags, pVal, pvtType, plFlavor);
 }
 
+HRESULT WINAPI Put(int vFunc, IWbemClassObject *ptr, LPCWSTR wszName, LONG lFlags, VARIANT *pVal,
+    CIMTYPE vtType)
+{
+    TRACE("%i %p %s %lx %p %li\n", vFunc, ptr, debugstr_w(wszName), lFlags, pVal, vtType);
+
+    return IWbemClassObject_Put(ptr, wszName, lFlags, pVal, vtType);
+}
+
+HRESULT WINAPI Delete(int vFunc, IWbemClassObject *ptr, LPCWSTR wszName)
+{
+    TRACE("%i %p %s\n", vFunc, ptr, debugstr_w(wszName));
+
+    return IWbemClassObject_Delete(ptr, wszName);
+}
+
+HRESULT WINAPI GetObjectText(int vFunc, IWbemClassObject *ptr, LONG lFlags, BSTR *pstrObjectText)
+{
+    TRACE("%i %p %li %p\n", vFunc, ptr, lFlags, pstrObjectText);
+
+    return IWbemClassObject_GetObjectText(ptr, lFlags, pstrObjectText);
+}
+
 HRESULT WINAPI GetCurrentApartmentType(int vFunc, IComThreadingInfo *ptr, APTTYPE *aptType)
 {
     TRACE("%i %p %p\n", vFunc, ptr, aptType);
@@ -127,6 +149,21 @@ HRESULT WINAPI GetNames(int vFunc, IWbemClassObject *ptr, LPCWSTR wszQualifierNa
     TRACE("%i %p %s %lx %p %p\n", vFunc, ptr, debugstr_w(wszQualifierName), lFlags, pQualifierVal, pNames);
 
     return IWbemClassObject_GetNames(ptr, wszQualifierName, lFlags, pQualifierVal, pNames);
+}
+
+HRESULT WINAPI BeginEnumeration(int vFunc, IWbemClassObject *ptr, LONG lEnumFlags)
+{
+    TRACE("%i %p %lx\n", vFunc, ptr, lEnumFlags);
+
+    return IWbemClassObject_BeginEnumeration(ptr, lEnumFlags);
+}
+
+HRESULT WINAPI Next(int vFunc, IWbemClassObject *ptr, LONG lFlags, BSTR *pstrName,
+    VARIANT *pVal, CIMTYPE *pvtType, LONG* plFlavor)
+{
+    TRACE("%i %p %lx %p %p %p %p\n", vFunc, ptr, lFlags, pstrName, pVal, pvtType, plFlavor);
+
+    return IWbemClassObject_Next(ptr, lFlags, pstrName, pVal, pvtType, plFlavor);
 }
 
 HRESULT WINAPI BeginMethodEnumeration(int vFunc, IWbemClassObject *ptr, LONG lEnumFlags)

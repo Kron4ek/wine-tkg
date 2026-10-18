@@ -106,7 +106,7 @@ static HRESULT WINAPI band_QueryInterface(IDirectMusicBand *iface, REFIID riid,
         return E_NOINTERFACE;
     }
 
-    IDirectMusicBand_AddRef((IUnknown*)*ret_iface);
+    IUnknown_AddRef((IUnknown*)*ret_iface);
     return S_OK;
 }
 
@@ -323,10 +323,12 @@ static HRESULT parse_dmbd_chunk(struct band *This, IStream *stream, struct chunk
             break;
         }
 
-        if (FAILED(hr)) break;
+        if (FAILED(hr)) return hr;
     }
 
-    return hr;
+    if (list_empty(&This->instruments))
+        return DMUS_E_UNSUPPORTED_STREAM;
+    return S_OK;
 }
 
 static HRESULT WINAPI band_object_ParseDescriptor(IDirectMusicObject *iface,

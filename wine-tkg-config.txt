@@ -1,9 +1,9 @@
-# Last wine-tkg-staging-ntsync-git configuration - Sat Oct  3 09:56:35 AM UTC 2026 :
+# Last wine-tkg-staging-ntsync-git configuration - Sun Oct 18 09:38:11 AM UTC 2026 :
 
 Local cfg files used
 
-Wine (plain) version: 11.19.r0.g455e3509b98
-Using wine-staging patchset (version 11.19.r0.g766285c4)
+Wine (plain) version: 11.20.r0.g7298a818b79
+Using wine-staging patchset (version 11.20.r0.g711f5be0)
 
 Not using vkd3d native library for d3d12 translation (allows using vkd3d-proton)
 
@@ -19,7 +19,6 @@ CSMT-toggle.patch -- ( Applied CSMT toggle logic patch )
 Staging overrides, if any: -W dcomp-DCompositionCreateDevice2
 
 
-LAA-unix-staging-wow64.patch -- ( Applied large address aware override support )
 
 proton-win10-default.patch -- ( Enforce win10 as default wine version )
 proton_battleye.patch -- ( Add support for Proton's Battleye runtime )

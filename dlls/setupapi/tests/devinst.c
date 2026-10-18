@@ -698,7 +698,7 @@ static void check_device_info_(int line, HDEVINFO set, int index, const GUID *cl
                 "Got unexpected class %s.\n", wine_dbgstr_guid(&device.ClassGuid));
         ret = SetupDiGetDeviceInstanceIdA(set, &device, id, sizeof(id), NULL);
         ok_(__FILE__, line)(ret, "Got unexpected error %#lx.\n", GetLastError());
-        ok_(__FILE__, line)(!strcasecmp(id, expect_id), "Got unexpected id %s.\n", id);
+        ok_(__FILE__, line)(!stricmp(id, expect_id), "Got unexpected id %s.\n", id);
     }
     else
     {
@@ -714,7 +714,10 @@ static void test_device_info(void)
     static const GUID deadbeef = {0xdeadbeef,0xdead,0xbeef,{0xde,0xad,0xbe,0xef,0xde,0xad,0xbe,0xef}};
     SP_DEVINFO_DATA device = {0}, ret_device = {sizeof(ret_device)};
     char id[MAX_DEVICE_ID_LEN + 2];
+    DWORD phantom;
     HDEVINFO set;
+    LSTATUS ls;
+    HKEY key;
     BOOL ret;
     INT i = 0;
 
@@ -848,6 +851,36 @@ static void test_device_info(void)
     ret = SetupDiCreateDeviceInfoA(set, id, &guid, NULL, NULL, 0, NULL);
     ok(ret, "Failed to create device, error %#lx.\n", GetLastError());
 
+    /* Create device with only an enumerator. */
+    SetLastError(0xdeadbeef);
+    ret = SetupDiCreateDeviceInfoA(set, "Root", &guid, NULL, NULL, 0, NULL);
+    ok(!ret, "Expected failure.\n");
+    ok(GetLastError() == ERROR_INVALID_DEVINST_NAME, "Got unexpected error %#lx.\n", GetLastError());
+
+    /* Create device with only an enumerator and device ID. */
+    SetLastError(0xdeadbeef);
+    ret = SetupDiCreateDeviceInfoA(set, "Root\\LEGACY_BOGUS", &guid, NULL, NULL, 0, NULL);
+    ok(!ret, "Expected failure.\n");
+    ok(GetLastError() == ERROR_INVALID_DEVINST_NAME, "Got unexpected error %#lx.\n", GetLastError());
+
+    /* Create device with an empty instance ID. */
+    SetLastError(0xdeadbeef);
+    ret = SetupDiCreateDeviceInfoA(set, "Root\\LEGACY_BOGUS\\", &guid, NULL, NULL, 0, NULL);
+    ok(!ret, "Expected failure.\n");
+    ok(GetLastError() == ERROR_INVALID_DEVINST_NAME, "Got unexpected error %#lx.\n", GetLastError());
+
+    /* Create device with a full device instance ID and DICD_GENERATE_ID. */
+    SetLastError(0xdeadbeef);
+    ret = SetupDiCreateDeviceInfoA(set, "Root\\LEGACY_BOGUS\\0101", &guid, NULL, NULL, DICD_GENERATE_ID, NULL);
+    ok(!ret, "Expected failure.\n");
+    ok(GetLastError() == ERROR_INVALID_DEVINST_NAME, "Got unexpected error %#lx.\n", GetLastError());
+
+    /* Create device with a single separator and DICD_GENERATE_ID. */
+    SetLastError(0xdeadbeef);
+    ret = SetupDiCreateDeviceInfoA(set, "LEGACY_BOGUS\\", &guid, NULL, NULL, DICD_GENERATE_ID, NULL);
+    ok(!ret, "Expected failure.\n");
+    ok(GetLastError() == ERROR_INVALID_DEVINST_NAME, "Got unexpected error %#lx.\n", GetLastError());
+
     SetupDiDestroyDeviceInfoList(set);
 
     set = SetupDiCreateDeviceInfoList(&guid, NULL);
@@ -865,6 +898,77 @@ static void test_device_info(void)
     ok(!ret, "Expect failure\n");
     ok(GetLastError() == ERROR_DEVINST_ALREADY_EXISTS, "Got error %#lx\n", GetLastError());
     check_device_info(set, 0, NULL, NULL);
+    SetupDiDestroyDeviceInfoList(set);
+
+    /* Create a registry key outside of setupapi. */
+    ls = RegCreateKeyA(HKEY_LOCAL_MACHINE, "System\\CurrentControlSet\\Enum\\Root\\LEGACY_BOGUS\\0101", &key);
+    ok(!ls, "Failed to create key, error %lu.\n", ls);
+
+    /* Now attempt to create device info, this should fail. */
+    set = SetupDiCreateDeviceInfoList(NULL, NULL);
+    ret = SetupDiCreateDeviceInfoA(set, "Root\\LEGACY_BOGUS\\0101", &guid, NULL, NULL, 0, &device);
+    ok(!ret, "Expected failure.\n");
+    ok(GetLastError() == ERROR_DEVINST_ALREADY_EXISTS, "Got unexpected error %#lx.\n", GetLastError());
+    check_device_info(set, 0, NULL, NULL);
+
+    phantom = 1;
+    RegSetValueExA(key, "Phantom", 0, REG_DWORD, (BYTE *)&phantom, sizeof(phantom));
+
+    /*
+     * Can't open a device with this device instance ID if the phantom value
+     * is present and set to 1.
+     */
+    ret = SetupDiOpenDeviceInfoA(set, "Root\\LEGACY_BOGUS\\0101", NULL, 0, &device);
+    ok(!ret, "Expected failure.\n");
+    ok(GetLastError() == ERROR_NO_SUCH_DEVINST, "Got unexpected error %#lx.\n", GetLastError());
+    check_device_info(set, 0, NULL, NULL);
+
+    /* Present phantom value set to 0, it will open. */
+    phantom = 0;
+    RegSetValueExA(key, "Phantom", 0, REG_DWORD, (BYTE *)&phantom, sizeof(phantom));
+    ret = SetupDiOpenDeviceInfoA(set, "Root\\LEGACY_BOGUS\\0101", NULL, 0, &device);
+    ok(ret, "Got unexpected error %#lx.\n", GetLastError());
+    check_device_info(set, 0, &GUID_NULL, "ROOT\\LEGACY_BOGUS\\0101");
+    check_device_info(set, 1, NULL, NULL);
+    SetupDiDestroyDeviceInfoList(set);
+
+    /* Also succeeds without the phantom value, opening an empty key. */
+    RegDeleteValueA(key, "Phantom");
+    set = SetupDiCreateDeviceInfoList(NULL, NULL);
+    ret = SetupDiOpenDeviceInfoA(set, "Root\\LEGACY_BOGUS\\0101", NULL, 0, &device);
+    ok(ret, "Got unexpected error %#lx.\n", GetLastError());
+    check_device_info(set, 0, &GUID_NULL, "ROOT\\LEGACY_BOGUS\\0101");
+    check_device_info(set, 1, NULL, NULL);
+    SetupDiDestroyDeviceInfoList(set);
+
+    /*
+     * Set created with a GUID, no GUID value is present in the registry,
+     * defaults to GUID_NULL.
+     */
+    set = SetupDiCreateDeviceInfoList(&guid, NULL);
+    ret = SetupDiOpenDeviceInfoA(set, "Root\\LEGACY_BOGUS\\0101", NULL, 0, &device);
+    ok(!ret, "Expected failure.\n");
+    ok(GetLastError() == ERROR_CLASS_MISMATCH, "Got unexpected error %#lx.\n", GetLastError());
+    check_device_info(set, 0, NULL, NULL);
+    SetupDiDestroyDeviceInfoList(set);
+
+    set = SetupDiCreateDeviceInfoList(&GUID_NULL, NULL);
+    ret = SetupDiOpenDeviceInfoA(set, "Root\\LEGACY_BOGUS\\0101", NULL, 0, &device);
+    ok(ret, "Got unexpected error %#lx.\n", GetLastError());
+    check_device_info(set, 0, &GUID_NULL, "ROOT\\LEGACY_BOGUS\\0101");
+    check_device_info(set, 1, NULL, NULL);
+    SetupDiDestroyDeviceInfoList(set);
+
+    /* Delete the key and try again. */
+    RegDeleteKeyA(key, "");
+    RegCloseKey(key);
+
+    /* No key, success. */
+    set = SetupDiCreateDeviceInfoList(NULL, NULL);
+    ret = SetupDiCreateDeviceInfoA(set, "Root\\LEGACY_BOGUS\\0101", &guid, NULL, NULL, 0, &device);
+    ok(ret, "Got unexpected error %#lx.\n", GetLastError());
+    check_device_info(set, 0, &guid, "ROOT\\LEGACY_BOGUS\\0101");
+    check_device_info(set, 1, NULL, NULL);
     SetupDiDestroyDeviceInfoList(set);
 
     set = SetupDiGetClassDevsA(&guid, NULL, NULL, 0);
@@ -1557,6 +1661,37 @@ static void test_open_device_info(void)
     ok(!ret, "Expected failure.\n");
     check_device_info(set, 0, NULL, NULL);
 
+    /* Open device with an instance ID exceeding max device ID length. */
+    memset(id, 'x', sizeof(id));
+    memcpy(id, "Root\\LEGACY_BOGUS\\", strlen("Root\\LEGACY_BOGUS\\"));
+    id[MAX_DEVICE_ID_LEN + 1] = 0;
+    SetLastError(0xdeadbeef);
+    ret = SetupDiOpenDeviceInfoA(set, id, NULL, 0, &device);
+    ok(GetLastError() == ERROR_INVALID_DEVINST_NAME, "Got unexpected error %#lx.\n", GetLastError());
+    ok(!ret, "Expected failure.\n");
+    check_device_info(set, 0, NULL, NULL);
+
+    /* Open device with only an enumerator. */
+    SetLastError(0xdeadbeef);
+    ret = SetupDiOpenDeviceInfoA(set, "Root", NULL, 0, &device);
+    ok(GetLastError() == ERROR_INVALID_DEVINST_NAME, "Got unexpected error %#lx.\n", GetLastError());
+    ok(!ret, "Expected failure.\n");
+    check_device_info(set, 0, NULL, NULL);
+
+    /* Open device with only an enumerator and device ID. */
+    SetLastError(0xdeadbeef);
+    ret = SetupDiOpenDeviceInfoA(set, "Root\\LEGACY_BOGUS", NULL, 0, &device);
+    ok(GetLastError() == ERROR_INVALID_DEVINST_NAME, "Got unexpected error %#lx.\n", GetLastError());
+    ok(!ret, "Expected failure.\n");
+    check_device_info(set, 0, NULL, NULL);
+
+    /* Open device with an empty instance ID. */
+    SetLastError(0xdeadbeef);
+    ret = SetupDiOpenDeviceInfoA(set, "Root\\LEGACY_BOGUS\\", NULL, 0, &device);
+    ok(GetLastError() == ERROR_INVALID_DEVINST_NAME, "Got unexpected error %#lx.\n", GetLastError());
+    ok(!ret, "Expected failure.\n");
+    check_device_info(set, 0, NULL, NULL);
+
     /* Open unregistered device */
     ret = SetupDiCreateDeviceInfoA(set, "Root\\LEGACY_BOGUS\\1000", &guid, NULL, NULL, 0, &device);
     ok(ret, "Failed to create device, error %#lx.\n", GetLastError());
@@ -1582,7 +1717,7 @@ static void test_open_device_info(void)
     ok(ret, "Failed to open device info\n");
     ret = SetupDiGetDeviceInstanceIdA(set, &device, id, sizeof(id), NULL);
     ok(ret, "Got unexpected error %#lx.\n", GetLastError());
-    ok(!strcasecmp(id, "Root\\LEGACY_BOGUS\\1001"), "Got unexpected id %s.\n", id);
+    ok(!stricmp(id, "Root\\LEGACY_BOGUS\\1001"), "Got unexpected id %s.\n", id);
     check_device_info(set, 0, &guid, "Root\\LEGACY_BOGUS\\1000");
     check_device_info(set, 1, &guid, "Root\\LEGACY_BOGUS\\1001");
     check_device_info(set, 2, NULL, NULL);
@@ -1598,7 +1733,7 @@ static void test_open_device_info(void)
     ok(ret, "Failed to open device info\n");
     ret = SetupDiGetDeviceInstanceIdA(set, &device, id, sizeof(id), NULL);
     ok(ret, "Got unexpected error %#lx.\n", GetLastError());
-    ok(!strcasecmp(id, "Root\\LEGACY_BOGUS\\1001"), "Got unexpected id %s.\n", id);
+    ok(!stricmp(id, "Root\\LEGACY_BOGUS\\1001"), "Got unexpected id %s.\n", id);
     check_device_info(set, 0, &guid, "Root\\LEGACY_BOGUS\\1001");
     check_device_info(set, 1, NULL, NULL);
 
@@ -1609,7 +1744,7 @@ static void test_open_device_info(void)
     ok(ret, "Failed to open device info\n");
     ret = SetupDiGetDeviceInstanceIdA(set, &device, id, sizeof(id), NULL);
     ok(ret, "Got unexpected error %#lx.\n", GetLastError());
-    ok(!strcasecmp(id, "Root\\LEGACY_BOGUS\\1001"), "Got unexpected id %s.\n", id);
+    ok(!stricmp(id, "Root\\LEGACY_BOGUS\\1001"), "Got unexpected id %s.\n", id);
     check_device_info(set, 0, &guid, "Root\\LEGACY_BOGUS\\1001");
     check_device_info(set, 1, NULL, NULL);
 
@@ -1650,6 +1785,13 @@ static void test_open_device_info(void)
     SetLastError(0xdeadbeef);
     ret = SetupDiOpenDeviceInfoA(set, NULL, NULL, 0, &device);
     ok(GetLastError() == ERROR_INVALID_PARAMETER, "Got unexpected error %#lx.\n", GetLastError());
+    ok(!ret, "Expected failure.\n");
+    check_device_info(set, 0, NULL, NULL);
+
+    /* NULL instance ID on W function, returns different error. */
+    SetLastError(0xdeadbeef);
+    ret = SetupDiOpenDeviceInfoW(set, NULL, NULL, 0, &device);
+    todo_wine ok(GetLastError() == ERROR_CLASS_MISMATCH, "Got unexpected error %#lx.\n", GetLastError());
     ok(!ret, "Expected failure.\n");
     check_device_info(set, 0, NULL, NULL);
 
@@ -1805,7 +1947,7 @@ static void check_device_iface_(int line, HDEVINFO set, SP_DEVINFO_DATA *device,
         ok_(__FILE__, line)(iface.Flags == flags, "Got unexpected flags %#lx.\n", iface.Flags);
         ret = SetupDiGetDeviceInterfaceDetailA(set, &iface, detail, sizeof(buffer), NULL, NULL);
         ok_(__FILE__, line)(ret, "Failed to get interface detail, error %#lx.\n", GetLastError());
-        todo_wine_if(todo_path) ok_(__FILE__, line)(!strcasecmp(detail->DevicePath, path), "Got unexpected path %s.\n", detail->DevicePath);
+        todo_wine_if(todo_path) ok_(__FILE__, line)(!stricmp(detail->DevicePath, path), "Got unexpected path %s.\n", detail->DevicePath);
         check_all_lower_case(line, detail->DevicePath);
     }
     else
@@ -1890,7 +2032,7 @@ static void test_device_iface(void)
     ok(iface.Flags == 0, "Got unexpected flags %#lx.\n", iface.Flags);
     ret = SetupDiGetDeviceInterfaceDetailA(set, &iface, detail, sizeof(buffer), NULL, NULL);
     ok(ret, "Failed to get interface detail, error %#lx.\n", GetLastError());
-    ok(!strcasecmp(detail->DevicePath, "\\\\?\\ROOT#LEGACY_BOGUS#0000#{6A55B5A4-3F65-11DB-B704-0011955C2BDB}\\test"),
+    ok(!stricmp(detail->DevicePath, "\\\\?\\ROOT#LEGACY_BOGUS#0000#{6A55B5A4-3F65-11DB-B704-0011955C2BDB}\\test"),
             "Got unexpected path %s.\n", detail->DevicePath);
 
     check_device_iface(set, &device, &guid, 0, 0, "\\\\?\\ROOT#LEGACY_BOGUS#0000#{6A55B5A4-3F65-11DB-B704-0011955C2BDB}");
@@ -2005,14 +2147,14 @@ static void test_device_iface_detail(void)
     size = 0xdeadbeef;
     ret = SetupDiGetDeviceInterfaceDetailA(set, &iface, detail, expected_size, &size, NULL);
     ok(ret, "Failed to get interface detail, error %#lx.\n", GetLastError());
-    ok(!strcasecmp(path, detail->DevicePath), "Got unexpected path %s.\n", detail->DevicePath);
+    ok(!stricmp(path, detail->DevicePath), "Got unexpected path %s.\n", detail->DevicePath);
     ok(size == expected_size, "Expected size %lu, got %lu.\n", expected_size, size);
 
     SetLastError(0xdeadbeef);
     size = 0xdeadbeef;
     ret = SetupDiGetDeviceInterfaceDetailA(set, &iface, detail, expected_size * 2, &size, NULL);
     ok(ret, "Failed to get interface detail, error %#lx.\n", GetLastError());
-    ok(!strcasecmp(path, detail->DevicePath), "Got unexpected path %s.\n", detail->DevicePath);
+    ok(!stricmp(path, detail->DevicePath), "Got unexpected path %s.\n", detail->DevicePath);
     ok(size == expected_size, "Expected size %lu, got %lu.\n", expected_size, size);
 
     expected_size = FIELD_OFFSET(SP_DEVICE_INTERFACE_DETAIL_DATA_W, DevicePath[strlen(path) + 1]);
@@ -3391,7 +3533,7 @@ static void test_device_install_params(void)
     ok(!params.InstallMsgHandlerContext, "Got callback context %p.\n", params.InstallMsgHandlerContext);
     ok(!params.FileQueue, "Got queue %p.\n", params.FileQueue);
     ok(!params.ClassInstallReserved, "Got class installer data %#Ix.\n", params.ClassInstallReserved);
-    ok(!strcasecmp(params.DriverPath, "C:\\windows"), "Got driver path %s.\n", params.DriverPath);
+    ok(!stricmp(params.DriverPath, "C:\\windows"), "Got driver path %s.\n", params.DriverPath);
 
     SetupDiDestroyDeviceInfoList(set);
 }
@@ -3470,43 +3612,43 @@ static void test_get_actual_section(void)
     SetLastError(0xdeadbeef);
     ret = SetupDiGetActualSectionToInstallA(hinf, "section1", section, ARRAY_SIZE(section), &size, NULL);
     ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-    ok(!strcasecmp(section, "section1"), "Got unexpected section %s.\n", section);
+    ok(!stricmp(section, "section1"), "Got unexpected section %s.\n", section);
     ok(size == 9, "Got size %lu.\n", size);
 
     extptr = section;
     ret = SetupDiGetActualSectionToInstallA(hinf, "section2", section, ARRAY_SIZE(section), NULL, &extptr);
     ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-    ok(!strcasecmp(section, "section2.NT"), "Got unexpected section %s.\n", section);
+    ok(!stricmp(section, "section2.NT"), "Got unexpected section %s.\n", section);
     ok(extptr == section + 8, "Got extension %s.\n", extptr);
 
     extptr = section;
     ret = SetupDiGetActualSectionToInstallA(hinf, "section3", section, ARRAY_SIZE(section), NULL, &extptr);
     ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-    ok(!strcasecmp(section, "section3.NT" MYEXT), "Got unexpected section %s.\n", section);
+    ok(!stricmp(section, "section3.NT" MYEXT), "Got unexpected section %s.\n", section);
     ok(extptr == section + 8, "Got extension %s.\n", extptr);
 
     extptr = section;
     ret = SetupDiGetActualSectionToInstallA(hinf, "section4", section, ARRAY_SIZE(section), NULL, &extptr);
     ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-    ok(!strcasecmp(section, "section4.NT" MYEXT), "Got unexpected section %s.\n", section);
+    ok(!stricmp(section, "section4.NT" MYEXT), "Got unexpected section %s.\n", section);
     ok(extptr == section + 8, "Got extension %s.\n", extptr);
 
     extptr = section;
     ret = SetupDiGetActualSectionToInstallA(hinf, "section5", section, ARRAY_SIZE(section), NULL, &extptr);
     ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-    ok(!strcasecmp(section, "section5.NT"), "Got unexpected section %s.\n", section);
+    ok(!stricmp(section, "section5.NT"), "Got unexpected section %s.\n", section);
     ok(extptr == section + 8, "Got extension %s.\n", extptr);
 
     extptr = section;
     ret = SetupDiGetActualSectionToInstallA(hinf, "section6", section, ARRAY_SIZE(section), NULL, &extptr);
     ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-    ok(!strcasecmp(section, "section6.NT" MYEXT), "Got unexpected section %s.\n", section);
+    ok(!stricmp(section, "section6.NT" MYEXT), "Got unexpected section %s.\n", section);
     ok(extptr == section + 8, "Got extension %s.\n", extptr);
 
     extptr = section;
     ret = SetupDiGetActualSectionToInstallA(hinf, "section9", section, ARRAY_SIZE(section), NULL, &extptr);
     ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-    ok(!strcasecmp(section, "section9.NT" MYEXT), "Got unexpected section %s.\n", section);
+    ok(!stricmp(section, "section9.NT" MYEXT), "Got unexpected section %s.\n", section);
     ok(extptr == section + 8, "Got extension %s.\n", extptr);
 
     if (0)
@@ -3515,31 +3657,31 @@ static void test_get_actual_section(void)
         extptr = section;
         ret = SetupDiGetActualSectionToInstallA(hinf, "section1", section, ARRAY_SIZE(section), NULL, &extptr);
         ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-        ok(!strcasecmp(section, "section1"), "Got unexpected section %s.\n", section);
+        ok(!stricmp(section, "section1"), "Got unexpected section %s.\n", section);
         ok(!extptr || !*extptr /* Windows 10 1809 */, "Got extension %s.\n", extptr);
 
         extptr = section;
         ret = SetupDiGetActualSectionToInstallA(hinf, "section7", section, ARRAY_SIZE(section), NULL, &extptr);
         ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-        ok(!strcasecmp(section, "section7"), "Got unexpected section %s.\n", section);
+        ok(!stricmp(section, "section7"), "Got unexpected section %s.\n", section);
         ok(!extptr || !*extptr /* Windows 10 1809 */, "Got extension %s.\n", extptr);
 
         extptr = section;
         ret = SetupDiGetActualSectionToInstallA(hinf, "section8", section, ARRAY_SIZE(section), NULL, &extptr);
         ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-        ok(!strcasecmp(section, "section8"), "Got unexpected section %s.\n", section);
+        ok(!stricmp(section, "section8"), "Got unexpected section %s.\n", section);
         ok(!extptr || !*extptr /* Windows 10 1809 */, "Got extension %s.\n", extptr);
 
         extptr = section;
         ret = SetupDiGetActualSectionToInstallA(hinf, "nonexistent", section, ARRAY_SIZE(section), NULL, &extptr);
         ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-        ok(!strcasecmp(section, "nonexistent"), "Got unexpected section %s.\n", section);
+        ok(!stricmp(section, "nonexistent"), "Got unexpected section %s.\n", section);
         ok(!extptr || !*extptr /* Windows 10 1809 */, "Got extension %s.\n", extptr);
 
         extptr = section;
         ret = SetupDiGetActualSectionToInstallA(hinf, "section10", section, ARRAY_SIZE(section), NULL, &extptr);
         ok(ret, "Failed to get section, error %#lx.\n", GetLastError());
-        ok(!strcasecmp(section, "section10"), "Got unexpected section %s.\n", section);
+        ok(!stricmp(section, "section10"), "Got unexpected section %s.\n", section);
         ok(!extptr, "Got extension %s.\n", extptr);
     }
 
@@ -4253,19 +4395,19 @@ static void check_all_devices_enumerated_(int line, HDEVINFO set, BOOL expect_de
         ret = SetupDiGetDeviceInstanceIdA(set, &device, id, sizeof(id), NULL);
         if (!ret) continue;
 
-        if (!strcasecmp(id, "Root\\LEGACY_BOGUS\\foo"))
+        if (!stricmp(id, "Root\\LEGACY_BOGUS\\foo"))
         {
             found_dev1 = 1;
             ok_(__FILE__, line)(IsEqualGUID(&device.ClassGuid, &guid),
                     "Got unexpected class %s.\n", wine_dbgstr_guid(&device.ClassGuid));
         }
-        else if (!strcasecmp(id, "Root\\LEGACY_BOGUS\\qux"))
+        else if (!stricmp(id, "Root\\LEGACY_BOGUS\\qux"))
         {
             found_dev2 = 1;
             ok_(__FILE__, line)(IsEqualGUID(&device.ClassGuid, &guid),
                     "Got unexpected class %s.\n", wine_dbgstr_guid(&device.ClassGuid));
         }
-        else if (!strcasecmp(id, "Root\\LEGACY_BOGUS\\bar"))
+        else if (!stricmp(id, "Root\\LEGACY_BOGUS\\bar"))
         {
             found_dev3 = 1;
             ok_(__FILE__, line)(IsEqualGUID(&device.ClassGuid, &guid2),
@@ -4649,7 +4791,7 @@ static BOOL is_in_inf_dir(const char *path)
 
     GetWindowsDirectoryA(expect, sizeof(expect));
     strcat(expect, "\\inf\\");
-    return !strncasecmp(path, expect, strrchr(path, '\\') - path);
+    return !strnicmp(path, expect, strrchr(path, '\\') - path);
 }
 
 static void check_original_file_name(const char *dest_inf, const char *src_inf, const char *src_catalog)
@@ -5486,7 +5628,7 @@ static void test_class_device_order(void)
     i = 0;
     for (char *id = buffer; *id; id = id + strlen(id) + 1, i++)
     {
-        todo_wine ok(!strcasecmp(id, test_dev_names[i]), "Got unexpected id %s.\n", id);
+        todo_wine ok(!stricmp(id, test_dev_names[i]), "Got unexpected id %s.\n", id);
     }
 
     cr = CM_Get_Device_Interface_ListA(&iface_guid3, NULL, buffer, sizeof(buffer), CM_GET_DEVICE_INTERFACE_LIST_ALL_DEVICES);
@@ -5497,7 +5639,7 @@ static void test_class_device_order(void)
         char exp_path[MAX_PATH];
 
         create_device_iface_path(test_dev_names[i], &iface_guid3, exp_path);
-        todo_wine ok(!strcasecmp(path, exp_path), "Got unexpected path %s.\n", path);
+        todo_wine ok(!stricmp(path, exp_path), "Got unexpected path %s.\n", path);
     }
 
     /* Register devices. */
@@ -5519,7 +5661,7 @@ static void test_class_device_order(void)
         ok(IsEqualGUID(&device.ClassGuid, &guid3), "Got unexpected class %s.\n", wine_dbgstr_guid(&device.ClassGuid));
         ret = SetupDiGetDeviceInstanceIdA(set2, &device, instance_id, sizeof(instance_id), NULL);
         ok(ret, "Got unexpected error %#lx.\n", GetLastError());
-        todo_wine ok(!strcasecmp(instance_id, test_dev_names[i]), "Got unexpected id %s.\n", instance_id);
+        todo_wine ok(!stricmp(instance_id, test_dev_names[i]), "Got unexpected id %s.\n", instance_id);
     }
     ok(i == ARRAY_SIZE(test_dev_names), "Unexpected number of devices in set %lu.\n", i);
     check_device_info(set2, i, NULL, NULL);
@@ -5534,7 +5676,7 @@ static void test_class_device_order(void)
     i = 0;
     for (char *id = buffer; *id; id = id + strlen(id) + 1, i++)
     {
-        todo_wine ok(!strcasecmp(id, test_dev_names[i]), "Got unexpected id %s.\n", id);
+        todo_wine ok(!stricmp(id, test_dev_names[i]), "Got unexpected id %s.\n", id);
     }
 
     /* Enumstr argument doesn't change the order. */
@@ -5546,7 +5688,7 @@ static void test_class_device_order(void)
         ok(IsEqualGUID(&device.ClassGuid, &guid3), "Got unexpected class %s.\n", wine_dbgstr_guid(&device.ClassGuid));
         ret = SetupDiGetDeviceInstanceIdA(set2, &device, instance_id, sizeof(instance_id), NULL);
         ok(ret, "Got unexpected error %#lx.\n", GetLastError());
-        todo_wine ok(!strcasecmp(instance_id, test_dev_names[i ? 2 : 0]), "Got unexpected id %s.\n", instance_id);
+        todo_wine ok(!stricmp(instance_id, test_dev_names[i ? 2 : 0]), "Got unexpected id %s.\n", instance_id);
     }
     ok(i == (ARRAY_SIZE(test_dev_names) - 1), "Unexpected number of devices in set %lu.\n", i);
     check_device_info(set2, i, NULL, NULL);
@@ -5563,7 +5705,7 @@ static void test_class_device_order(void)
         ok(IsEqualGUID(&device.ClassGuid, &guid3), "Got unexpected class %s.\n", wine_dbgstr_guid(&device.ClassGuid));
         ret = SetupDiGetDeviceInstanceIdA(set2, &device, instance_id, sizeof(instance_id), NULL);
         ok(ret, "Got unexpected error %#lx.\n", GetLastError());
-        todo_wine ok(!strcasecmp(instance_id, test_dev_names[i ? 2 : 0]), "Got unexpected id %s.\n", instance_id);
+        todo_wine ok(!stricmp(instance_id, test_dev_names[i ? 2 : 0]), "Got unexpected id %s.\n", instance_id);
     }
     ok(i == (ARRAY_SIZE(test_dev_names) - 1), "Unexpected number of devices in set %lu.\n", i);
     check_device_info(set2, i, NULL, NULL);
@@ -5587,7 +5729,7 @@ static void test_class_device_order(void)
         ok(IsEqualGUID(&device.ClassGuid, &guid3), "Got unexpected class %s.\n", wine_dbgstr_guid(&device.ClassGuid));
         ret = SetupDiGetDeviceInstanceIdA(set2, &device, instance_id, sizeof(instance_id), NULL);
         ok(ret, "Got unexpected error %#lx.\n", GetLastError());
-        todo_wine ok(!strcasecmp(instance_id, test_dev_names[i]), "Got unexpected id %s.\n", instance_id);
+        todo_wine ok(!stricmp(instance_id, test_dev_names[i]), "Got unexpected id %s.\n", instance_id);
     }
     ok(i == ARRAY_SIZE(test_dev_names), "Unexpected number of devices in set %lu.\n", i);
     check_device_info(set2, i, NULL, NULL);
@@ -5605,7 +5747,7 @@ static void test_class_device_order(void)
         char exp_path[MAX_PATH];
 
         create_device_iface_path(test_dev_names[i], &iface_guid3, exp_path);
-        todo_wine ok(!strcasecmp(path, exp_path), "Got unexpected path %s.\n", path);
+        todo_wine ok(!stricmp(path, exp_path), "Got unexpected path %s.\n", path);
     }
 
     /* Destroy/remove all registered devices. */

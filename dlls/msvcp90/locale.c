@@ -3685,7 +3685,7 @@ size_t __cdecl codecvt_short__Getcat(const locale_facet **facet, const locale *l
 
         *facet = operator_new(sizeof(codecvt_wchar));
         _Locinfo_ctor_cstr(&locinfo, locale_string_char_c_str(&loc->ptr->name));
-        codecvt_short_ctor((codecvt_wchar*)*facet);
+        codecvt_short_ctor_locinfo((codecvt_wchar*)*facet, &locinfo, 0);
         _Locinfo_dtor(&locinfo);
     }
 
@@ -4210,7 +4210,7 @@ int __thiscall codecvt_char16_do_in(const codecvt_char16 *this, _Mbstatet *state
 
         if (fourbyte)
         {
-            if (res > 0x10000)
+            if (res >= 0x10000)
             {
                 res -= 0x10000;
                 MBSTATET_TO_INT(state) = 0xdc00 | (res & 0x3ff);
@@ -8784,7 +8784,7 @@ char* __cdecl num_put_wchar__Ffmt(const num_put *this, char *fmt, char spec, int
     *p++ = '%';
     if(fmtfl & FMTFLAG_showpos)
         *p++ = '+';
-    if(fmtfl & FMTFLAG_showbase)
+    if(fmtfl & FMTFLAG_showpoint)
         *p++ = '#';
     *p++ = '.';
     *p++ = '*';
@@ -12665,7 +12665,6 @@ locale* __thiscall locale_ctor_locale_cstr(locale *this, const locale *loc, cons
     _Locinfo_ctor_cat_cstr(&locinfo, cat, locname);
     if(!memcmp(locale_string_char_c_str(&locinfo.newlocname), "*", 2)) {
         _Locinfo_dtor(&locinfo);
-        operator_delete(this->ptr);
         _Xruntime_error("bad locale name");
     }
 
@@ -12981,9 +12980,15 @@ size_t __cdecl mbsrtowcs(wchar_t *dst, const char **pstr, size_t n, mbstate_t *s
         if (!len) break;
         if (dst) dst[ret] = wc;
         ret++;
-        if (!wc) break;
+        if (!wc)
+        {
+            src = NULL;
+            break;
+        }
         src += len;
     }
+
+    if (dst) *pstr = src;
     return ret;
 }
 
@@ -13054,7 +13059,7 @@ size_t __cdecl _Strxfrm(char *dest, char *dest_end,
     _Collvec cv;
     WCHAR *buf;
     LCID lcid;
-    int len;
+    int len, sortkey_len;
 
     TRACE("(%p %p %p %p %p)\n", dest, dest_end, src, src_end, coll);
 
@@ -13080,11 +13085,11 @@ size_t __cdecl _Strxfrm(char *dest, char *dest_end,
     if (!buf) return INT_MAX;
     MultiByteToWideChar(cv.page, MB_ERR_INVALID_CHARS, src, src_len, buf, len);
 
-    len = LCMapStringW(lcid, LCMAP_SORTKEY, buf, len, NULL, 0);
-    if (len <= dest_len)
+    sortkey_len = LCMapStringW(lcid, LCMAP_SORTKEY, buf, len, NULL, 0);
+    if (sortkey_len <= dest_len)
         LCMapStringW(lcid, LCMAP_SORTKEY, buf, len, (WCHAR*)dest, dest_len);
     free(buf);
-    return len;
+    return sortkey_len;
 }
 
 size_t __cdecl _Wcsxfrm(wchar_t *dest, wchar_t *dest_end,
@@ -13155,9 +13160,9 @@ DEFINE_RTTI_DATA(num_get_short, 0, ".?AV?$num_get@GV?$istreambuf_iterator@GU?$ch
 DEFINE_RTTI_DATA(num_put_char, 0, ".?AV?$num_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
 DEFINE_RTTI_DATA(num_put_wchar, 0, ".?AV?$num_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
 DEFINE_RTTI_DATA(num_put_short, 0, ".?AV?$num_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
-DEFINE_RTTI_DATA(time_put_char, 0, ".?AV?$num_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
-DEFINE_RTTI_DATA(time_put_wchar, 0, ".?AV?$num_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
-DEFINE_RTTI_DATA(time_put_short, 0, ".?AV?$num_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(time_put_char, 0, ".?AV?$time_put@DV?$ostreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(time_put_wchar, 0, ".?AV?$time_put@_WV?$ostreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
+DEFINE_RTTI_DATA(time_put_short, 0, ".?AV?$time_put@GV?$ostreambuf_iterator@GU?$char_traits@G@std@@@std@@@std@@", locale_facet_rtti_base_descriptor)
 DEFINE_RTTI_DATA(time_base, 0, ".?AUtime_base@std@@", locale_facet_rtti_base_descriptor)
 DEFINE_RTTI_DATA(time_get_char, 0, ".?AV?$time_get@DV?$istreambuf_iterator@DU?$char_traits@D@std@@@std@@@std@@", time_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)
 DEFINE_RTTI_DATA(time_get_wchar, 0, ".?AV?$time_get@_WV?$istreambuf_iterator@_WU?$char_traits@_W@std@@@std@@@std@@", time_base_rtti_base_descriptor, locale_facet_rtti_base_descriptor)

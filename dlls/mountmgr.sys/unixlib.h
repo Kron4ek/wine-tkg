@@ -132,6 +132,12 @@ struct cdrom_ioctl_params
     int wow64;
 };
 
+struct dismount_params
+{
+    char *unix_device;
+    char *unix_mount;
+};
+
 struct detect_ports_params
 {
     char *names;
@@ -185,6 +191,7 @@ enum mountmgr_funcs
     unix_cdrom_open,
     unix_cdrom_close,
     unix_cdrom_ioctl,
+    unix_dismount,
     unix_detect_serial_ports,
     unix_detect_parallel_ports,
     unix_set_shell_folder,

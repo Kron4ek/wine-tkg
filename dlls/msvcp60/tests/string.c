@@ -96,6 +96,7 @@ static int (__thiscall *p_basic_string_char_compare_substr_cstr_len)(basic_strin
 static size_t (__thiscall *p_basic_string_char_find_cstr_substr)(basic_string_char*, const char*, size_t, size_t);
 static size_t (__thiscall *p_basic_string_char_rfind_cstr_substr)(basic_string_char*, const char*, size_t, size_t);
 static basic_string_char* (__thiscall *p_basic_string_char_replace_cstr)(basic_string_char*, size_t, size_t, const char*);
+static basic_string_char* (__thiscall *p_basic_string_char_replace_ch)(basic_string_char*, size_t, size_t, size_t, char);
 
 static size_t *p_basic_string_char_npos;
 
@@ -239,6 +240,8 @@ static BOOL init(void)
                 "?rfind@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QEBA_KPEBD_K1@Z");
         SET(p_basic_string_char_replace_cstr,
                 "?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QEAAAEAV12@_K0PEBD@Z");
+        SET(p_basic_string_char_replace_ch,
+                "?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QEAAAEAV12@_K00D@Z");
         SET(p_basic_string_char_npos,
                 "?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2_KB");
 
@@ -324,6 +327,8 @@ static BOOL init(void)
                 "?rfind@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z");
         SET(p_basic_string_char_replace_cstr,
                 "?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@IIPBD@Z");
+        SET(p_basic_string_char_replace_ch,
+                "?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@IIID@Z");
         SET(p_basic_string_char_npos,
                 "?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB");
 
@@ -662,6 +667,12 @@ static void test_basic_string_char_replace(void) {
 
         call_func1(p_basic_string_char_dtor, &str);
     }
+
+    call_func1(p_basic_string_char_ctor, &str);
+    call_func5(p_basic_string_char_replace_ch, &str, 0, 0, 0, 'x');
+    ok(!strcmp(call_func1(p_basic_string_char_cstr, &str), ""), "str = %s\n",
+            (const char*)call_func1(p_basic_string_char_cstr, &str));
+    call_func1(p_basic_string_char_dtor, &str);
 }
 
 static void test_basic_string_wchar(void) {
@@ -760,6 +771,31 @@ static void test_basic_string_wchar_swap(void) {
     ok(wcscmp(wtmp2, call_func1(p_basic_string_wchar_cstr, &str2)) == 0, "Invalid value of str2\n");
     call_func1(p_basic_string_wchar_dtor, &str1);
     call_func1(p_basic_string_wchar_dtor, &str2);
+}
+
+static void test_mbsrtowcs(void)
+{
+    const char src[] = "test";
+    const char *pstr;
+    mbstate_t state;
+    WCHAR dst[20];
+    size_t ret;
+
+    state = 0;
+    pstr = src;
+    dst[1] = 'x';
+    ret = mbsrtowcs(dst, &pstr, 1, &state);
+    ok(ret == 1, "mbsrtowcs returned %Id\n", ret);
+    ok(pstr == src + 1, "pstr = %p, src = %p\n", pstr, src);
+    ok(!state, "state = %d\n", state);
+    ok(dst[0] == 't', "dst[0] = '%c'\n", dst[0]);
+    ok(dst[1] == 'x', "dst[1] = '%c'\n", dst[1]);
+
+    ret = mbsrtowcs(dst, &pstr, 20, &state);
+    ok(ret == 3, "mbsrtowcs returned %Id\n", ret);
+    ok(!pstr, "pstr = %p, src = %p\n", pstr, src);
+    ok(!state, "state = %d\n", state);
+    ok(!wcscmp(dst, L"est"), "dst = %s\n", wine_dbgstr_w(dst));
 }
 
 static void test_wcsrtombs(void)
@@ -911,6 +947,7 @@ START_TEST(string)
     test_basic_string_char_replace();
     test_basic_string_wchar();
     test_basic_string_wchar_swap();
+    test_mbsrtowcs();
     test_wcsrtombs();
     test_exception();
 

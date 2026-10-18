@@ -791,20 +791,15 @@ static HRESULT WINAPI domdoc_transformNodeToObject(IXMLDOMDocument3 *iface,
 static HRESULT WINAPI domdoc_get_doctype(IXMLDOMDocument3 *iface, IXMLDOMDocumentType **doctype)
 {
     domdoc *doc = impl_from_IXMLDOMDocument3(iface);
-    struct domnode *node = NULL;
+    struct domnode *dtd;
 
     TRACE("%p, %p.\n", iface, doctype);
 
     if (!doctype)
         return E_INVALIDARG;
 
-    LIST_FOR_EACH_ENTRY(node, &doc->node->children, struct domnode, entry)
-    {
-        if (node->type == NODE_DOCUMENT_TYPE)
-        {
-            return create_node(node, (IXMLDOMNode **)doctype);
-        }
-    }
+    if ((dtd = domnode_get_dtd(doc->node)))
+        return create_node(dtd, (IXMLDOMNode **)doctype);
 
     return return_null_node((IXMLDOMNode **)doctype);
 }
@@ -1165,6 +1160,11 @@ static HRESULT WINAPI domdoc_createNode(IXMLDOMDocument3 *iface, VARIANT type, B
         return hr;
     }
 
+    if (node_type == NODE_ELEMENT)
+    {
+        domnode->flags |= DOMNODE_USE_EMPTY_TAG;
+    }
+
     return create_node(domnode, node);
 }
 
@@ -1394,9 +1394,7 @@ static HRESULT WINAPI domdoc_get_parseError(IXMLDOMDocument3 *iface, IXMLDOMPars
     if (doc->error)
         error_string = SysAllocString(L"error");
 
-    *obj = create_parseError(doc->error, NULL, error_string, NULL, 0, 0, 0);
-    if (!*obj) return E_OUTOFMEMORY;
-    return S_OK;
+    return create_parse_error(doc->error, error_string, obj);
 }
 
 static HRESULT WINAPI domdoc_get_url(IXMLDOMDocument3 *iface, BSTR *url)
@@ -1753,29 +1751,15 @@ static HRESULT WINAPI domdoc_putref_schemas(IXMLDOMDocument3 *iface, VARIANT sch
     return hr;
 }
 
-static HRESULT WINAPI domdoc_validateNode(IXMLDOMDocument3 *iface, IXMLDOMNode *node, IXMLDOMParseError **err)
+static HRESULT WINAPI domdoc_validate(IXMLDOMDocument3 *iface, IXMLDOMParseError **err)
 {
     domdoc *doc = impl_from_IXMLDOMDocument3(iface);
 
-    TRACE("%p, %p, %p.\n", iface, node, err);
+    TRACE("%p, %p.\n", iface, err);
 
     /* TODO: check ready state */
 
-    if (!node)
-    {
-        if (err)
-            *err = create_parseError(0, NULL, NULL, NULL, 0, 0, 0);
-        return E_POINTER;
-    }
-
-    return node_validate(doc->node, node, err);
-}
-
-static HRESULT WINAPI domdoc_validate(IXMLDOMDocument3 *iface, IXMLDOMParseError **err)
-{
-    TRACE("%p, %p.\n", iface, err);
-
-    return IXMLDOMDocument3_validateNode(iface, (IXMLDOMNode *)iface, err);
+    return node_validate(doc->node, NULL, err);
 }
 
 static HRESULT variant_get_bool_property(const VARIANT *v, VARIANT_BOOL *ret)
@@ -1960,6 +1944,20 @@ static HRESULT WINAPI domdoc_getProperty(IXMLDOMDocument3 *iface, BSTR p, VARIAN
 
     FIXME("Unknown property %s\n", debugstr_w(p));
     return E_FAIL;
+}
+
+static HRESULT WINAPI domdoc_validateNode(IXMLDOMDocument3 *iface, IXMLDOMNode *node, IXMLDOMParseError **err)
+{
+    domdoc *doc = impl_from_IXMLDOMDocument3(iface);
+
+    TRACE("%p, %p, %p.\n", iface, node, err);
+
+    /* TODO: check ready state */
+
+    if (!node || !err)
+        return E_INVALIDARG;
+
+    return node_validate(doc->node, node, err);
 }
 
 static HRESULT WINAPI domdoc_importNode(IXMLDOMDocument3 *iface, IXMLDOMNode *node, VARIANT_BOOL deep, IXMLDOMNode **clone)

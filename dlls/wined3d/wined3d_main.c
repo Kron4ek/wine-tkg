@@ -32,6 +32,7 @@
 #include "d3d12.h"
 #define VK_NO_PROTOTYPES
 #include "wine/vulkan.h"
+#define VKD3D_UTILS_NO_WIN32_TYPES
 #include <vkd3d_utils.h>
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
@@ -377,6 +378,11 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
             {
                 ERR_(winediag)("Using the VA video decoder backend.\n");
                 wined3d_settings.decoder_backend = WINED3D_DECODER_BACKEND_VA;
+            }
+            else if (!stricmp(buffer, "none"))
+            {
+                ERR_(winediag)("Disabling hardware video decoding support.\n");
+                wined3d_settings.decoder_backend = WINED3D_DECODER_BACKEND_NONE;
             }
         }
         if (!get_config_key_dword(hkey, appkey, env, "VideoPciDeviceID", &tmpvalue))

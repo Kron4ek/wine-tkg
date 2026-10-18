@@ -122,7 +122,7 @@ my %khronos_types =
      "khronos_uint32_t" => "unsigned int",
      "khronos_int64_t" => "__int64",
      "khronos_uint64_t" => "unsigned __int64",
-     "khronos_ssize_t" => "ssize_t",
+     "khronos_ssize_t" => "SSIZE_T",
      "khronos_float_t" => "float",
      "khronos_utime_nanoseconds_t" => "unsigned __int64",
      "khronos_stime_nanoseconds_t" => "__int64",
@@ -1000,7 +1000,7 @@ sub get_arg_len($)
 my $ogl_url="https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry";
 my $ogl_commit="0b449b97cdf1043eef5e1f0e235cbbab6ec10c86";
 my $egl_url="https://raw.githubusercontent.com/KhronosGroup/EGL-Registry";
-my $egl_commit="3ae2b7c48690d2ce13cc6db3db02dfc0572be65e";
+my $egl_commit="e80a2e0050f02ae349e822f964671e364e05e711";
 my $cache = ($ENV{XDG_CACHE_HOME} || "$ENV{HOME}/.cache") . "/wine";
 
 system "mkdir", "-p", $cache;

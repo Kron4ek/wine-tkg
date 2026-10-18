@@ -79,7 +79,7 @@ static const char *get_substitution(struct inf_file *inf, const char *name, int 
 
     while (inf_section_next_value(sec, &value))
     {
-        if (strlen(value->key) == len && !strncasecmp(value->key, name, len))
+        if (strlen(value->key) == len && !strnicmp(value->key, name, len))
             return value->value;
     }
 
@@ -204,7 +204,7 @@ struct inf_section *inf_get_section(struct inf_file *inf, const char *name)
 
     while (inf_next_section(inf, &sec))
     {
-        if (!strcasecmp(sec->name, name))
+        if (!stricmp(sec->name, name))
             return sec;
     }
 
@@ -238,7 +238,7 @@ struct inf_value *inf_get_value(struct inf_section *sec, const char *key)
 
     while (inf_section_next_value(sec, &value))
     {
-        if (!strcasecmp(value->key, key))
+        if (!stricmp(value->key, key))
             return value;
     }
 

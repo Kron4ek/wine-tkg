@@ -224,8 +224,8 @@ static void DirectSoundDevice_destroy(DirectSoundDevice *device)
         if(device->mmdevice)
             IMMDevice_Release(device->mmdevice);
         CloseHandle(device->sleepev);
+        free(device->linear_buffer);
         free(device->filter_buffer);
-        free(device->tmp_buffer);
         free(device->cp_buffer);
         free(device->buffer);
         device->mixlock.DebugInfo->Spare[0] = 0;

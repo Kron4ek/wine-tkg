@@ -823,7 +823,10 @@ static HRESULT WINAPI segment_persist_stream_Load(IPersistStream *iface, IStream
             TRACE("Loading segment %p from wave file\n", This);
 
             This->header.mtLength = 1;
-            if (FAILED(hr = wave_track_create_from_chunk(stream, &chunk, &track))) break;
+            This->header.dwFlags = DMUS_SEGIOF_REFLENGTH;
+            if (FAILED(hr = wave_track_create_from_chunk(stream, &chunk, &track,
+                    &This->header.rtLength)))
+                break;
             hr = segment_append_track(This, (IDirectMusicTrack *)track, 1, 0);
             IDirectMusicTrack8_Release(track);
             break;
@@ -894,4 +897,25 @@ HRESULT create_dmsegment(REFIID guid, void **ret_iface)
     IDirectMusicSegment8_Release(&obj->IDirectMusicSegment8_iface);
 
     return hr;
+}
+
+static inline struct segment *unsafe_impl_from_IDirectMusicSegment8(IDirectMusicSegment8 *iface)
+{
+    if (iface->lpVtbl != &segment_vtbl) return NULL;
+    return CONTAINING_RECORD(iface, struct segment, IDirectMusicSegment8_iface);
+}
+
+HRESULT segment_get_rt_length(IDirectMusicSegment *iface, REFERENCE_TIME *length)
+{
+    struct segment *This = unsafe_impl_from_IDirectMusicSegment8((IDirectMusicSegment8 *)iface);
+
+    if (!This)
+        return E_FAIL;
+
+    if (!(This->header.dwFlags & DMUS_SEGIOF_REFLENGTH))
+        return S_FALSE;
+
+    *length = This->header.rtLength;
+
+    return S_OK;
 }

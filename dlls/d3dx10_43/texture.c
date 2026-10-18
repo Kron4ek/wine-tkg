@@ -438,6 +438,35 @@ HRESULT WINAPI D3DX10GetImageInfoFromMemory(const void *src_data, SIZE_T src_dat
     return hr;
 }
 
+static void dump_image_info(const D3DX10_IMAGE_INFO *image_info)
+{
+    if (!image_info)
+    {
+        TRACE("image_info (null).\n");
+        return;
+    }
+    TRACE("Width %u, Height %u, Depth %u, ArraySize %u, MipLevels %u.\n",
+            image_info->Width, image_info->Height, image_info->Depth, image_info->ArraySize, image_info->MipLevels);
+    TRACE("MiscFlags %#x, Format %#x, ResourceDimension %u, ImageFileFormat %u.\n",
+            image_info->MiscFlags, image_info->Format, image_info->ResourceDimension, image_info->ImageFileFormat);
+}
+
+static void dump_image_load_info(const D3DX10_IMAGE_LOAD_INFO *load_info)
+{
+    if (!load_info)
+    {
+        TRACE("load_info (null).\n");
+        return;
+    }
+    TRACE("Width %u, Height %u, Depth %u, FirstMipLevel %u, MipLevels %u, Usage %u.\n",
+            load_info->Width, load_info->Height, load_info->Depth, load_info->FirstMipLevel,
+            load_info->MipLevels, load_info->Usage);
+    TRACE("BindFlags %#x, CpuAccessFlags %#x, MiscFlags %#x, Format %u (%#x), Filter %u, MipFilter %u.\n",
+            load_info->BindFlags, load_info->CpuAccessFlags, load_info->MiscFlags,
+            load_info->Format, load_info->Format, load_info->Filter, load_info->MipFilter);
+    dump_image_info(load_info->pSrcInfo);
+}
+
 static HRESULT create_texture(ID3D10Device *device, const void *data, SIZE_T size,
         D3DX10_IMAGE_LOAD_INFO *load_info, ID3D10Resource **texture)
 {
@@ -445,6 +474,9 @@ static HRESULT create_texture(ID3D10Device *device, const void *data, SIZE_T siz
     D3DX10_IMAGE_LOAD_INFO load_info_copy;
     D3DX10_IMAGE_INFO img_info;
     HRESULT hr;
+
+    if (TRACE_ON(d3dx))
+        dump_image_load_info(load_info);
 
     init_load_info(load_info, &load_info_copy);
     if (!load_info_copy.pSrcInfo)
@@ -685,9 +717,11 @@ HRESULT load_texture_data(const void *data, SIZE_T size, D3DX10_IMAGE_LOAD_INFO 
 
     /* Potentially round up width/height to align with block size. */
     if (!load_info->Width || load_info->Width == D3DX10_FROM_FILE || load_info->Width == D3DX10_DEFAULT)
-        load_info->Width = (img_info.Width + fmt_desc->block_width - 1) & ~(fmt_desc->block_width - 1);
+        load_info->Width = img_info.Width;
+    load_info->Width = (load_info->Width + fmt_desc->block_width - 1) & ~(fmt_desc->block_width - 1);
     if (!load_info->Height || load_info->Height == D3DX10_FROM_FILE || load_info->Height == D3DX10_DEFAULT)
-        load_info->Height = (img_info.Height + fmt_desc->block_height - 1) & ~(fmt_desc->block_height - 1);
+        load_info->Height = img_info.Height;
+    load_info->Height = (load_info->Height + fmt_desc->block_height - 1) & ~(fmt_desc->block_height - 1);
     if (!load_info->Depth || load_info->Depth == D3DX10_FROM_FILE || load_info->Depth == D3DX10_DEFAULT)
         load_info->Depth = img_info.Depth;
 
@@ -841,7 +875,10 @@ HRESULT create_d3d_texture(ID3D10Device *device, D3DX10_IMAGE_LOAD_INFO *load_in
             texture_2d_desc.MiscFlags = load_info->MiscFlags;
 
             if (FAILED(hr = ID3D10Device_CreateTexture2D(device, &texture_2d_desc, resource_data, &texture_2d)))
+            {
+                WARN("Texture creation failed, hr %#lx.\n", hr);
                 return hr;
+            }
             *texture = (ID3D10Resource *)texture_2d;
             break;
         }
@@ -862,7 +899,10 @@ HRESULT create_d3d_texture(ID3D10Device *device, D3DX10_IMAGE_LOAD_INFO *load_in
             texture_3d_desc.MiscFlags = load_info->MiscFlags;
 
             if (FAILED(hr = ID3D10Device_CreateTexture3D(device, &texture_3d_desc, resource_data, &texture_3d)))
+            {
+                WARN("Texture creation failed, hr %#lx.\n", hr);
                 return hr;
+            }
             *texture = (ID3D10Resource *)texture_3d;
             break;
         }

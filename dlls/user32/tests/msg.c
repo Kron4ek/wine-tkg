@@ -21628,6 +21628,7 @@ static const struct message print_window_invisible[] =
 {
     { WM_PAINT, sent|wparam|lparam, 0, 0 },
     { WM_NCPAINT, sent|beginpaint|wparam|lparam, 1, 0 },
+    { WM_GETTEXT, sent|beginpaint|defwinproc|optional },
     { 0 }
 };
 
@@ -21645,6 +21646,7 @@ static const struct message print_window_invisible_optional[] =
 {
     { WM_PAINT, sent|wparam|lparam|optional, 0, 0 },
     { WM_NCPAINT, sent|beginpaint|wparam|lparam|optional, 1, 0 },
+    { WM_GETTEXT, sent|beginpaint|defwinproc|optional },
     { 0 }
 };
 
@@ -21802,7 +21804,6 @@ static void test_PrintWindow(char **argv)
         if (flags[i] & PW_CLIENTONLY)
             ok(color == RGB(0, 255, 0), "Got unexpected color %#lx.\n", color);
         else
-            todo_wine /* Wine decorated mode. Non-client area is painted by the WM. */
             ok(color != RGB(0, 255, 0), "Got unexpected color %#lx.\n", color);
         color = GetPixel(mem_dc, width / 2, height / 2);
         ok(color == RGB(0, 255, 0), "Got unexpected color %#lx.\n", color);

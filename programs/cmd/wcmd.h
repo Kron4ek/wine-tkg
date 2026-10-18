@@ -177,25 +177,27 @@ struct split_command
 
 BOOL WCMD_print_volume_information(const WCHAR *);
 
+struct word_iterator;
+
 RETURN_CODE WCMD_assoc(const WCHAR *, BOOL);
 RETURN_CODE WCMD_call(WCHAR *command);
-RETURN_CODE WCMD_choice(WCHAR *);
-RETURN_CODE WCMD_clear_screen(void);
+RETURN_CODE WCMD_choice(struct word_iterator *);
+RETURN_CODE WCMD_clear_screen(struct word_iterator *);
 RETURN_CODE WCMD_color(void);
 RETURN_CODE WCMD_copy(WCHAR *);
-RETURN_CODE WCMD_create_dir(WCHAR *);
-RETURN_CODE WCMD_delete(WCHAR *);
+RETURN_CODE WCMD_create_dir(struct word_iterator *);
+RETURN_CODE WCMD_delete(struct word_iterator *);
 RETURN_CODE WCMD_directory(WCHAR *);
 RETURN_CODE WCMD_echo(const WCHAR *);
 RETURN_CODE WCMD_endlocal(void);
 void WCMD_enter_paged_mode(const WCHAR *);
 RETURN_CODE WCMD_exit(void);
 BOOL WCMD_get_fullpath(const WCHAR *, SIZE_T, WCHAR *, WCHAR **);
-RETURN_CODE WCMD_give_help(WCHAR *args);
+RETURN_CODE WCMD_give_help(struct word_iterator *);
 RETURN_CODE WCMD_goto(void);
 RETURN_CODE WCMD_label(void);
 void WCMD_leave_paged_mode(void);
-RETURN_CODE WCMD_more(WCHAR *);
+RETURN_CODE WCMD_more(struct word_iterator *);
 RETURN_CODE WCMD_move (void);
 WCHAR* WINAPIV WCMD_format_string(const WCHAR *format, ...);
 void WINAPIV WCMD_output(const WCHAR *format, ...);
@@ -207,9 +209,9 @@ RETURN_CODE WCMD_pause(void);
 RETURN_CODE WCMD_popd(void);
 void WCMD_print_error (void);
 RETURN_CODE WCMD_pushd(const WCHAR *args);
-RETURN_CODE WCMD_remove_dir(WCHAR *command);
+RETURN_CODE WCMD_remove_dir(struct word_iterator *);
 RETURN_CODE WCMD_rename(void);
-RETURN_CODE WCMD_setlocal(WCHAR *args);
+RETURN_CODE WCMD_setlocal(struct word_iterator *);
 RETURN_CODE WCMD_setshow_date(void);
 RETURN_CODE WCMD_setshow_default(const WCHAR *args);
 RETURN_CODE WCMD_setshow_env(WCHAR *command);
@@ -219,11 +221,11 @@ RETURN_CODE WCMD_setshow_time(void);
 RETURN_CODE WCMD_shift(const WCHAR *args);
 RETURN_CODE WCMD_start(WCHAR *args);
 RETURN_CODE WCMD_title(const WCHAR *);
-RETURN_CODE WCMD_type(WCHAR *);
+RETURN_CODE WCMD_type(struct word_iterator *);
 RETURN_CODE WCMD_verify(void);
 RETURN_CODE WCMD_version(void);
 RETURN_CODE WCMD_volume(void);
-RETURN_CODE WCMD_mklink(WCHAR *args);
+RETURN_CODE WCMD_mklink(struct word_iterator *);
 RETURN_CODE WCMD_change_drive(WCHAR drive);
 
 WCHAR *WCMD_fgets(WCHAR *buf, DWORD n, HANDLE stream);
@@ -248,10 +250,16 @@ struct word_iterator
 
 struct word_iterator *WCMD_word_iterator_init(struct word_iterator *iterator, const WCHAR *string, const WCHAR *delims, unsigned int flags);
 BOOL WCMD_word_iterator_advance(struct word_iterator *iterator);
+BOOL WCMD_word_iterator_advance_if_option_arg(struct word_iterator *iterator, const WCHAR *opt, WCHAR **arg);
 static inline void WCMD_word_iterator_dispose(struct word_iterator *iterator)
 {
     free(iterator->raw_argument);
     free(iterator->unquoted_argument);
+}
+static inline void WCMD_word_iterator_reset(struct word_iterator *iterator)
+{
+    iterator->position = 0;
+    iterator->length = 0;
 }
 WCHAR *WCMD_parameter(WCHAR *s, int n, WCHAR **start, BOOL raw);
 WCHAR *WCMD_parameter_with_delims(WCHAR *s, int n, WCHAR **start, BOOL raw, const WCHAR *delims);
@@ -279,6 +287,7 @@ RETURN_CODE node_execute(CMD_NODE *node);
 RETURN_CODE WCMD_call_batch(const WCHAR *, WCHAR *);
 RETURN_CODE WCMD_call_command(WCHAR *command);
 RETURN_CODE WCMD_run_builtin_command(int cmd_index, WCHAR *cmd);
+RETURN_CODE WCMD_run_external_full_path(const WCHAR *file, WCHAR *full_cmdline);
 
 BOOL WCMD_find_label(HANDLE h, const WCHAR*, LARGE_INTEGER *pos);
 void WCMD_set_label_end(WCHAR *string);

@@ -31,6 +31,7 @@
 static void compare_media_types_(unsigned int line, const AM_MEDIA_TYPE *got, const AM_MEDIA_TYPE *expected)
 {
     VIDEOINFO *got_video_info_ptr, *expected_video_info_ptr;
+    int i;
 
     ok_(__FILE__, line)(IsEqualGUID(&got->majortype, &expected->majortype), "Got major type %s.\n",
             wine_dbgstr_guid(&got->majortype));
@@ -69,6 +70,14 @@ static void compare_media_types_(unsigned int line, const AM_MEDIA_TYPE *got, co
             "Got bitcount %d.\n", got_video_info_ptr->bmiHeader.biBitCount);
     ok_(__FILE__, line)(got_video_info_ptr->bmiHeader.biCompression == expected_video_info_ptr->bmiHeader.biCompression,
             "Got compression %lx.\n", got_video_info_ptr->bmiHeader.biCompression);
+    ok_(__FILE__, line)(got_video_info_ptr->bmiHeader.biClrUsed == expected_video_info_ptr->bmiHeader.biClrUsed,
+            "Got color used %lu.\n", got_video_info_ptr->bmiHeader.biClrUsed);
+    ok_(__FILE__, line)(got_video_info_ptr->bmiHeader.biClrImportant == expected_video_info_ptr->bmiHeader.biClrImportant,
+            "Got color important %lu.\n", got_video_info_ptr->bmiHeader.biClrImportant);
+    ok_(__FILE__, line)(got_video_info_ptr->bmiHeader.biXPelsPerMeter == expected_video_info_ptr->bmiHeader.biXPelsPerMeter,
+            "Got X pixels per meter %ld.\n", got_video_info_ptr->bmiHeader.biXPelsPerMeter);
+    ok_(__FILE__, line)(got_video_info_ptr->bmiHeader.biYPelsPerMeter == expected_video_info_ptr->bmiHeader.biYPelsPerMeter,
+            "Got Y pixels per meter %ld.\n", got_video_info_ptr->bmiHeader.biYPelsPerMeter);
 
     ok_(__FILE__, line)(got_video_info_ptr->bmiHeader.biSizeImage == expected_video_info_ptr->bmiHeader.biSizeImage,
             "Got image size %lu.\n", got_video_info_ptr->bmiHeader.biSizeImage);
@@ -90,6 +99,39 @@ static void compare_media_types_(unsigned int line, const AM_MEDIA_TYPE *got, co
             "Got target right %ld.\n", got_video_info_ptr->rcTarget.right);
     ok_(__FILE__, line)(got_video_info_ptr->rcTarget.bottom == expected_video_info_ptr->rcTarget.bottom,
             "Got target bottom %ld.\n", got_video_info_ptr->rcTarget.bottom);
+
+    ok_(__FILE__, line)(got_video_info_ptr->dwBitRate == expected_video_info_ptr->dwBitRate, "Got bit rate %ld.\n",
+            got_video_info_ptr->dwBitRate);
+    ok_(__FILE__, line)(got_video_info_ptr->dwBitErrorRate == expected_video_info_ptr->dwBitErrorRate,
+            "Got bit error rate %ld.\n", got_video_info_ptr->dwBitErrorRate);
+    ok_(__FILE__, line)(got_video_info_ptr->AvgTimePerFrame == expected_video_info_ptr->AvgTimePerFrame,
+            "Got average time per frame %I64d.\n", got_video_info_ptr->AvgTimePerFrame);
+
+    if (got_video_info_ptr->bmiHeader.biCompression == BI_BITFIELDS)
+    {
+        for (i = 0; i < ARRAY_SIZE(got_video_info_ptr->dwBitMasks); i++)
+        {
+            ok_(__FILE__, line)(got_video_info_ptr->dwBitMasks[i] == expected_video_info_ptr->dwBitMasks[i],
+                    "Got bit mask %d %#lx.\n", i, got_video_info_ptr->dwBitMasks[i]);
+        }
+    }
+
+    if (got_video_info_ptr->bmiHeader.biBitCount == 8)
+    {
+        for (i = 0; i < got_video_info_ptr->bmiHeader.biClrUsed; i++)
+        {
+            winetest_push_context("quad %d", i);
+            ok_(__FILE__, line)(got_video_info_ptr->bmiColors[i].rgbBlue == expected_video_info_ptr->bmiColors[i].rgbBlue,
+                    "Got blue value %d.\n", got_video_info_ptr->bmiColors[i].rgbBlue);
+            ok_(__FILE__, line)( got_video_info_ptr->bmiColors[i].rgbGreen == expected_video_info_ptr->bmiColors[i].rgbGreen,
+                    "Got green value %d.\n", got_video_info_ptr->bmiColors[i].rgbGreen);
+            ok_(__FILE__, line)(got_video_info_ptr->bmiColors[i].rgbRed == expected_video_info_ptr->bmiColors[i].rgbRed,
+                    "Got red value %d.\n", got_video_info_ptr->bmiColors[i].rgbRed);
+            ok_(__FILE__, line)( got_video_info_ptr->bmiColors[i].rgbReserved == expected_video_info_ptr->bmiColors[i].rgbReserved,
+                    "Got reserved value %d.\n", got_video_info_ptr->bmiColors[i].rgbBlue);
+            winetest_pop_context();
+        }
+    }
 }
 
 struct image_data
@@ -98,7 +140,7 @@ struct image_data
     BYTE data[];
 };
 
-static struct image_data *create_image(BOOL is_32bit, BOOL is_flipped, DWORD width, DWORD height)
+static struct image_data *create_image(BOOL is_32bit, BOOL bottom_up, DWORD width, DWORD height)
 {
     static const struct
     {
@@ -133,16 +175,16 @@ static struct image_data *create_image(BOOL is_32bit, BOOL is_flipped, DWORD wid
     image_data->size = size;
     line = image_data->data;
 
-    if (is_flipped)
+    if (bottom_up)
     {
         line += (height - 1) * stride;
         stride = -stride;
     }
 
-    for (i = 0; i < 240; i++)
+    for (i = 0; i < min(240, height); i++)
     {
         ptr = line;
-        for (j = 0; j < 240; j++)
+        for (j = 0; j < min(240, width); j++)
         {
             *ptr++ = color[i / 30].b;
             *ptr++ = color[i / 30].g;
@@ -774,21 +816,38 @@ static ULONG get_refcount(void *iface)
     return IUnknown_Release(unknown);
 }
 
+static const RGBQUAD color_prefix[] =
+{
+    { 0, 0, 0 },
+    { 0, 0, 128 },
+    { 0, 128, 0 },
+    { 0, 128, 128 },
+    { 128, 0, 0 },
+    { 128, 0, 128 },
+    { 128, 128, 0 },
+    { 192, 192, 192 },
+    { 192, 220, 192 },
+    { 240, 202, 166 },
+};
+
+static const BYTE color_pattern[] = { 1, 51, 102, 153, 204, 254 };
+
 static const struct
 {
     const GUID *guid;
     DWORD compression;
     WORD bitcount;
-    ULONG cbFormat;
+    ULONG format;
+    DWORD bitmasks[3];
 }
 subtypes[] =
 {
     { &MEDIASUBTYPE_ARGB32, BI_RGB, 32, sizeof(VIDEOINFOHEADER) },
     { &MEDIASUBTYPE_RGB32, BI_RGB, 32, sizeof(VIDEOINFOHEADER) },
     { &MEDIASUBTYPE_RGB24, BI_RGB, 24, sizeof(VIDEOINFOHEADER) },
-    { &MEDIASUBTYPE_RGB565, BI_BITFIELDS, 16, sizeof(VIDEOINFOHEADER) + sizeof(DWORD[3]) /* dwBitMasks */ },
-    { &MEDIASUBTYPE_RGB555, BI_BITFIELDS, 16, sizeof(VIDEOINFOHEADER) + sizeof(DWORD[3]) /* dwBitMasks */ },
-    { &MEDIASUBTYPE_RGB8, BI_RGB, 8, sizeof(VIDEOINFOHEADER) + sizeof(RGBQUAD[256]) /* bmiColors */ },
+    { &MEDIASUBTYPE_RGB565, BI_BITFIELDS, 16, sizeof(VIDEOINFOHEADER) + sizeof(DWORD[3]), { 0xf800, 0x7e0, 0x1f } },
+    { &MEDIASUBTYPE_RGB555, BI_BITFIELDS, 16, sizeof(VIDEOINFOHEADER) + sizeof(DWORD[3]), { 0x7c00, 0x3e0, 0x1f } },
+    { &MEDIASUBTYPE_RGB8, BI_RGB, 8, sizeof(VIDEOINFOHEADER) + sizeof(RGBQUAD[256]) },
 };
 
 static void test_registration(void)
@@ -806,12 +865,7 @@ static void test_registration(void)
     int i, j;
 
     hr = create_color_conv_property_bag(&property_bag);
-
-    if (hr != S_OK)
-    {
-        skip("Skipping registration tests.\n");
-        return;
-    }
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     VariantInit(&var);
     hr = IPropertyBag_Read(property_bag, L"FilterData", &var, NULL);
@@ -885,11 +939,7 @@ static void test_interfaces(void)
     IPin *pin;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-
-    if (hr != S_OK)
-        return;
 
     check_interface(filter, &IID_IBaseFilter, TRUE);
     check_interface(filter, &IID_IMediaFilter, TRUE);
@@ -909,43 +959,33 @@ static void test_interfaces(void)
     check_interface(filter, &IID_IVideoWindow, FALSE);
 
     hr = IBaseFilter_FindPin(filter, L"In", &pin);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
-    if (hr == S_OK)
-    {
-        todo_wine
-        check_interface(pin, &IID_IMemInputPin, TRUE);
-        check_interface(pin, &IID_IPin, TRUE);
-        todo_wine
-        check_interface(pin, &IID_IQualityControl, TRUE);
-        check_interface(pin, &IID_IUnknown, TRUE);
+    check_interface(pin, &IID_IMemInputPin, TRUE);
+    check_interface(pin, &IID_IPin, TRUE);
+    todo_wine
+    check_interface(pin, &IID_IQualityControl, TRUE);
+    check_interface(pin, &IID_IUnknown, TRUE);
 
-        check_interface(pin, &IID_IMediaPosition, FALSE);
-        check_interface(pin, &IID_IMediaSeeking, FALSE);
+    check_interface(pin, &IID_IMediaPosition, FALSE);
+    check_interface(pin, &IID_IMediaSeeking, FALSE);
 
-        IPin_Release(pin);
-    }
+    IPin_Release(pin);
 
     hr = IBaseFilter_FindPin(filter, L"Out", &pin);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
-    if (hr == S_OK)
-    {
-        check_interface(pin, &IID_IPin, TRUE);
-        todo_wine
-        check_interface(pin, &IID_IMediaPosition, TRUE);
-        todo_wine
-        check_interface(pin, &IID_IMediaSeeking, TRUE);
-        todo_wine
-        check_interface(pin, &IID_IQualityControl, TRUE);
-        check_interface(pin, &IID_IUnknown, TRUE);
+    check_interface(pin, &IID_IPin, TRUE);
+    todo_wine
+    check_interface(pin, &IID_IMediaPosition, TRUE);
+    check_interface(pin, &IID_IMediaSeeking, TRUE);
+    todo_wine
+    check_interface(pin, &IID_IQualityControl, TRUE);
+    check_interface(pin, &IID_IUnknown, TRUE);
 
-        check_interface(pin, &IID_IAsyncReader, FALSE);
+    check_interface(pin, &IID_IAsyncReader, FALSE);
 
-        IPin_Release(pin);
-    }
+    IPin_Release(pin);
 
     refcount = IBaseFilter_Release(filter);
     ok(refcount == 0, "Got refcount %lu.\n", refcount);
@@ -1052,10 +1092,7 @@ static void test_enum_pins(void)
     HRESULT hr;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     refcount = get_refcount(filter);
     ok(refcount == 1, "Got refcount %ld.\n", refcount);
@@ -1074,10 +1111,7 @@ static void test_enum_pins(void)
     ok(hr == E_POINTER, "Got hr %#lx.\n", hr);
 
     hr = IEnumPins_Next(enum1, 1, pins, NULL);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        goto skip_test;
 
     refcount = get_refcount(filter);
     ok(refcount == 3, "Got refcount %ld.\n", refcount);
@@ -1165,8 +1199,6 @@ static void test_enum_pins(void)
     IPin_Release(pins[0]);
 
     IEnumPins_Release(enum2);
-
-skip_test:
     IEnumPins_Release(enum1);
     refcount = IBaseFilter_Release(filter);
     ok(refcount == 0, "Got refcount %ld.\n", refcount);
@@ -1181,19 +1213,13 @@ static void test_find_pin(void)
     HRESULT hr;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = IBaseFilter_EnumPins(filter, &enum_pins);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IBaseFilter_FindPin(filter, L"In", &pin);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        goto skip_test;
 
     hr = IEnumPins_Next(enum_pins, 1, &pin2, NULL);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1209,7 +1235,6 @@ static void test_find_pin(void)
     IPin_Release(pin2);
     IPin_Release(pin);
 
-skip_test:
     IEnumPins_Release(enum_pins);
     refcount = IBaseFilter_Release(filter);
     ok(refcount == 0, "Got refcount %ld.\n", refcount);
@@ -1227,16 +1252,10 @@ static void test_pin_info(void)
     IPin *pin;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = IBaseFilter_FindPin(filter, L"In", &pin);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        goto skip_test;
 
     refcount = get_refcount(filter);
     ok(refcount == 2, "Got refcount %ld.\n", refcount);
@@ -1296,30 +1315,103 @@ static void test_pin_info(void)
 
     IPin_Release(pin);
 
-skip_test:
     refcount = IBaseFilter_Release(filter);
     ok(refcount == 0, "Got refcount %ld.\n", refcount);
 }
 
+static void test_source_media_types(const char *test_context, IPin *source, const AM_MEDIA_TYPE *req_mt, AM_MEDIA_TYPE *rgb32)
+{
+    AM_MEDIA_TYPE *media_types[ARRAY_SIZE(subtypes)], mt;
+    IEnumMediaTypes *enum_types;
+    VIDEOINFO video_info;
+    DWORD image_size;
+    ULONG num_types;
+    int i, r, g, b;
+    RGBQUAD *ptr;
+    HRESULT hr;
+
+    winetest_push_context("%s", test_context);
+
+    hr = IPin_EnumMediaTypes(source, &enum_types);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IEnumMediaTypes_Next(enum_types, ARRAY_SIZE(subtypes), media_types, &num_types);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    ok(num_types == 6, "Got num_types %lu.\n", num_types);
+
+    mt = *req_mt;
+    mt.pbFormat = (BYTE *)&video_info;
+    mt.bFixedSizeSamples = TRUE;
+    video_info = *((VIDEOINFO *)req_mt->pbFormat);
+    video_info.bmiHeader.biClrUsed = 0;
+    video_info.bmiHeader.biClrImportant = 0;
+
+    for (i = 0; i < num_types; i++)
+    {
+        winetest_push_context("subtype %d", i);
+
+        image_size = 240 * 240 * (subtypes[i].bitcount / 8);
+        mt.subtype = *subtypes[i].guid;
+        mt.lSampleSize = image_size;
+        mt.cbFormat = max(subtypes[i].format, req_mt->cbFormat);
+        video_info.bmiHeader.biSizeImage = image_size;
+        video_info.bmiHeader.biBitCount = subtypes[i].bitcount;
+        video_info.bmiHeader.biCompression = subtypes[i].compression;
+        memcpy(video_info.dwBitMasks, subtypes[i].bitmasks, sizeof(video_info.dwBitMasks));
+        if (i == 5)
+        {
+            video_info.bmiHeader.biClrUsed = 226;
+            video_info.bmiHeader.biClrImportant = 226;
+            memcpy(video_info.bmiColors, color_prefix, sizeof(color_prefix));
+            ptr = video_info.bmiColors + ARRAY_SIZE(color_prefix);
+            for (b = 0; b < ARRAY_SIZE(color_pattern); b++)
+                for (g = 0; g < ARRAY_SIZE(color_pattern); g++)
+                    for (r = 0; r < ARRAY_SIZE(color_pattern); r++)
+                        *ptr++ = (RGBQUAD){ color_pattern[b], color_pattern[g], color_pattern[r] };
+        }
+
+        compare_media_types(media_types[i], &mt);
+
+        hr = IPin_QueryAccept(source, media_types[i]);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        /* Copy the RGB32 media type that was accepted for another QueryAccept test after disconnect */
+        if (rgb32 && i == 1)
+            CopyMediaType(rgb32, media_types[i]);
+
+        /* Test negative height */
+        ((VIDEOINFO *)media_types[i]->pbFormat)->bmiHeader.biHeight = -240;
+        hr = IPin_QueryAccept(source, media_types[i]);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+        DeleteMediaType(media_types[i]);
+
+        winetest_pop_context();
+    }
+
+    hr = IEnumMediaTypes_Next(enum_types, ARRAY_SIZE(subtypes), media_types, &num_types);
+    ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    ok(num_types == 0, "Got num_types %lu.\n", num_types);
+
+    IEnumMediaTypes_Release(enum_types);
+
+    winetest_pop_context();
+}
+
 static void test_media_types(void)
 {
-    AM_MEDIA_TYPE *media_types[ARRAY_SIZE(subtypes)], req_mt, mt;
+    AM_MEDIA_TYPE req_mt, rgb32 = { 0 };
     struct testfilter *peer = NULL;
-    IEnumMediaTypes *enum_types;
-    ULONG refcount, num_types;
-    IPin *sink, *source;
     VIDEOINFO video_info;
     IFilterGraph *graph;
     IBaseFilter *filter;
-    DWORD image_size;
+    IPin *sink, *source;
+    ULONG refcount;
     HRESULT hr;
     int i;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = create_filter_graph(&graph);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1328,10 +1420,7 @@ static void test_media_types(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IBaseFilter_FindPin(filter, L"Out", &source);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        goto skip_test;
 
     hr = IBaseFilter_FindPin(filter, L"In", &sink);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1351,17 +1440,15 @@ static void test_media_types(void)
         winetest_push_context("subtype %d", i);
 
         req_mt.subtype = *subtypes[i].guid;
-        req_mt.cbFormat = subtypes[i].cbFormat;
+        req_mt.cbFormat = subtypes[i].format;
         video_info.bmiHeader.biHeight = 240;
         hr = IPin_QueryAccept(sink, &req_mt);
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
-        todo_wine
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_Disconnect(sink);
-        todo_wine
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         /* Test negative height */
@@ -1371,18 +1458,21 @@ static void test_media_types(void)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
-        todo_wine
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_Disconnect(sink);
-        todo_wine
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         winetest_pop_context();
     }
 
-    req_mt.subtype = MEDIASUBTYPE_RGB32;
-    req_mt.cbFormat = sizeof(VIDEOINFOHEADER);
+    /* Test RGB565 media type with bit fields */
+    req_mt.subtype = MEDIASUBTYPE_RGB565;
+    req_mt.cbFormat = sizeof(VIDEOINFOHEADER) + sizeof(DWORD[3]);
+    video_info.bmiHeader.biCompression = BI_BITFIELDS;
+    video_info.dwBitMasks[0] = 0xf800;
+    video_info.dwBitMasks[1] = 0x7e0;
+    video_info.dwBitMasks[2] = 0x1f;
     video_info.bmiHeader.biHeight = 240;
     /* Any value of biPlanes is accepted, and then echoed back in the enum */
     video_info.bmiHeader.biPlanes = 123;
@@ -1397,67 +1487,68 @@ static void test_media_types(void)
     video_info.rcTarget.bottom = 220;
 
     hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
-    todo_wine
+    ok(hr == VFW_E_INVALIDMEDIATYPE, "Got hr %#lx.\n", hr);
+
+    /* Test RGB565 media type with biCompression set to RGB */
+    req_mt.cbFormat = sizeof(VIDEOINFOHEADER);
+    video_info.bmiHeader.biCompression = BI_RGB;
+
+    hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
-    hr = IPin_EnumMediaTypes(source, &enum_types);
-    ok(hr == S_OK, "Got hr %#lx.\n", hr);
-
-    hr = IEnumMediaTypes_Next(enum_types, ARRAY_SIZE(subtypes), media_types, &num_types);
-    todo_wine
-    ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine
-    ok(num_types == 6, "Got num_types %lu.\n", num_types);
-
-    mt = req_mt;
-    mt.bFixedSizeSamples = TRUE;
-
-    for (i = 0; i < num_types; i++)
-    {
-        winetest_push_context("subtype %d", i);
-
-        image_size = 240 * 240 * (subtypes[i].bitcount / 8);
-        mt.subtype = *subtypes[i].guid;
-        mt.lSampleSize = image_size;
-        mt.cbFormat = subtypes[i].cbFormat;
-        video_info.bmiHeader.biSizeImage = image_size;
-        video_info.bmiHeader.biBitCount = subtypes[i].bitcount;
-        video_info.bmiHeader.biCompression = subtypes[i].compression;
-
-        compare_media_types(media_types[i], &mt);
-
-        hr = IPin_QueryAccept(source, media_types[i]);
-        ok(hr == S_OK, "Got hr %#lx.\n", hr);
-
-        /* Copy the RGB32 media type that was accepted for another QueryAccept test after disconnect */
-        if (i == 1)
-            CopyMediaType(&req_mt, media_types[i]);
-
-        /* Test negative height */
-        ((VIDEOINFO *)media_types[i]->pbFormat)->bmiHeader.biHeight = -240;
-        hr = IPin_QueryAccept(source, media_types[i]);
-        ok(hr == S_OK, "Got hr %#lx.\n", hr);
-
-        DeleteMediaType(media_types[i]);
-
-        winetest_pop_context();
-    }
-
-    hr = IEnumMediaTypes_Next(enum_types, ARRAY_SIZE(subtypes), media_types, &num_types);
-    ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
-    ok(num_types == 0, "Got num_types %lu.\n", num_types);
-
-    IEnumMediaTypes_Release(enum_types);
+    test_source_media_types("RGB565", source, &req_mt, NULL);
 
     hr = IPin_Disconnect(sink);
-    todo_wine
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    /* Test RGB8 with a bmiColor */
+    req_mt.subtype = MEDIASUBTYPE_RGB8;
+    req_mt.cbFormat = sizeof(VIDEOINFOHEADER) + sizeof(RGBQUAD[1]);
+    video_info.bmiHeader.biClrUsed = 1;
+    video_info.bmiHeader.biClrImportant = 1;
+
+    hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    test_source_media_types("RGB8 (1 color)", source, &req_mt, NULL);
+
+    hr = IPin_Disconnect(sink);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    /* Test RGB8 with a biClrUsed larger than cbFormat will fit */
+    video_info.bmiHeader.biClrUsed = 2;
+
+    hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
+    ok(hr == VFW_E_INVALIDMEDIATYPE, "Got hr %#lx.\n", hr);
+
+    /* Test RGB8 without bmiColors */
+    req_mt.cbFormat = sizeof(VIDEOINFOHEADER);
+    video_info.bmiHeader.biClrUsed = 0;
+    video_info.bmiHeader.biClrImportant = 0;
+
+    hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    test_source_media_types("RGB8 (0 color)", source, &req_mt, NULL);
+
+    hr = IPin_Disconnect(sink);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    /* Test RGB32 */
+    req_mt.subtype = MEDIASUBTYPE_RGB32;
+
+    hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    test_source_media_types("RGB32", source, &req_mt, &rgb32);
+
+    hr = IPin_Disconnect(sink);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     /* The previously accepted media type is no longer accepted after disconnect */
-    hr = IPin_QueryAccept(source, &req_mt);
-    todo_wine
+    hr = IPin_QueryAccept(source, &rgb32);
     ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
-    FreeMediaType(&req_mt);
+    FreeMediaType(&rgb32);
 
     IPin_Release(sink);
     IPin_Release(source);
@@ -1465,7 +1556,6 @@ static void test_media_types(void)
     refcount = IBaseFilter_Release(&peer->filter.IBaseFilter_iface);
     ok(refcount == 0, "Got refcount %lu.\n", refcount);
 
-skip_test:
     hr = IFilterGraph_RemoveFilter(graph, filter);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
@@ -1486,16 +1576,10 @@ static void test_enum_media_types(void)
     IPin *pin;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = IBaseFilter_FindPin(filter, L"In", &pin);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        goto skip_test;
 
     hr = IPin_EnumMediaTypes(pin, &enum1);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1557,7 +1641,6 @@ static void test_enum_media_types(void)
     IEnumMediaTypes_Release(enum2);
     IPin_Release(pin);
 
-skip_test:
     ref = IBaseFilter_Release(filter);
     ok(!ref, "Got outstanding refcount %ld.\n", ref);
 }
@@ -1570,10 +1653,7 @@ static void test_unconnected_filter_state(void)
     ULONG ref;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = IBaseFilter_GetState(filter, 0, &state);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1765,6 +1845,129 @@ static void test_filter_state(IMediaControl *control, IBaseFilter *filter)
     ok(state == State_Stopped, "Got state %lu.\n", state);
 }
 
+static void test_sink_dynamic_format_change(const char *test_context, IMemInputPin *input, struct testfilter *testsink,
+        const struct image_data *rgb24_image)
+{
+    static const struct
+    {
+        LONG width;
+        LONG height;
+    }
+    image_sizes[] =
+    {
+        { 640, -480 },
+        { 640, 480 },
+        { 180, -180 },
+        { 180, 180 },
+        { 240, -240 },
+        { 240, 240 },
+    };
+
+    struct mem_allocator *sink_allocator;
+    struct image_data *rgb32_image;
+    LONGLONG color_diff, x_diff;
+    VIDEOINFO *video_info_ptr;
+    IMemAllocator *allocator;
+    IMediaSample *sample;
+    LONG image_size;
+    HRESULT hr;
+    BYTE *buff;
+    int i, j;
+
+    winetest_push_context("%s", test_context);
+
+    sink_allocator = mem_allocator_from_IMemAllocator(testsink->sink.pAllocator);
+
+    hr = IMemInputPin_GetAllocator(input, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    for (i = 0; i < ARRAY_SIZE(image_sizes); i++)
+    {
+        winetest_push_context("image size %d", i);
+
+        sink_allocator->expect_get_buffer = TRUE;
+        sink_allocator->expect_get_media_type = TRUE;
+        sink_allocator->media_type_checked = FALSE;
+        hr = IMemAllocator_GetBuffer(allocator, &sample, NULL, NULL, 0);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        todo_wine
+            ok(sink_allocator->sample_refcount == 1, "Got sample refcount %ld.\n", sink_allocator->sample_refcount);
+        todo_wine
+            ok(sink_allocator->media_type_checked, "Expected media type to have been checked.\n");
+        sink_allocator->expect_get_buffer = FALSE;
+        sink_allocator->expect_get_media_type = FALSE;
+
+        image_size = IMediaSample_GetSize(sample);
+        ok(image_size == rgb24_image->size, "Got image_size %ld.\n", image_size);
+
+        hr = IMediaSample_GetPointer(sample, &buff);
+        ok(hr == S_OK, "Get hr %#lx.\n", hr);
+
+        memcpy(buff, rgb24_image->data, image_size);
+        hr = IMediaSample_SetActualDataLength(sample, image_size);
+        ok(hr == S_OK, "Get hr %#lx.\n", hr);
+
+        memset(sink_allocator->data, 0, sizeof(sink_allocator->data));
+        video_info_ptr = (VIDEOINFO *)testsink->sink.pin.mt.pbFormat;
+        video_info_ptr->bmiHeader.biWidth = image_sizes[i].width;
+        video_info_ptr->bmiHeader.biHeight = image_sizes[i].height;
+        video_info_ptr->rcSource.right = min(240, image_sizes[i].width);
+        video_info_ptr->rcSource.bottom = min(240, labs(image_sizes[i].height));
+        video_info_ptr->rcTarget.right = min(240, image_sizes[i].width);
+        video_info_ptr->rcTarget.bottom = min(240, labs(image_sizes[i].height));
+        sink_allocator->size = image_sizes[i].width * labs(image_sizes[i].height) * 4;
+        sink_allocator->send_media_type = TRUE;
+
+        sink_allocator->expect_get_media_type = TRUE;
+        sink_allocator->media_type_checked = FALSE;
+        hr = IMemInputPin_Receive(input, sample);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        ok(sink_allocator->media_type_checked, "Expected media type to have been checked.\n");
+        sink_allocator->expect_get_buffer = FALSE;
+        sink_allocator->expect_get_media_type = FALSE;
+        sink_allocator->send_media_type = FALSE;
+
+        IMediaSample_Release(sample);
+
+        sample = testsink->sample;
+        testsink->sample = NULL;
+
+        ok(sample != NULL, "Expected out peer sample.\n");
+
+        hr = IMediaSample_GetPointer(sample, &buff);
+        ok(hr == S_OK, "Get hr %#lx.\n", hr);
+
+        rgb32_image = create_image(TRUE, image_sizes[i].height > 0, image_sizes[i].width, labs(image_sizes[i].height));
+
+        image_size = IMediaSample_GetSize(sample);
+        ok(image_size == rgb32_image->size, "Got image_size %ld.\n", image_size);
+
+        color_diff = x_diff = 0;
+        for (j = 0; j < image_size; ++j)
+        {
+            if (j % 4 == 3)
+                x_diff += abs((int)buff[j] - (int)rgb32_image->data[j]);
+            else
+                color_diff += abs((int)buff[j] - (int)rgb32_image->data[j]);
+        }
+        color_diff = color_diff * 100 / 255 / (image_size * 3 / 4);
+        x_diff = x_diff * 100 / 255 / (image_size / 4);
+        ok(color_diff == 0, "Got %I64u%% difference.\n", color_diff);
+        todo_wine
+        ok(x_diff == 0, "Got %I64u%% difference.\n", x_diff);
+        free(rgb32_image);
+
+        IMediaSample_Release(sample);
+        ok(sink_allocator->sample_refcount == 0, "Got sample refcount %ld.\n", sink_allocator->sample_refcount);
+
+        winetest_pop_context();
+    }
+
+    IMemAllocator_Release(allocator);
+
+    winetest_pop_context();
+}
+
 #define SET_TIME_START    (1 << 0)
 #define SET_TIME_END      (1 << 1)
 #define SET_MEDIA_TIME    (1 << 2)
@@ -1782,13 +1985,13 @@ static void test_filter_state(IMediaControl *control, IBaseFilter *filter)
 #define EXP_DISCONTINUITY      (1 << 4)
 #define EXP_UNDEFINED_TIME_END (1 << 5)
 
-#define TODO_TIME           (1 << 0)
+#define TODO_TIME_END       (1 << 0)
 #define TODO_MEDIA_TIME     (1 << 1)
 #define TODO_SYNC_POINT     (1 << 2)
 #define TODO_PREROLL        (1 << 3)
 
-static void test_sample_processing(
-        IMediaControl *control, IMemInputPin *input, struct testfilter *testsink, IBaseFilter *dmo_filter)
+static void test_sample_processing(IMediaControl *control, IMemInputPin *input, struct testfilter *testsource,
+        struct testfilter *testsink, IBaseFilter *dmo_filter)
 {
     static struct
     {
@@ -1801,7 +2004,7 @@ static void test_sample_processing(
     tests[] =
     {
         {
-            .todo_flags = TODO_SYNC_POINT | TODO_TIME
+            .todo_flags = TODO_SYNC_POINT
         },
         {
             .flags = SET_TIME_START | SET_MEDIA_TIME | SET_SYNC_POINT,
@@ -1810,7 +2013,7 @@ static void test_sample_processing(
             .media_time_end = 20000,
             .sync_point = TRUE,
             .expected_flags = EXP_TIME | EXP_UNDEFINED_TIME_END | EXP_MEDIA_TIME | EXP_SYNC_POINT,
-            .todo_flags = TODO_MEDIA_TIME
+            .todo_flags = TODO_MEDIA_TIME | TODO_TIME_END
         },
         {
             .flags = SET_TIME,
@@ -1873,15 +2076,14 @@ static void test_sample_processing(
             .todo_flags = TODO_MEDIA_TIME
         },
     };
-
     struct image_data *rgb24_image, *rgb32_image;
     REFERENCE_TIME *time_start, *time_end;
     struct mem_allocator *sink_allocator;
+    LONGLONG color_diff, x_diff;
     VIDEOINFO *video_info_ptr;
     IMemAllocator *allocator;
     IMediaSample *sample;
     LONG image_size;
-    LONGLONG diff;
     HRESULT hr;
     BYTE *buff;
     int i;
@@ -1892,7 +2094,6 @@ static void test_sample_processing(
     testsink->can_block = S_FALSE;
 
     hr = IMemInputPin_ReceiveCanBlock(input);
-    todo_wine
     ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
 
     sink_allocator = mem_allocator_from_IMemAllocator(testsink->sink.pAllocator);
@@ -1976,26 +2177,19 @@ static void test_sample_processing(
         sink_allocator->expect_get_media_type = TRUE;
         sink_allocator->media_type_checked = FALSE;
         hr = IMemInputPin_Receive(input, sample);
-        todo_wine
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
-        if (hr != S_OK)
-        {
-            winetest_pop_context();
-            continue;
-        }
 
         ok(sink_allocator->sample_refcount == 1, "Got sample refcount %ld.\n", sink_allocator->sample_refcount);
-        todo_wine
         ok(sink_allocator->media_type_checked, "Expected media type to have been checked.\n");
         ok(testsink->sample != NULL, "Expected out peer sample.\n");
         sink_allocator->expect_get_buffer = FALSE;
         sink_allocator->expect_set_time = FALSE;
         sink_allocator->expect_get_media_type = FALSE;
 
-        todo_wine_if(tests[i].todo_flags & TODO_TIME)
         if (tests[i].expected_flags & EXP_TIME)
         {
             ok(sink_allocator->ts_set, "Time start should be set.\n");
+            todo_wine_if(tests[i].todo_flags & TODO_TIME_END)
             ok(sink_allocator->te_set, "Time end should be set.\n");
             ok(sink_allocator->time_start == tests[i].time_start, "Got start time %I64d.\n",
                     sink_allocator->time_start);
@@ -2081,9 +2275,7 @@ static void test_sample_processing(
     sink_allocator->expect_get_media_type = TRUE;
     sink_allocator->media_type_checked = FALSE;
     hr = IMemInputPin_Receive(input, sample);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine
     ok(sink_allocator->media_type_checked, "Expected media type to have been checked.\n");
     sink_allocator->expect_get_buffer = FALSE;
     sink_allocator->expect_get_media_type = FALSE;
@@ -2093,10 +2285,7 @@ static void test_sample_processing(
     sample = testsink->sample;
     testsink->sample = NULL;
 
-    todo_wine
     ok(sample != NULL, "Expected out peer sample.\n");
-    if (sample == NULL)
-        goto skip_test;
 
     hr = IMediaSample_GetPointer(sample, &buff);
     ok(hr == S_OK, "Get hr %#lx.\n", hr);
@@ -2106,17 +2295,32 @@ static void test_sample_processing(
     image_size = IMediaSample_GetActualDataLength(sample);
     ok(image_size == rgb32_image->size, "Got image_size %ld.\n", image_size);
 
-    diff = 0;
-    for (unsigned int i = 0; i < image_size; ++i)
-        diff += abs((int)buff[i] - (int)rgb32_image->data[i]);
-    diff = diff * 100 / 256 / image_size;
-    ok(diff == 0, "Got %I64u%% difference.\n", diff);
+    color_diff = x_diff = 0;
+    for (i = 0; i < image_size; ++i)
+    {
+        if (i % 4 == 3)
+            x_diff += abs((int)buff[i] - (int)rgb32_image->data[i]);
+        else
+            color_diff += abs((int)buff[i] - (int)rgb32_image->data[i]);
+    }
+    color_diff = color_diff * 100 / 255 / (image_size * 3 / 4);
+    x_diff = x_diff * 100 / 255 / (image_size / 4);
+    ok(color_diff == 0, "Got %I64u%% difference.\n", color_diff);
+    todo_wine
+    ok(x_diff == 0, "Got %I64u%% difference.\n", x_diff);
 
     free(rgb32_image);
     IMediaSample_Release(sample);
     ok(sink_allocator->sample_refcount == 0, "Got sample refcount %ld.\n", sink_allocator->sample_refcount);
 
-    /* Test dynamic format change (flip height) */
+    test_sink_dynamic_format_change("bottom-up", input, testsink, rgb24_image);
+
+    free(rgb24_image);
+
+    /* Test dynamic format change of source buffer (switch from bottom-up to top-down) */
+    video_info_ptr = (VIDEOINFO *)testsource->source.pin.mt.pbFormat;
+    video_info_ptr->bmiHeader.biHeight = -video_info_ptr->bmiHeader.biHeight;
+
     sink_allocator->expect_get_buffer = TRUE;
     sink_allocator->expect_get_media_type = TRUE;
     sink_allocator->media_type_checked = FALSE;
@@ -2129,6 +2333,11 @@ static void test_sample_processing(
     sink_allocator->expect_get_buffer = FALSE;
     sink_allocator->expect_get_media_type = FALSE;
 
+    hr = IMediaSample_SetMediaType(sample, &testsource->source.pin.mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    rgb24_image = create_image(FALSE, FALSE, 240, 240);
+
     image_size = IMediaSample_GetSize(sample);
     ok(image_size == rgb24_image->size, "Got image_size %ld.\n", image_size);
 
@@ -2136,30 +2345,17 @@ static void test_sample_processing(
     ok(hr == S_OK, "Get hr %#lx.\n", hr);
 
     memcpy(buff, rgb24_image->data, image_size);
-    free(rgb24_image);
     hr = IMediaSample_SetActualDataLength(sample, image_size);
     ok(hr == S_OK, "Get hr %#lx.\n", hr);
 
-    memset(sink_allocator->data, 0, sizeof(sink_allocator->data));
-    video_info_ptr = (VIDEOINFO *)testsink->sink.pin.mt.pbFormat;
-    video_info_ptr->bmiHeader.biWidth = 640;
-    video_info_ptr->bmiHeader.biHeight = -480;
-    video_info_ptr->rcSource.right = 240;
-    video_info_ptr->rcSource.bottom = 240;
-    video_info_ptr->rcTarget.right = 240;
-    video_info_ptr->rcTarget.bottom = 240;
-    sink_allocator->size = 640 * 480 * 4;
-    sink_allocator->send_media_type = TRUE;
-
+    sink_allocator->expect_get_buffer = TRUE;
     sink_allocator->expect_get_media_type = TRUE;
     sink_allocator->media_type_checked = FALSE;
     hr = IMemInputPin_Receive(input, sample);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine
     ok(sink_allocator->media_type_checked, "Expected media type to have been checked.\n");
     sink_allocator->expect_get_buffer = FALSE;
     sink_allocator->expect_get_media_type = FALSE;
-    sink_allocator->send_media_type = FALSE;
 
     IMediaSample_Release(sample);
 
@@ -2171,23 +2367,34 @@ static void test_sample_processing(
     hr = IMediaSample_GetPointer(sample, &buff);
     ok(hr == S_OK, "Get hr %#lx.\n", hr);
 
-    rgb32_image = create_image(TRUE, FALSE, 640, 480);
+    rgb32_image = create_image(TRUE, TRUE, 240, 240);
 
-    image_size = IMediaSample_GetSize(sample);
+    image_size = IMediaSample_GetActualDataLength(sample);
     ok(image_size == rgb32_image->size, "Got image_size %ld.\n", image_size);
 
-    diff = 0;
-    for (unsigned int i = 0; i < image_size; ++i)
-        diff += abs((int)buff[i] - (int)rgb32_image->data[i]);
-    diff = diff * 100 / 256 / image_size;
+    color_diff = x_diff = 0;
+    for (i = 0; i < image_size; ++i)
+    {
+        if (i % 4 == 3)
+            x_diff += abs((int)buff[i] - (int)rgb32_image->data[i]);
+        else
+            color_diff += abs((int)buff[i] - (int)rgb32_image->data[i]);
+    }
+    color_diff = color_diff * 100 / 255 / (image_size * 3 / 4);
+    x_diff = x_diff * 100 / 255 / (image_size / 4);
+    ok(color_diff == 0, "Got %I64u%% difference.\n", color_diff);
     todo_wine
-    ok(diff == 0, "Got %I64u%% difference.\n", diff);
-    free(rgb32_image);
+    ok(x_diff == 0, "Got %I64u%% difference.\n", x_diff);
 
+    free(rgb32_image);
     IMediaSample_Release(sample);
     ok(sink_allocator->sample_refcount == 0, "Got sample refcount %ld.\n", sink_allocator->sample_refcount);
 
-skip_test:
+    /* Test dynamic format change of sink buffer (with top-down source) */
+    test_sink_dynamic_format_change("top-down", input, testsink, rgb24_image);
+
+    free(rgb24_image);
+
     hr = IMemAllocator_Decommit(allocator);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
@@ -2218,7 +2425,6 @@ static void test_streaming_events(IMediaControl *control, IPin *sink, IMemInputP
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
     sink_allocator->expect_get_buffer = FALSE;
     sink_allocator->expect_get_media_type = FALSE;
-    todo_wine
     ok(sink_allocator->media_type_checked, "Expected media type to have been checked.\n");
     hr = IMediaSample_GetPointer(sample, &data);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2246,11 +2452,8 @@ static void test_streaming_events(IMediaControl *control, IPin *sink, IMemInputP
     sink_allocator->media_type_checked = FALSE;
     sink_allocator->expect_get_media_type = TRUE;
     hr = IMemInputPin_Receive(input, sample);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine
     ok(testsink->sample != NULL, "Expected to receive sample.\n");
-    todo_wine
     ok(sink_allocator->media_type_checked, "Expected media type to have been checked.\n");
     sink_allocator->expect_get_media_type = FALSE;
     if (testsink->sample)
@@ -2277,11 +2480,8 @@ static void test_streaming_events(IMediaControl *control, IPin *sink, IMemInputP
     sink_allocator->expect_get_media_type = TRUE;
     sink_allocator->expect_get_buffer = TRUE;
     hr = IMemInputPin_Receive(input, sample);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    todo_wine
     ok(testsink->sample != NULL, "Expected to receive sample.\n");
-    todo_wine
     ok(sink_allocator->media_type_checked, "Expected media type to have been checked.\n");
     sink_allocator->expect_get_buffer = FALSE;
     sink_allocator->expect_get_media_type = FALSE;
@@ -2311,10 +2511,7 @@ static void test_connect_pin(void)
     HRESULT hr;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = create_filter_graph(&graph);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2326,17 +2523,13 @@ static void test_connect_pin(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IBaseFilter_FindPin(filter, L"In", &sink);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        goto skip_test;
 
     hr = IBaseFilter_FindPin(filter, L"Out", &source);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     meminput = NULL;
     hr = IPin_QueryInterface(sink, &IID_IMemInputPin, (void **)&meminput);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     sink_allocator = create_mem_allocator();
@@ -2387,10 +2580,7 @@ static void test_connect_pin(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IFilterGraph_ConnectDirect(graph, &testsource->source.pin.IPin_iface, sink, &req_mt);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        goto skip_connection_test;
 
     hr = IPin_ConnectedTo(sink, &peer);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2436,7 +2626,7 @@ static void test_connect_pin(void)
     ok(testsink->sink.pin.peer == source, "Got out peer %p.\n", testsink->sink.pin.peer);
 
     test_filter_state(control, filter);
-    test_sample_processing(control, meminput, testsink, filter);
+    test_sample_processing(control, meminput, testsource, testsink, filter);
     test_streaming_events(control, sink, meminput, testsink);
 
     ok(sink_allocator->commited, "Allocator should still be commited\n");
@@ -2459,9 +2649,7 @@ static void test_connect_pin(void)
     hr = IFilterGraph_Disconnect(graph, &testsource->source.pin.IPin_iface);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
-skip_connection_test:
-    if (meminput)
-        IMemInputPin_Release(meminput);
+    IMemInputPin_Release(meminput);
 
     IPin_Release(sink);
     IPin_Release(source);
@@ -2480,7 +2668,7 @@ skip_connection_test:
 
     refcount = IMemAllocator_Release(&sink_allocator->IMemAllocator_iface);
     ok(refcount == 0, "Got refcount %lu.\n", refcount);
-skip_test:
+
     IMediaControl_Release(control);
 
     hr = IFilterGraph_RemoveFilter(graph, filter);

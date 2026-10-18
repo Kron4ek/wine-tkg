@@ -1,4 +1,4 @@
-@ stub BeginEnumeration
+@ stdcall BeginEnumeration(long ptr long)
 @ stdcall BeginMethodEnumeration(long ptr long)
 @ stub BlessIWbemServices
 @ stub BlessIWbemServicesObject
@@ -8,7 +8,7 @@
 @ stdcall ConnectServerWmi(wstr wstr wstr wstr long wstr ptr ptr long long)
 @ stub CreateClassEnumWmi
 @ stdcall CreateInstanceEnumWmi(wstr long ptr ptr long long ptr wstr wstr wstr)
-@ stub Delete
+@ stdcall Delete(long ptr wstr)
 @ stub DeleteMethod
 @ stub DllCanUnloadNow
 @ stub DllGetClassObject
@@ -26,7 +26,7 @@
 @ stub GetMethodOrigin
 @ stdcall GetMethodQualifierSet(long ptr wstr ptr)
 @ stdcall GetNames(long ptr wstr long ptr ptr)
-@ stub GetObjectText
+@ stdcall GetObjectText(long ptr long ptr)
 @ stub GetPropertyHandle
 @ stub GetPropertyInfoByHandle
 @ stub GetPropertyOrigin
@@ -35,9 +35,9 @@
 @ stub InheritsFrom
 @ stdcall Initialize(long)
 @ stub Lock
-@ stub Next
+@ stdcall Next(long ptr long wstr ptr ptr ptr)
 @ stdcall NextMethod(long ptr long ptr ptr ptr)
-@ stub Put
+@ stdcall Put(long ptr wstr long ptr long)
 @ stub PutClassWmi
 @ stub PutInstanceWmi
 @ stub PutMethod

@@ -77,6 +77,8 @@ extern void set_audiopath_perf_pointer(IDirectMusicAudioPath*,IDirectMusicPerfor
 extern void set_audiopath_dsound_buffer(IDirectMusicAudioPath*,IDirectSoundBuffer*);
 extern void set_audiopath_primary_dsound_buffer(IDirectMusicAudioPath*,IDirectSoundBuffer*);
 
+extern HRESULT segment_get_rt_length(IDirectMusicSegment *iface, REFERENCE_TIME *length);
+
 extern HRESULT segment_state_create(IDirectMusicSegment *segment, MUSIC_TIME start_time,
         IDirectMusicPerformance8 *performance, IDirectMusicSegmentState **ret_iface);
 extern HRESULT segment_state_play(IDirectMusicSegmentState *iface, IDirectMusicPerformance8 *performance);
@@ -87,7 +89,7 @@ extern BOOL segment_state_has_segment(IDirectMusicSegmentState *iface, IDirectMu
 extern BOOL segment_state_has_track(IDirectMusicSegmentState *iface, DWORD track_id);
 
 extern HRESULT wave_track_create_from_chunk(IStream *stream, struct chunk_entry *parent,
-        IDirectMusicTrack8 **ret_iface);
+        IDirectMusicTrack8 **ret_iface, REFERENCE_TIME *ret_duration);
 
 extern void sequence_track_set_items(IDirectMusicTrack8 *track, DMUS_IO_SEQ_ITEM *items, unsigned int count);
 

@@ -62,6 +62,56 @@ static const char *debugstr_ok( const char *cond )
 #define ok_ret( e, r )      ok_ex( r, ==, e, UINT_PTR, "%#Ix, error %ld", GetLastError() )
 #define ok_nt( e, r )       ok_ex( r, ==, e, NTSTATUS, "%#lx" )
 
+#define msg_wait_for_events( a, b, c ) msg_wait_for_events_( __FILE__, __LINE__, a, b, c )
+static DWORD msg_wait_for_events_( const char *file, int line, DWORD count, HANDLE *events, DWORD timeout )
+{
+    DWORD ret, end = GetTickCount() + min( timeout, 5000 );
+    MSG msg;
+
+    while ((ret = MsgWaitForMultipleObjects( count, events, FALSE, min( timeout, 5000 ), QS_ALLINPUT )) <= count)
+    {
+        while (PeekMessageW( &msg, 0, 0, 0, PM_REMOVE ))
+        {
+            TranslateMessage( &msg );
+            DispatchMessageW( &msg );
+        }
+        if (ret < count) return ret;
+        if (timeout >= 5000) continue;
+        if (end <= GetTickCount()) timeout = 0;
+        else timeout = end - GetTickCount();
+    }
+
+    if (timeout >= 5000) ok_(file, line)( 0, "MsgWaitForMultipleObjects returned %#lx\n", ret );
+    else ok_(file, line)( ret == WAIT_TIMEOUT, "MsgWaitForMultipleObjects returned %#lx\n", ret );
+    return ret;
+}
+
+#define run_in_process( a ) run_in_process_( __FILE__, __LINE__, a )
+static void run_in_process_( const char *file, int line, const char *args )
+{
+    char cmdline[MAX_PATH * 2], test[MAX_PATH], *tmp, **argv;
+    STARTUPINFOA startup = {.cb = sizeof(STARTUPINFOA)};
+    PROCESS_INFORMATION info = {0};
+    const char *name;
+    DWORD ret;
+    int argc;
+
+    name = file;
+    if ((tmp = strrchr( name, '\\' ))) name = tmp;
+    if ((tmp = strrchr( name, '/' ))) name = tmp;
+    strcpy( test, name );
+    if ((tmp = strrchr( test, '.' ))) *tmp = 0;
+
+    argc = winetest_get_mainargs( &argv );
+    sprintf( cmdline, "%s %s %s", argv[0], argc > 1 ? argv[1] : test, args );
+    ret = CreateProcessA( NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &info );
+    ok_(file, line)( ret, "CreateProcessA failed, error %lu\n", GetLastError() );
+    if (!ret) return;
+
+    msg_wait_for_events( 1, &info.hProcess, winetest_interactive ? 30000 : 10000 );
+    wait_child_process( &info );
+}
+
 #define check_gl_error(exp) check_gl_error_(__LINE__, exp)
 static void check_gl_error_( unsigned int line, GLenum exp )
 {
@@ -101,10 +151,10 @@ static void flush_events(void)
 
 static void init_functions(void)
 {
-#define USE_GL_FUNC( func ) ext.func = (void *)wglGetProcAddress( #func );
-    ALL_GL_EXT_FUNCS
-    ALL_WGL_EXT_FUNCS
+#define USE_GL_FUNC(func) { .name = #func, .ptr = (void *)&ext.func },
+    static const struct { const char *name; void **ptr; } procs[] = { ALL_GL_EXT_FUNCS ALL_WGL_EXT_FUNCS };
 #undef USE_GL_FUNC
+    for (int i = 0; i < ARRAY_SIZE(procs); i++) *procs[i].ptr = wglGetProcAddress( procs[i].name );
 }
 
 static BOOL gl_extension_supported(const char *extensions, const char *extension_string)
@@ -5385,6 +5435,652 @@ static void test_memory_map( HDC hdc)
     wglMakeCurrent( hdc, old_rc );
 }
 
+static void test_other_process_window_process( HWND hwnd, int expect_format )
+{
+    const PIXELFORMATDESCRIPTOR pfd =
+    {
+        .nSize = sizeof(PIXELFORMATDESCRIPTOR),
+        .nVersion = 1,
+        .dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL,
+        .iPixelType = PFD_TYPE_RGBA,
+        .cColorBits = 24,
+    };
+    UINT pixel;
+    int format, value;
+    HGLRC ctx;
+    HDC hdc;
+
+    hdc = GetDC( hwnd );
+    ok_ptr( hdc, !=, NULL );
+
+    /* from the other process pov, the pixel format hasn't been set */
+    format = GetPixelFormat( hdc );
+    ok_u4( format, ==, 0 );
+
+    /* using a different pixel format from the window owner is allowed */
+    format = ChoosePixelFormat( hdc, &pfd );
+    ok_u4( format, !=, 0 );
+    ok_u4( format, !=, expect_format );
+    ok_ret( TRUE, SetPixelFormat( hdc, format, NULL ) );
+
+    ctx = wglCreateContext( hdc );
+    ok_ptr( ctx, !=, NULL );
+    ok_ret( TRUE, wglMakeCurrent( hdc, ctx ) );
+
+    init_functions();
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p context %p\n", hwnd, ctx );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ptr( ext.glGetFramebufferParameteriv, !=, NULL );
+    if (!ext.glGetFramebufferParameteriv) skip( "missing glGetFramebufferParameteriv\n" );
+    else
+    {
+        ext.glGetFramebufferParameteriv( GL_FRAMEBUFFER, GL_DOUBLEBUFFER, &value );
+        ok_ret( GL_NO_ERROR, glGetError() );
+        ok_x4( value, ==, GL_FALSE );
+    }
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    glClearColor( 0.0, 1.0, 0.0, 1.0 );
+    ok_ret( 0, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( 0, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0x00ff00, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p drawn green -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, SwapBuffers( hdc ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0x00ff00, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p swapped buffers\n", hwnd );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ReleaseDC( hwnd, hdc );
+}
+
+static void test_other_process_window( HDC hdc )
+{
+    const PIXELFORMATDESCRIPTOR pfd =
+    {
+        .nSize = sizeof(PIXELFORMATDESCRIPTOR),
+        .nVersion = 1,
+        .dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
+        .iPixelType = PFD_TYPE_RGBA,
+        .cColorBits = 24,
+    };
+    HWND hwnd = WindowFromDC( hdc ), child;
+    HGLRC ctx, child_ctx;
+    int format, value;
+    char args[256];
+    HDC child_hdc;
+    UINT pixel;
+
+    if (winetest_interactive) trace( "*** hwnd %p\n", hwnd );
+
+    format = GetPixelFormat( hdc );
+    ok_u4( format, !=, 0 );
+
+    ctx = wglCreateContext( hdc );
+    ok_ptr( ctx, !=, NULL );
+    ok_ret( TRUE, wglMakeCurrent( hdc, ctx ) );
+
+    ext.glGetFramebufferParameteriv( GL_FRAMEBUFFER, GL_DOUBLEBUFFER, &value );
+    ok_ret( GL_NO_ERROR, glGetError() );
+    ok_x4( value, ==, GL_TRUE );
+
+    glClearColor( 1.0, 0.0, 0.0, 1.0 );
+    ok_ret( 0, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( 0, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0x0000ff, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p drawn red -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, SwapBuffers( hdc ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p swapped buffers\n", hwnd );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    sprintf( args, "test_other_process_window %p %u", hwnd, format );
+    run_in_process( args );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, SwapBuffers( hdc ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0x0000ff, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p swapped buffers\n", hwnd );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, wglDeleteContext( ctx ) );
+
+
+    child = CreateWindowA( "static", "opengl32_test", WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CHILD,
+                           0, 0, 100, 100, hwnd, NULL, NULL, NULL );
+    ok_ptr( child, !=, NULL );
+    flush_events();
+
+    if (winetest_interactive) trace( "*** hwnd %p child %p\n", hwnd, child );
+
+    ok_ptr( GetParent( child ), ==, hwnd );
+    ok_ptr( GetAncestor( child, GA_ROOT ), ==, hwnd );
+    child_hdc = GetDC( child );
+    ok_ptr( child_hdc, !=, NULL );
+
+    format = ChoosePixelFormat( child_hdc, &pfd );
+    ok_u4( format, !=, 0 );
+    ok_ret( TRUE, SetPixelFormat( child_hdc, format, NULL ) );
+
+    child_ctx = wglCreateContext( child_hdc );
+    ok_ptr( child_ctx, !=, NULL );
+    ok_ret( TRUE, wglMakeCurrent( child_hdc, child_ctx ) );
+
+    ext.glGetFramebufferParameteriv( GL_FRAMEBUFFER, GL_DOUBLEBUFFER, &value );
+    ok_ret( GL_NO_ERROR, glGetError() );
+    ok_x4( value, ==, GL_TRUE );
+
+    glClearColor( 1.0, 0.0, 0.0, 1.0 );
+    ok_ret( 0, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( 0, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0x0000ff, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** child %p drawn red -> %#x\n", child, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, SwapBuffers( child_hdc ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** child %p swapped buffers\n", child );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    sprintf( args, "test_other_process_window %p %u", child, format );
+    run_in_process( args );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** child %p -> %#x\n", child, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, SwapBuffers( child_hdc ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0x0000ff, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** child %p swapped buffers\n", child );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, ReleaseDC( child, child_hdc ) );
+    ok_ret( TRUE, wglDeleteContext( child_ctx ) );
+
+
+    DestroyWindow( child );
+}
+
+static void test_other_process_parent_process( HWND child )
+{
+    const PIXELFORMATDESCRIPTOR pfd =
+    {
+        .nSize = sizeof(PIXELFORMATDESCRIPTOR),
+        .nVersion = 1,
+        .dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
+        .iPixelType = PFD_TYPE_RGBA,
+        .cColorBits = 24,
+    };
+    HWND toplevel = GetAncestor( child, GA_ROOT ), hwnd, tmp;
+    UINT pixel;
+    int format;
+    HGLRC ctx;
+    HDC hdc;
+
+
+    /* test creating a context on a child of a foreign window */
+
+    hwnd = CreateWindowA( "static", "opengl32_test", WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CHILD,
+                          0, 0, 100, 100, child, NULL, NULL, NULL );
+    ok_ptr( hwnd, !=, NULL );
+    flush_events();
+
+    hdc = GetDC( hwnd );
+    ok_ptr( hdc, !=, NULL );
+
+    format = ChoosePixelFormat( hdc, &pfd );
+    ok_u4( format, !=, 0 );
+    ok_ret( TRUE, SetPixelFormat( hdc, format, NULL ) );
+
+    ctx = wglCreateContext( hdc );
+    ok_ptr( ctx, !=, NULL );
+    ok_ret( TRUE, wglMakeCurrent( hdc, ctx ) );
+
+    init_functions();
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p context %p\n", hwnd, ctx );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    glClearColor( 0.0, 0.0, 1.0, 1.0 );
+    ok_ret( 0, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( 0, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0xff0000, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p drawn blue -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, SwapBuffers( hdc ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p swapped buffers\n", hwnd );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    /* reparent our window as a toplevel window */
+
+    SetWindowLongA( hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE );
+    tmp = SetParent( hwnd, NULL );
+    ok_ptr( tmp, ==, child );
+    ok_ptr( GetParent( hwnd ), ==, NULL );
+    ok_ptr( GetAncestor( hwnd, GA_ROOT ), ==, hwnd );
+    flush_events();
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p reparent top -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    glClearColor( 0.0, 1.0, 0.0, 1.0 );
+    ok_ret( 0, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( 0, glGetError() );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p drawn green -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0x00ff00, "got %#x\n", pixel );
+
+    ok_ret( TRUE, SwapBuffers( hdc ) );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p swapped buffers\n", hwnd );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0xff0000, "got %#x\n", pixel );
+
+    ok_ret( TRUE, wglDeleteContext( ctx ) );
+    ReleaseDC( hwnd, hdc );
+
+    DestroyWindow( hwnd );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p destroyed\n", hwnd );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+
+    /* test creating a context on a window that is then reparented to a foreign window */
+
+    hwnd = CreateWindowA( "static", "opengl32_test", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                          0, 0, 100, 100, NULL, NULL, NULL, NULL );
+    ok_ptr( hwnd, !=, NULL );
+    flush_events();
+
+    hdc = GetDC( hwnd );
+    ok_ptr( hdc, !=, NULL );
+
+    format = ChoosePixelFormat( hdc, &pfd );
+    ok_u4( format, !=, 0 );
+    ok_ret( TRUE, SetPixelFormat( hdc, format, NULL ) );
+
+    ctx = wglCreateContext( hdc );
+    ok_ptr( ctx, !=, NULL );
+    ok_ret( TRUE, wglMakeCurrent( hdc, ctx ) );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p context %p\n", hwnd, ctx );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    glClearColor( 1.0, 0.0, 0.0, 1.0 );
+    ok_ret( 0, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( 0, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0x0000ff, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p drawn red -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, SwapBuffers( hdc ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p swapped buffers\n", hwnd );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    /* reparent the window to the foreign child */
+
+    SetWindowLongA( hwnd, GWL_STYLE, WS_CHILD | WS_OVERLAPPEDWINDOW | WS_VISIBLE );
+    tmp = SetParent( hwnd, child );
+    ok_ptr( tmp, ==, GetDesktopWindow() );
+    ok_ptr( GetParent( hwnd ), ==, child );
+    ok_ptr( GetAncestor( hwnd, GA_ROOT ), ==, toplevel );
+    flush_events();
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p reparent %p -> %#x\n", hwnd, child, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    glClearColor( 0.0, 1.0, 0.0, 1.0 );
+    ok_ret( 0, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( 0, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0x00ff00, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p drawn green -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, SwapBuffers( hdc ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0x0000ff, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p swapped buffers\n", hwnd );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    /* reparent the foreign child as a toplevel window */
+
+    tmp = (HWND)SendMessageA( child, WM_USER, 0, 0 );
+    ok_ptr( tmp, ==, toplevel );
+    ok_ptr( GetParent( child ), ==, NULL );
+    ok_ptr( GetAncestor( child, GA_ROOT ), ==, child );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0x0000ff, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** child %p reparent top -> %#x\n", child, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    glClearColor( 0.0, 0.0, 1.0, 1.0 );
+    ok_ret( 0, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( 0, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0xff0000, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p drawn blue -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, SwapBuffers( hdc ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0x00ff00, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p swapped buffers\n", hwnd );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    /* reparent our window as a toplevel window */
+
+    SetWindowLongA( hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE );
+    tmp = SetParent( hwnd, NULL );
+    ok_ptr( tmp, ==, child );
+    ok_ptr( GetParent( hwnd ), ==, NULL );
+    ok_ptr( GetAncestor( hwnd, GA_ROOT ), ==, hwnd );
+    flush_events();
+
+    /* restore the foreign child window parent */
+
+    tmp = (HWND)SendMessageA( child, WM_USER, (WPARAM)toplevel, 0 );
+    ok_ptr( tmp, ==, GetDesktopWindow() );
+    ok_ptr( GetParent( child ), ==, toplevel );
+    ok_ptr( GetAncestor( child, GA_ROOT ), ==, toplevel );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0x00ff00, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p reparent top -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    glClearColor( 1.0, 0.0, 0.0, 1.0 );
+    ok_ret( 0, glGetError() );
+    glClear( GL_COLOR_BUFFER_BIT );
+    ok_ret( 0, glGetError() );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    ok( (pixel & 0xffffff) == 0x0000ff, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p drawn red -> %#x\n", hwnd, pixel );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, SwapBuffers( hdc ) );
+
+    pixel = 0xdeadbeef;
+    glReadPixels( 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel );
+    ok_ret( 0, glGetError() );
+    todo_wine ok( (pixel & 0xffffff) == 0xff0000, "got %#x\n", pixel );
+
+    if (winetest_interactive)
+    {
+        trace( "*** hwnd %p swapped buffers\n", hwnd );
+        msg_wait_for_events( 0, NULL, 1000 );
+    }
+
+    ok_ret( TRUE, wglDeleteContext( ctx ) );
+    ReleaseDC( hwnd, hdc );
+
+    DestroyWindow( hwnd );
+}
+
+static LRESULT WINAPI test_other_process_parent_proc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam )
+{
+    if (msg == WM_USER)
+    {
+        SetWindowLongA( hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE | (wparam ? WS_CHILD : 0) );
+        return (LRESULT)SetParent( hwnd, (HWND)wparam );
+    }
+
+    return DefWindowProcA( hwnd, msg, wparam, lparam );
+}
+
+static void test_other_process_parent( HDC hdc )
+{
+    HWND toplevel = WindowFromDC( hdc ), child;
+    char args[256];
+
+    child = CreateWindowA( "static", "opengl32_test", WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CHILD,
+                           0, 0, 200, 200, toplevel, NULL, NULL, NULL );
+    ok_ptr( child, !=, NULL );
+    flush_events();
+
+    SetWindowLongPtrA( child, GWLP_WNDPROC, (LONG_PTR)test_other_process_parent_proc );
+    ok_ptr( GetParent( child ), ==, toplevel );
+    ok_ptr( GetAncestor( child, GA_ROOT ), ==, toplevel );
+
+    if (winetest_interactive) trace( "*** toplevel %p child %p\n", toplevel, child );
+
+    sprintf( args, "test_other_process_parent %p", child );
+    run_in_process( args );
+
+    DestroyWindow( child );
+    flush_events();
+}
+
 START_TEST(opengl)
 {
     const PIXELFORMATDESCRIPTOR pfd =
@@ -5395,6 +6091,8 @@ START_TEST(opengl)
         .iPixelType = PFD_TYPE_RGBA,
         .cColorBits = 24,
     };
+    char **argv;
+    int argc = winetest_get_mainargs( &argv );
 
     HMODULE gdi32 = GetModuleHandleA( "gdi32.dll" );
     int format, res;
@@ -5406,9 +6104,15 @@ START_TEST(opengl)
     pD3DKMTCreateDCFromMemory = (void *)GetProcAddress( gdi32, "D3DKMTCreateDCFromMemory" );
     pD3DKMTDestroyDCFromMemory = (void *)GetProcAddress( gdi32, "D3DKMTDestroyDCFromMemory" );
 
+    if (argc >= 3 && !strcmp( argv[2], "test_other_process_window" ))
+        return test_other_process_window_process( UlongToHandle( strtol( argv[3], NULL, 16 ) ), strtol( argv[4], NULL, 10 ) );
+    if (argc >= 3 && !strcmp( argv[2], "test_other_process_parent" ))
+        return test_other_process_parent_process( UlongToHandle( strtol( argv[3], NULL, 16 ) ) );
+
     hwnd = CreateWindowW( L"static", NULL, WS_OVERLAPPEDWINDOW | WS_VISIBLE, 10, 10, 200, 200, NULL,
                           NULL, NULL, NULL );
     ok_ptr( hwnd, !=, NULL );
+    flush_events();
 
     check_gl_error( GL_INVALID_OPERATION );
 
@@ -5482,6 +6186,8 @@ START_TEST(opengl)
     test_framebuffer();
     test_memory_map( hdc );
     test_gl_error( hdc );
+    test_other_process_window( hdc );
+    test_other_process_parent( hdc );
 
     tmp = ext.wglGetExtensionsStringEXT();
     ok( tmp && *tmp, "got wgl_extensions %s\n", debugstr_a(tmp) );

@@ -367,9 +367,6 @@ extern NTSTATUS open_hkcu_key( const char *path, HANDLE *key );
 
 extern NTSTATUS sync_ioctl( HANDLE file, ULONG code, void *in_buffer, ULONG in_size,
                             void *out_buffer, ULONG out_size );
-extern NTSTATUS cdrom_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user,
-                                       IO_STATUS_BLOCK *io, UINT code, void *in_buffer,
-                                       UINT in_size, void *out_buffer, UINT out_size );
 extern NTSTATUS serial_DeviceIoControl( HANDLE device, HANDLE event, PIO_APC_ROUTINE apc, void *apc_user,
                                         IO_STATUS_BLOCK *io, UINT code, void *in_buffer,
                                         UINT in_size, void *out_buffer, UINT out_size );
@@ -642,6 +639,8 @@ static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, UL
                                0, NULL, size, ViewShare, 0, protect );
 }
 
+static const ULONG cpsr_user_mask = 0xf620fc30;
+
 /* LDT definitions */
 
 #if defined(__i386__) || defined(__x86_64__)
@@ -738,7 +737,5 @@ static inline int is_gdt_sel( WORD sel )
 }
 
 #endif  /* defined(__i386__) || defined(__x86_64__) */
-
-BOOL WINAPI __wine_needs_override_large_address_aware(void);
 
 #endif /* __NTDLL_UNIX_PRIVATE_H */

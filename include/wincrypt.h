@@ -2652,9 +2652,10 @@ static const WCHAR CERT_PHYSICAL_STORE_AUTH_ROOT_NAME[] =
 /* CERT_RDN attribute dwValueType flags */
 #define CERT_RDN_FLAGS_MASK 0xff000000
 #define CERT_RDN_ENABLE_T61_UNICODE_FLAG  0x80000000
-#define CERT_RDN_DISABLE_CHECK_TYPE_FLAG  0x4000000
-#define CERT_RDN_ENABLE_UTF8_UNICODE_FLAG 0x2000000
-#define CERT_RDN_DISABLE_IE4_UTF8_FLAG    0x0100000
+#define CERT_RDN_DISABLE_CHECK_TYPE_FLAG  0x40000000
+#define CERT_RDN_ENABLE_UTF8_UNICODE_FLAG 0x20000000
+#define CERT_RDN_FORCE_UTF8_UNICODE_FLAG  0x10000000
+#define CERT_RDN_DISABLE_IE4_UTF8_FLAG    0x01000000
 
 #define IS_CERT_RDN_CHAR_STRING(x) \
  (((x) & CERT_RDN_TYPE_MASK) >= CERT_RDN_NUMERIC_STRING)
@@ -2902,7 +2903,7 @@ typedef struct _CTL_FIND_SUBJECT_PARA
 #define szOID_RSA_signingTime               "1.2.840.113549.1.9.5"
 #define szOID_RSA_counterSign               "1.2.840.113549.1.9.6"
 #define szOID_RSA_challengePwd              "1.2.840.113549.1.9.7"
-#define szOID_RSA_unstructAddr              "1.2.840.113549.1.9.9"
+#define szOID_RSA_unstructAddr              "1.2.840.113549.1.9.8"
 #define szOID_RSA_extCertAttrs              "1.2.840.113549.1.9.9"
 #define szOID_RSA_certExtensions            "1.2.840.113549.1.9.14"
 #define szOID_RSA_SMIMECapabilities         "1.2.840.113549.1.9.15"

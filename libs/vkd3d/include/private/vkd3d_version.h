@@ -1,1 +1,1 @@
-#define VKD3D_VCS_ID " (git 6ee3db29)"
+#define VKD3D_VCS_ID " (git fed0c341)"

@@ -2211,6 +2211,21 @@ static const struct test_image_load_info
             }
         }
     },
+    /* Pass in dimensions smaller than the block size. */
+    {
+        test_dds_dxt1, sizeof(test_dds_dxt1),
+        {
+            2, 2, D3DX10_DEFAULT, D3DX10_DEFAULT, 1, (D3D10_USAGE)D3DX10_DEFAULT,
+            D3DX10_DEFAULT, D3DX10_DEFAULT, D3DX10_DEFAULT, D3DX10_DEFAULT, D3DX10_DEFAULT, D3DX10_DEFAULT
+        },
+        S_OK, D3D10_RESOURCE_DIMENSION_TEXTURE2D,
+        {
+            .desc_2d =
+            {
+                4, 4, 1, 1, DXGI_FORMAT_BC1_UNORM, { 1, 0 }, D3D10_USAGE_DEFAULT, D3D10_BIND_SHADER_RESOURCE, 0, 0
+            }
+        }
+    },
 };
 
 static const struct test_invalid_image_load_info
@@ -8609,7 +8624,6 @@ static void test_create_effect_from_memory(void)
 #if D3DX10_SDK_VERSION >= 40
     ok(desc.ConstantBuffers == 1, "Unexpected buffer count.\n");
 #else
-    todo_wine
     ok(desc.ConstantBuffers == 2, "Unexpected buffer count.\n");
 #endif
     effect->lpVtbl->Release(effect);

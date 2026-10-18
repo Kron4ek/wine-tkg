@@ -2523,7 +2523,9 @@ async_test("weakmap_obj", function() {
 
     r = external.newRefTest();
     ok(r.ref === 1, "wrong ref after newRefTest: " + r.ref);
-    o = { val: r.get(), map: s };
+    o = document.createElement("div");
+    o.val = r.get();
+    o.map = s;
     s.set(o, o);
     ok(r.ref > 1, "map entry released");
 
@@ -4931,4 +4933,11 @@ sync_test("i8 types", function() {
     v = external.getVariant(20, "1152921504606846977");
     ok(external.getVT(v) === "VT_R8", "VT_I8 stored as " + external.getVT(v));
     ok(v === 1152921504606846976, "v = " + v);
+});
+
+sync_test("properties enumeration", function() {
+    for (var prop in external)
+    {
+        ok(false, "got property");
+    }
 });

@@ -168,7 +168,7 @@ case "$host_cpu" in
   x86_64)          HOST_ARCH=x86_64 ;;
 esac
 m4_set_add_all([_AC_SUBST_VARS],[HOST_ARCH]m4_foreach([cpu],[aarch64,arm,arm64ec,i386,x86_64],
-                                [m4_foreach([var],[CC,CXX,CFLAGS,CXXFLAGS,EXTRACFLAGS,EXTRACXXFLAGS,LDFLAGS,DEBUG,TARGET,STRIP,DELAYLOADFLAG,DISABLED_SUBDIRS],[,cpu[_]var])]))
+                                [m4_foreach([var],[CC,CXX,CFLAGS,CXXFLAGS,EXTRACFLAGS,EXTRACXXFLAGS,LDFLAGS,DEBUG,TARGET,STRIP,DELAYLOADFLAG],[,cpu[_]var])]))
 
 dnl Some special cases for the Windows platform
 
@@ -367,6 +367,10 @@ WINE_WARNING_WITH(gettext,[test "$MSGFMT" = false],
 dnl **** Check for PE cross compiler ****
 
 AC_SUBST(PE_ARCHS,"")
+AC_SUBST(CXX_PE_ARCHS,"")
+AC_SUBST(CPPABI_PE_ARCHS,"")
+AS_VAR_IF([enable_win16],[no],[AC_SUBST(WIN16_ARCH,none)],[WIN16_ARCH=i386])
+
 cross_archs=
 AS_VAR_SET_IF([enable_archs],
     [test "x$with_system_dllpath" = "x" || AC_MSG_ERROR("The --with-system-dllpath option is not compatible with --enable-archs")
@@ -575,17 +579,17 @@ Please install mingw-w64, clang/llvm-dlltool/lld, or llvm-mingw.])
     AS_VAR_POPDEF([wine_cv_crosscxx_cxx17])
     case "x$res" in
       x) AC_MSG_RESULT([none needed])
-         enable_cplusplus="$enable_cplusplus,$wine_arch" ;;
+         AS_VAR_APPEND([CXX_PE_ARCHS],[" $wine_arch"]) ;;
       xno) AC_MSG_RESULT([unsupported])
            WINE_WARNING([$wine_arch PE compiler supporting C++17 not found, some modules won't be built.]) ;;
       x*) AC_MSG_RESULT([$res])
           AS_VAR_APPEND([${wine_arch}_CXX],[" $res"])
-          enable_cplusplus="$enable_cplusplus,$wine_arch" ;;
+          AS_VAR_APPEND([CXX_PE_ARCHS],[" $wine_arch"]) ;;
     esac
 
     AS_VAR_IF([res],[no],[AS_VAR_SET([${wine_arch}_CXX],[])],
               [case "$target" in
-                 *mingw*|*-windows-gnu) enable_cppabi="$enable_cppabi,$wine_arch" ;;
+                 *mingw*|*-windows-gnu) AS_VAR_APPEND([CPPABI_PE_ARCHS],[" $wine_arch"]) ;;
                esac])
 
     WINE_TRY_PE_CFLAGS([-fno-strict-aliasing])
@@ -691,6 +695,9 @@ CFLAGS=$saved_CFLAGS
 CPPFLAGS=$saved_CPPFLAGS
 CXXFLAGS=$saved_CXXFLAGS
 LDFLAGS=$saved_LDFLAGS
+
+CXX_PE_ARCHS=${CXX_PE_ARCHS:-none}
+CPPABI_PE_ARCHS=${CPPABI_PE_ARCHS:-none}
 
 case $HOST_ARCH-$host_os in
   x86_64-darwin*|arm-*|aarch64-*|*-cygwin*|*-mingw32*)
@@ -1593,14 +1600,10 @@ dnl **** Check for libva ****
 if test "x$with_va" != "xno"
 then
     WINE_PACKAGE_FLAGS(VA,[libva libva-drm],[-lva-drm -lva],,,
-        [AC_CHECK_HEADERS(va/va_drm.h)
-        if test "$ac_cv_header_va_va_drm_h" = "yes"
-        then
-            WINE_CHECK_SONAME(va-drm, vaGetDisplayDRM,,[VA_CFLAGS=""])
-            WINE_CHECK_SONAME(va, vaInitialize,,[VA_CFLAGS=""])
-        else
-            VA_CFLAGS=""
-        fi])
+        [AC_CHECK_HEADER([va/va_drm.h],
+            [WINE_CHECK_SONAME(va-drm, vaGetDisplayDRM,,[VA_CFLAGS=""])
+             WINE_CHECK_SONAME(va, vaInitialize,,[VA_CFLAGS=""])],
+            [VA_CFLAGS=""])])
 fi
 WINE_NOTICE_WITH(va,[test "x$ac_cv_lib_soname_va_drm" = x -o "x$ac_cv_lib_soname_va" = x],
                  [libva-drm ${notice_platform}development files not found, VA video acceleration won't be supported.])
@@ -1780,7 +1783,7 @@ then
     ac_oss_incl="-I${OSSLIBDIR:-/usr/lib/oss}/include"
     CPPFLAGS="$CPPFLAGS $ac_oss_incl"
     AC_CHECK_HEADER([sys/soundcard.h],
-        [AC_CHECK_MEMBERS([oss_sysinfo.numaudioengines],
+        [AC_CHECK_MEMBER([oss_sysinfo.numaudioengines],
             [AC_SUBST(OSS4_CFLAGS,"$ac_oss_incl")
              AC_CHECK_LIB(ossaudio,_oss_ioctl,
                  [AC_SUBST(OSS4_LIBS,"-lossaudio")])],,
@@ -1818,12 +1821,7 @@ dnl **** Check for capi4linux ****
 if test "x$with_capi" != "xno"
 then
     WINE_PACKAGE_FLAGS(CAPI20,[capi20],,,,
-     dnl Check for broken kernel header that doesn't define __user
-    [AC_CHECK_HEADERS([capi20.h linux/capi.h],,,[#define __user])
-    if test "$ac_cv_header_capi20_h" = "yes" -a "$ac_cv_header_linux_capi_h" = "yes"
-    then
-        AC_CHECK_FUNC(capi20_register)
-    fi])
+        [AC_CHECK_HEADER([capi20.h],[AC_CHECK_FUNC(capi20_register)])])
 fi
 WINE_NOTICE_WITH(capi,[test "x$ac_cv_func_capi20_register" != xyes],
                  [libcapi20 ${notice_platform}development files not found, ISDN won't be supported.],
@@ -1863,9 +1861,9 @@ then
     WINE_PACKAGE_FLAGS(KRB5,[krb5],,
                        [`${KRB5_CONFIG:-krb5-config} --cflags 2>/dev/null`],
                        [`${KRB5_CONFIG:-krb5-config} --libs 2>/dev/null`],
-        [AC_CHECK_HEADER([krb5/krb5.h],[WINE_CHECK_SONAME(krb5,krb5_is_config_principal)])])
+        [AC_CHECK_HEADER([krb5/krb5.h],[AC_CHECK_FUNC(krb5_is_config_principal)])])
 fi
-WINE_NOTICE_WITH(krb5,[test "x$ac_cv_lib_soname_krb5" = "x"],
+WINE_NOTICE_WITH(krb5,[test "x$ac_cv_func_krb5_is_config_principal" != xyes],
                  [libkrb5 ${notice_platform}development files not found (or too old), Kerberos won't be supported.],
                  [enable_kerberos])
 
@@ -1877,9 +1875,9 @@ then
                        [`${KRB5_CONFIG:-krb5-config} --libs gssapi 2>/dev/null`],
         [AC_CHECK_HEADER([gssapi/gssapi.h],
              [AC_CHECK_HEADER([gssapi/gssapi_ext.h],
-                  [WINE_CHECK_SONAME(gssapi_krb5, gss_init_sec_context)])])])
+                  [AC_CHECK_FUNC(gss_init_sec_context)])])])
 fi
-WINE_NOTICE_WITH(gssapi,[test "x$ac_cv_lib_soname_gssapi_krb5" = "x"],
+WINE_NOTICE_WITH(gssapi,[test "x$ac_cv_func_gss_init_sec_context" != xyes],
                  [libgssapi_krb5 ${notice_platform}development files not found (or too old), Kerberos won't be supported.],
                  [enable_kerberos])
 
@@ -1914,13 +1912,11 @@ fi
 dnl *** Check for Vulkan ***
 if test "x$with_vulkan" != "xno"
 then
-    WINE_CHECK_SONAME(vulkan, vkGetInstanceProcAddr)
-    if test "x$ac_cv_lib_soname_vulkan" = "x"
-    then
-        WINE_CHECK_SONAME(MoltenVK, vkGetInstanceProcAddr, [AC_DEFINE_UNQUOTED(SONAME_LIBVULKAN,["$ac_cv_lib_soname_MoltenVK"])])
-    fi
+    WINE_CHECK_SONAME(vulkan, vkGetInstanceProcAddr,,
+        [WINE_CHECK_SONAME(MoltenVK, vkGetInstanceProcAddr,
+            [AC_DEFINE_UNQUOTED(SONAME_LIBVULKAN,["$ac_cv_lib_soname_MoltenVK"])])])
 fi
-WINE_NOTICE_WITH(vulkan,[test "x$ac_cv_lib_soname_vulkan" = "x" -a "x$ac_cv_lib_soname_MoltenVK" = "x"],
+WINE_NOTICE_WITH(vulkan,[test "x$ac_cv_lib_soname_vulkan$ac_cv_lib_soname_MoltenVK" = "x"],
                  [libvulkan and libMoltenVK ${notice_platform}development files not found, Vulkan won't be supported.])
 
 dnl **** Check for gcc specific options ****
@@ -2369,90 +2365,14 @@ esac
 
 dnl *** Check for modules to disable by default
 
-enable_vcruntime140_1=${enable_vcruntime140_1:-x86_64,arm64ec}
-
-if test -n "$PE_ARCHS"
+if test -z "$PE_ARCHS"
 then
-    enable_wow64=${enable_wow64:-aarch64,x86_64}
-    enable_wow64win=${enable_wow64win:-aarch64,x86_64}
-    enable_wow64cpu=${enable_wow64cpu:-x86_64}
-    enable_xtajit64=${enable_xtajit64:-arm64ec}
-else
     enable_wow64=${enable_wow64:-no}
     enable_wow64win=${enable_wow64win:-no}
     enable_wow64cpu=${enable_wow64cpu:-no}
     enable_xtajit64=${enable_xtajit64:-no}
     enable_compiler_rt=${enable_compiler_rt:-no}
 fi
-
-dnl Disable modules that need C++
-enable_cplusplus=${enable_cplusplus:-no}
-enable_cpp=${enable_cpp:-$enable_cplusplus}
-enable_cppabi=${enable_cppabi:-no}
-enable_unwind=${enable_unwind:-$enable_cppabi}
-enable_dmsynth=${enable_dmsynth:-$enable_cplusplus}
-enable_fluidsynth=${enable_fluidsynth:-$enable_cplusplus}
-enable_icu=${enable_icu:-$enable_cplusplus}
-enable_icucommon=${enable_icucommon:-$enable_cplusplus}
-enable_icui18n=${enable_icui18n:-$enable_cplusplus}
-
-dnl Disable some programs for other PE archs
-enable_conhost=${enable_conhost:-$HOST_ARCH}
-enable_lsass=${enable_lsass:-$HOST_ARCH}
-enable_plugplay=${enable_plugplay:-$HOST_ARCH}
-enable_rpcss=${enable_rpcss:-$HOST_ARCH}
-enable_services=${enable_services:-$HOST_ARCH}
-enable_spoolsv=${enable_spoolsv:-$HOST_ARCH}
-enable_termsv=${enable_termsv:-$HOST_ARCH}
-enable_wineboot=${enable_wineboot:-$HOST_ARCH}
-enable_winemenubuilder=${enable_winemenubuilder:-$HOST_ARCH}
-enable_wuauserv=${enable_wuauserv:-$HOST_ARCH}
-
-dnl Explicitly enable some programs for arm64ec
-enable_cmd=${enable_cmd:-yes}
-enable_dllhost=${enable_dllhost:-yes}
-enable_dpnsvr=${enable_dpnsvr:-i386,x86_64,arm64ec}
-enable_dxdiag=${enable_dxdiag:-yes}
-enable_msiexec=${enable_msiexec:-yes}
-enable_netsh=${enable_netsh:-yes}
-enable_regsvr32=${enable_regsvr32:-yes}
-enable_rundll32=${enable_rundll32:-yes}
-
-dnl Disable 32-bit only modules for other archs
-enable_crtdll=${enable_crtdll:-i386}
-enable_ctl3d32=${enable_ctl3d32:-i386}
-enable_d3d8=${enable_d3d8:-i386}
-enable_d3dim=${enable_d3dim:-i386}
-enable_d3dim700=${enable_d3dim700:-i386}
-enable_dmband=${enable_dmband:-i386}
-enable_dmcompos=${enable_dmcompos:-i386}
-enable_dmime=${enable_dmime:-i386}
-enable_dmscript=${enable_dmscript:-i386}
-enable_dmstyle=${enable_dmstyle:-i386}
-enable_dplay=${enable_dplay:-i386}
-enable_dplayx=${enable_dplayx:-i386}
-enable_dpwsockx=${enable_dpwsockx:-i386}
-enable_iccvid=${enable_iccvid:-i386}
-enable_iprop=${enable_iprop:-i386}
-enable_msscript_ocx=${enable_msscript_ocx:-i386}
-enable_msvcp70=${enable_msvcp70:-i386}
-enable_msvcp71=${enable_msvcp71:-i386}
-enable_msvcr70=${enable_msvcr70:-i386}
-enable_msvcr71=${enable_msvcr71:-i386}
-enable_msvcrt20=${enable_msvcrt20:-i386}
-enable_msvcrt40=${enable_msvcrt40:-i386}
-enable_msvcrtd=${enable_msvcrtd:-i386}
-enable_olecli32=${enable_olecli32:-i386}
-enable_olepro32=${enable_olepro32:-i386}
-enable_olethk32=${enable_olethk32:-i386}
-enable_twain_32=${enable_twain_32:-i386}
-enable_vdmdbg=${enable_vdmdbg:-i386}
-
-dnl Disable Win16-related modules
-enable_win16=${enable_win16:-i386}
-enable_w32skrnl=${enable_w32skrnl:-$enable_win16}
-enable_wow32=${enable_wow32:-$enable_win16}
-enable_winevdm=${enable_winevdm:-$enable_win16}
 
 dnl Disable winetest too if tests are disabled
 enable_winetest=${enable_winetest:-$enable_tests}
@@ -3479,6 +3399,8 @@ WINE_CONFIG_MAKEFILE(dlls/wpc)
 WINE_CONFIG_MAKEFILE(dlls/wpc/tests)
 WINE_CONFIG_MAKEFILE(dlls/wpcap)
 WINE_CONFIG_MAKEFILE(dlls/wpcap/tests)
+WINE_CONFIG_MAKEFILE(dlls/wpnapps)
+WINE_CONFIG_MAKEFILE(dlls/wpnapps/tests)
 WINE_CONFIG_MAKEFILE(dlls/ws2_32)
 WINE_CONFIG_MAKEFILE(dlls/ws2_32/tests)
 WINE_CONFIG_MAKEFILE(dlls/wsdapi)
@@ -3825,7 +3747,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-11.19.r0.g766285c4\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-11.20.r0.g711f5be0\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 dlls/wineandroid.drv/wine-debug.apk: dlls/wineandroid.drv/build.gradle ${wine_srcdir}dlls/wineandroid.drv/AndroidManifest.xml ${wine_srcdir}dlls/wineandroid.drv/WineActivity.java ${wine_srcdir}dlls/wineandroid.drv/wine.svg

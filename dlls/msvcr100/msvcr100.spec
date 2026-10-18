@@ -712,7 +712,8 @@
 @ cdecl __AdjustPointer(ptr ptr)
 @ stub __BuildCatchObject
 @ stub __BuildCatchObjectHelper
-@ stdcall -arch=!i386 __C_specific_handler(ptr long ptr ptr)
+@ stdcall -arch=!i386,!arm64ec __C_specific_handler(ptr long ptr ptr)
+@ stdcall -arch=arm64ec -norelay __C_specific_handler(ptr long ptr ptr)
 @ cdecl __CppXcptFilter(long ptr)
 @ stub __CxxCallUnwindDelDtor
 @ stub __CxxCallUnwindDtor
@@ -857,9 +858,9 @@
 @ cdecl _aligned_msize(ptr long long)
 @ cdecl _aligned_offset_malloc(long long long)
 @ cdecl _aligned_offset_realloc(ptr long long long)
-@ stub _aligned_offset_recalloc
+@ cdecl _aligned_offset_recalloc(ptr long long long long)
 @ cdecl _aligned_realloc(ptr long long)
-@ stub _aligned_recalloc
+@ cdecl _aligned_recalloc(ptr long long long)
 @ cdecl _amsg_exit(long)
 @ cdecl _assert(str str long)
 @ cdecl _atodbl(ptr str)
@@ -1922,11 +1923,14 @@
 @ cdecl mbtowc(ptr str long)
 @ cdecl memchr(ptr long long)
 @ cdecl memcmp(ptr ptr long)
-@ cdecl memcpy(ptr ptr long)
+@ cdecl -arch=!arm64ec memcpy(ptr ptr long)
+@ cdecl -arch=arm64ec -norelay memcpy(ptr ptr long)
 @ cdecl memcpy_s(ptr long ptr long)
-@ cdecl memmove(ptr ptr long)
+@ cdecl -arch=!arm64ec memmove(ptr ptr long)
+@ cdecl -arch=arm64ec -norelay memmove(ptr ptr long)
 @ cdecl memmove_s(ptr long ptr long)
-@ cdecl memset(ptr long long)
+@ cdecl -arch=!arm64ec memset(ptr long long)
+@ cdecl -arch=arm64ec -norelay memset(ptr long long)
 @ cdecl modf(double ptr)
 @ cdecl -arch=!i386 modff(float ptr)
 @ cdecl perror(str)

@@ -253,7 +253,6 @@ static const WCHAR unix_prefixW[] = {'\\','?','?','\\','u','n','i','x'};
 static const BOOL is_case_sensitive = FALSE;
 
 static pthread_mutex_t dir_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t mnt_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* check if a given Unicode char is OK in a DOS short name */
 static inline BOOL is_invalid_dos_char( WCHAR ch )
@@ -261,17 +260,6 @@ static inline BOOL is_invalid_dos_char( WCHAR ch )
     static const WCHAR invalid_chars[] = { INVALID_DOS_CHARS,'~','.',0 };
     if (ch > 0x7f) return TRUE;
     return wcschr( invalid_chars, ch ) != NULL;
-}
-
-/* check if the device can be a mounted volume */
-static inline BOOL is_valid_mounted_device( const struct stat *st )
-{
-#if defined(linux) || defined(__sun__)
-    return S_ISBLK( st->st_mode );
-#else
-    /* disks are char devices on *BSD */
-    return S_ISCHR( st->st_mode );
-#endif
 }
 
 static inline void ignore_file( const char *name )
@@ -629,6 +617,9 @@ static void flush_dir_queue( struct list *queue )
 }
 
 
+#if defined(HAVE_GETATTRLIST) && defined(ATTR_VOL_CAPABILITIES) && \
+    defined(VOL_CAPABILITIES_FORMAT) && defined(VOL_CAP_FMT_CASE_SENSITIVE)
+
 #ifdef __ANDROID__
 
 static char *unescape_field( char *str )
@@ -731,294 +722,7 @@ static struct mntent *getmntent_replacement( FILE *f )
 #define getmntent getmntent_replacement
 #endif
 
-/***********************************************************************
- *           parse_mount_entries
- *
- * Parse mount entries looking for a given device. Helper for get_default_drive_device.
- */
-
-#ifdef sun
-#include <sys/vfstab.h>
-static char *parse_vfstab_entries( FILE *f, dev_t dev, ino_t ino)
-{
-    struct vfstab entry;
-    struct stat st;
-    char *device;
-
-    while (! getvfsent( f, &entry ))
-    {
-        /* don't even bother stat'ing network mounts, there's no meaningful device anyway */
-        if (!strcmp( entry.vfs_fstype, "nfs" ) ||
-            !strcmp( entry.vfs_fstype, "smbfs" ) ||
-            !strcmp( entry.vfs_fstype, "ncpfs" )) continue;
-
-        if (stat( entry.vfs_mountp, &st ) == -1) continue;
-        if (st.st_dev != dev || st.st_ino != ino) continue;
-        if (!strcmp( entry.vfs_fstype, "fd" ))
-        {
-            if ((device = strstr( entry.vfs_mntopts, "dev=" )))
-            {
-                char *p = strchr( device + 4, ',' );
-                if (p) *p = 0;
-                return device + 4;
-            }
-        }
-        else
-            return entry.vfs_special;
-    }
-    return NULL;
-}
-#endif
-
-#ifdef linux
-static char *parse_mount_entries( FILE *f, dev_t dev, ino_t ino )
-{
-    struct mntent *entry;
-    struct stat st;
-    char *device;
-
-    while ((entry = getmntent( f )))
-    {
-        /* don't even bother stat'ing network mounts, there's no meaningful device anyway */
-        if (!strcmp( entry->mnt_type, "nfs" ) ||
-            !strcmp( entry->mnt_type, "cifs" ) ||
-            !strcmp( entry->mnt_type, "smbfs" ) ||
-            !strcmp( entry->mnt_type, "ncpfs" )) continue;
-
-        if (stat( entry->mnt_dir, &st ) == -1) continue;
-        if (st.st_dev != dev || st.st_ino != ino) continue;
-        if (!strcmp( entry->mnt_type, "supermount" ))
-        {
-            if ((device = strstr( entry->mnt_opts, "dev=" )))
-            {
-                char *p = strchr( device + 4, ',' );
-                if (p) *p = 0;
-                return device + 4;
-            }
-        }
-        else if (!stat( entry->mnt_fsname, &st ) && S_ISREG(st.st_mode))
-        {
-            /* if device is a regular file check for a loop mount */
-            if ((device = strstr( entry->mnt_opts, "loop=" )))
-            {
-                char *p = strchr( device + 5, ',' );
-                if (p) *p = 0;
-                return device + 5;
-            }
-        }
-        else
-            return entry->mnt_fsname;
-    }
-    return NULL;
-}
-#endif
-
-#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
-#include <fstab.h>
-static char *parse_mount_entries( FILE *f, dev_t dev, ino_t ino )
-{
-    struct fstab *entry;
-    struct stat st;
-
-    while ((entry = getfsent()))
-    {
-        /* don't even bother stat'ing network mounts, there's no meaningful device anyway */
-        if (!strcmp( entry->fs_vfstype, "nfs" ) ||
-            !strcmp( entry->fs_vfstype, "smbfs" ) ||
-            !strcmp( entry->fs_vfstype, "ncpfs" )) continue;
-
-        if (stat( entry->fs_file, &st ) == -1) continue;
-        if (st.st_dev != dev || st.st_ino != ino) continue;
-        return entry->fs_spec;
-    }
-    return NULL;
-}
-#endif
-
-#ifdef sun
-#include <sys/mnttab.h>
-static char *parse_mount_entries( FILE *f, dev_t dev, ino_t ino )
-{
-    struct mnttab entry;
-    struct stat st;
-    char *device;
-
-
-    while (( ! getmntent( f, &entry) ))
-    {
-        /* don't even bother stat'ing network mounts, there's no meaningful device anyway */
-        if (!strcmp( entry.mnt_fstype, "nfs" ) ||
-            !strcmp( entry.mnt_fstype, "smbfs" ) ||
-            !strcmp( entry.mnt_fstype, "ncpfs" )) continue;
-
-        if (stat( entry.mnt_mountp, &st ) == -1) continue;
-        if (st.st_dev != dev || st.st_ino != ino) continue;
-        if (!strcmp( entry.mnt_fstype, "fd" ))
-        {
-            if ((device = strstr( entry.mnt_mntopts, "dev=" )))
-            {
-                char *p = strchr( device + 4, ',' );
-                if (p) *p = 0;
-                return device + 4;
-            }
-        }
-        else
-            return entry.mnt_special;
-    }
-    return NULL;
-}
-#endif
-
-/***********************************************************************
- *           get_default_drive_device
- *
- * Return the default device to use for a given drive mount point.
- */
-static char *get_default_drive_device( const char *root )
-{
-    char *ret = NULL;
-
-#ifdef linux
-    FILE *f;
-    char *device = NULL;
-    int fd, res = -1;
-    struct stat st;
-
-    /* try to open it first to force it to get mounted */
-    if ((fd = open( root, O_RDONLY | O_DIRECTORY )) != -1)
-    {
-        res = fstat( fd, &st );
-        close( fd );
-    }
-    /* now try normal stat just in case */
-    if (res == -1) res = stat( root, &st );
-    if (res == -1) return NULL;
-
-    mutex_lock( &mnt_mutex );
-
-#ifdef __ANDROID__
-    if ((f = fopen( "/proc/mounts", "r" )))
-    {
-        device = parse_mount_entries( f, st.st_dev, st.st_ino );
-        fclose( f );
-    }
-#else
-    if ((f = fopen( "/etc/mtab", "r" )))
-    {
-        device = parse_mount_entries( f, st.st_dev, st.st_ino );
-        fclose( f );
-    }
-    /* look through fstab too in case it's not mounted (for instance if it's an audio CD) */
-    if (!device && (f = fopen( "/etc/fstab", "r" )))
-    {
-        device = parse_mount_entries( f, st.st_dev, st.st_ino );
-        fclose( f );
-    }
-#endif
-    if (device) ret = strdup( device );
-    mutex_unlock( &mnt_mutex );
-
-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__ ) || defined(__DragonFly__)
-    char *device = NULL;
-    int fd, res = -1;
-    struct stat st;
-
-    /* try to open it first to force it to get mounted */
-    if ((fd = open( root, O_RDONLY )) != -1)
-    {
-        res = fstat( fd, &st );
-        close( fd );
-    }
-    /* now try normal stat just in case */
-    if (res == -1) res = stat( root, &st );
-    if (res == -1) return NULL;
-
-    mutex_lock( &mnt_mutex );
-
-    /* The FreeBSD parse_mount_entries doesn't require a file argument, so just
-     * pass NULL.  Leave the argument in for symmetry.
-     */
-    device = parse_mount_entries( NULL, st.st_dev, st.st_ino );
-    if (device) ret = strdup( device );
-    mutex_unlock( &mnt_mutex );
-
-#elif defined( sun )
-    FILE *f;
-    char *device = NULL;
-    int fd, res = -1;
-    struct stat st;
-
-    /* try to open it first to force it to get mounted */
-    if ((fd = open( root, O_RDONLY )) != -1)
-    {
-        res = fstat( fd, &st );
-        close( fd );
-    }
-    /* now try normal stat just in case */
-    if (res == -1) res = stat( root, &st );
-    if (res == -1) return NULL;
-
-    mutex_lock( &mnt_mutex );
-
-    if ((f = fopen( "/etc/mnttab", "r" )))
-    {
-        device = parse_mount_entries( f, st.st_dev, st.st_ino);
-        fclose( f );
-    }
-    /* look through fstab too in case it's not mounted (for instance if it's an audio CD) */
-    if (!device && (f = fopen( "/etc/vfstab", "r" )))
-    {
-        device = parse_vfstab_entries( f, st.st_dev, st.st_ino );
-        fclose( f );
-    }
-    if (device) ret = strdup( device );
-    mutex_unlock( &mnt_mutex );
-
-#elif defined(__APPLE__)
-    struct statfs *mntStat;
-    struct stat st;
-    int i;
-    int mntSize;
-    dev_t dev;
-    ino_t ino;
-    static const char path_bsd_device[] = "/dev/disk";
-    int res;
-
-    res = stat( root, &st );
-    if (res == -1) return NULL;
-
-    dev = st.st_dev;
-    ino = st.st_ino;
-
-    mutex_lock( &mnt_mutex );
-
-    mntSize = getmntinfo(&mntStat, MNT_NOWAIT);
-
-    for (i = 0; i < mntSize && !ret; i++)
-    {
-        if (stat(mntStat[i].f_mntonname, &st ) == -1) continue;
-        if (st.st_dev != dev || st.st_ino != ino) continue;
-
-        /* FIXME add support for mounted network drive */
-        if ( strncmp(mntStat[i].f_mntfromname, path_bsd_device, strlen(path_bsd_device)) == 0)
-        {
-            /* set return value to the corresponding raw BSD node */
-            ret = malloc( strlen(mntStat[i].f_mntfromname) + 2 /* 2 : r and \0 */ );
-            if (ret)
-            {
-                strcpy(ret, "/dev/r");
-                strcat(ret, mntStat[i].f_mntfromname+sizeof("/dev/")-1);
-            }
-        }
-    }
-    mutex_unlock( &mnt_mutex );
-#else
-    static int warned;
-    if (!warned++) FIXME( "auto detection of DOS devices not supported on this platform\n" );
-#endif
-    return ret;
-}
-
+static pthread_mutex_t mnt_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /***********************************************************************
  *           get_device_mount_point
@@ -1104,10 +808,6 @@ static char *get_device_mount_point( dev_t dev )
 #endif
     return ret;
 }
-
-
-#if defined(HAVE_GETATTRLIST) && defined(ATTR_VOL_CAPABILITIES) && \
-    defined(VOL_CAPABILITIES_FORMAT) && defined(VOL_CAP_FMT_CASE_SENSITIVE)
 
 static pthread_mutex_t fs_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -3319,10 +3019,10 @@ void init_files(void)
 static NTSTATUS get_dos_device( char **unix_name, int start_pos )
 {
     struct stat st;
-    char *new_name, *dev = *unix_name + start_pos;
+    char *dev = *unix_name + start_pos;
 
     /* special case for drive devices */
-    if (dev[0] && dev[1] == ':' && !dev[2]) strcpy( dev + 1, "::" );
+    if (dev[0] && dev[1] == ':' && !dev[2]) return STATUS_BAD_DEVICE_TYPE;
 
     if (strchr( dev, '/' )) goto failed;
 
@@ -3346,17 +3046,7 @@ static NTSTATUS get_dos_device( char **unix_name, int start_pos )
             strcpy( dev, "lpt1" );
             continue;
         }
-
-        new_name = NULL;
-        if (dev[1] == ':' && dev[2] == ':')  /* drive device */
-        {
-            dev[2] = 0;  /* remove last ':' to get the drive mount point symlink */
-            new_name = get_default_drive_device( *unix_name );
-        }
-        free( *unix_name );
-        *unix_name = new_name;
-        if (!new_name) return STATUS_BAD_DEVICE_TYPE;
-        dev = NULL; /* last try */
+        break;
     }
 failed:
     free( *unix_name );
@@ -4738,48 +4428,44 @@ NTSTATUS ntdll_get_unix_file_name( const WCHAR *dos, char **unix_name, UINT disp
 }
 
 
-/***********************************************************************
- *           unmount_device
- *
- * Unmount the specified device.
- */
-static NTSTATUS unmount_device( HANDLE handle )
+NTSTATUS ntdll_unmount_device( int fd, char *mount_point )
 {
     NTSTATUS status;
-    int unix_fd, needs_close;
-
-    if (!(status = server_get_unix_fd( handle, 0, &unix_fd, &needs_close, NULL, NULL )))
-    {
-        struct stat st;
-        char *mount_point = NULL;
-
-        if (fstat( unix_fd, &st ) == -1 || !is_valid_mounted_device( &st ))
-            status = STATUS_INVALID_PARAMETER;
-        else
-        {
-            if ((mount_point = get_device_mount_point( st.st_rdev )))
-            {
+    struct stat st;
 #ifdef __APPLE__
-                static char diskutil[] = "diskutil";
-                static char unmount[] = "unmount";
-                char *argv[4] = {diskutil, unmount, mount_point, NULL};
+    static char diskutil[] = "diskutil";
+    static char unmount[] = "unmount";
+    char *argv[4] = {diskutil, unmount, mount_point, NULL};
 #else
-                static char umount[] = "umount";
-                char *argv[3] = {umount, mount_point, NULL};
+    static char umount[] = "umount";
+    char *argv[3] = {umount, mount_point, NULL};
 #endif
-                __wine_unix_spawnvp( argv, TRUE );
-#ifdef linux
-                /* umount will fail to release the loop device since we still have
-                    a handle to it, so we release it here */
-                if (major(st.st_rdev) == LOOP_MAJOR) ioctl( unix_fd, 0x4c01 /*LOOP_CLR_FD*/, 0 );
-#endif
-                /* Add in a small delay. Without this subsequent tasks
-                    like IOCTL_STORAGE_EJECT_MEDIA might fail. */
-                usleep( 100000 );
-            }
-        }
-        if (needs_close) close( unix_fd );
+
+    if (fstat( fd, &st ) == -1)
+        return STATUS_INVALID_PARAMETER;
+
+    SERVER_START_REQ( unmount_device )
+    {
+        req->dev = st.st_rdev;
+        status = wine_server_call( req );
     }
+    SERVER_END_REQ;
+
+    if (!mount_point)
+        return status;
+
+    __wine_unix_spawnvp( argv, TRUE );
+
+#ifdef linux
+    /* umount will fail to release the loop device since we still have a
+     * handle to it, so we release it here */
+    if (major( st.st_rdev ) == LOOP_MAJOR)
+        ioctl( fd, 0x4c01 /* LOOP_CLR_FD */, 0 );
+#endif
+    /* Add in a small delay. Without this subsequent tasks like
+     * IOCTL_STORAGE_EJECT_MEDIA might fail. */
+    usleep( 100000 );
+
     return status;
 }
 
@@ -6866,14 +6552,6 @@ NTSTATUS WINAPI NtDeviceIoControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUT
     case FILE_DEVICE_NETWORK:
         status = sock_ioctl( handle, event, apc, apc_context, io, code, in_buffer, in_size, out_buffer, out_size );
         break;
-    case FILE_DEVICE_DISK:
-    case FILE_DEVICE_CD_ROM:
-    case FILE_DEVICE_DVD:
-    case FILE_DEVICE_CONTROLLER:
-    case FILE_DEVICE_MASS_STORAGE:
-        status = cdrom_DeviceIoControl( handle, event, apc, apc_context, io, code,
-                                        in_buffer, in_size, out_buffer, out_size );
-        break;
     case FILE_DEVICE_SERIAL_PORT:
         status = serial_DeviceIoControl( handle, event, apc, apc_context, io, code,
                                          in_buffer, in_size, out_buffer, out_size );
@@ -6954,20 +6632,12 @@ NTSTATUS WINAPI NtFsControlFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE ap
 
     switch (code)
     {
-    case FSCTL_DISMOUNT_VOLUME:
-        status = server_ioctl_file( handle, event, apc, apc_context, io, code,
-                                    in_buffer, in_size, out_buffer, out_size );
-        if (!status) status = unmount_device( handle );
-        return status;
-
     case FSCTL_PIPE_IMPERSONATE:
         FIXME("FSCTL_PIPE_IMPERSONATE: impersonating self\n");
         return server_ioctl_file( handle, event, apc, apc_context, io, code,
                                   in_buffer, in_size, out_buffer, out_size );
 
     case FSCTL_IS_VOLUME_MOUNTED:
-    case FSCTL_LOCK_VOLUME:
-    case FSCTL_UNLOCK_VOLUME:
         FIXME("stub! return success - Unsupported fsctl %x (device=%x access=%x func=%x method=%x)\n",
               code, code >> 16, (code >> 14) & 3, (code >> 2) & 0xfff, code & 3);
         status = STATUS_SUCCESS;

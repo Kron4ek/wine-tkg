@@ -677,9 +677,9 @@ static void devmode_to_ticket(const DEVMODEW *dm, struct ticket *ticket)
         ticket->page.orientation = dm->dmOrientation;
     if (dm->dmFields & DM_PAPERSIZE)
         ticket->page.media.paper = dm->dmPaperSize;
-    if (dm->dmFields & DM_PAPERLENGTH)
-        ticket->page.media.size.width = dm->dmPaperWidth * 100;
     if (dm->dmFields & DM_PAPERWIDTH)
+        ticket->page.media.size.width = dm->dmPaperWidth * 100;
+    if (dm->dmFields & DM_PAPERLENGTH)
         ticket->page.media.size.height = dm->dmPaperLength * 100;
     if (dm->dmFields & DM_SCALE)
         ticket->page.scaling = dm->dmScale;
@@ -1795,6 +1795,9 @@ HRESULT WINAPI PTGetPrintCapabilities(HPTPROVIDER provider, IStream *stream, ISt
 
     if (!is_valid_provider(provider) || !stream || !caps)
         return E_INVALIDARG;
+
+    hr = initialize_ticket(prov, &ticket);
+    if (hr != S_OK) return hr;
 
     hr = parse_ticket(stream, kPTJobScope, &ticket);
     if (hr != S_OK) return hr;

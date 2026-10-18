@@ -374,6 +374,19 @@ struct domnode * domnode_get_root_element(struct domnode *doc)
     return NULL;
 }
 
+struct domnode * domnode_get_dtd(struct domnode *doc)
+{
+    struct domnode *node;
+
+    LIST_FOR_EACH_ENTRY(node, &doc->children, struct domnode, entry)
+    {
+        if (node->type == NODE_DOCUMENT_TYPE)
+            return node;
+    }
+
+    return NULL;
+}
+
 struct domnode *domnode_get_first_child(struct domnode *node)
 {
     return node_from_entry(list_head(&node->children));
@@ -1449,6 +1462,7 @@ HRESULT node_clone_domnode(struct domnode *node, bool deep, struct domnode **clo
     {
         return hr;
     }
+    object->flags |= node->flags & DOMNODE_USE_EMPTY_TAG;
 
     if (node->type == NODE_DOCUMENT)
         object->properties = domdoc_properties_clone(node->properties);
@@ -2053,7 +2067,16 @@ static void node_dump(struct domnode *node, struct node_dump_context *context)
             node_dump_element_attributes(context, node);
             if (list_empty(&node->children))
             {
-                node_dump_append(context, L"/>", 2);
+                if (node->flags & DOMNODE_USE_EMPTY_TAG)
+                {
+                    node_dump_append(context, L"/>", 2);
+                }
+                else
+                {
+                    node_dump_append(context, L"></", 3);
+                    node_dump_qualified_name(context, node);
+                    node_dump_append(context, L">", 1);
+                }
             }
             else
             {
@@ -3922,10 +3945,9 @@ static HRESULT WINAPI parse_content_handler_endPrefixMapping(ISAXContentHandler 
     return S_OK;
 }
 
-static HRESULT WINAPI parse_content_handler_startElement(ISAXContentHandler *iface, const WCHAR *uri, int uri_len,
-        const WCHAR *name, int name_len, const WCHAR *qname, int qname_len, ISAXAttributes *attrs)
+static HRESULT parse_context_start_element(struct parse_context *c, const WCHAR *uri, int uri_len,
+        const WCHAR *name, int name_len, const WCHAR *qname, int qname_len, ISAXAttributes *attrs, bool is_empty)
 {
-    struct parse_context *c = impl_from_ISAXContentHandler(iface);
     struct domnode *element, *attr;
     int max_depth = c->max_depth;
     int count, length;
@@ -3939,6 +3961,9 @@ static HRESULT WINAPI parse_content_handler_startElement(ISAXContentHandler *ifa
     parse_context_node_create(c, NODE_ELEMENT, qname, qname_len, uri, uri_len, c->root, &element);
     parse_context_append_child(c, c->node, element);
     c->node = element;
+
+    if (is_empty)
+        element->flags |= DOMNODE_USE_EMPTY_TAG;
 
     /* TODO: error handling */
 
@@ -3969,16 +3994,27 @@ static HRESULT WINAPI parse_content_handler_startElement(ISAXContentHandler *ifa
     return c->status;
 }
 
-static HRESULT WINAPI parse_content_handler_endElement(ISAXContentHandler *iface, const WCHAR *uri, int uri_len,
-        const WCHAR *name, int name_len, const WCHAR *qname, int qname_len)
+static HRESULT parse_context_end_element(struct parse_context *c)
 {
-    struct parse_context *c = impl_from_ISAXContentHandler(iface);
-
     --c->depth;
     parse_context_create_text_node(c, NODE_TEXT);
     c->node = c->node->parent;
 
     return c->status;
+}
+
+static HRESULT WINAPI parse_content_handler_startElement(ISAXContentHandler *iface, const WCHAR *uri, int uri_len,
+        const WCHAR *name, int name_len, const WCHAR *qname, int qname_len, ISAXAttributes *attrs)
+{
+    struct parse_context *c = impl_from_ISAXContentHandler(iface);
+    return parse_context_start_element(c, uri, uri_len, name, name_len, qname, qname_len, attrs, false);
+}
+
+static HRESULT WINAPI parse_content_handler_endElement(ISAXContentHandler *iface, const WCHAR *uri, int uri_len,
+        const WCHAR *name, int name_len, const WCHAR *qname, int qname_len)
+{
+    struct parse_context *c = impl_from_ISAXContentHandler(iface);
+    return parse_context_end_element(c);
 }
 
 static HRESULT WINAPI parse_content_handler_characters(ISAXContentHandler *iface, const WCHAR *chars, int count)
@@ -4268,6 +4304,22 @@ static HRESULT WINAPI parse_extension_handler_dtd(ISAXExtensionHandler *iface,
     return c->status;
 }
 
+static HRESULT WINAPI parse_extension_handler_startEmptyElement(ISAXExtensionHandler *iface,
+        const WCHAR *uri, int uri_len, const WCHAR *name, int name_len,
+        const WCHAR *qname, int qname_len, ISAXAttributes *attrs)
+{
+    struct parse_context *c = impl_from_ISAXExtensionHandler(iface);
+    return parse_context_start_element(c, uri, uri_len, name, name_len, qname, qname_len, attrs, true);
+}
+
+static HRESULT WINAPI parse_extension_handler_endEmptyElement(ISAXExtensionHandler *iface,
+        const WCHAR *uri, int uri_len, const WCHAR *name, int name_len,
+        const WCHAR *qname, int qname_len)
+{
+    struct parse_context *c = impl_from_ISAXExtensionHandler(iface);
+    return parse_context_end_element(c);
+}
+
 static const ISAXExtensionHandlerVtbl parse_extension_handler_vtbl =
 {
     parse_extension_handler_QueryInterface,
@@ -4275,6 +4327,8 @@ static const ISAXExtensionHandlerVtbl parse_extension_handler_vtbl =
     parse_extension_handler_Release,
     parse_extension_handler_xmldecl,
     parse_extension_handler_dtd,
+    parse_extension_handler_startEmptyElement,
+    parse_extension_handler_endEmptyElement,
 };
 
 static struct parse_context *impl_from_ISAXLexicalHandler(ISAXLexicalHandler *iface)
@@ -4863,32 +4917,177 @@ static void LIBXML2_LOG_CALLBACK validate_warning(void* ctx, char const* msg, ..
     va_end(ap);
 }
 
+static HRESULT return_validation_error(LONG code, IXMLDOMParseError **err)
+{
+    HRESULT hr;
+
+    if (err)
+    {
+        if (FAILED(hr = create_parse_error(code, NULL, err)))
+            return hr;
+    }
+
+    return S_FALSE;
+}
+
+static bool node_validate_root(struct validation_context *ctxt, struct domnode *node)
+{
+    struct domnode *dtd, *root;
+
+    if (node->type != NODE_DOCUMENT)
+        return true;
+
+    /* Check for root element presence. Tree manipulation should ensure that there is only
+       one top level element. */
+
+    if (!(root = domnode_get_root_element(node)))
+    {
+        ctxt->code = E_XML_NOTWF;
+        return false;
+    }
+
+    if ((dtd = domnode_get_dtd(node)))
+    {
+        if (wcscmp(dtd->qname, root->qname))
+        {
+            ctxt->code = E_DOM_ROOT_NAME_MISMATCH;
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool node_dtd_validate_attribute(struct validation_context *ctxt, struct dtd *dtd, struct domnode *attr)
+{
+    struct domnode *elem = attr->parent;
+    struct attlist_attr *decl;
+
+    /* Detached attribute node */
+    if (!elem)
+        return true;
+
+    if (!(decl = parser_dtd_get_attr_decl(dtd, attr)))
+    {
+        ctxt->code = E_DOM_ATTRIBUTE_NOT_DEFINED;
+        return false;
+    }
+
+    return parser_dtd_validate_attribute_value(ctxt, dtd, decl, attr);
+}
+
+static bool node_dtd_validate_single_node(struct validation_context *ctxt, struct dtd *dtd, struct domnode *node)
+{
+    struct element_decl *elem_decl;
+
+    if (node->type == NODE_ATTRIBUTE)
+        return node_dtd_validate_attribute(ctxt, dtd, node);
+
+    if (node->type != NODE_ELEMENT)
+        return true;
+
+    if (!(elem_decl = parser_dtd_get_element_decl(dtd, node->qname)))
+    {
+        ctxt->code = E_DOM_ELEMENT_UNDECLARED;
+        return false;
+    }
+
+    return parser_dtd_validate_element_content(ctxt, dtd, elem_decl, node);
+}
+
+static bool node_dtd_validate_node(struct validation_context *ctxt, struct dtd *dtd, struct domnode *node)
+{
+    struct domnode *attr, *root, *child;
+    bool ret = true;
+
+    root = node;
+    while (ret)
+    {
+        ret &= node_dtd_validate_single_node(ctxt, dtd, node);
+
+        if (node->type == NODE_ELEMENT)
+        {
+            attr = domnode_get_first_attribute(node);
+
+            while (attr && ret)
+            {
+                ret &= node_dtd_validate_attribute(ctxt, dtd, attr);
+                attr = domnode_get_next_attribute_sibling(attr);
+            }
+
+            if ((child = domnode_get_first_child(node)))
+            {
+                node = child;
+                continue;
+            }
+        }
+
+        for (;;)
+        {
+            if (node == root)
+                return ret;
+            if (domnode_get_next_sibling(node))
+                break;
+            node = node->parent;
+        }
+
+        node = domnode_get_next_sibling(node);
+    }
+
+    return ret;
+}
+
 HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseError **err)
 {
+    struct validation_context ctxt = { 0 };
+    struct domnode *node, *root, *dtd;
     IXMLDOMSchemaCollection2 *schema;
-    struct domnode *node;
     LONG err_code = 0;
     HRESULT hr = S_OK;
     int validated = 0;
     xmlDocPtr xmldoc;
     xmlNodePtr xmlnode;
 
-    if (!(node = get_node_obj(node_obj)))
-        return E_FAIL;
-
-    if (node->owner != doc && node != doc)
+    if (node_obj)
     {
-        if (err)
-            *err = create_parseError(err_code, NULL, NULL, NULL, 0, 0, 0);
-        return E_FAIL;
+        if (!(node = get_node_obj(node_obj)))
+            return E_FAIL;
+
+        if (node->owner != doc && node != doc)
+        {
+            return_validation_error(err_code, err);
+            return E_FAIL;
+        }
+
+        switch (node->type)
+        {
+            case NODE_DOCUMENT:
+            case NODE_DOCUMENT_TYPE:
+                return return_validation_error(E_DOM_INVALIDTYPE, err);
+            default:
+                ;
+        }
+    }
+    else
+    {
+        node = doc;
     }
 
-    /* TODO: for now simply treat empty document as not well-formed */
-    if (list_empty(&node->children))
+    if (node->type == NODE_DOCUMENT)
     {
-        if (err)
-            *err = create_parseError(E_XML_NOTWF, NULL, NULL, NULL, 0, 0, 0);
-        return S_FALSE;
+        if (!node_validate_root(&ctxt, node))
+            return return_validation_error(ctxt.code, err);
+    }
+
+    if ((dtd = domnode_get_dtd(node_get_doc(node))))
+    {
+        if (node->type == NODE_DOCUMENT)
+            root = domnode_get_root_element(node);
+        else
+            root = node;
+
+        if (!node_dtd_validate_node(&ctxt, dtd->dtd, root))
+            return return_validation_error(ctxt.code, err);
     }
 
     xmldoc = create_xmldoc_from_domdoc(node, &xmlnode);
@@ -4903,7 +5102,7 @@ HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseEr
         vctx->warning = validate_warning;
         ++validated;
 
-        ret = node == doc ? xmlValidateDocument(vctx, xmldoc) : xmlValidateElement(vctx, xmldoc, xmlnode);
+        ret = node->type == NODE_DOCUMENT ? xmlValidateDocument(vctx, xmldoc) : xmlValidateElement(vctx, xmldoc, xmlnode);
         if (!ret)
         {
             /* TODO: get a real error code here */
@@ -4949,8 +5148,7 @@ HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseEr
         hr = S_FALSE;
     }
 
-    if (err)
-        *err = create_parseError(err_code, NULL, NULL, NULL, 0, 0, 0);
+    return_validation_error(err_code, err);
 
     return hr;
 }

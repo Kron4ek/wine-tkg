@@ -1401,19 +1401,19 @@ static BOOL read_platform_entry(struct inf_section *section, DWORD *ret_platform
     {
         next = next_part(&str, TRUE);
 
-        if (strcasecmp(str, "Win95") == 0)
+        if (stricmp(str, "Win95") == 0)
             platform |= PLATFORM_WIN98;
-        else if (strcasecmp(str, "Win98") == 0)
+        else if (stricmp(str, "Win98") == 0)
             platform |= PLATFORM_WIN98;
-        else if (strcasecmp(str, "NT4") == 0)
+        else if (stricmp(str, "NT4") == 0)
             platform |= PLATFORM_NT4;
-        else if (strcasecmp(str, "NT5") == 0)
+        else if (stricmp(str, "NT5") == 0)
             platform |= PLATFORM_NT5;
-        else if (strcasecmp(str, "NT4Alpha") == 0)
+        else if (stricmp(str, "NT4Alpha") == 0)
             platform |= PLATFORM_NT4;
-        else if (strcasecmp(str, "NT5Alpha") == 0)
+        else if (stricmp(str, "NT5Alpha") == 0)
             platform |= PLATFORM_NT5;
-        else if (strcasecmp(str, "Millen") == 0)
+        else if (stricmp(str, "Millen") == 0)
             platform |= PLATFORM_MILLEN;
         else
             FIXME("Unknown platform: %s\n", debugstr_a(str));
@@ -1480,7 +1480,7 @@ static BOOL read_urls(struct cifcomponent *component, struct inf_section *sectio
         str = inf_value_get_key(inf_value);
         if (!str) return E_OUTOFMEMORY;
 
-        if (strncasecmp(str, "URL", 3))
+        if (strnicmp(str, "URL", 3))
             goto next;
 
         if (!str[3])
@@ -1651,9 +1651,9 @@ static HRESULT process_section(struct ciffile *file, struct inf_section *section
     if (!section_get_str(section, "SectionType", &type, "Component"))
         return E_OUTOFMEMORY;
 
-    if (!strcasecmp(type, "Component"))
+    if (!stricmp(type, "Component"))
         hr = process_component(file, section, section_name);
-    else if (strcasecmp(type, "Group") == 0)
+    else if (stricmp(type, "Group") == 0)
         hr = process_group(file, section, section_name);
     else
         FIXME("Don't know how to process %s\n", debugstr_a(type));
@@ -1675,12 +1675,12 @@ static HRESULT process_inf(struct ciffile *file, struct inf_file *inf)
 
         TRACE("start processing section %s\n", debugstr_a(section_name));
 
-        if (!strcasecmp(section_name, "Strings") ||
-            !strncasecmp(section_name, "Strings.", strlen("Strings.")))
+        if (!stricmp(section_name, "Strings") ||
+            !strnicmp(section_name, "Strings.", strlen("Strings.")))
         {
             /* Ignore string sections */
         }
-        else if (strcasecmp(section_name, "Version") == 0)
+        else if (stricmp(section_name, "Version") == 0)
             hr = process_version(file, section);
         else
             hr = process_section(file, section, section_name);

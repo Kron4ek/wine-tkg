@@ -515,79 +515,106 @@ static BOOL make_thread_context_current( struct opengl_context *root, struct ope
     return make_internal_context_current( get_thread_context( root ? root->attrs : core_attrs ), drawable );
 }
 
-static pthread_mutex_t gamma_lock = PTHREAD_MUTEX_INITIALIZER;
-static GLuint framebuffer_program, gamma_ramp;
-static GLsync gamma_sync;
-static LONG gamma_serial;
-
-static const char *framebuffer_vertex_shader =
-"#version 330\n"
-"\n"
-"const vec4 pos[4] = vec4[4](\n"
-"    vec4(-1.0, -1.0, 0.0, 1.0),\n"
-"    vec4(-1.0, 1.0, 0.0, 1.0),\n"
-"    vec4(1.0, -1.0, 0.0, 1.0),\n"
-"    vec4(1.0, 1.0, 0.0, 1.0)\n"
-");\n"
-"const vec2 tex[4] = vec2[4](\n"
-"    vec2(0.0, 0.0),\n"
-"    vec2(0.0, 1.0),\n"
-"    vec2(1.0, 0.0),\n"
-"    vec2(1.0, 1.0)\n"
-");\n"
-"out vec2 uv;\n"
-"\n"
-"void main(void)\n"
-"{\n"
-"    gl_Position = pos[gl_VertexID];\n"
-"    uv = tex[gl_VertexID];\n"
-"}\n"
-;
-
-static const char *framebuffer_fragment_shader =
-"#version 330\n"
-"\n"
-"uniform sampler2D tex;\n"
-"layout (std140) uniform ramp {\n"
-"    vec3 values[256];\n"
-"};\n"
-"in vec2 uv;\n"
-"layout(location = 0) out vec4 color;\n"
-"\n"
-"vec3 color_from_index(vec3 index)\n"
-"{\n"
-"    ivec3 i = ivec3(index);\n"
-"    return vec3(values[i.r].r, values[i.g].g, values[i.b].b);\n"
-"}\n"
-"\n"
-"void main(void)\n"
-"{\n"
-"    vec3 sample = texture(tex, uv).xyz * 255.0;\n"
-"    vec3 prev = floor(sample);\n"
-"    vec3 next = ceil(sample);\n"
-"    color.xyz = mix(color_from_index(prev), color_from_index(next), sample - prev);\n"
-"    color.a = 1.0;\n"
-"}\n"
-;
+struct vertex
+{
+    struct { float x; float y; } pos;
+    struct { float x; float y; } tex;
+};
 
 #define GAMMA_RAMP_SIZE 256
 
-static void init_framebuffer_program(void)
+static GLuint framebuffer_program_create( BOOL compat, LONG *gamma_serial )
 {
-    GLuint vs = 0, fs = 0, program = 0, ramp_index, tex;
+    static const char *vertex_shader_compat =
+        "#version 120\n"
+        "\n"
+        "attribute vec2 pos;\n"
+        "attribute vec2 tex;\n"
+        "varying vec2 uv;\n"
+        "\n"
+        "void main(void)\n"
+        "{\n"
+        "    gl_Position.xy = pos;\n"
+        "    gl_Position.zw = vec2(0, 1);\n"
+        "    uv = tex;\n"
+        "}\n"
+        "";
+    static const char *vertex_shader =
+        "#version 330\n"
+        "\n"
+        "in vec2 pos;\n"
+        "in vec2 tex;\n"
+        "out vec2 uv;\n"
+        "\n"
+        "void main(void)\n"
+        "{\n"
+        "    gl_Position.xy = pos;\n"
+        "    gl_Position.zw = vec2(0, 1);\n"
+        "    uv = tex;\n"
+        "}\n"
+        "";
+    static const char *fragment_shader_compat =
+        "#version 120\n"
+        "\n"
+        "uniform sampler2D color;\n"
+        "uniform vec4 ramp[256];\n"
+        "\n"
+        "varying vec2 uv;\n"
+        "\n"
+        "vec3 color_from_index(vec3 index)\n"
+        "{\n"
+        "    ivec3 i = ivec3(index);\n"
+        "    return vec3(ramp[i.r].r, ramp[i.g].g, ramp[i.b].b);\n"
+        "}\n"
+        "\n"
+        "void main(void)\n"
+        "{\n"
+        "    vec3 sample = texture2D(color, uv).rgb * 255.0;\n"
+        "    vec3 prev = floor(sample);\n"
+        "    vec3 next = ceil(sample);\n"
+        "    gl_FragColor.rgb = mix(color_from_index(prev), color_from_index(next), sample - prev);\n"
+        "    gl_FragColor.a = 1.0;\n"
+        "}\n"
+        "";
+    static const char *fragment_shader =
+        "#version 330\n"
+        "\n"
+        "uniform sampler2D color;\n"
+        "uniform vec4 ramp[256];\n"
+        "\n"
+        "in vec2 uv;\n"
+        "layout(location = 0) out vec4 frag;\n"
+        "\n"
+        "vec3 color_from_index(vec3 index)\n"
+        "{\n"
+        "    ivec3 i = ivec3(index);\n"
+        "    return vec3(ramp[i.r].r, ramp[i.g].g, ramp[i.b].b);\n"
+        "}\n"
+        "\n"
+        "void main(void)\n"
+        "{\n"
+        "    vec3 sample = texture(color, uv).xyz * 255.0;\n"
+        "    vec3 prev = floor(sample);\n"
+        "    vec3 next = ceil(sample);\n"
+        "    frag.xyz = mix(color_from_index(prev), color_from_index(next), sample - prev);\n"
+        "    frag.a = 1.0;\n"
+        "}\n"
+        "";
+
     const struct opengl_funcs *funcs = &display_funcs;
     float ramp_data[GAMMA_RAMP_SIZE * 4];
+    GLuint vs = 0, fs = 0, program = 0;
     char error[512];
     GLint success;
 
     if (!(vs = funcs->p_glCreateShader( GL_VERTEX_SHADER ))) goto failed;
-    funcs->p_glShaderSource( vs, 1, &framebuffer_vertex_shader, NULL );
+    funcs->p_glShaderSource( vs, 1, compat ? &vertex_shader_compat : &vertex_shader, NULL );
     funcs->p_glCompileShader( vs );
     funcs->p_glGetShaderiv( vs, GL_COMPILE_STATUS, &success );
     if (!success) goto failed;
 
     if (!(fs = funcs->p_glCreateShader( GL_FRAGMENT_SHADER ))) goto failed;
-    funcs->p_glShaderSource( fs, 1, &framebuffer_fragment_shader, NULL );
+    funcs->p_glShaderSource( fs, 1, compat ? &fragment_shader_compat : &fragment_shader, NULL );
     funcs->p_glCompileShader( fs );
     funcs->p_glGetShaderiv( fs, GL_COMPILE_STATUS, &success );
     if (!success) goto failed;
@@ -595,6 +622,10 @@ static void init_framebuffer_program(void)
     if (!(program = funcs->p_glCreateProgram())) goto failed;
     funcs->p_glAttachShader( program, vs );
     funcs->p_glAttachShader( program, fs );
+
+    funcs->p_glBindAttribLocation( program, 0, "pos" );
+    funcs->p_glBindAttribLocation( program, 1, "tex" );
+
     funcs->p_glLinkProgram( program );
     funcs->p_glGetProgramiv( program, GL_LINK_STATUS, &success );
     if (!success) goto failed;
@@ -602,23 +633,14 @@ static void init_framebuffer_program(void)
     funcs->p_glDeleteShader( fs );
     funcs->p_glDeleteShader( vs );
 
-    get_float_gamma_ramp( ramp_data, &gamma_serial );
-    funcs->p_glGenBuffers( 1, &gamma_ramp );
-    funcs->p_glBindBuffer( GL_UNIFORM_BUFFER, gamma_ramp );
-    funcs->p_glBufferData( GL_UNIFORM_BUFFER, sizeof(float) * 4 * GAMMA_RAMP_SIZE, ramp_data, GL_DYNAMIC_DRAW );
-    gamma_sync = funcs->p_glFenceSync( GL_SYNC_GPU_COMMANDS_COMPLETE, 0 );
-
-    ramp_index = funcs->p_glGetUniformBlockIndex( program, "ramp" );
-    funcs->p_glUniformBlockBinding( program, ramp_index, 0 );
-
     funcs->p_glUseProgram( program );
-    funcs->p_glBindBufferBase( GL_UNIFORM_BUFFER, 0, gamma_ramp );
 
-    tex = funcs->p_glGetUniformLocation( program, "tex" );
-    funcs->p_glUniform1i( tex, 0 );
+    funcs->p_glUniform1i( funcs->p_glGetUniformLocation( program, "color" ), 0 );
 
-    framebuffer_program = program;
-    return;
+    get_float_gamma_ramp( ramp_data, gamma_serial );
+    funcs->p_glUniform4fv( funcs->p_glGetUniformLocation( program, "ramp" ), GAMMA_RAMP_SIZE, ramp_data );
+
+    return program;
 
 failed:
     if (vs)
@@ -639,7 +661,7 @@ failed:
         ERR( "Program info log: %s\n", error );
         funcs->p_glDeleteProgram( program );
     }
-    return;
+    return 0;
 }
 
 struct framebuffer_surface
@@ -647,6 +669,9 @@ struct framebuffer_surface
     struct opengl_drawable  base;
     struct opengl_context  *root_context;
     struct opengl_drawable *target;         /* driver drawable to present to */
+
+    LONG gamma_serial;
+    GLuint program;
 };
 
 static const struct opengl_drawable_funcs framebuffer_surface_funcs;
@@ -822,14 +847,19 @@ static void destroy_framebuffer_attachment( struct opengl_drawable *drawable, GL
     TRACE( "drawable %p/%u destroyed %s buffer %#x/%u\n", drawable, fbo, kind, attachment, name );
 }
 
-static GLuint create_framebuffer( struct opengl_drawable *drawable, const struct wgl_pixel_format *desc, SIZE size )
+static UINT framebuffer_image_count( struct opengl_drawable *drawable )
 {
-    const struct opengl_funcs *funcs = &display_funcs;
-    GLuint count = 1, fbo, name;
-    GLenum ret;
-
+    GLuint count = 1;
     if (drawable->doublebuffer) count *= 2;
     if (drawable->stereo) count *= 2;
+    return count;
+}
+
+static GLuint create_framebuffer( struct opengl_drawable *drawable, const struct wgl_pixel_format *desc, SIZE size )
+{
+    GLuint count = framebuffer_image_count( drawable ), fbo, name;
+    const struct opengl_funcs *funcs = &display_funcs;
+    GLenum ret;
 
     funcs->p_glGenFramebuffers( 1, &fbo );
     funcs->p_glBindFramebuffer( GL_FRAMEBUFFER, fbo );
@@ -870,11 +900,8 @@ static GLuint create_framebuffer( struct opengl_drawable *drawable, const struct
 static void resize_framebuffer( struct opengl_drawable *drawable, const struct wgl_pixel_format *desc, GLuint fbo, SIZE size )
 {
     const struct opengl_funcs *funcs = &display_funcs;
-    GLuint count = 1;
+    GLuint count = framebuffer_image_count( drawable );
     GLenum ret;
-
-    if (drawable->doublebuffer) count *= 2;
-    if (drawable->stereo) count *= 2;
 
     funcs->p_glBindFramebuffer( GL_FRAMEBUFFER, fbo );
 
@@ -889,10 +916,7 @@ static void resize_framebuffer( struct opengl_drawable *drawable, const struct w
 static void destroy_framebuffer( struct opengl_drawable *drawable, const struct wgl_pixel_format *desc, GLuint fbo )
 {
     const struct opengl_funcs *funcs = &display_funcs;
-    GLuint count = 1;
-
-    if (drawable->doublebuffer) count *= 2;
-    if (drawable->stereo) count *= 2;
+    GLuint count = framebuffer_image_count( drawable );
 
     funcs->p_glBindFramebuffer( GL_FRAMEBUFFER, fbo );
 
@@ -906,6 +930,7 @@ static void destroy_framebuffer( struct opengl_drawable *drawable, const struct 
 static void framebuffer_surface_reset( struct opengl_drawable *drawable )
 {
     struct wgl_pixel_format draw_desc = pixel_formats[drawable->format - 1], read_desc = draw_desc;
+    struct framebuffer_surface *surface = framebuffer_from_opengl_drawable( drawable );
 
     read_desc.samples = read_desc.sample_buffers = 0;
 
@@ -915,6 +940,15 @@ static void framebuffer_surface_reset( struct opengl_drawable *drawable )
         destroy_framebuffer( drawable, &draw_desc, drawable->draw_fbo );
     destroy_framebuffer( drawable, &read_desc, drawable->read_fbo );
     drawable->draw_fbo = drawable->read_fbo = 0;
+
+    if (surface->program)
+    {
+        const struct opengl_funcs *funcs = &display_funcs;
+
+        surface->gamma_serial = 0;
+        funcs->p_glDeleteProgram( surface->program );
+        surface->program = 0;
+    }
 }
 
 static void framebuffer_surface_destroy( struct opengl_drawable *drawable )
@@ -933,10 +967,10 @@ static void framebuffer_surface_destroy( struct opengl_drawable *drawable )
 
 static void blit_framebuffer_surface( struct opengl_drawable *drawable )
 {
-    static pthread_once_t once = PTHREAD_ONCE_INIT;
-
     const struct opengl_funcs *funcs = &display_funcs;
+    struct framebuffer_surface *surface = framebuffer_from_opengl_drawable( drawable );
     SIZE src = drawable->virtual_size, dst = drawable->monitor_size;
+    BOOL compat = surface->root_context == root_compat;
     float ramp_data[GAMMA_RAMP_SIZE * 4];
 
     TRACE( "%s src %s dst %s fbo %u\n", debugstr_opengl_drawable( drawable ), wine_dbgstr_point( (POINT *)&src ),
@@ -952,35 +986,44 @@ static void blit_framebuffer_surface( struct opengl_drawable *drawable )
         funcs->p_glReadBuffer( GL_COLOR_ATTACHMENT0 );
         funcs->p_glBlitFramebuffer( 0, 0, src.cx, src.cy, 0, 0, dst.cx, dst.cy, GL_COLOR_BUFFER_BIT, GL_LINEAR );
     }
-    else
+    else if (surface->program || (surface->program = framebuffer_program_create( compat, &surface->gamma_serial )))
     {
+        struct vertex vertex[] =
+        {
+            {{-1, -1}, {0, 0}},
+            {{+1, -1}, {1, 0}},
+            {{-1, +1}, {0, 1}},
+            {{+1, +1}, {1, 1}},
+        };
+        GLuint vao, vbo;
         GLint front;
-        GLuint vao;
 
-        pthread_once( &once, init_framebuffer_program );
-        funcs->p_glUseProgram( framebuffer_program );
+        funcs->p_glUseProgram( surface->program );
 
         funcs->p_glActiveTexture( GL_TEXTURE0 );
         funcs->p_glGetFramebufferAttachmentParameteriv( GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &front );
         funcs->p_glBindTexture( GL_TEXTURE_2D, front );
 
-        pthread_mutex_lock( &gamma_lock );
-        if (get_float_gamma_ramp( ramp_data, &gamma_serial ))
-        {
-            funcs->p_glDeleteSync( gamma_sync );
-            funcs->p_glBufferSubData( GL_UNIFORM_BUFFER, 0, sizeof(float) * 4 * GAMMA_RAMP_SIZE, ramp_data );
-            gamma_sync = funcs->p_glFenceSync( GL_SYNC_GPU_COMMANDS_COMPLETE, 0 );
-        }
-        funcs->p_glWaitSync( gamma_sync, 0, GL_TIMEOUT_IGNORED );
-        pthread_mutex_unlock( &gamma_lock );
+        if (get_float_gamma_ramp( ramp_data, &surface->gamma_serial ))
+            funcs->p_glUniform4fv( funcs->p_glGetUniformLocation( surface->program, "ramp" ), GAMMA_RAMP_SIZE, ramp_data );
 
         funcs->p_glViewport( 0, 0, dst.cx, dst.cy );
 
-        /* macOS OpenGL requires a VAO for glDrawArrays */
+        funcs->p_glGenBuffers( 1, &vbo );
+        funcs->p_glBindBuffer( GL_ARRAY_BUFFER, vbo );
+        funcs->p_glBufferData( GL_ARRAY_BUFFER, sizeof(vertex), vertex, GL_STATIC_DRAW );
+
         funcs->p_glGenVertexArrays( 1, &vao );
         funcs->p_glBindVertexArray( vao );
+        funcs->p_glVertexAttribPointer( 0, 2, GL_FLOAT, GL_FALSE, sizeof(struct vertex), (void *)offsetof(struct vertex, pos) );
+        funcs->p_glEnableVertexAttribArray( 0 );
+        funcs->p_glVertexAttribPointer( 1, 2, GL_FLOAT, GL_FALSE, sizeof(struct vertex), (void *)offsetof(struct vertex, tex) );
+        funcs->p_glEnableVertexAttribArray( 1 );
+
         funcs->p_glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+
         funcs->p_glDeleteVertexArrays( 1, &vao );
+        funcs->p_glDeleteBuffers( 1, &vbo );
     }
 
     if (drawable->srgb) funcs->p_glDisable( GL_FRAMEBUFFER_SRGB );
@@ -1571,12 +1614,13 @@ static const struct opengl_driver_funcs egldrv_funcs =
     .p_context_activate = egldrv_context_activate,
 };
 
-static void dump_extensions( BOOLEAN extensions[GL_EXTENSION_COUNT] )
-{
 #define USE_GL_EXT(x) [x] = #x,
-    static const char *names[] = { ALL_EGL_EXTS ALL_GL_EXTS ALL_WGL_EXTS };
+static const char *extension_names[] = { ALL_EGL_EXTS ALL_GL_EXTS ALL_WGL_EXTS };
 #undef USE_GL_EXT
-    for (UINT i = 0; i < GL_EXTENSION_COUNT; i++) if (extensions[i]) TRACE( "- %s\n", names[i] );
+
+static void dump_extensions( const BOOLEAN extensions[GL_EXTENSION_COUNT] )
+{
+    for (UINT i = 0; i < GL_EXTENSION_COUNT; i++) if (extensions[i]) TRACE( "- %s\n", extension_names[i] );
 }
 
 static BOOL egl_init( const struct opengl_driver_funcs **driver_funcs )
@@ -1707,16 +1751,31 @@ static void init_egl_devices( struct opengl_funcs *funcs )
     for (int i = 0; i < count; i++)
     {
         BOOLEAN extensions[GL_EXTENSION_COUNT] = {0};
-
-        if (devices[i] == display_egl.device) continue;
+        EGLAttrib device_type = EGL_DEVICE_TYPE_OTHER_EXT;
 
         if (!(str = funcs->p_eglQueryDeviceStringEXT( devices[i], EGL_EXTENSIONS ))) continue;
         parse_extensions( str, extensions, TRUE );
         TRACE( "EGL device %#x extensions:\n", i );
         dump_extensions( extensions );
 
-        /* Assume that all devices without EGL_MESA_device_software are accelerated. */
-        if (extensions[EGL_MESA_device_software]) continue;
+        if (extensions[EGL_EXT_device_type])
+            funcs->p_eglQueryDeviceAttribEXT( devices[i], EGL_DEVICE_TYPE_EXT, &device_type );
+
+        if (devices[i] == display_egl.device)
+        {
+            display_egl.device_type = device_type;
+
+            TRACE( "EGL display device extensions:\n" );
+            for (UINT i = 0; i < GL_EXTENSION_COUNT; i++)
+            {
+                if (display_egl.extensions[i] || !extensions[i]) continue;
+                TRACE( "- %s\n", extension_names[i] );
+                display_egl.extensions[i] = TRUE;
+            }
+            continue;
+        }
+
+        if (device_type == EGL_DEVICE_TYPE_CPU_EXT || extensions[EGL_MESA_device_software]) continue;
 
         if (!(egl = calloc( 1, sizeof(*egl) ))) break;
 
@@ -1724,6 +1783,7 @@ static void init_egl_devices( struct opengl_funcs *funcs )
         egl->type = EGL_PLATFORM_DEVICE_EXT;
         egl->native_display = devices[i];
         egl->device = devices[i];
+        egl->device_type = device_type;
         egl->index = list_count( &devices_egl );
         memcpy( egl->extensions, extensions, sizeof(extensions) );
 
@@ -1799,8 +1859,9 @@ static void init_device_info( struct egl_platform *egl, const struct opengl_func
 
     TRACE( "Initializing device %u (%p)\n", egl->index, egl->device);
 
-    /* Assume that all devices without EGL_MESA_device_software are accelerated. */
-    egl->accelerated = !egl->extensions[EGL_MESA_device_software];
+    egl->accelerated = (egl->device_type != EGL_DEVICE_TYPE_CPU_EXT) && !egl->extensions[EGL_MESA_device_software];
+
+    TRACE( "  - device_type: %#x\n", egl->device_type );
     TRACE( "  - accelerated: %u\n", egl->accelerated );
 
     /* EGL does not provide a convenient way to get device / vendor ID, so we have to do it
@@ -1886,7 +1947,8 @@ static void init_device_info( struct egl_platform *egl, const struct opengl_func
             memcpy( egl->version, values, sizeof(egl->version) );
         TRACE( "  - version: %u.%u.%u\n", egl->version[0], egl->version[1], egl->version[2] );
 
-        parse_extensions( (const char *)funcs->p_glGetString( GL_EXTENSIONS ), extensions, TRUE );
+        parse_current_extensions( (context == core_context ? egl->core_version : egl->compat_version) / 10, extensions );
+
         if (extensions[GL_NVX_gpu_memory_info])
         {
             funcs->p_glGetIntegerv( GL_GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX, values );
@@ -2029,7 +2091,7 @@ static int win32u_wglGetPixelFormat( HDC hdc )
     int format;
     HWND hwnd;
 
-    if ((hwnd = NtUserWindowFromDC( hdc )))
+    if ((hwnd = NtUserWindowFromDC( hdc )) && is_current_process_window( hwnd ))
         format = get_window_pixel_format( hwnd );
     else if ((format = get_dc_pixel_format( hdc )) < 0)
     {
@@ -2401,7 +2463,7 @@ static BOOL win32u_wglSetPixelFormat( HDC hdc, int new_format, const PIXELFORMAT
     funcs->p_get_pixel_formats( NULL, 0, &total, &onscreen );
     if (new_format <= 0 || new_format > total) return FALSE;
 
-    if ((hwnd = NtUserWindowFromDC( hdc )))
+    if ((hwnd = NtUserWindowFromDC( hdc )) && is_current_process_window( hwnd ))
     {
         struct opengl_drawable *drawable;
         int old_format;
@@ -2461,7 +2523,7 @@ static BOOL win32u_wglSetPixelFormatWINE( HDC hdc, int format )
     HWND hwnd;
 
     if (!(hwnd = NtUserWindowFromDC( hdc )) || !is_cache_dc( hdc )) return FALSE;
-    if (format && get_window_pixel_format( hwnd ) == format) return TRUE;
+    if (format && is_current_process_window( hwnd ) && get_window_pixel_format( hwnd ) == format) return TRUE;
 
     TRACE( "%p/%p format %d\n", hdc, hwnd, format );
 
@@ -3190,7 +3252,7 @@ static BOOL query_renderer_integer( struct egl_platform *egl, GLenum attribute, 
     case WGL_RENDERER_ACCELERATED_WINE: *value = egl->accelerated; return TRUE;
     case WGL_RENDERER_DEVICE_ID_WINE: *value = egl->device_id; return TRUE;
     case WGL_RENDERER_VENDOR_ID_WINE: *value = egl->vendor_id; return TRUE;
-    case WGL_RENDERER_UNIFIED_MEMORY_ARCHITECTURE_WINE: *value = 0; return TRUE;
+    case WGL_RENDERER_UNIFIED_MEMORY_ARCHITECTURE_WINE: *value = (egl->device_type == EGL_DEVICE_TYPE_INTEGRATED_GPU_EXT); return TRUE;
     case WGL_RENDERER_VERSION_WINE: memcpy( value, egl->version, sizeof(egl->version) ); return TRUE;
     case WGL_RENDERER_OPENGL_COMPATIBILITY_PROFILE_VERSION_WINE:
         value[0] = egl->compat_version / 10;

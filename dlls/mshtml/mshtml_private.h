@@ -377,6 +377,11 @@ typedef struct {
     UINT_PTR x;
 } nsCycleCollectingAutoRefCnt;
 
+static inline UINT_PTR NS_REFCOUNT_VALUE(nsCycleCollectingAutoRefCnt ref)
+{
+    return ref.x >> 2;
+}
+
 /*
    dispex is our base IDispatchEx implementation for all mshtml objects, and the vtbl allows
    customizing the behavior depending on the object. Objects have basically 3 types of props:
@@ -638,14 +643,14 @@ typedef struct {
     void (NSAPI *delete_cycle_collectable)(void*);
 } CCObjCallback;
 
-DEFINE_GUID(IID_nsXPCOMCycleCollectionParticipant, 0x9674489b,0x1f6f,0x4550,0xa7,0x30, 0xcc,0xae,0xdd,0x10,0x4c,0xf9);
-
 extern nsrefcnt (__cdecl *ccref_incr)(nsCycleCollectingAutoRefCnt*,nsISupports*);
 extern nsrefcnt (__cdecl *ccref_decr)(nsCycleCollectingAutoRefCnt*,nsISupports*,ExternalCycleCollectionParticipant*);
 extern void (__cdecl *ccref_init)(nsCycleCollectingAutoRefCnt*,nsrefcnt);
 extern void (__cdecl *ccp_init)(ExternalCycleCollectionParticipant*,const CCObjCallback*);
 extern void (__cdecl *describe_cc_node)(nsCycleCollectingAutoRefCnt*,const char*,nsCycleCollectionTraversalCallback*);
 extern void (__cdecl *note_cc_edge)(nsISupports*,const char*,nsCycleCollectionTraversalCallback*);
+HRESULT WINAPI cc_participant_Traverse(IWineCCParticipant*,void*,void*,void*,const struct cc_traverse_ops*);
+extern IWineCCParticipant cc_participant;
 
 void init_dispatch(DispatchEx*,dispex_static_data_t*,HTMLInnerWindow*,compat_mode_t);
 void init_dispatch_from_desc(DispatchEx*,dispex_data_t*,HTMLInnerWindow*,DispatchEx*);

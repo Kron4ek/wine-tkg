@@ -54,6 +54,18 @@ static DEVICE_OBJECT *bus_fdo;
 static struct bus_options options = {.devices = LIST_INIT(options.devices)};
 static HANDLE driver_key;
 
+typedef struct
+{
+   ULONG Unknown[6];
+   ULONG State[5];
+   ULONG Count[2];
+   UCHAR Buffer[64];
+} SHA_CTX, *PSHA_CTX;
+
+extern void WINAPI A_SHAInit(SHA_CTX *ctx);
+extern void WINAPI A_SHAUpdate(SHA_CTX *ctx, const unsigned char *buffer, UINT size);
+extern void WINAPI A_SHAFinal(SHA_CTX *ctx, ULONG *result);
+
 struct hid_report
 {
     struct list entry;
@@ -80,7 +92,8 @@ struct device_extension
     enum device_state state;
 
     struct device_desc desc;
-    GUID container_id;
+    BOOL unique_serial;
+    ULONG parent_hash[5];
     DWORD index;
 
     BYTE *report_desc;
@@ -161,43 +174,44 @@ static void unix_device_set_feature_report(DEVICE_OBJECT *device, HID_XFER_PACKE
     winebus_call(device_set_feature_report, &params);
 }
 
-static DWORD get_device_index(struct device_desc *desc, struct list **before)
+static BOOL has_unique_serial_number(struct device_desc *desc)
 {
     struct device_extension *ext;
-    DWORD index = 0;
 
-    *before = NULL;
+    if (!*desc->serialnumber) return FALSE;
 
-    /* The device list is sorted, so just increment the index until it doesn't match an index already in the list */
     LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
     {
-        if (ext->desc.vid == desc->vid && ext->desc.pid == desc->pid && ext->desc.interface == desc->interface)
+        if (ext->desc.vid == desc->vid && ext->desc.pid == desc->pid && ext->desc.interface == desc->interface
+                && !wcscmp(desc->serialnumber, ext->desc.serialnumber))
         {
-            if (ext->index != index)
-            {
-                *before = &ext->entry;
-                break;
-            }
-            index++;
+            WARN("Found device with duplicate serial number %s.\n", debugstr_w(desc->serialnumber));
+            return FALSE;
         }
     }
-
-    return index;
+    return TRUE;
 }
 
 static WCHAR *get_instance_id(DEVICE_OBJECT *device)
 {
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    const WCHAR *serial_str = !*ext->desc.serialnumber ? L"0000" : ext->desc.serialnumber;
-    DWORD len = wcslen(serial_str) + 33;
     WCHAR *dst;
 
-    if ((dst = ExAllocatePool(PagedPool, len * sizeof(WCHAR))))
+    /*
+     * Single interface USB devices (and parent devices of USB interfaces for
+     * composite devices) use their serial number string as the instance ID.
+     * If a second device with the same device ID and serial number string is
+     * added, just fall back to the path based instance ID.
+     */
+    if (ext->desc.interface == -1 && ext->unique_serial)
     {
-        swprintf(dst, len, L"%u&%s&%x&%u&%u", ext->desc.version, serial_str,
-                 ext->desc.uid, ext->index, ext->desc.is_gamepad);
+        if ((dst = ExAllocatePool(PagedPool, (wcslen(ext->desc.serialnumber) + 1) * sizeof(WCHAR))))
+            wcscpy(dst, ext->desc.serialnumber);
+        return dst;
     }
 
+    if ((dst = ExAllocatePool(PagedPool, 22 * sizeof(WCHAR))))
+        swprintf(dst, 22, L"1&%08x&0&%x", ext->parent_hash[0], ext->index);
     return dst;
 }
 
@@ -345,14 +359,14 @@ static void remove_pending_irps(DEVICE_OBJECT *device)
 
 static DEVICE_OBJECT *bus_create_hid_device(struct device_desc *desc, UINT64 unix_device)
 {
-    struct device_extension *ext;
+    struct device_extension *ext, *next;
     DEVICE_OBJECT *device;
     UNICODE_STRING nameW;
     WCHAR dev_name[256];
-    struct list *before;
     NTSTATUS status;
+    SHA_CTX ctx;
 
-    TRACE("desc %s, unix_device %#I64x\n", debugstr_device_desc(desc), unix_device);
+    TRACE("desc %s, parent %s, unix_device %#I64x\n", debugstr_device_desc(desc), debugstr_w(desc->parent), unix_device);
 
     swprintf(dev_name, ARRAY_SIZE(dev_name), L"\\Device\\WINEBUS#%p", unix_device);
     RtlInitUnicodeString(&nameW, dev_name);
@@ -369,9 +383,14 @@ static DEVICE_OBJECT *bus_create_hid_device(struct device_desc *desc, UINT64 uni
     ext = (struct device_extension *)device->DeviceExtension;
     ext->device             = device;
     ext->desc               = *desc;
-    ext->index              = get_device_index(desc, &before);
+    ext->unique_serial      = has_unique_serial_number(desc);
     ext->unix_device        = unix_device;
     list_init(&ext->reports);
+
+    A_SHAInit(&ctx);
+    A_SHAUpdate(&ctx, (BYTE *)desc->parent, wcslen(desc->parent) * sizeof(WCHAR));
+    A_SHAFinal(&ctx, ext->parent_hash);
+    ext->index = ext->desc.index;
 
     if (desc->is_hidraw && (desc->bus_type == BUS_TYPE_BLUETOOTH) && is_dualshock4_gamepad(desc->vid, desc->pid))
     {
@@ -387,11 +406,17 @@ static DEVICE_OBJECT *bus_create_hid_device(struct device_desc *desc, UINT64 uni
     InitializeCriticalSectionEx(&ext->cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO);
     ext->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": cs");
 
-    /* add to list of pnp devices */
-    if (before)
-        list_add_before(before, &ext->entry);
-    else
-        list_add_tail(&device_list, &ext->entry);
+    /* find an unused index in the device list if necessary, keep it sorted by (parent hash, index) */
+    LIST_FOR_EACH_ENTRY(next, &device_list, struct device_extension, entry)
+    {
+        if (next->parent_hash[0] < ext->parent_hash[0]) continue;
+        if (next->parent_hash[0] > ext->parent_hash[0]) break;
+        if (next->index < ext->index) continue;
+        if (next->index > ext->index) break;
+        WARN("Duplicate device with parent %s (%#lx), index %lu\n", debugstr_w(desc->parent), ext->parent_hash[0], ext->index);
+        ext->index++;
+    }
+    list_add_before(&next->entry, &ext->entry);
 
     RtlLeaveCriticalSection(&device_list_cs);
 
@@ -737,6 +762,24 @@ static NTSTATUS handle_IRP_MN_QUERY_DEVICE_RELATIONS(IRP *irp)
     return status;
 }
 
+static WCHAR *get_container_id(struct device_extension *ext)
+{
+    WCHAR *dst;
+    GUID guid;
+
+    memcpy(&guid, ext->parent_hash, sizeof(guid));
+
+    if ((dst = ExAllocatePool(PagedPool, 39 * sizeof(WCHAR))))
+    {
+        swprintf(dst, 39, L"{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+                 guid.Data1, guid.Data2, guid.Data3, guid.Data4[0], guid.Data4[1], guid.Data4[2],
+                 guid.Data4[3], guid.Data4[4], guid.Data4[5], guid.Data4[6], guid.Data4[7] );
+        TRACE("Returning container ID %s.\n", debugstr_w(dst));
+    }
+
+    return dst;
+}
+
 static NTSTATUS handle_IRP_MN_QUERY_ID(DEVICE_OBJECT *device, IRP *irp)
 {
     NTSTATUS status = irp->IoStatus.Status;
@@ -764,9 +807,25 @@ static NTSTATUS handle_IRP_MN_QUERY_ID(DEVICE_OBJECT *device, IRP *irp)
             irp->IoStatus.Information = (ULONG_PTR)get_instance_id(device);
             break;
         case BusQueryContainerID:
+        {
+            struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
+
             TRACE("BusQueryContainerID\n");
+
+            /*
+             * Each interface of a multi interface device is expected to have
+             * the same container ID. On native this comes from their parent
+             * device, but since we currently don't replicate the full device
+             * hierachy we will create a matching container ID here ourselves.
+             */
+            if (ext->desc.interface != -1)
+            {
+                irp->IoStatus.Information = (ULONG_PTR)get_container_id(ext);
+                break;
+            }
             irp->IoStatus.Information = 0;
             return STATUS_NOT_SUPPORTED;
+        }
         default:
             WARN("Unhandled type %08x\n", type);
             return status;

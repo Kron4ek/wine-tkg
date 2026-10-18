@@ -44,6 +44,12 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(msxml);
 
+static bool bstr_equal(BSTR s1, BSTR s2)
+{
+    if (SysStringLen(s1) != SysStringLen(s2)) return false;
+    return !memcmp(s1, s2, SysStringLen(s1) * sizeof(WCHAR));
+}
+
 struct stream_wrapper
 {
     ISequentialStream ISequentialStream_iface;
@@ -1104,6 +1110,154 @@ static void saxreader_free_element_decl(struct element_decl *decl)
         saxreader_free_element_content(decl->content);
     SysFreeString(decl->name);
     free(decl);
+}
+
+struct element_decl * parser_dtd_get_element_decl(struct dtd *dtd, BSTR name)
+{
+    struct element_decl *decl;
+
+    LIST_FOR_EACH_ENTRY(decl, &dtd->elements, struct element_decl, entry)
+    {
+        if (bstr_equal(decl->name, name))
+            return decl;
+    }
+
+    return NULL;
+}
+
+struct attlist_attr * parser_dtd_get_attr_decl(struct dtd *dtd, struct domnode *attr)
+{
+    struct domnode *elem = attr->parent;
+    struct attlist_decl *decl;
+
+    LIST_FOR_EACH_ENTRY(decl, &dtd->attr_decls, struct attlist_decl, entry)
+    {
+        if (bstr_equal(decl->name, elem->qname))
+        {
+            for (size_t i = 0; i < decl->count; ++i)
+            {
+                if (bstr_equal(decl->attributes[i].name.qname, attr->qname))
+                    return &decl->attributes[i];
+            }
+        }
+    }
+
+    return NULL;
+}
+
+bool parser_dtd_validate_attribute_value(struct validation_context *ctxt, struct dtd *dtd,
+        struct attlist_attr *decl, struct domnode *attr)
+{
+    bool ret = true;
+    HRESULT hr;
+    BSTR value;
+
+    if (FAILED(hr = node_get_text(attr, &value)))
+    {
+        ctxt->code = hr;
+        return false;
+    }
+
+    /* Instances must have same value for #FIXED defaults. */
+    if (decl->valuetype == ATTR_DEF_TYPE_FIXED && wcscmp(value, decl->value))
+    {
+        ctxt->code = E_DOM_ATTRIBUTE_FIXED;
+        ret = false;
+    }
+
+    if (ret && decl->type == ATTR_TYPE_ENUMERATION)
+    {
+        ret = false;
+        for (size_t i = 0; i < decl->valuelist.count; ++i)
+        {
+            if (!wcscmp(decl->valuelist.values[i], value))
+            {
+                ret = true;
+                break;
+            }
+        }
+
+        if (!ret)
+            ctxt->code = E_DOM_ATTRIBUTE_VALUE;
+    }
+
+    SysFreeString(value);
+
+    return ret;
+}
+
+static bool parser_dtd_validate_element_mixed_content(struct validation_context *ctxt, struct dtd *dtd,
+        struct element_decl *decl, struct domnode *elem)
+{
+    struct domnode *child = domnode_get_first_child(elem);
+    struct element_content *content;
+
+    while (child)
+    {
+        if (child->type == NODE_ELEMENT)
+        {
+            content = decl->content;
+            while (content)
+            {
+                if (content->type == ELEMENT_CONTENT_ELEMENT)
+                {
+                    if (bstr_equal(content->name, elem->qname)) break;
+                }
+                else if (content->type == ELEMENT_CONTENT_OR
+                        && content->left && content->left->type == ELEMENT_CONTENT_ELEMENT)
+                {
+                    if (bstr_equal(content->left->name, elem->qname)) break;
+                }
+
+                content = content->right;
+            }
+
+            if (!content)
+            {
+                ctxt->code = E_DOM_INVALID_CONTENT;
+                return false;
+            }
+        }
+
+        child = domnode_get_next_sibling(child);
+    }
+
+    return true;
+}
+
+bool parser_dtd_validate_element_content(struct validation_context *ctxt, struct dtd *dtd,
+        struct element_decl *decl, struct domnode *elem)
+{
+    struct domnode *child;
+
+    if (decl->type == ELEMENT_TYPE_EMPTY)
+    {
+        child = domnode_get_first_child(elem);
+        if (child)
+        {
+            switch (child->type)
+            {
+                case NODE_PROCESSING_INSTRUCTION:
+                case NODE_ENTITY_REFERENCE:
+                case NODE_CDATA_SECTION:
+                case NODE_COMMENT:
+                case NODE_TEXT:
+                    ctxt->code = E_DOM_ILLEGAL_TEXT;
+                    break;
+                default:
+                    ctxt->code = E_DOM_INVALID_CONTENT;
+                    break;
+            }
+
+            return false;
+        }
+    }
+    else if (decl->type == ELEMENT_TYPE_MIXED)
+    {
+        return parser_dtd_validate_element_mixed_content(ctxt, dtd, decl, elem);
+    }
+
+    return true;
 }
 
 struct dtd *parser_dtd_addref(struct dtd *dtd)
@@ -2545,8 +2699,9 @@ static void saxlocator_end_document(struct saxlocator *locator)
 }
 
 static void saxlocator_start_element(struct saxlocator *locator, const struct text_position *position,
-        struct element *element)
+        struct element *element, bool is_empty)
 {
+    struct saxextensionhandler_iface *extension_handler = saxreader_get_extensionhandler(locator->saxreader);
     struct saxcontenthandler_iface *handler = saxreader_get_contenthandler(locator->saxreader);
     int max_depth = locator->saxreader->max_element_depth;
     MSXML_VERSION version = locator->saxreader->version;
@@ -2597,7 +2752,15 @@ static void saxlocator_start_element(struct saxlocator *locator, const struct te
         local = element->name.local;
     }
 
-    if (locator->vbInterface)
+    if (is_empty && saxreader_has_handler(locator, SAXExtensionHandler))
+    {
+        hr = ISAXExtensionHandler_startEmptyElement(extension_handler->handler,
+                uri ? uri : &empty_str, SysStringLen(uri),
+                local ? local : &empty_str, SysStringLen(local),
+                element->name.qname, SysStringLen(element->name.qname),
+                &locator->ISAXAttributes_iface);
+    }
+    else if (locator->vbInterface)
     {
         if (!uri) uri = locator->saxreader->empty_bstr;
         hr = IVBSAXContentHandler_startElement(handler->vbhandler, &uri, &local, &element->name.qname,
@@ -2613,8 +2776,10 @@ static void saxlocator_start_element(struct saxlocator *locator, const struct te
     locator->status = saxlocator_callback_result(locator, hr);
 }
 
-static void saxlocator_end_element(struct saxlocator *locator, const struct text_position *position, struct element *element)
+static void saxlocator_end_element(struct saxlocator *locator, const struct text_position *position,
+        struct element *element, bool is_empty)
 {
+    struct saxextensionhandler_iface *extension_handler = saxreader_get_extensionhandler(locator->saxreader);
     struct saxcontenthandler_iface *handler = saxreader_get_contenthandler(locator->saxreader);
     BSTR uri = NULL, local = NULL;
     HRESULT hr;
@@ -2638,7 +2803,14 @@ static void saxlocator_end_element(struct saxlocator *locator, const struct text
             local = element->name.local;
         }
 
-        if (locator->vbInterface)
+        if (is_empty && saxreader_has_handler(locator, SAXExtensionHandler))
+        {
+            hr = ISAXExtensionHandler_endEmptyElement(extension_handler->handler,
+                    uri ? uri : &empty_str, SysStringLen(uri),
+                    local ? local : &empty_str, SysStringLen(local),
+                    element->name.qname, SysStringLen(element->name.qname));
+        }
+        else if (locator->vbInterface)
         {
             if (!uri) uri = locator->saxreader->empty_bstr;
             hr = IVBSAXContentHandler_endElement(handler->vbhandler, &uri, &local, &element->name.qname);
@@ -3746,12 +3918,6 @@ static struct element *saxreader_new_element(struct saxlocator *locator, struct 
     return element;
 }
 
-static bool bstr_equal(BSTR s1, BSTR s2)
-{
-    if (SysStringLen(s1) != SysStringLen(s2)) return false;
-    return !memcmp(s1, s2, SysStringLen(s1) * sizeof(WCHAR));
-}
-
 static bool bstr_startswith(BSTR s, const WCHAR *prefix, UINT length)
 {
     if (SysStringLen(s) < length) return false;
@@ -4306,10 +4472,10 @@ static void saxreader_parse_starttag(struct saxlocator *locator)
        so we have to reiterate after all attributes were parsed. */
     saxreader_set_element_uri(locator, element);
 
-    saxlocator_start_element(locator, &position, element);
+    saxlocator_start_element(locator, &position, element, empty_element);
     if (empty_element)
     {
-        saxlocator_end_element(locator, &position, element);
+        saxlocator_end_element(locator, &position, element, true);
         list_remove(&element->entry);
         saxreader_free_element(element);
     }
@@ -4340,7 +4506,7 @@ static void saxreader_parse_endtag(struct saxlocator *locator)
         element = LIST_ENTRY(list_head(&locator->elements), struct element, entry);
 
         if (!wcscmp(element->name.qname, name.qname))
-            saxlocator_end_element(locator, &position, element);
+            saxlocator_end_element(locator, &position, element, false);
         else
             hr = E_SAX_ENDTAGMISMATCH;
 

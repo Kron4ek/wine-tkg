@@ -251,6 +251,42 @@ L"<?xml version=\"1.0\"?>"
 "   <attachment id=\"patch1\">0001-msxml3-tests-DTD-validation.patch</attachment>"
 "</email>";
 
+static const WCHAR email_xml_14_1[] =
+L"<?xml version=\"1.0\"?>"
+"<!DOCTYPE email ["\
+"   <!ELEMENT email         (recipients,from,reply-to?,subject,body,attachment*,data?)>"\
+"       <!ATTLIST email attachments IDREFS #REQUIRED>"\
+"       <!ATTLIST email sent (yes|no) \"no\">"\
+"   <!ELEMENT recipients    (to+,cc*)>"\
+"   <!ELEMENT to            (#PCDATA)>"\
+"       <!ATTLIST to name CDATA #IMPLIED>"\
+"   <!ELEMENT cc            (#PCDATA)>"\
+"       <!ATTLIST cc name CDATA #IMPLIED>"\
+"   <!ELEMENT from          (#PCDATA)>"\
+"       <!ATTLIST from name CDATA #IMPLIED>"\
+"   <!ELEMENT reply-to      (#PCDATA)>"\
+"       <!ATTLIST reply-to name CDATA #IMPLIED>"\
+"   <!ELEMENT subject       ANY>"\
+"   <!ELEMENT body          ANY>"\
+"       <!ATTLIST body enc CDATA #FIXED \"UTF-8\">"\
+"   <!ELEMENT attachment    (#PCDATA)>"\
+"       <!ATTLIST attachment id ID #REQUIRED>"\
+"   <!ELEMENT data EMPTY>"\
+"   <!ELEMENT a ANY>"\
+"]>"
+"<email attachments=\"patch1\">"
+"   <recipients>"
+"       <to>wine-patches@winehq.org</to>"
+"   </recipients>"
+"   <from name=\"Anonymous\">user@localhost</from>"
+"   <subject>msxml3/tests: DTD validation (try 92)</subject>"
+"   <body>"
+"       XML_INVALID_CONTENT 0xC00CE014"
+"   </body>"
+"   <attachment id=\"patch1\">0001-msxml3-tests-DTD-validation.patch</attachment>"
+"   <data><a/></data>"
+"</email>";
+
 static const WCHAR email_xml_15[] =
 L"<?xml version=\"1.0\"?>"
 "<!DOCTYPE email ["\
@@ -384,6 +420,41 @@ L"<?xml version=\"1.0\"?>"
 "   <attachment id=\"patch1\">0001-msxml3-tests-DTD-validation.patch</attachment>"
 "</email>";
 
+static const WCHAR email_xml_18_1[] =
+L"<?xml version=\"1.0\"?>"
+"<!DOCTYPE email ["\
+"   <!ELEMENT email         (recipients,from,reply-to?,subject,body,attachment*,data?)>"\
+"       <!ATTLIST email attachments IDREFS #REQUIRED>"\
+"       <!ATTLIST email sent (yes|no) \"no\">"\
+"   <!ELEMENT recipients    (to+,cc*)>"\
+"   <!ELEMENT to            (#PCDATA)>"\
+"       <!ATTLIST to name CDATA #IMPLIED>"\
+"   <!ELEMENT cc            (#PCDATA)>"\
+"       <!ATTLIST cc name CDATA #IMPLIED>"\
+"   <!ELEMENT from          (#PCDATA)>"\
+"       <!ATTLIST from name CDATA #IMPLIED>"\
+"   <!ELEMENT reply-to      (#PCDATA)>"\
+"       <!ATTLIST reply-to name CDATA #IMPLIED>"\
+"   <!ELEMENT subject       ANY>"\
+"   <!ELEMENT body          ANY>"\
+"       <!ATTLIST body enc CDATA #FIXED \"UTF-8\">"\
+"   <!ELEMENT attachment    (#PCDATA)>"\
+"       <!ATTLIST attachment id ID #REQUIRED>"\
+"   <!ELEMENT data EMPTY>"\
+"]>"
+"<email attachments=\"patch1\">"
+"   <recipients>"
+"       <to>wine-patches@winehq.org</to>"
+"   </recipients>"
+"   <from name=\"Anonymous\">user@localhost</from>"
+"   <subject>msxml3/tests: DTD validation (try 96)</subject>"
+"   <body>"
+"       XML_ILLEGAL_TEXT 0xC00CE018"
+"   </body>"
+"   <attachment id=\"patch1\">0001-msxml3-tests-DTD-validation.patch</attachment>"
+"   <data>some text</data>"
+"</email>";
+
 static const WCHAR email_xml_20[] =
 L"<?xml version=\"1.0\"?>"
 "<!DOCTYPE email ["\
@@ -413,6 +484,39 @@ L"<?xml version=\"1.0\"?>"
 "   <subject>msxml3/tests: DTD validation (try 97)</subject>"
 "   <body>"
 "       XML_REQUIRED_ATTRIBUTE_MISSING 0xC00CE020"
+"   </body>"
+"   <attachment id=\"patch1\">0001-msxml3-tests-DTD-validation.patch</attachment>"
+"</email>";
+
+static const WCHAR email_xml_2[] =
+L"<?xml version=\"1.0\"?>"
+"<!DOCTYPE email ["\
+"   <!ELEMENT email         (recipients,from,reply-to?,subject,body,attachment*)>"\
+"       <!ATTLIST email attachments IDREFS #REQUIRED>"\
+"       <!ATTLIST email sent (yes|no) \"no\">"\
+"   <!ELEMENT recipients    (to+,cc*)>"\
+"   <!ELEMENT to            (#PCDATA)>"\
+"       <!ATTLIST to name CDATA #IMPLIED>"\
+"   <!ELEMENT cc            (#PCDATA)>"\
+"       <!ATTLIST cc name CDATA #IMPLIED>"\
+"   <!ELEMENT from          (#PCDATA)>"\
+"       <!ATTLIST from name CDATA #IMPLIED>"\
+"   <!ELEMENT reply-to      (#PCDATA)>"\
+"       <!ATTLIST reply-to name CDATA #IMPLIED>"\
+"   <!ELEMENT subject       ANY>"\
+"   <!ELEMENT body          ANY>"\
+"       <!ATTLIST body enc CDATA #FIXED \"UTF-8\">"\
+"   <!ELEMENT attachment    (#PCDATA)>"\
+"       <!ATTLIST attachment id ID #REQUIRED>"\
+"]>"
+"<email sent=\"nope\" >"
+"   <recipients>"
+"       <to>wine-patches@winehq.org</to>"
+"   </recipients>"
+"   <from name=\"Anonymous\">user@localhost</from>"
+"   <subject>msxml3/tests: DTD validation (try 97)</subject>"
+"   <body>"
+"       Multiple errors"
 "   </body>"
 "   <attachment id=\"patch1\">0001-msxml3-tests-DTD-validation.patch</attachment>"
 "</email>";
@@ -1039,11 +1143,13 @@ todo_wine
 
 static void test_dtd_validation(void)
 {
+    IXMLDOMParseErrorCollection *coll;
+    IXMLDOMParseError2 *err2;
     IXMLDOMParseError *err;
     IXMLDOMDocument2 *doc;
+    LONG count, res;
     HRESULT hr;
     VARIANT v;
-    LONG res;
 
     hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER,
             &IID_IXMLDOMDocument2, (void **)&doc);
@@ -1077,7 +1183,7 @@ static void test_dtd_validation(void)
     hr = IXMLDOMParseError_get_errorCode(err, &res);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_ELEMENT_UNDECLARED */
-    todo_wine ok(res == 0xC00CE00D, "Unexpected code %#lx.\n", res);
+    ok(res == 0xc00ce00d, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_0E), NULL);
@@ -1113,7 +1219,7 @@ static void test_dtd_validation(void)
     hr = IXMLDOMParseError_get_errorCode(err, &res);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_ROOT_NAME_MISMATCH */
-    todo_wine ok(res == 0xC00CE013, "Unexpected code %#lx.\n", res);
+    ok(res == 0xc00ce013, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_14), NULL);
@@ -1128,6 +1234,18 @@ static void test_dtd_validation(void)
     todo_wine ok(res == 0xC00CE014, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
+    hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_14_1), NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    err = NULL;
+    hr = IXMLDOMDocument2_validate(doc, &err);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    res = 0;
+    hr = IXMLDOMParseError_get_errorCode(err, &res);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    /* XML_INVALID_CONTENT */
+    ok(res == 0xc00ce014, "Unexpected code %#lx.\n", res);
+    IXMLDOMParseError_Release(err);
+
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_15), NULL);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     err = NULL;
@@ -1137,7 +1255,7 @@ static void test_dtd_validation(void)
     hr = IXMLDOMParseError_get_errorCode(err, &res);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_ATTRIBUTE_NOT_DEFINED */
-    todo_wine ok(res == 0xC00CE015, "Unexpected code %#lx.\n", res);
+    ok(res == 0xc00ce015, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_16), NULL);
@@ -1150,7 +1268,7 @@ static void test_dtd_validation(void)
     hr = IXMLDOMParseError_get_errorCode(err, &res);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_ATTRIBUTE_FIXED */
-    todo_wine ok(res == 0xC00CE016, "Unexpected code %#lx.\n", res);
+    ok(res == 0xc00ce016, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_17), NULL);
@@ -1162,7 +1280,7 @@ static void test_dtd_validation(void)
     hr = IXMLDOMParseError_get_errorCode(err, &res);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_ATTRIBUTE_VALUE */
-    todo_wine ok(res == 0xC00CE017, "Unexpected code %#lx.\n", res);
+    ok(res == 0xc00ce017, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_18), NULL);
@@ -1177,6 +1295,18 @@ static void test_dtd_validation(void)
     todo_wine ok(res == 0xC00CE018, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
+    hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_18_1), NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    err = NULL;
+    hr = IXMLDOMDocument2_validate(doc, &err);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    res = 0;
+    hr = IXMLDOMParseError_get_errorCode(err, &res);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    /* XML_ILLEGAL_TEXT */
+    ok(res == 0xc00ce018, "Unexpected code %#lx.\n", res);
+    IXMLDOMParseError_Release(err);
+
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_20), NULL);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     err = NULL;
@@ -1189,6 +1319,45 @@ static void test_dtd_validation(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_REQUIRED_ATTRIBUTE_MISSING */
     todo_wine ok(res == 0xC00CE020, "Unexpected code %#lx.\n", res);
+    IXMLDOMParseError_Release(err);
+
+    /* Multiple validation errors */
+    V_VT(&v) = VT_BOOL;
+    V_BOOL(&v) = VARIANT_TRUE;
+    hr = IXMLDOMDocument2_setProperty(doc, _bstr_(L"MultipleErrorMessages"), v);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument2_loadXML(doc, _bstr_(email_xml_2), NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    err = NULL;
+    hr = IXMLDOMDocument2_validate(doc, &err);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    res = 0;
+    hr = IXMLDOMParseError_get_errorCode(err, &res);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    /* XML_ATTRIBUTE_VALUE */
+    ok(res == 0xc00ce017, "Unexpected code %#lx.\n", res);
+
+    hr = IXMLDOMParseError_QueryInterface(err, &IID_IXMLDOMParseError2, (void **)&err2);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    coll = NULL;
+    hr = IXMLDOMParseError2_get_allErrors(err2, &coll);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    todo_wine
+    ok(!!coll, "Unexpected pointer %p.\n", coll);
+    if (coll)
+    {
+        hr = IXMLDOMParseErrorCollection_get_length(coll, &count);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        ok(count == 2, "Unexpected count %ld.\n", count);
+        IXMLDOMParseErrorCollection_Release(coll);
+    }
+
+    IXMLDOMParseError2_Release(err2);
+
     IXMLDOMParseError_Release(err);
 
     IXMLDOMDocument2_Release(doc);
@@ -1340,6 +1509,172 @@ static void test_selection_namespaces(void)
     free_bstrs();
 }
 
+static const WCHAR unicode_xml[] =
+    L"\xfeff<?xml version=\"1.0\" encoding=\"unicode\" ?><u></u>";
+
+static void write_to_file_w(const WCHAR *name, const WCHAR *data)
+{
+    DWORD written;
+    HANDLE hfile;
+    BOOL ret;
+
+    hfile = CreateFileW(name, GENERIC_WRITE|GENERIC_READ, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+    ok(hfile != INVALID_HANDLE_VALUE, "failed to create test file: %s\n", debugstr_w(name));
+
+    ret = WriteFile(hfile, data, wcslen(data) * sizeof(*data), &written, NULL);
+    ok(ret, "WriteFile failed: %s, %ld\n", debugstr_w(name), GetLastError());
+
+    CloseHandle(hfile);
+}
+
+static void test_encoding(void)
+{
+    WCHAR path[MAX_PATH];
+    IXMLDOMDocument *doc;
+    VARIANT_BOOL b;
+    HRESULT hr;
+    VARIANT v;
+
+    /* The 'unicode' encoding */
+    GetTempPathW(MAX_PATH, path);
+    wcscat(path, L"unicode.xml");
+    write_to_file_w(path, unicode_xml);
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IXMLDOMDocument, (void **)&doc);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = _bstr_(path);
+    hr = IXMLDOMDocument_load(doc, v, &b);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    DeleteFileW(path);
+
+    GetTempPathW(MAX_PATH, path);
+    wcscat(path, L"saved-unicode.xml");
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = _bstr_(path);
+    hr = IXMLDOMDocument_save(doc, v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    DeleteFileW(path);
+    IXMLDOMDocument_Release(doc);
+    free_bstrs();
+}
+
+static void test_validateNode(void)
+{
+    IXMLDOMDocumentType *doctype;
+    IXMLDOMNamedNodeMap *attrs;
+    IXMLDOMElement *element;
+    IXMLDOMParseError *err;
+    IXMLDOMAttribute *attr;
+    IXMLDOMDocument3 *doc;
+    IXMLDOMNode *node;
+    HRESULT hr;
+    VARIANT v;
+    LONG res;
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument3, (void **)&doc);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    V_VT(&v) = VT_I2;
+    V_I2(&v) = 0;
+    hr = IXMLDOMDocument3_setProperty(doc, _bstr_(L"ProhibitDTD"), v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument3_validateNode(doc, NULL, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)doc, NULL);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    err = (void *)0x1;
+    hr = IXMLDOMDocument3_validateNode(doc, NULL, &err);
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(err == (void *)0x1, "Unexpected error object %p.\n", err);
+
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)doc, &err);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    IXMLDOMParseError_Release(err);
+
+    hr = IXMLDOMDocument3_loadXML(doc, _bstr_(email_xml), NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)doc, &err);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMParseError_get_errorCode(err, &res);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    /* Can't use validateNode() on a document node. */
+    ok(res == 0xc00ce208, "Unexpected code %#lx.\n", res);
+    IXMLDOMParseError_Release(err);
+
+    hr = IXMLDOMDocument3_get_doctype(doc, &doctype);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)doctype, &err);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMParseError_get_errorCode(err, &res);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    /* Can't use validateNode() on a doctype node. */
+    ok(res == 0xc00ce208, "Unexpected code %#lx.\n", res);
+    IXMLDOMParseError_Release(err);
+    IXMLDOMDocumentType_Release(doctype);
+
+    /* No problem with a root */
+    hr = IXMLDOMDocument3_get_documentElement(doc, &element);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)element, &err);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IXMLDOMParseError_Release(err);
+
+    hr = IXMLDOMElement_get_attributes(element, &attrs);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMNamedNodeMap_get_item(attrs, 0, &node);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMDocument3_validateNode(doc, node, &err);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IXMLDOMParseError_Release(err);
+    IXMLDOMNode_Release(node);
+    IXMLDOMNamedNodeMap_Release(attrs);
+    IXMLDOMElement_Release(element);
+
+    /* Detached attribute */
+    hr = IXMLDOMDocument3_createAttribute(doc, _bstr_(L"attr"), &attr);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMAttribute_put_text(attr, _bstr_(L"value"));
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMDocument3_validateNode(doc, (IXMLDOMNode *)attr, &err);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IXMLDOMAttribute_Release(attr);
+
+    IXMLDOMDocument3_Release(doc);
+
+    free_bstrs();
+}
+
+static void test_parseerror(void)
+{
+    IXMLDOMParseError *error;
+    IXMLDOMDocument *doc;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument3, (void **)&doc);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument_get_parseError(doc, &error);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    check_interface(error, &IID_IUnknown, TRUE);
+    check_interface(error, &IID_IDispatch, TRUE);
+    check_interface(error, &IID_IDispatchEx, TRUE);
+    check_interface(error, &IID_IXMLDOMParseError, TRUE);
+    check_interface(error, &IID_IXMLDOMParseError2, TRUE);
+
+    IXMLDOMDocument_Release(doc);
+}
+
 START_TEST(domdoc)
 {
     HRESULT hr;
@@ -1351,7 +1686,7 @@ START_TEST(domdoc)
     hr = CoCreateInstance(&CLSID_DOMDocument60, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLDOMDocument2, (void **)&doc);
     if (hr != S_OK)
     {
-        win_skip("class &CLSID_DOMDocument60 not supported\n");
+        win_skip("Class DOMDocument60 is not supported\n");
         return;
     }
     IXMLDOMDocument2_Release(doc);
@@ -1367,6 +1702,9 @@ START_TEST(domdoc)
     test_dtd_validation();
     test_max_element_depth_values();
     test_selection_namespaces();
+    test_encoding();
+    test_validateNode();
+    test_parseerror();
 
     CoUninitialize();
 }

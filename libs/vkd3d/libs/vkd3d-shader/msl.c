@@ -1575,17 +1575,6 @@ static void msl_handle_instruction(struct msl_generator *gen, const struct vsir_
         case VSIR_OP_IF:
             msl_if(gen, ins);
             break;
-        case VSIR_OP_IREM:
-        case VSIR_OP_UREM:
-            msl_binop(gen, ins, "%");
-            break;
-        case VSIR_OP_ISHL:
-            msl_binop(gen, ins, "<<");
-            break;
-        case VSIR_OP_ISHR:
-        case VSIR_OP_USHR:
-            msl_binop(gen, ins, ">>");
-            break;
         case VSIR_OP_ILT:
         case VSIR_OP_LTO:
         case VSIR_OP_ULT:
@@ -1613,6 +1602,29 @@ static void msl_handle_instruction(struct msl_generator *gen, const struct vsir_
         case VSIR_OP_INEG:
         case VSIR_OP_NEG:
             msl_unary_op(gen, ins, "-");
+            break;
+        case VSIR_OP_IREM:
+        case VSIR_OP_UREM:
+            msl_binop(gen, ins, "%");
+            break;
+        case VSIR_OP_ISFINITE:
+            /* Negate to convert from MSL 0/1 bool to vsir 0/-1 bool. */
+            msl_intrinsic(gen, ins, "-isfinite");
+            break;
+        case VSIR_OP_ISHL:
+            msl_binop(gen, ins, "<<");
+            break;
+        case VSIR_OP_ISHR:
+        case VSIR_OP_USHR:
+            msl_binop(gen, ins, ">>");
+            break;
+        case VSIR_OP_ISINF:
+            /* Negate to convert from MSL 0/1 bool to vsir 0/-1 bool. */
+            msl_intrinsic(gen, ins, "-isinf");
+            break;
+        case VSIR_OP_ISNAN:
+            /* Negate to convert from MSL 0/1 bool to vsir 0/-1 bool. */
+            msl_intrinsic(gen, ins, "-isnan");
             break;
         case VSIR_OP_ITOF:
         case VSIR_OP_UTOF:

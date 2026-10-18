@@ -1599,7 +1599,7 @@ static DWORD simd_fault_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_R
 
     ok( rec->ExceptionCode == expected, "exception code: %#lx, should be %#lx\n",
         rec->ExceptionCode, expected);
-    ok( rec->NumberParameters == is_wow64 ? 2 : 1, "# of params: %li\n", rec->NumberParameters);
+    ok( rec->NumberParameters == (is_wow64 ? 2 : 1), "# of params: %li\n", rec->NumberParameters);
     ok( rec->ExceptionInformation[0] == 0, "param #0: %Ix\n", rec->ExceptionInformation[0]);
     if (rec->NumberParameters == 2)
         ok( rec->ExceptionInformation[1] == ((XSAVE_FORMAT *)context->ExtendedRegisters)->MxCsr,
@@ -4728,7 +4728,7 @@ static void test_wow64_context(void)
     context.ContextFlags = CONTEXT_ALL;
     ret = pNtGetContextThread( pi.hThread, &context );
     ok(ret == STATUS_SUCCESS, "got %#lx\n", ret);
-    ok( context.ContextFlags == is_arm64ec ? CONTEXT_FULL : CONTEXT_ALL,
+    ok( context.ContextFlags == (is_arm64ec ? CONTEXT_FULL : CONTEXT_ALL),
         "got context flags %#lx\n", context.ContextFlags );
     ok( !context.Rsi, "rsi is not zero %Ix\n", context.Rsi );
     ok( !context.Rdi, "rdi is not zero %Ix\n", context.Rdi );
@@ -7862,6 +7862,22 @@ static void test_thread_context(void)
     ok( !status, "NtGetContextThread failed %08lx\n", status );
     ok( orig_context.X[0] && orig_context.X[0] != fill, "unexpected x0 = %Ix\n", orig_context.X[0] );
     ok( orig_context.X[18] && orig_context.X[18] != fill, "unexpected x18 = %Ix\n", orig_context.X[18] );
+
+    context = orig_context;
+    context.ContextFlags = CONTEXT_ARM64_CONTROL;
+    context.Cpsr = ~orig_context.Cpsr;
+    status = pNtSetContextThread( thread, &context );
+    ok( !status, "NtSetContextThread failed %08lx\n", status );
+
+    memset( &context, 0xcc, sizeof(context) );
+    context.ContextFlags = CONTEXT_CONTROL;
+    status = pNtGetContextThread( thread, &context );
+    ok( !status, "NtGetContextThread failed %08lx\n", status );
+    ok( (orig_context.Cpsr ^ context.Cpsr) == 0xf620fc30, "unexpected cpsr modification = %lx\n",
+        orig_context.Cpsr ^ context.Cpsr );
+
+    status = pNtSetContextThread( thread, &orig_context );
+    ok( !status, "NtSetContextThread failed %08lx\n", status );
 
     memset( &context, 0xcc, sizeof(context) );
     context.ContextFlags = CONTEXT_ARM64_FULL;

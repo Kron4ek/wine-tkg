@@ -1980,6 +1980,9 @@ CheckNpS "NpS.5E1",                  5
 CheckNpS "npObj.Check.5",            0.5
 CheckNpS "npObj.Check.0",            0
 CheckNpS "With npObj : .Check.5 : End With", 0.5
+CheckNpS "With npObj : ._" & vbLf & "Check 7 : End With", 7
+CheckNpS "With npObj : . _" & vbLf & "  Check 8 : End With", 8
+CheckNpS "npObj. Check 9",            9
 CheckNpT "NpT.5,.25",                0.5,    0.25
 NpS.5
 Call ok(getVT(npArg) = "VT_R8*", "NpS.5: getVT(npArg) = " & getVT(npArg))
@@ -2005,6 +2008,11 @@ CheckParseErr "npObj.Check .",              1010
 CheckParseErr "npArg = npObj.",             1010
 CheckParseErr "npArg = .",                  1010
 CheckParseErr "With npObj : . : End With",  1010
+CheckParseErr "With npObj : . Check 1 : End With", 1002
+CheckParseErr "With npObj : ." & vbTab & "Check 1 : End With", 1002
+CheckParseErr "With npObj : . [Check] 1 : End With", 1002
+CheckParseErr "With npObj : . End = 1 : End With", 1002
+CheckParseErr "With npObj : . 5 : End With", 1010
 CheckParseErr "Sub 5 : End Sub",            1010
 CheckParseErr "Function 5 : End Function",  1010
 CheckParseErr "Class 5 : End Class",        1010
@@ -2034,6 +2042,53 @@ For Each reservedWord In Array("as", "boolean", "byte", "currency", "double", "e
     CheckParseErr "npArg = " & reservedWord, 1002
     CheckParseErr reservedWord & " = 1", 1024
 Next
+
+Sub TestLiteralMemberAccess
+    Dim x
+    On Error Resume Next
+    Err.Clear : x = "s".p : Call ok(Err.Number = 424, "x = ""s"".p: Err.Number = " & Err.Number)
+    Err.Clear : x = "s". p : Call ok(Err.Number = 424, "x = ""s"". p: Err.Number = " & Err.Number)
+    Err.Clear : x = "s".p(1) : Call ok(Err.Number = 424, "x = ""s"".p(1): Err.Number = " & Err.Number)
+    Err.Clear : x = "s".p.q : Call ok(Err.Number = 424, "x = ""s"".p.q: Err.Number = " & Err.Number)
+    Err.Clear : x = "s".end : Call ok(Err.Number = 424, "x = ""s"".end: Err.Number = " & Err.Number)
+    Err.Clear : x = 1.5.p : Call ok(Err.Number = 424, "x = 1.5.p: Err.Number = " & Err.Number)
+    Err.Clear : x = &H10.p : Call ok(Err.Number = 424, "x = &H10.p: Err.Number = " & Err.Number)
+    Err.Clear : x = True.p : Call ok(Err.Number = 424, "x = True.p: Err.Number = " & Err.Number)
+    Err.Clear : x = False.p : Call ok(Err.Number = 424, "x = False.p: Err.Number = " & Err.Number)
+    Err.Clear : x = Nothing.p : Call ok(Err.Number = 424, "x = Nothing.p: Err.Number = " & Err.Number)
+    Err.Clear : x = Empty.p : Call ok(Err.Number = 424, "x = Empty.p: Err.Number = " & Err.Number)
+    Err.Clear : x = Null.p : Call ok(Err.Number = 424, "x = Null.p: Err.Number = " & Err.Number)
+    Err.Clear : x = #1/1/2020#.p : Call ok(Err.Number = 424, "x = #1/1/2020#.p: Err.Number = " & Err.Number)
+    Err.Clear : x = "a" & "s".p : Call ok(Err.Number = 424, "x = ""a"" & ""s"".p: Err.Number = " & Err.Number)
+    Err.Clear : x = -1.5.p : Call ok(Err.Number = 424, "x = -1.5.p: Err.Number = " & Err.Number)
+    Err.Clear : Call "s".p : Call ok(Err.Number = 424, "Call ""s"".p: Err.Number = " & Err.Number)
+    Err.Clear : Call "s".p(1) : Call ok(Err.Number = 424, "Call ""s"".p(1): Err.Number = " & Err.Number)
+End Sub
+Call TestLiteralMemberAccess
+
+Sub TestNewMemberAccess
+    Dim x, matches
+    x = New RegExp.Global
+    Call ok(x = False, "New RegExp.Global = " & x)
+    Call ok(getVT(New RegExp.Pattern) = "VT_BSTR", "getVT(New RegExp.Pattern) = " & getVT(New RegExp.Pattern))
+    Set matches = New RegExp.Execute("abc")
+    Call ok(matches.Count = 1, "New RegExp.Execute(""abc"").Count = " & matches.Count)
+    Call ok(New RegExp.Execute("abc").Count = 1, "New RegExp.Execute(""abc"").Count is not 1")
+
+    On Error Resume Next
+    Err.Clear
+    x = New RegExp.nosuchmember
+    Call ok(Err.Number = 438, "New RegExp.nosuchmember: Err.Number = " & Err.Number)
+End Sub
+Call TestNewMemberAccess
+
+CheckParseErr """s"".p = 1",                 1024
+CheckParseErr """s"".p",                     1024
+CheckParseErr """s"".p 1",                   1024
+CheckParseErr "1.5.p = 1",                   1024
+CheckParseErr "Nothing.p = 1",               1024
+CheckParseErr "New RegExp.Pattern = ""a""",  1024
+CheckParseErr "New RegExp.Execute ""a""",    1024
 
 Function ParenId(a)
     ParenId = a
@@ -3788,6 +3843,107 @@ Class class_test_identifiers_as_function_name
     Sub Explicit2 ( erase )
     End Sub
 End Class
+
+Class class_test_identifiers_as_member_var
+    Public default
+    Private property
+
+    Public Sub SetProperty(val)
+        property = val
+    End Sub
+
+    Public Function GetProperty()
+        GetProperty = property
+    End Function
+End Class
+
+Class class_test_identifiers_as_member_var2
+    Private default, error
+    Public step, property
+    Public explicit(2), second, property2
+
+    Public Default Function DefFunc()
+        default = "dd"
+        DefFunc = default
+    End Function
+
+    Public Property Get Prop()
+        Prop = "pp"
+    End Property
+End Class
+
+Class class_test_identifiers_as_member_array
+    Public property(2)
+    Public default(2)
+End Class
+
+Class class_test_identifiers_as_private_member_array
+    Private default(2), property(2)
+End Class
+
+Class class_test_declaration_line_continuation
+    Public _
+        default, _
+        property
+    Private ret
+
+    Public _
+    Default _
+    Function DefFunc()
+        DefFunc = "df"
+    End Function
+
+    Public Property _
+    Get Prop()
+        Prop = "pp"
+    End Property
+
+    Private _
+    Sub PrivSub()
+        ret = "ps"
+    End Sub
+
+    Public Function CallPrivSub()
+        PrivSub
+        CallPrivSub = ret
+    End Function
+End Class
+
+sub test_identifiers_as_member_var
+    Dim obj
+
+    Set obj = New class_test_identifiers_as_member_var
+    obj.default = "xx"
+    Call ok(obj.default = "xx", "obj.default = " & obj.default)
+    obj.SetProperty "yy"
+    Call ok(obj.GetProperty() = "yy", "obj.GetProperty() = " & obj.GetProperty())
+
+    Set obj = New class_test_identifiers_as_member_var2
+    obj.property = "zz"
+    obj.step = 3
+    Call ok(obj.property = "zz", "obj.property = " & obj.property)
+    Call ok(obj.step = 3, "obj.step = " & obj.step)
+    Call ok(obj = "dd", "default function returned " & obj)
+    Call ok(obj.Prop = "pp", "obj.Prop = " & obj.Prop)
+
+    Set obj = New class_test_identifiers_as_member_array
+    obj.property(1) = "pa"
+    Call ok(obj.property(1) = "pa", "obj.property(1) = " & obj.property(1))
+    obj.default(1) = "da"
+    Call ok(obj.default(1) = "da", "obj.default(1) = " & obj.default(1))
+
+    Set obj = New class_test_identifiers_as_private_member_array
+
+    Set obj = New class_test_declaration_line_continuation
+    Call ok(obj = "df", "default function returned " & obj)
+    Call ok(obj.Prop = "pp", "obj.Prop = " & obj.Prop)
+    Call ok(obj.CallPrivSub() = "ps", "obj.CallPrivSub() = " & obj.CallPrivSub())
+    obj.default = "dd"
+    obj.property = "pv"
+    Call ok(obj.default = "dd", "obj.default = " & obj.default)
+    Call ok(obj.property = "pv", "obj.property = " & obj.property)
+end sub
+call test_identifiers_as_member_var()
 
 Class class_test_identifiers_as_property_name
     Public Property Get Property()

@@ -78,7 +78,7 @@ static int __cdecl cmp_cache_entry( const void *a, const void *b )
     if (entry->service < entry2->service) return -1;
     if (entry->type > entry2->type) return 1;
     if (entry->type < entry2->type) return -1;
-    return strcasecmp( entry->name, entry2->name );
+    return stricmp( entry->name, entry2->name );
 }
 
 /* cache lock must be held */
@@ -653,14 +653,14 @@ static DNS_STATUS do_query_hosts( const char *name, WORD type, DNS_RECORDA **res
             if (!entry->ip4) break;
             for (ptr = entry->aliases; ptr && *ptr; ptr += strlen( ptr ) + 1)
             {
-                if (!strcasecmp( ptr, name ) && (rec = create_cname_record( ptr, entry->name )))
+                if (!stricmp( ptr, name ) && (rec = create_cname_record( ptr, entry->name )))
                 {
                     DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
                     if ((rec = create_a_record( entry->name, entry->ip4 ))) DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
                     break;
                 }
             }
-            if (!rec && !strcasecmp( entry->name, name ) && (rec = create_a_record( entry->name, entry->ip4 )))
+            if (!rec && !stricmp( entry->name, name ) && (rec = create_a_record( entry->name, entry->ip4 )))
                 DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
             break;
 
@@ -668,20 +668,20 @@ static DNS_STATUS do_query_hosts( const char *name, WORD type, DNS_RECORDA **res
             if (!entry->ip6) break;
             for (ptr = entry->aliases; ptr && *ptr; ptr += strlen( ptr ) + 1)
             {
-                if (!strcasecmp( ptr, name ) && (rec = create_cname_record( ptr, entry->name )))
+                if (!stricmp( ptr, name ) && (rec = create_cname_record( ptr, entry->name )))
                 {
                     DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
                     if ((rec = create_aaaa_record( entry->name, entry->ip6 ))) DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
                     break;
                 }
             }
-            if (!rec && !strcasecmp( entry->name, name ) && (rec = create_aaaa_record( entry->name, entry->ip6 )))
+            if (!rec && !stricmp( entry->name, name ) && (rec = create_aaaa_record( entry->name, entry->ip6 )))
                 DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
             break;
 
         case DNS_TYPE_CNAME:
             for (ptr = entry->aliases; ptr && *ptr; ptr += strlen( ptr ) + 1)
-                if (!strcasecmp( ptr, name ) && (rec = create_cname_record( ptr, entry->name )))
+                if (!stricmp( ptr, name ) && (rec = create_cname_record( ptr, entry->name )))
                 {
                     DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
                     break;
@@ -797,6 +797,68 @@ static DNS_STATUS do_query_dns( const char *name, WORD type, DWORD options, void
     return ret;
 }
 
+static struct
+{
+    char name[DNS_MAX_NAME_LENGTH];
+    char cname[DNS_MAX_NAME_LENGTH];
+    IP4_ADDRESS ip4;
+    IP6_ADDRESS ip6;
+} hostinfo;
+
+void init_hostinfo( void )
+{
+    struct get_hostinfo_params params;
+
+    params.name  = hostinfo.name;
+    params.cname = hostinfo.cname;
+    params.ip4   = &hostinfo.ip4;
+    params.ip6   = &hostinfo.ip6;
+    RESOLV_CALL( get_hostinfo, &params );
+}
+
+static DNS_STATUS do_query_hostname( const char *name, WORD type, DNS_RECORDA **result )
+{
+    static const IP6_ADDRESS ip6_zero;
+    DNS_RRSET rrset;
+    DNS_RECORDA *rec;
+
+    DNS_RRSET_INIT( rrset );
+    switch (type)
+    {
+    case DNS_TYPE_A:
+        if (!hostinfo.ip4) return DNS_ERROR_RCODE_NAME_ERROR;
+        if (*hostinfo.cname)
+        {
+            if ((rec = create_cname_record( hostinfo.name, hostinfo.cname ))) DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
+            if ((rec = create_a_record( hostinfo.cname, &hostinfo.ip4 ))) DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
+        }
+        else if ((rec = create_a_record( hostinfo.name, &hostinfo.ip4 ))) DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
+        break;
+
+    case DNS_TYPE_AAAA:
+        if (!memcmp(&hostinfo.ip6, &ip6_zero, sizeof(ip6_zero))) return DNS_ERROR_RCODE_NAME_ERROR;
+        if (*hostinfo.cname)
+        {
+            if ((rec = create_cname_record( hostinfo.name, hostinfo.cname ))) DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
+            if ((rec = create_aaaa_record( hostinfo.cname, &hostinfo.ip6 ))) DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
+        }
+        else if ((rec = create_aaaa_record( hostinfo.name, &hostinfo.ip6 ))) DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
+        break;
+
+    case DNS_TYPE_CNAME:
+        if (!*hostinfo.cname) return DNS_ERROR_RCODE_NAME_ERROR;
+        if ((rec = create_cname_record( hostinfo.name, hostinfo.cname ))) DNS_RRSET_ADD( rrset, (DNS_RECORD *)rec );
+        break;
+
+    default:
+        return DNS_ERROR_RCODE_NOT_IMPLEMENTED;
+    }
+    DNS_RRSET_TERMINATE( rrset );
+
+    *result = (DNS_RECORDA *)rrset.pFirstRR;
+    return ERROR_SUCCESS;
+}
+
 /******************************************************************************
  * DnsQuery_UTF8              [DNSAPI.@]
  *
@@ -850,6 +912,11 @@ DNS_STATUS WINAPI DnsQuery_UTF8( const char *name, WORD type, DWORD options, voi
     }
 
     if ((ret = DnsValidateName_UTF8( name, DnsNameDomain )) && ret != DNS_ERROR_NON_RFC_NAME) return ret;
+
+    if ((type == DNS_TYPE_A || type == DNS_TYPE_AAAA || type == DNS_TYPE_CNAME) && !stricmp( name, hostinfo.name ))
+    {
+        return do_query_hostname( name, type, result );
+    }
 
     if ((type == DNS_TYPE_A || type == DNS_TYPE_AAAA || type == DNS_TYPE_CNAME) && !(options & DNS_QUERY_NO_HOSTS_FILE))
     {
