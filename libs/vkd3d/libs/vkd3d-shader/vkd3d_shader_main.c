@@ -1335,9 +1335,7 @@ static int vkd3d_shader_scan_instruction(struct vkd3d_shader_scan_context *conte
                 context->cf_info[context->cf_info_count - 1].inside_block = false;
             break;
         case VSIR_OP_TEXDP3TEX:
-        case VSIR_OP_TEXM3x2TEX:
         case VSIR_OP_TEXM3x3SPEC:
-        case VSIR_OP_TEXM3x3TEX:
         case VSIR_OP_TEXM3x3VSPEC:
         case VSIR_OP_TEXREG2AR:
         case VSIR_OP_TEXREG2GB:

@@ -1049,7 +1049,7 @@ static uint32_t sm6_parser_read_bits(struct sm6_parser *sm6, unsigned int length
     if (!length)
         return 0;
 
-    VKD3D_ASSERT(length < 32);
+    VKD3D_ASSERT(length <= 32);
 
     if (sm6_parser_is_end(sm6))
     {
@@ -1072,9 +1072,11 @@ static uint32_t sm6_parser_read_bits(struct sm6_parser *sm6, unsigned int length
         bits |= *sm6->ptr << l;
         prev_len = l;
     }
+    if (length < 32)
+        bits &= (1u << length) - 1;
     sm6->bitpos += length - prev_len;
 
-    return bits & ((1 << length) - 1);
+    return bits;
 }
 
 static uint64_t sm6_parser_read_vbr(struct sm6_parser *sm6, unsigned int length)
@@ -1275,6 +1277,11 @@ static enum vkd3d_result dxil_abbrev_init(struct dxil_abbrev *abbrev, unsigned i
                 abbrev->operands[i].context = sm6_parser_read_vbr(sm6, 5);
                 abbrev->operands[i].read_operand = (type == ABBREV_FIXED) ? sm6_parser_read_fixed_operand
                         : sm6_parser_read_vbr_operand;
+
+                if (abbrev->operands[i].context > 32)
+                    vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_BITCODE,
+                            "Invalid abbreviation encoding data %"PRIu64".", abbrev->operands[i].context);
+
                 break;
 
             case ABBREV_ARRAY:
@@ -1569,6 +1576,10 @@ static enum vkd3d_result dxil_block_init(struct dxil_block *block, const struct 
     sm6_parser_align_32(sm6);
     block->length = sm6_parser_read_uint32(sm6);
     block->start = sm6->ptr - sm6->start;
+
+    if (block->abbrev_len > 32)
+        vkd3d_shader_parser_error(&sm6->p, VKD3D_SHADER_ERROR_DXIL_INVALID_BITCODE,
+                "Invalid block abbreviation length %u.", block->abbrev_len);
 
     if (sm6->p.status < 0)
         return sm6->p.status;

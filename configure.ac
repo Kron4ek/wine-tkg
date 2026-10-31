@@ -1441,10 +1441,10 @@ if test "x$with_wayland" != "xno"
 then
     WINE_PACKAGE_FLAGS(WAYLAND_CLIENT,[wayland-client],,,,
         [AC_CHECK_HEADER([wayland-client.h],
-           [AC_CHECK_FUNC(wl_display_connect,
-              [AC_PATH_PROG(WAYLAND_SCANNER,wayland-scanner,
-                            [`test -n "$PKG_CONFIG" && $PKG_CONFIG --variable=wayland_scanner wayland-scanner 2>/dev/null`])],
-              [WAYLAND_CLIENT_LIBS=""])])])
+           [AC_CHECK_FUNC(wl_display_connect,[:],[WAYLAND_CLIENT_LIBS=""])],
+           [WAYLAND_CLIENT_LIBS=""])])
+    AC_PATH_PROG(WAYLAND_SCANNER,wayland-scanner,
+                 [`test -n "$PKG_CONFIG" && $PKG_CONFIG --variable=wayland_scanner wayland-scanner 2>/dev/null`])
     WINE_PACKAGE_FLAGS(XKBCOMMON,[xkbcommon],,,,
         [AC_CHECK_FUNC(xkb_context_new,[:],[XKBCOMMON_LIBS=""])])
     if test "x$with_opengl" != "xno"
@@ -1461,8 +1461,20 @@ then
         fi
     fi
 fi
-WINE_NOTICE_WITH(wayland, [test -z "$WAYLAND_CLIENT_LIBS" -o -z "$WAYLAND_SCANNER" -o -z "$XKBCOMMON_LIBS" -o -z "$XKBREGISTRY_LIBS" -o "$ac_cv_header_linux_input_h" = "no"],
-                 [Wayland ${notice_platform}development files not found, the Wayland driver won't be supported.],
+WINE_NOTICE_WITH(wayland, [test -z "$WAYLAND_CLIENT_LIBS"],
+                 [wayland-client ${notice_platform}development files not found, the Wayland driver won't be supported.],
+                 [enable_winewayland_drv])
+WINE_NOTICE_WITH(wayland, [test -z "$WAYLAND_SCANNER"],
+                 [wayland-scanner not found, the Wayland driver won't be supported.],
+                 [enable_winewayland_drv])
+WINE_NOTICE_WITH(wayland, [test -z "$XKBCOMMON_LIBS"],
+                 [libxkbcommon ${notice_platform}development files not found, the Wayland driver won't be supported.],
+                 [enable_winewayland_drv])
+WINE_NOTICE_WITH(wayland, [test -z "$XKBREGISTRY_LIBS"],
+                 [libxkbregistry ${notice_platform}development files not found, the Wayland driver won't be supported.],
+                 [enable_winewayland_drv])
+WINE_NOTICE_WITH(wayland, [test "$ac_cv_header_linux_input_h" = "no"],
+                 [linux/input.h not found, the Wayland driver won't be supported.],
                  [enable_winewayland_drv])
 
 if test "$enable_wineandroid_drv$enable_winemac_drv$enable_winewayland_drv" = "nonono"
@@ -2824,6 +2836,7 @@ WINE_CONFIG_MAKEFILE(dlls/mfreadwrite)
 WINE_CONFIG_MAKEFILE(dlls/mfreadwrite/tests)
 WINE_CONFIG_MAKEFILE(dlls/mfsrcsnk)
 WINE_CONFIG_MAKEFILE(dlls/mfsrcsnk/tests)
+WINE_CONFIG_MAKEFILE(dlls/mfwmaaec)
 WINE_CONFIG_MAKEFILE(dlls/mgmtapi)
 WINE_CONFIG_MAKEFILE(dlls/midimap)
 WINE_CONFIG_MAKEFILE(dlls/mlang)
@@ -3747,7 +3760,7 @@ dnl Rules for generated source files
 
 WINE_APPEND_RULE(
 [dlls/ntdll/unix/version.c: dummy
-	@version=\`(echo \"wine-11.20.r0.g711f5be0\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
+	@version=\`(echo \"wine-11.21.r0.g04414fee\") | sed -n -e '\$\$s/\(.*\)/const char wine_build[[]] = \"\\1  ( TkG Staging NTsync )\";/p'\` && (echo \$\$version | cmp -s - \$[@]) || echo \$\$version >\$[@] || (rm -f \$[@] && exit 1)
 programs/winetest/build.rc: dummy
 	@build=\"STRINGTABLE { 1 \\\"\`GIT_DIR=${wine_srcdir}.git git rev-parse HEAD 2>/dev/null\`\\\" }\" && (echo \$\$build | cmp -s - \$[@]) || echo \$\$build >\$[@] || (rm -f \$[@] && exit 1)
 dlls/wineandroid.drv/wine-debug.apk: dlls/wineandroid.drv/build.gradle ${wine_srcdir}dlls/wineandroid.drv/AndroidManifest.xml ${wine_srcdir}dlls/wineandroid.drv/WineActivity.java ${wine_srcdir}dlls/wineandroid.drv/wine.svg

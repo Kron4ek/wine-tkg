@@ -2446,14 +2446,16 @@ static void write_cache_file(http_request_t *req, const BYTE *buf, DWORD len)
     }
 
     if(len) {
-        BOOL bres;
         DWORD written;
 
-        bres = WriteFile(req->hCacheFile, buf, len, &written, NULL);
-        if(bres)
+        if(WriteFile(req->hCacheFile, buf, len, &written, NULL)) {
             req->cache_size += written;
-        else
-            FIXME("WriteFile failed: %lu\n", GetLastError());
+        }else {
+            WARN("WriteFile failed: %lu\n", GetLastError());
+            CloseHandle(req->hCacheFile);
+            req->hCacheFile = NULL;
+            return;
+        }
     }
 
     if(req->data_stream->vtbl->end_of_data(req->data_stream, req))
@@ -2467,13 +2469,13 @@ static void create_cache_entry(http_request_t *req)
     BOOL b = TRUE;
 
     /* FIXME: We should free previous cache file earlier */
-    if(req->req_file) {
-        req_file_release(req->req_file);
-        req->req_file = NULL;
-    }
     if(req->hCacheFile) {
         CloseHandle(req->hCacheFile);
         req->hCacheFile = NULL;
+    }
+    if(req->req_file) {
+        req_file_release(req->req_file);
+        req->req_file = NULL;
     }
 
     if(req->hdr.dwFlags & INTERNET_FLAG_NO_CACHE_WRITE)
@@ -2529,10 +2531,15 @@ static void create_cache_entry(http_request_t *req)
     b = CreateUrlCacheEntryW(url, req->contentLength == ~0 ? 0 : req->contentLength, NULL, file_name, 0);
     if(!b) {
         WARN("Could not create cache entry: %08lx\n", GetLastError());
+        free(url);
         return;
     }
 
-    create_req_file(file_name, &req->req_file);
+    if(create_req_file(file_name, &req->req_file) != ERROR_SUCCESS) {
+        DeleteFileW(file_name);
+        free(url);
+        return;
+    }
     req->req_file->url = url;
     req->content_pos = 0;
     req->cache_size = 0;
@@ -3055,6 +3062,11 @@ static DWORD read_req_file(http_request_t *req, BYTE *buffer, DWORD size, DWORD 
     LARGE_INTEGER off;
     BYTE buf[1024];
 
+    if (!req->hCacheFile && !req->req_file->is_committed) {
+        *read = 0;
+        return ERROR_SUCCESS;
+    }
+
     while (req->content_pos > req->cache_size) {
         res = read_http_stream(req, (BYTE*)buf, min(sizeof(buf), req->content_pos - req->cache_size),
                                &ret_read, allow_blocking);
@@ -3163,7 +3175,7 @@ static void async_read_file_proc(task_header_t *hdr)
 
     TRACE("req %p buf %p size %lu read_pos %lu ret_read %p\n", req, task->buf, task->size, task->read_pos, task->ret_read);
 
-    if(req->req_file && req->req_file->file_handle) {
+    if(req->req_file && req->req_file->file_handle && (req->hCacheFile || req->req_file->is_committed)) {
         DWORD ret, ret_read;
         BYTE buf[1024];
         while (req->content_pos > req->cache_size) {
@@ -5596,7 +5608,7 @@ BOOL WINAPI HttpSendRequestExA(HINTERNET hRequest,
 
     if (lpBuffersIn)
     {
-        BuffersInW.dwStructSize = sizeof(LPINTERNET_BUFFERSW);
+        BuffersInW.dwStructSize = sizeof(INTERNET_BUFFERSW);
         if (lpBuffersIn->lpcszHeader)
         {
             if (lpBuffersIn->dwHeadersLength == 0 && *lpBuffersIn->lpcszHeader != '\0')
@@ -6220,112 +6232,34 @@ static LPWSTR * HTTP_InterpretHttpHeader(LPCWSTR buffer)
 
 static DWORD HTTP_ProcessHeader(http_request_t *request, LPCWSTR field, LPCWSTR value, DWORD dwModifier)
 {
-    LPHTTPHEADERW lphttpHdr;
+    LPHTTPHEADERW lphttpHdr = NULL;
     INT index;
     BOOL request_only = !!(dwModifier & HTTP_ADDHDR_FLAG_REQ);
-    DWORD res = ERROR_SUCCESS;
+    DWORD res = ERROR_HTTP_INVALID_HEADER;
 
     TRACE("--> %s: %s - 0x%08lx\n", debugstr_w(field), debugstr_w(value), dwModifier);
 
     EnterCriticalSection( &request->headers_section );
 
-    index = HTTP_GetCustomHeaderIndex(request, field, 0, request_only);
-     if (index >= 0)
-     {
-         lphttpHdr = &request->custHeaders[index];
+    /* REPLACE wins out over ADD */
+    if (dwModifier & HTTP_ADDREQ_FLAG_REPLACE)
+        dwModifier &= ~HTTP_ADDREQ_FLAG_ADD;
 
-        /* replace existing header if FLAG_REPLACE is given */
-        if (dwModifier & HTTP_ADDREQ_FLAG_REPLACE)
-        {
-            HTTP_DeleteCustomHeader( request, index );
+    if (dwModifier & HTTP_ADDREQ_FLAG_ADD)
+        index = -1;
+    else
+        index = HTTP_GetCustomHeaderIndex(request, field, 0, request_only);
 
-            if (value && value[0])
-            {
-                HTTPHEADERW hdr;
-
-                hdr.lpszField = (LPWSTR)field;
-                hdr.lpszValue = (LPWSTR)value;
-                hdr.wFlags = hdr.wCount = 0;
-
-                if (dwModifier & HTTP_ADDHDR_FLAG_REQ)
-                    hdr.wFlags |= HDR_ISREQUEST;
-
-                res = HTTP_InsertCustomHeader( request, &hdr );
-            }
-
-            goto out;
-        }
-
-        /* do not add new header if FLAG_ADD_IF_NEW is set */
-        if (dwModifier & HTTP_ADDREQ_FLAG_ADD_IF_NEW)
-         {
-            res = ERROR_HTTP_INVALID_HEADER; /* FIXME */
-            goto out;
-        }
-
-        /* handle appending to existing header */
-        if (dwModifier & COALESCEFLAGS)
-        {
-            LPWSTR lpsztmp;
-            WCHAR ch = 0;
-            INT len = 0;
-            INT origlen = lstrlenW(lphttpHdr->lpszValue);
-            INT valuelen = lstrlenW(value);
-
-            /* FIXME: Should it really clear HDR_ISREQUEST? */
-             if (dwModifier & HTTP_ADDHDR_FLAG_REQ)
-                lphttpHdr->wFlags |= HDR_ISREQUEST;
-            else
-                lphttpHdr->wFlags &= ~HDR_ISREQUEST;
-
-            if (dwModifier & HTTP_ADDREQ_FLAG_COALESCE_WITH_COMMA)
-            {
-                ch = ',';
-                lphttpHdr->wFlags |= HDR_COMMADELIMITED;
-            }
-            else if (dwModifier & HTTP_ADDREQ_FLAG_COALESCE_WITH_SEMICOLON)
-            {
-                ch = ';';
-                lphttpHdr->wFlags |= HDR_COMMADELIMITED;
-            }
-
-            len = origlen + valuelen + ((ch > 0) ? 2 : 0);
-
-            lpsztmp = realloc(lphttpHdr->lpszValue, (len+1)*sizeof(WCHAR));
-            if (lpsztmp)
-            {
-                lphttpHdr->lpszValue = lpsztmp;
-                /* FIXME: Increment lphttpHdr->wCount. Perhaps lpszValue should be an array */
-                if (ch > 0)
-                {
-                    lphttpHdr->lpszValue[origlen] = ch;
-                    origlen++;
-                    lphttpHdr->lpszValue[origlen] = ' ';
-                    origlen++;
-                }
-
-                memcpy(&lphttpHdr->lpszValue[origlen], value, valuelen*sizeof(WCHAR));
-                lphttpHdr->lpszValue[len] = '\0';
-            }
-            else
-             {
-                WARN("realloc (%d bytes) failed\n",len+1);
-                res = ERROR_OUTOFMEMORY;
-             }
-
-            goto out;
-         }
-     }
-
-    /* FIXME: What about other combinations? */
-    if ((dwModifier & ~HTTP_ADDHDR_FLAG_REQ) == HTTP_ADDREQ_FLAG_REPLACE)
+    if (index >= 0)
     {
-        res = ERROR_HTTP_HEADER_NOT_FOUND;
-        goto out;
+        if (dwModifier & HTTP_ADDREQ_FLAG_ADD_IF_NEW)
+        {
+            LeaveCriticalSection( &request->headers_section );
+            return ERROR_HTTP_INVALID_HEADER;
+        }
+        lphttpHdr = &request->custHeaders[index];
     }
-
-    /* FIXME: What if value == ""? */
-    if (value)
+    else if (value)
     {
         HTTPHEADERW hdr;
 
@@ -6336,15 +6270,92 @@ static DWORD HTTP_ProcessHeader(http_request_t *request, LPCWSTR field, LPCWSTR 
         if (dwModifier & HTTP_ADDHDR_FLAG_REQ)
             hdr.wFlags |= HDR_ISREQUEST;
 
-        res = HTTP_InsertCustomHeader( request, &hdr );
-        goto out;
+        res = HTTP_InsertCustomHeader(request, &hdr);
+        LeaveCriticalSection( &request->headers_section );
+        return res;
+    }
+    /* no value to delete */
+    else
+    {
+        LeaveCriticalSection( &request->headers_section );
+        return ERROR_SUCCESS;
     }
 
-    /* FIXME: What if value == NULL? */
-out:
-     TRACE("<-- %ld\n", res);
-     LeaveCriticalSection( &request->headers_section );
-     return res;
+    if (dwModifier & HTTP_ADDHDR_FLAG_REQ)
+	    lphttpHdr->wFlags |= HDR_ISREQUEST;
+    else
+        lphttpHdr->wFlags &= ~HDR_ISREQUEST;
+
+    if (dwModifier & HTTP_ADDREQ_FLAG_REPLACE)
+    {
+        HTTP_DeleteCustomHeader( request, index );
+
+        if (value && value[0])
+        {
+            HTTPHEADERW hdr;
+
+            hdr.lpszField = (LPWSTR)field;
+            hdr.lpszValue = (LPWSTR)value;
+            hdr.wFlags = hdr.wCount = 0;
+
+            if (dwModifier & HTTP_ADDHDR_FLAG_REQ)
+                hdr.wFlags |= HDR_ISREQUEST;
+
+            res = HTTP_InsertCustomHeader(request, &hdr);
+            LeaveCriticalSection( &request->headers_section );
+            return res;
+        }
+
+        LeaveCriticalSection( &request->headers_section );
+        return ERROR_SUCCESS;
+    }
+    else if (dwModifier & COALESCEFLAGS)
+    {
+        LPWSTR lpsztmp;
+        WCHAR ch = 0;
+        INT len = 0;
+        INT origlen = lstrlenW(lphttpHdr->lpszValue);
+        INT valuelen = lstrlenW(value);
+
+        if (dwModifier & HTTP_ADDREQ_FLAG_COALESCE_WITH_COMMA)
+        {
+            ch = ',';
+            lphttpHdr->wFlags |= HDR_COMMADELIMITED;
+        }
+        else if (dwModifier & HTTP_ADDREQ_FLAG_COALESCE_WITH_SEMICOLON)
+        {
+            ch = ';';
+            lphttpHdr->wFlags |= HDR_COMMADELIMITED;
+        }
+
+        len = origlen + valuelen + ((ch > 0) ? 2 : 0);
+
+        lpsztmp = realloc(lphttpHdr->lpszValue, (len + 1) * sizeof(WCHAR));
+        if (lpsztmp)
+        {
+            lphttpHdr->lpszValue = lpsztmp;
+    /* FIXME: Increment lphttpHdr->wCount. Perhaps lpszValue should be an array */
+            if (ch > 0)
+            {
+                lphttpHdr->lpszValue[origlen] = ch;
+                origlen++;
+                lphttpHdr->lpszValue[origlen] = ' ';
+                origlen++;
+            }
+
+            memcpy(&lphttpHdr->lpszValue[origlen], value, valuelen*sizeof(WCHAR));
+            lphttpHdr->lpszValue[len] = '\0';
+            res = ERROR_SUCCESS;
+        }
+        else
+        {
+            WARN("realloc (%d bytes) failed\n",len+1);
+            res = ERROR_OUTOFMEMORY;
+        }
+    }
+    TRACE("<-- %ld\n", res);
+    LeaveCriticalSection( &request->headers_section );
+    return res;
 }
 
 /***********************************************************************

@@ -304,6 +304,8 @@ static void test_key_import_rsa(void)
 {
     NCRYPT_PROV_HANDLE prov;
     NCRYPT_KEY_HANDLE key;
+    NCryptBuffer buf;
+    NCryptBufferDesc desc;
     SECURITY_STATUS ret;
 
     prov = 0;
@@ -350,6 +352,15 @@ static void test_key_import_rsa(void)
     ret = NCryptImportKey(prov, 0, BCRYPT_PUBLIC_KEY_BLOB, NULL, &key, rsa_key_blob, sizeof(rsa_key_blob) + 1, 0);
     ok(ret == NTE_BAD_DATA, "got %#lx\n", ret);
 
+    buf.cbBuffer   = sizeof(L"winetestkey");
+    buf.BufferType = NCRYPTBUFFER_PKCS_KEY_NAME;
+    buf.pvBuffer   = (void *)L"winetestkey";
+    desc.ulVersion = NCRYPTBUFFER_VERSION;
+    desc.cBuffers  = 1;
+    desc.pBuffers  = &buf;
+    ret = NCryptImportKey(prov, 0, BCRYPT_PUBLIC_KEY_BLOB, &desc, &key, rsa_key_blob, sizeof(rsa_key_blob), 0);
+    ok(ret == ERROR_SUCCESS, "got %#lx\n", ret);
+    NCryptDeleteKey(key, 0);
     NCryptFreeObject(prov);
 }
 
@@ -458,7 +469,7 @@ static void test_set_property(void)
     ret = NCryptSetProperty(key, L"My Custom Property", (BYTE *)L"value", sizeof(L"value"), 0);
     ok(ret == NTE_NOT_SUPPORTED, "got %#lx\n", ret);
     }
-    NCryptFreeObject(key);
+    NCryptDeleteKey(key, 0);
     NCryptFreeObject(prov);
 }
 
@@ -485,7 +496,7 @@ static void test_create_persisted_key(void)
     check_properties(prov, key);
 
     NCryptFinalizeKey(key, 0);
-    NCryptFreeObject(key);
+    NCryptDeleteKey(key, 0);
 
     todo_wine
     {
@@ -493,9 +504,12 @@ static void test_create_persisted_key(void)
     ret = NCryptCreatePersistedKey(prov, &key, BCRYPT_AES_ALGORITHM, NULL, 0, 0);
     ok(ret == ERROR_SUCCESS || broken(ret == NTE_NOT_SUPPORTED) /* win 7 */, "got %#lx\n", ret);
     if (ret == NTE_NOT_SUPPORTED) win_skip("broken, symmetric keys not supported.\n");
-    else ok(key, "got null handle\n");
+    else
+    {
+        ok(key, "got null handle\n");
+        NCryptDeleteKey(key, 0);
     }
-
+    }
     NCryptFreeObject(prov);
 }
 
@@ -520,7 +534,7 @@ static void test_finalize_key(void)
     ret = NCryptFinalizeKey(0, 0);
     ok(ret == NTE_INVALID_HANDLE, "got %#lx\n", ret);
 
-    NCryptFreeObject(key);
+    NCryptDeleteKey(key, 0);
 }
 
 static UCHAR signature_pubkey_blob[] = {
@@ -765,8 +779,6 @@ static void test_NCryptEncrypt(void)
     ok(ret == NTE_BAD_FLAGS, "got %lx\n", ret);
 
     /* Test no padding with RSA */
-    todo_wine
-    {
     ret = NCryptEncrypt(key, data_to_encrypt, sizeof(data_to_encrypt), NULL, NULL, 0, &output_size,
                         NCRYPT_NO_PADDING_FLAG);
     ok(ret == ERROR_SUCCESS, "got %lx\n", ret);
@@ -777,7 +789,6 @@ static void test_NCryptEncrypt(void)
                         &output_size, NCRYPT_NO_PADDING_FLAG);
     ok(ret == NTE_INVALID_PARAMETER, "got %lx\n", ret);
     free(output_a);
-    }
 
     /* Test output RSA with PKCS1. PKCS1 should append a random padding to the data, so the output should be different
      * with each call. */
@@ -802,10 +813,40 @@ static void test_NCryptEncrypt(void)
     ok(ret == ERROR_SUCCESS, "got %lx\n", ret);
     ok(memcmp(output_a, output_b, 128), "expected to have different outputs.\n");
 
-    NCryptFreeObject(key);
     free(output_a);
     free(output_b);
+    NCryptDeleteKey(key, 0);
+    NCryptFreeObject(prov);
+}
 
+static void test_NCryptDecrypt(void)
+{
+    NCRYPT_PROV_HANDLE prov;
+    NCRYPT_KEY_HANDLE key;
+    SECURITY_STATUS ret;
+    BYTE encrypted[128], unencrypted[128];
+    DWORD size;
+
+    ret = NCryptOpenStorageProvider(&prov, NULL, 0);
+    ok(!ret, "got %lx\n", ret);
+    ret = NCryptCreatePersistedKey(prov, &key, BCRYPT_RSA_ALGORITHM, NULL, 0, 0);
+    ok(!ret, "got %lx\n", ret);
+    ret = NCryptFinalizeKey(key, 0);
+    ok(!ret, "got %lx\n", ret);
+
+    size = sizeof(encrypted);
+    memset(encrypted, 0, sizeof(encrypted));
+    ret = NCryptEncrypt(key, data_to_encrypt, sizeof(data_to_encrypt), NULL, encrypted, size, &size,
+                        NCRYPT_PAD_PKCS1_FLAG);
+    ok(!ret, "got %lx\n", ret);
+
+    size = sizeof(unencrypted);
+    memset(unencrypted, 0, sizeof(unencrypted));
+    ret = NCryptDecrypt(key, encrypted, sizeof(encrypted), NULL, unencrypted, size, &size, NCRYPT_PAD_PKCS1_FLAG);
+    ok(!ret, "got %lx\n", ret);
+    ok(!memcmp(unencrypted, data_to_encrypt, sizeof(data_to_encrypt)), "wrong data\n");
+
+    NCryptDeleteKey(key, 0);
     NCryptFreeObject(prov);
 }
 
@@ -829,14 +870,48 @@ static void test_NCryptExportKey(void)
     size = 0;
     ret = NCryptExportKey(key, 0, BCRYPT_RSAPRIVATE_BLOB, NULL, buffer, sizeof(buffer), &size, 0);
     ok(ret == ERROR_SUCCESS, "got unexpected return value %lx\n", ret);
-    ok(size == 283, "got unexpected size %#lx\n", size);
+    ok(size == 283, "got %lu\n", size);
 
     size = 0;
     ret = NCryptExportKey(key, 0, BCRYPT_RSAFULLPRIVATE_BLOB, NULL, buffer, sizeof(buffer), &size, 0);
     ok(ret == ERROR_SUCCESS, "got unexpected return value %lx\n", ret);
-    ok(size == 603, "got unexpected size %#lx\n", size);
+    ok(size == 603, "got %lu\n", size);
 
-    NCryptFreeObject(key);
+    NCryptDeleteKey(key, 0);
+    NCryptFreeObject(prov);
+}
+
+static void test_NCryptImportKey(void)
+{
+    NCRYPT_PROV_HANDLE prov;
+    NCRYPT_KEY_HANDLE key, key2;
+    SECURITY_STATUS ret;
+    DWORD size;
+    BYTE buffer[256];
+
+    ret = NCryptOpenStorageProvider(&prov, NULL, 0);
+    ok(!ret, "got %#lx\n", ret);
+    ret = NCryptCreatePersistedKey(prov, &key, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0, 0);
+    ok(!ret, "got %#lx\n", ret);
+    ret = NCryptFinalizeKey(key, 0);
+    ok(!ret, "got %#lx\n", ret);
+
+    size = 0;
+    ret = NCryptExportKey(key, 0, BCRYPT_ECCPUBLIC_BLOB, NULL, buffer, sizeof(buffer), &size, 0);
+    ok(!ret, "got %#lx\n", ret);
+    ok(size == 72, "got %lu\n", size);
+
+    ret = NCryptImportKey(prov, 0, BCRYPT_ECCPUBLIC_BLOB, NULL, &key2, buffer, size, 0);
+    ok(!ret, "got %#lx\n", ret);
+
+    size = 0;
+    memset(buffer, 0, sizeof(buffer));
+    ret = NCryptGetProperty(key2, NCRYPT_ALGORITHM_GROUP_PROPERTY, buffer, sizeof(buffer), &size, 0);
+    ok(!ret, "got %#lx\n", ret);
+    ok(!wcscmp((const WCHAR *)buffer, L"ECDSA"), "got %s\n", wine_dbgstr_w((const WCHAR *)buffer));
+
+    NCryptDeleteKey(key, 0);
+    NCryptDeleteKey(key2, 0);
     NCryptFreeObject(prov);
 }
 
@@ -851,5 +926,7 @@ START_TEST(ncrypt)
     test_verify_signature();
     test_NCryptIsAlgSupported();
     test_NCryptEncrypt();
+    test_NCryptDecrypt();
     test_NCryptExportKey();
+    test_NCryptImportKey();
 }

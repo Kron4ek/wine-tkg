@@ -210,6 +210,17 @@ static struct list teb_list = LIST_INIT( teb_list );
 #define MAP_NORESERVE 0
 #endif
 
+#undef MAP_FIXED_NOREPLACE
+#ifndef MAP_FIXED_NOREPLACE
+# ifdef linux
+#  define MAP_FIXED_NOREPLACE 0x100000
+# elif defined MAP_TRYFIXED
+#  define MAP_FIXED_NOREPLACE MAP_TRYFIXED
+# else
+#  define MAP_FIXED_NOREPLACE 0
+# endif
+#endif
+
 #ifdef _WIN64  /* on 64-bit the page protection bytes use a 2-level table */
 static const size_t pages_vprot_shift = 20;
 static const size_t pages_vprot_mask = (1 << 20) - 1;
@@ -555,11 +566,7 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
 {
     void *ptr;
 
-#ifdef MAP_FIXED_NOREPLACE
-    ptr = mmap( start, size, prot, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
-#elif defined(MAP_TRYFIXED)
-    ptr = mmap( start, size, prot, MAP_TRYFIXED | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
     ptr = mmap( start, size, prot, MAP_FIXED | MAP_EXCL | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
     if (ptr == MAP_FAILED && errno == EINVAL) errno = EEXIST;
 #elif defined(__APPLE__)
@@ -578,7 +585,7 @@ static void *anon_mmap_tryfixed( void *start, size_t size, int prot, int flags )
         ptr = MAP_FAILED;
     }
 #else
-    ptr = mmap( start, size, prot, MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
+    ptr = mmap( start, size, prot, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANON | flags, -1, 0 );
 #endif
     if (ptr != MAP_FAILED && ptr != start)
     {
@@ -1738,12 +1745,21 @@ static void reset_write_watches( void *base, SIZE_T size )
 
 
 /***********************************************************************
- *           unmap_extra_space
+ *           map_anon_area
  *
- * Release the extra memory while keeping the range starting on the alignment boundary.
+ * Try to map some space with an anon mmap.
+ * virtual_mutex must be held by caller.
  */
-static inline void *unmap_extra_space( void *ptr, size_t total_size, size_t wanted_size, size_t align_mask )
+static void *map_anon_area( size_t size, int unix_prot, size_t align_mask )
 {
+    size_t total_size = size + align_mask + 1;
+    void *ptr = anon_mmap_alloc( total_size, unix_prot );
+
+    if (ptr == MAP_FAILED)
+    {
+        ERR( "anon mmap error %s, size %p, unix_prot %#x\n", strerror(errno), (void *)size, unix_prot );
+        return ptr;
+    }
     if ((ULONG_PTR)ptr & align_mask)
     {
         size_t extra = align_mask + 1 - ((ULONG_PTR)ptr & align_mask);
@@ -1751,8 +1767,7 @@ static inline void *unmap_extra_space( void *ptr, size_t total_size, size_t want
         ptr = (char *)ptr + extra;
         total_size -= extra;
     }
-    if (total_size > wanted_size)
-        munmap( (char *)ptr + wanted_size, total_size - wanted_size );
+    if (total_size > size) munmap( (char *)ptr + size, total_size - size );
     return ptr;
 }
 
@@ -1779,7 +1794,7 @@ static void *map_reserved_area( void *limit_low, void *limit_high, size_t size, 
         {
             if (mem_area_state( area ) != AREA_RESERVED) continue;
             start = ROUND_ADDR( (char *)mem_area_base( area ) + align_mask, align_mask );
-            if ((char *)end - (char *)start < size) continue;
+            if (start >= end || (char *)end - (char *)start < size) continue;
             ptr = ROUND_ADDR( (char *)end - size, align_mask );
             break;
         }
@@ -1792,7 +1807,7 @@ static void *map_reserved_area( void *limit_low, void *limit_high, size_t size, 
             if (mem_area_state( area ) != AREA_RESERVED) continue;
             start = ROUND_ADDR( (char *)start + align_mask, align_mask );
             end = min( limit_high, mem_area_end( area ));
-            if ((char *)end - (char *)start < size) continue;
+            if (start >= end || (char *)end - (char *)start < size) continue;
             ptr = start;
             break;
         }
@@ -1916,7 +1931,6 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
         void *start = address_space_start;
         void *end = min( user_space_limit, host_addr_space_limit );
         size_t host_size = ROUND_SIZE( 0, size, host_page_mask );
-        size_t view_size = host_size + align_mask + 1;
 
         if (limit_low && (void *)limit_low > start) start = (void *)limit_low;
         if (limit_high && (void *)limit_high < end) end = (char *)limit_high + 1;
@@ -1933,14 +1947,8 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
         }
         else
         {
-            if ((ptr = anon_mmap_alloc( view_size, unix_prot )) == MAP_FAILED)
-            {
-                status = (errno == ENOMEM) ? STATUS_NO_MEMORY : STATUS_INVALID_PARAMETER;
-                ERR( "anon mmap error %s, size %p, unix_prot %#x\n",
-                     strerror(errno), (void *)view_size, unix_prot );
-                return status;
-            }
-            ptr = unmap_extra_space( ptr, view_size, host_size, align_mask );
+            if ((ptr = map_anon_area( host_size, unix_prot, align_mask )) == MAP_FAILED)
+                return (errno == ENOMEM) ? STATUS_NO_MEMORY : STATUS_INVALID_PARAMETER;
             TRACE( "got mem with anon mmap %p-%p\n", ptr, (char *)ptr + size );
         }
     }
@@ -2373,11 +2381,12 @@ static void *get_host_addr_space_limit(void)
 
     while (addr >> 32)
     {
-        void *ret = anon_mmap_tryfixed( (void *)addr, host_page_size, PROT_NONE, 0 );
+        void *ret = mmap( (void *)addr, host_page_size, PROT_NONE,
+                          MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANON, -1, 0 );
         if (ret != MAP_FAILED)
         {
             munmap( ret, host_page_size );
-            break;
+            if (ret >= (void *)addr) break;
         }
         else if (errno == EEXIST) break;
         addr >>= 1;
@@ -3281,26 +3290,14 @@ void virtual_init(void)
         reserve_area( (void *)0x7f000000, (void *)0x7fff0000 );
     }
 
-    if (is_win64) /* top-down area */
-    {
-        void *start = (void *)0x7ff000000000;
-        void *end = (void *)0x7ff600000000;
-
-        if (start > host_addr_space_limit)
-        {
-            end = ROUND_ADDR( host_addr_space_limit, limit_4g - 1 );
-            start = (char *)end - limit_4g;
-        }
-        reserve_area( start, end );
-    }
-
 #ifdef _WIN64
     pages_vprot_size = ((size_t)host_addr_space_limit >> page_shift >> pages_vprot_shift) + 1;
     pages_vprot = calloc( pages_vprot_size, sizeof(*pages_vprot) );
+    assert( pages_vprot != NULL );
 #else
     pages_vprot = anon_mmap_alloc( 1U << (32 - page_shift), PROT_READ | PROT_WRITE );
-#endif
     assert( pages_vprot != MAP_FAILED );
+#endif
     view_block_start = anon_mmap_alloc( view_block_size, PROT_READ | PROT_WRITE );
     view_block_end = view_block_start + view_block_size / sizeof(*view_block_start);
     assert( view_block_start != MAP_FAILED );
@@ -3332,15 +3329,6 @@ void virtual_get_system_info( SYSTEM_BASIC_INFORMATION *info, BOOL wow64 )
         ULONG64 total = (ULONG64)sinfo.totalram * sinfo.mem_unit;
         info->MmHighestPhysicalPage = max(1, total / page_size);
     }
-#elif defined(__APPLE__)
-    /* sysconf(_SC_PHYS_PAGES) is buggy on macOS: in a 32-bit process, it
-     * returns an error on Macs with >4GB of RAM.
-     */
-    INT64 memsize;
-    size_t len = sizeof(memsize);
-
-    if (!sysctlbyname( "hw.memsize", &memsize, &len, NULL, 0 ))
-        info->MmHighestPhysicalPage = max(1, memsize / page_size);
 #elif defined(_SC_PHYS_PAGES)
     LONG64 phys_pages = sysconf( _SC_PHYS_PAGES );
 
@@ -3645,10 +3633,41 @@ static struct thread_data *init_thread_data( void *ptr )
     return data;
 }
 
+BOOL WINAPI __wine_needs_override_large_address_aware(void)
+{
+    static int needs_override = -1;
+
+    if (needs_override == -1)
+    {
+        const char *str = getenv( "WINE_LARGE_ADDRESS_AWARE" );
+
+        needs_override = !str || atoi(str) == 1;
+    }
+    return needs_override;
+}
+
+static BOOL is_large_address_aware(void)
+{
+    return (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)
+           || __wine_needs_override_large_address_aware();
+}
+
 /* enable use of a large address space when allowed by the application */
 static void set_large_address_space(void)
 {
-    if (is_machine_64bit( main_image_info.Machine )) return;
+    if (is_machine_64bit( main_image_info.Machine ))
+    {
+        void *start = (void *)0x7ff000000000;
+        void *end = (void *)0x7ff600000000;
+
+        if (start > host_addr_space_limit)
+        {
+            end = ROUND_ADDR( host_addr_space_limit, limit_4g - 1 );
+            start = (char *)end - limit_4g;
+        }
+        reserve_area( start, end );
+        return;
+    }
 
     if (main_image_info.Machine == IMAGE_FILE_MACHINE_I386)
     {
@@ -3662,7 +3681,7 @@ static void set_large_address_space(void)
 
     if (is_win64)
     {
-        if (main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)
+        if (is_large_address_aware())
         {
             user_space_wow_limit = limit_4g - 1;
             /* block a bit of top memory: some apps break if the entire high 2G is available */
@@ -3674,7 +3693,7 @@ static void set_large_address_space(void)
             set_mem_area_state( (void *)0x7fff0000, 0x10000, AREA_BLOCKED );
         }
     }
-    else if (!(main_image_info.ImageCharacteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE))
+    else if (!is_large_address_aware())
     {
         reserve_area( (void *)limit_2g, host_addr_space_limit );
         return;
@@ -3691,6 +3710,8 @@ struct thread_data *virtual_alloc_first_thread_data(void)
     unsigned int status;
     struct thread_data *thread_data;
     struct file_view *view;
+    size_t size = signal_stack_mask + 1 + kernel_stack_size;
+    void *ptr;
 
     /* reserve space for shared user data */
     status = map_view( &view, user_shared_data, page_size, 0, VPROT_READ | VPROT_COMMITTED, 0, 0, 0 );
@@ -3700,9 +3721,12 @@ struct thread_data *virtual_alloc_first_thread_data(void)
         exit(1);
     }
 
-    status = map_view( &view, NULL, signal_stack_mask + 1 + kernel_stack_size, MEM_TOP_DOWN,
-                       VPROT_READ | VPROT_WRITE | VPROT_COMMITTED, 4 * limit_4g, 0, 0 );
+    ptr = map_anon_area( size, PROT_READ | PROT_WRITE, granularity_mask );
+    assert( ptr != MAP_FAILED );
+    status = create_view( &view, ptr, size, VPROT_READ | VPROT_WRITE | VPROT_COMMITTED );
     assert( !status );
+    VIRTUAL_DEBUG_DUMP_VIEW( view );
+
     thread_data = init_thread_data( view->base );
     pthread_setspecific( thread_data_key, thread_data );
     return thread_data;
@@ -3839,6 +3863,8 @@ void virtual_free_thread_data( struct thread_data *data )
     SIZE_T size;
     sigset_t sigset;
     WOW_TEB *wow_teb;
+
+    if (process_exiting) return;
 
     if (!(teb = data->teb)) goto done;
 
@@ -6690,16 +6716,6 @@ NTSTATUS WINAPI NtFlushInstructionCache( HANDLE handle, const void *addr, SIZE_T
 
 #ifdef __APPLE__
 
-static kern_return_t (*p_thread_get_register_pointer_values)( thread_t, uintptr_t*, size_t*, uintptr_t* );
-static pthread_once_t tgrpvs_init_once = PTHREAD_ONCE_INIT;
-
-static void tgrpvs_init(void)
-{
-    p_thread_get_register_pointer_values = dlsym( RTLD_DEFAULT, "thread_get_register_pointer_values" );
-    if (!p_thread_get_register_pointer_values)
-        FIXME( "thread_get_register_pointer_values not supported for NtFlushProcessWriteBuffers\n" );
-}
-
 /**********************************************************************
  *           NtFlushProcessWriteBuffers  (NTDLL.@)
  */
@@ -6708,9 +6724,6 @@ NTSTATUS WINAPI NtFlushProcessWriteBuffers(void)
     /* Taken from https://github.com/dotnet/runtime/blob/7be37908e5a1cbb83b1062768c1649827eeaceaa/src/coreclr/pal/src/thread/process.cpp#L2799 */
     mach_msg_type_number_t count, i;
     thread_act_array_t threads;
-
-    pthread_once( &tgrpvs_init_once, tgrpvs_init );
-    if (!p_thread_get_register_pointer_values) return STATUS_SUCCESS;
 
     /* Get references to all threads of this process */
     if (task_threads( mach_task_self(), &threads, &count )) return STATUS_SUCCESS;
@@ -6722,7 +6735,7 @@ NTSTATUS WINAPI NtFlushProcessWriteBuffers(void)
         uintptr_t sp;
 
         /* Request the thread's register pointer values to force the thread to go through a memory barrier */
-        p_thread_get_register_pointer_values( threads[i], &sp, &reg_count, reg_values );
+        thread_get_register_pointer_values( threads[i], &sp, &reg_count, reg_values );
         mach_port_deallocate( mach_task_self(), threads[i] );
     }
     vm_deallocate( mach_task_self(), (vm_address_t)threads, count * sizeof(threads[0]) );

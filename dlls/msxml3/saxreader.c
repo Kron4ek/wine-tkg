@@ -1225,6 +1225,32 @@ static bool parser_dtd_validate_element_mixed_content(struct validation_context 
     return true;
 }
 
+bool parser_dtd_check_required_attributes(struct validation_context *ctxt, struct dtd *dtd, struct domnode *elem)
+{
+    struct attlist_decl *attlist_decl;
+    struct domnode *attr;
+
+    LIST_FOR_EACH_ENTRY(attlist_decl, &dtd->attr_decls, struct attlist_decl, entry)
+    {
+        if (bstr_equal(attlist_decl->name, elem->qname))
+        {
+            for (size_t i = 0; i < attlist_decl->count; ++i)
+            {
+                if (attlist_decl->attributes[i].valuetype == ATTR_DEF_TYPE_REQUIRED)
+                {
+                    if (domnode_get_attribute(elem, attlist_decl->attributes[i].name.qname, &attr) != S_OK)
+                    {
+                        ctxt->code = E_DOM_REQUIRED_ATTRIBUTE_MISSING;
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
 bool parser_dtd_validate_element_content(struct validation_context *ctxt, struct dtd *dtd,
         struct element_decl *decl, struct domnode *elem)
 {
@@ -3481,6 +3507,7 @@ static void saxreader_parse_encdecl(struct saxlocator *locator, const struct par
     if (wcscmp(name->qname, L"encoding"))
         return saxreader_set_error(locator, E_SAX_UNEXPECTED_ATTRIBUTE);
 
+    SysFreeString(locator->saxreader->xmldecl_encoding);
     locator->saxreader->xmldecl_encoding = saxreader_alloc_string(locator, value);
     TRACE("encoding name %s\n", debugstr_w(locator->saxreader->xmldecl_encoding));
 
@@ -3504,6 +3531,8 @@ static void saxreader_parse_sddecl(struct saxlocator *locator, const struct pars
     if (wcscmp(name->qname, L"standalone"))
         return saxreader_set_error(locator, E_SAX_UNEXPECTED_ATTRIBUTE);
 
+    SysFreeString(locator->saxreader->xmldecl_standalone);
+    locator->saxreader->xmldecl_standalone = NULL;
     if (!wcscmp(value, L"yes") || !wcscmp(value, L"no"))
         locator->saxreader->xmldecl_standalone = saxreader_alloc_string(locator, value);
     else
@@ -4576,6 +4605,7 @@ static void saxreader_parse_pi(struct saxlocator *locator)
         ch = *saxreader_get_ptr_noread(locator);
     }
 
+    free(buffer.data);
     SysFreeString(target);
     saxreader_set_error(locator, E_SAX_UNCLOSEDPI);
 }
@@ -5998,6 +6028,7 @@ static void saxreader_parse_doctype(struct saxlocator *locator)
     saxlocator_extension_dtd(locator);
     saxlocator_enddtd(locator);
 
+    SysFreeString(name);
     SysFreeString(sysid);
     SysFreeString(pubid);
 }
@@ -6551,7 +6582,7 @@ static HRESULT saxreader_get_property(const struct saxreader *reader, const WCHA
     if (!wcscmp(prop, L"xmldecl-standalone"))
     {
         V_VT(value) = VT_BSTR;
-        return return_bstr(reader->xmldecl_encoding, &V_BSTR(value));
+        return return_bstr(reader->xmldecl_standalone, &V_BSTR(value));
     }
 
     if (!wcscmp(prop, L"max-xml-size"))
@@ -6641,6 +6672,8 @@ static ULONG WINAPI saxxmlreader_Release(IVBSAXXMLReader *iface)
         }
 
         SysFreeString(reader->xmldecl_version);
+        SysFreeString(reader->xmldecl_standalone);
+        SysFreeString(reader->xmldecl_encoding);
         SysFreeString(reader->empty_bstr);
 
         free(reader);

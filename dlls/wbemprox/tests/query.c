@@ -464,9 +464,9 @@ static void _check_property( ULONG line, IWbemClassObject *obj, const WCHAR *pro
 
 static void test_Win32_Service( IWbemServices *services )
 {
-    BSTR class = SysAllocString( L"Win32_Service.Name=\"Spooler\"" ), empty = SysAllocString( L"" ), method;
-    IWbemClassObject *service, *out;
-    VARIANT state, retval, classvar;
+    BSTR class = SysAllocString( L"Win32_Service.Name=\"Spooler\"" ), empty = SysAllocString( L"" ), method, path;
+    IWbemClassObject *service, *out, *in, *sig_in, *sig_out;
+    VARIANT state, retval, classvar, var;
     CIMTYPE type;
     HRESULT hr;
 
@@ -479,7 +479,11 @@ static void test_Win32_Service( IWbemServices *services )
         return;
     }
 
+    check_property( service, L"Description", VT_BSTR, CIM_STRING );
     check_property( service, L"ProcessID", VT_I4, CIM_UINT32 );
+    check_property( service, L"PathName", VT_BSTR, CIM_STRING );
+    check_property( service, L"StartName", VT_BSTR, CIM_STRING );
+
     type = 0xdeadbeef;
     VariantInit( &state );
     hr = IWbemClassObject_Get( service, L"State", 0, &state, &type, NULL );
@@ -570,6 +574,56 @@ static void test_Win32_Service( IWbemServices *services )
     ok( hr == WBEM_E_NOT_FOUND, "got %#lx\n", hr );
     ok( service == NULL, "expected NULL service, got %p\n", service );
     SysFreeString( class );
+
+    class = SysAllocString( L"Win32_Service" );
+    hr = IWbemServices_GetObject( services, class, 0, NULL, &service, NULL );
+    ok( hr == S_OK, "got %#lx\n", hr );
+    SysFreeString( class );
+
+    hr = IWbemClassObject_GetMethod( service, L"ChangeStartMode", 0, &sig_in, &sig_out );
+    ok( hr == S_OK, "got %#lx\n", hr );
+
+    hr = IWbemClassObject_SpawnInstance( sig_in, 0, &in );
+    ok( hr == S_OK, "got %#lx\n", hr );
+
+    V_VT( &var ) = VT_BSTR;
+    V_BSTR( &var ) = SysAllocString( L"Manual" );
+    hr = IWbemClassObject_Put( in, L"StartMode", 0, &var, 0 );
+    ok( hr == S_OK, "got %#lx\n", hr );
+    VariantClear( &var );
+
+    path = SysAllocString( L"Win32_Service.Name=\"Spooler\"" );
+    method = SysAllocString( L"ChangeStartMode" );
+    out = NULL;
+    hr = IWbemServices_ExecMethod( services, path, method, 0, NULL, in, &out, NULL );
+    ok( hr == S_OK, "got %#lx\n", hr );
+
+    VariantInit( &retval );
+    hr = IWbemClassObject_Get( out, L"ReturnValue", 0, &retval, NULL, NULL );
+    ok( hr == S_OK, "got %#lx\n", hr );
+    ok( !V_I4(&retval) || V_I4(&retval) == 2, "got %ld\n", V_I4(&retval) );
+
+    V_VT( &var ) = VT_BSTR;
+    V_BSTR( &var ) = SysAllocString( L"Auto" );
+    hr = IWbemClassObject_Put( in, L"StartMode", 0, &var, 0 );
+    ok( hr == S_OK, "got %#lx\n", hr );
+    VariantClear( &var );
+
+    out = NULL;
+    hr = IWbemServices_ExecMethod( services, path, method, 0, NULL, in, &out, NULL );
+    ok( hr == S_OK, "got %#lx\n", hr );
+    SysFreeString( method );
+    SysFreeString( path );
+
+    VariantInit( &retval );
+    hr = IWbemClassObject_Get( out, L"ReturnValue", 0, &retval, NULL, NULL );
+    ok( hr == S_OK, "got %#lx\n", hr );
+    ok( V_I4(&retval) == 21, "got %ld\n", V_I4(&retval) );
+
+    IWbemClassObject_Release( out );
+    IWbemClassObject_Release( sig_in );
+    IWbemClassObject_Release( sig_out );
+    IWbemClassObject_Release( service );
 }
 
 static void test_Win32_Bios( IWbemServices *services )

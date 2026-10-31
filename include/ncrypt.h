@@ -39,11 +39,32 @@ typedef struct _NCryptAlgorithmName {
     DWORD dwFlags;
 } NCryptAlgorithmName;
 
+#define NCRYPTBUFFER_EMPTY                          0
+#define NCRYPTBUFFER_DATA                           1
+#define NCRYPTBUFFER_PROTECTION_DESCRIPTOR_STRING   3
+#define NCRYPTBUFFER_PROTECTION_FLAGS               4
+#define NCRYPTBUFFER_SSL_CLIENT_RANDOM              20
+#define NCRYPTBUFFER_SSL_SERVER_RANDOM              21
+#define NCRYPTBUFFER_SSL_HIGHEST_VERSION            22
+#define NCRYPTBUFFER_SSL_CLEAR_KEY                  23
+#define NCRYPTBUFFER_SSL_KEY_ARG_DATA               24
+#define NCRYPTBUFFER_SSL_SESSION_HASH               25
+#define NCRYPTBUFFER_PKCS_OID                       40
+#define NCRYPTBUFFER_PKCS_ALG_OID                   41
+#define NCRYPTBUFFER_PKCS_ALG_PARAM                 42
+#define NCRYPTBUFFER_PKCS_ALG_ID                    43
+#define NCRYPTBUFFER_PKCS_ATTRS                     44
+#define NCRYPTBUFFER_PKCS_KEY_NAME                  45
+#define NCRYPTBUFFER_PKCS_SECRET                    46
+#define NCRYPTBUFFER_CERT_BLOB                      47
+
 typedef struct _NCryptBuffer {
     ULONG cbBuffer;
     ULONG BufferType;
     PVOID pvBuffer;
 } NCryptBuffer, *PNCryptBuffer;
+
+#define NCRYPTBUFFER_VERSION    0
 
 typedef struct _NCryptBufferDesc {
     ULONG ulVersion;
@@ -84,7 +105,8 @@ typedef ULONG_PTR NCRYPT_SECRET_HANDLE;
 #define NCRYPT_SCHANNEL_SIGNATURE_INTERFACE 0x00010003
 #define NCRYPT_KEY_PROTECTION_INTERFACE     0x00010004
 
-#define NCRYPT_SILENT_FLAG 0x00000040
+#define NCRYPT_MACHINE_KEY_FLAG     0x00000020
+#define NCRYPT_SILENT_FLAG          0x00000040
 
 #define NCRYPT_NO_PADDING_FLAG 0x00000001
 #define NCRYPT_PAD_PKCS1_FLAG  0x00000002
@@ -139,10 +161,13 @@ typedef ULONG_PTR NCRYPT_SECRET_HANDLE;
 SECURITY_STATUS WINAPI NCryptCreatePersistedKey(NCRYPT_PROV_HANDLE, NCRYPT_KEY_HANDLE *, const WCHAR *, const WCHAR *,
                                                 DWORD, DWORD);
 SECURITY_STATUS WINAPI NCryptDecrypt(NCRYPT_KEY_HANDLE, BYTE *, DWORD, void *, BYTE *, DWORD, DWORD *, DWORD);
+SECURITY_STATUS WINAPI NCryptDeleteKey(NCRYPT_KEY_HANDLE, DWORD);
 SECURITY_STATUS WINAPI NCryptEncrypt(NCRYPT_KEY_HANDLE, BYTE *, DWORD, void *, BYTE *, DWORD, DWORD *, DWORD);
+SECURITY_STATUS WINAPI NCryptEnumKeys(NCRYPT_PROV_HANDLE, const WCHAR *, NCryptKeyName **, void **, DWORD);
 SECURITY_STATUS WINAPI NCryptExportKey(NCRYPT_KEY_HANDLE, NCRYPT_KEY_HANDLE, const WCHAR *, NCryptBufferDesc *, BYTE *,
                                        DWORD, DWORD *, DWORD);
 SECURITY_STATUS WINAPI NCryptFinalizeKey(NCRYPT_KEY_HANDLE, DWORD);
+SECURITY_STATUS WINAPI NCryptFreeBuffer(void *);
 SECURITY_STATUS WINAPI NCryptFreeObject(NCRYPT_HANDLE);
 SECURITY_STATUS WINAPI NCryptGetProperty(NCRYPT_HANDLE, const WCHAR *, BYTE *, DWORD, DWORD *, DWORD);
 SECURITY_STATUS WINAPI NCryptImportKey(NCRYPT_PROV_HANDLE, NCRYPT_KEY_HANDLE, const WCHAR *, NCryptBufferDesc *,

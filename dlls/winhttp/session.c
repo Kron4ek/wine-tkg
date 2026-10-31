@@ -754,6 +754,7 @@ static void request_destroy( struct object_header *hdr )
     free( request->verb );
     free( request->path );
     free( request->version );
+    free( request->reply );
     free( request->raw_headers );
     free( request->status_text );
     for (i = 0; i < request->num_headers; i++)
@@ -1608,10 +1609,10 @@ static BOOL query_option( struct object_header *hdr, DWORD option, void *buffer,
         HTTP_VERSION_INFO *info = buffer;
 
         FIXME( "WINHTTP_OPTION_HTTP_VERSION\n" );
-        if (!validate_buffer( buffer, buflen, sizeof(info) )) return FALSE;
+        if (!validate_buffer( buffer, buflen, sizeof(*info) )) return FALSE;
         info->dwMajorVersion = 1;
         info->dwMinorVersion = 1;
-        *buflen = sizeof(info);
+        *buflen = sizeof(*info);
         return TRUE;
     }
     case WINHTTP_OPTION_CONNECT_RETRIES:

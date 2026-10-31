@@ -219,15 +219,25 @@ while                   {return KW_WHILE;               }
 
 {IDENTIFIER}            {
                             struct hlsl_ctx *ctx = yyget_extra(yyscanner);
+                            struct hlsl_scope *scope;
 
                             if (hlsl_version_ge(ctx, 5, 1) && !strcmp(yytext, "ConstantBuffer"))
                                 return KW_CONSTANTBUFFER;
 
                             yylval->name = hlsl_strdup(ctx, yytext);
-                            if (hlsl_get_var(ctx->cur_scope, yytext) || hlsl_get_function(ctx, yytext))
-                                return VAR_IDENTIFIER;
-                            if (hlsl_get_type(ctx->cur_scope, yytext, true, true))
-                                return TYPE_IDENTIFIER;
+                            for (scope = ctx->cur_scope; scope; scope = scope->upper)
+                            {
+                                if (hlsl_get_var_in_scope(scope, yytext))
+                                    return VAR_IDENTIFIER;
+                                /* FIXME: Support functions in non-global namespace scopes. */
+                                if (scope == ctx->globals && hlsl_get_function(ctx, yytext))
+                                    return VAR_IDENTIFIER;
+                                if (hlsl_get_type(scope, yytext, false, true))
+                                    return TYPE_IDENTIFIER;
+                                if (hlsl_get_namespace(scope, yytext))
+                                    return NAMESPACE_IDENTIFIER;
+                            }
+
                             return NEW_IDENTIFIER;
                         }
 

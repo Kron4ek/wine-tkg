@@ -214,6 +214,7 @@ enum vkd3d_shader_error
     VKD3D_SHADER_ERROR_D3DBC_INVALID_PROFILE            = 7010,
     VKD3D_SHADER_ERROR_D3DBC_INVALID_WRITEMASK          = 7011,
     VKD3D_SHADER_ERROR_D3DBC_INVALID_INDIRECT_ADDRESS   = 7012,
+    VKD3D_SHADER_ERROR_D3DBC_INVALID_INSTRUCTION_SEQUENCE = 7013,
 
     VKD3D_SHADER_WARNING_D3DBC_IGNORED_INSTRUCTION_FLAGS= 7300,
     VKD3D_SHADER_WARNING_D3DBC_INVALID_SOURCE_MODIFIER  = 7301,
@@ -340,7 +341,6 @@ enum vsir_opcode
     VSIR_OP_ATOMIC_UMAX,
     VSIR_OP_ATOMIC_UMIN,
     VSIR_OP_ATOMIC_XOR,
-    VSIR_OP_BEM,
     VSIR_OP_BFI,
     VSIR_OP_BFREV,
     VSIR_OP_BRANCH,
@@ -348,17 +348,13 @@ enum vsir_opcode
     VSIR_OP_BREAKC,
     VSIR_OP_BREAKP,
     VSIR_OP_BUFINFO,
-    VSIR_OP_CALL,
-    VSIR_OP_CALLNZ,
     VSIR_OP_CASE,
     VSIR_OP_CHECK_ACCESS_FULLY_MAPPED,
     VSIR_OP_CMP,
-    VSIR_OP_CND,
     VSIR_OP_CONTINUE,
     VSIR_OP_CONTINUEP,
     VSIR_OP_COS,
     VSIR_OP_COUNTBITS,
-    VSIR_OP_CRS,
     VSIR_OP_CUT,
     VSIR_OP_CUT_STREAM,
     VSIR_OP_DADD,
@@ -425,7 +421,6 @@ enum vsir_opcode
     VSIR_OP_DP3,
     VSIR_OP_DP4,
     VSIR_OP_DRCP,
-    VSIR_OP_DST,
     VSIR_OP_DSX,
     VSIR_OP_DSX_COARSE,
     VSIR_OP_DSX_FINE,
@@ -547,7 +542,6 @@ enum vsir_opcode
     VSIR_OP_OR,
     VSIR_OP_ORD,
     VSIR_OP_PHI,
-    VSIR_OP_POW,
     VSIR_OP_QUAD_READ_ACROSS_D,
     VSIR_OP_QUAD_READ_ACROSS_X,
     VSIR_OP_QUAD_READ_ACROSS_Y,
@@ -577,9 +571,7 @@ enum vsir_opcode
     VSIR_OP_SAMPLE_LOD_S,
     VSIR_OP_SAMPLE_POS,
     VSIR_OP_SATURATE,
-    VSIR_OP_SETP,
     VSIR_OP_SGE,
-    VSIR_OP_SGN,
     VSIR_OP_SIN,
     VSIR_OP_SINCOS,
     VSIR_OP_SLT,
@@ -594,25 +586,12 @@ enum vsir_opcode
     VSIR_OP_SYNC,
     VSIR_OP_TAN,
     VSIR_OP_TEX,
-    VSIR_OP_TEXBEM,
-    VSIR_OP_TEXBEML,
-    VSIR_OP_TEXCOORD,
-    VSIR_OP_TEXCRD,
-    VSIR_OP_TEXDEPTH,
-    VSIR_OP_TEXDP3,
     VSIR_OP_TEXDP3TEX,
     VSIR_OP_TEXKILL,
     VSIR_OP_TEXLD,
     VSIR_OP_TEXLDD,
     VSIR_OP_TEXLDL,
-    VSIR_OP_TEXM3x2DEPTH,
-    VSIR_OP_TEXM3x2PAD,
-    VSIR_OP_TEXM3x2TEX,
-    VSIR_OP_TEXM3x3,
-    VSIR_OP_TEXM3x3DIFF,
-    VSIR_OP_TEXM3x3PAD,
     VSIR_OP_TEXM3x3SPEC,
-    VSIR_OP_TEXM3x3TEX,
     VSIR_OP_TEXM3x3VSPEC,
     VSIR_OP_TEXREG2AR,
     VSIR_OP_TEXREG2GB,
@@ -1161,6 +1140,9 @@ struct vsir_dst_operand
 void vsir_dst_operand_init(struct vsir_dst_operand *dst, enum vsir_register_type reg_type,
         enum vsir_data_type data_type, unsigned int idx_count);
 void vsir_dst_operand_init_null(struct vsir_dst_operand *dst);
+void vsir_dst_operand_init_ssa(struct vsir_dst_operand *dst, unsigned int idx,
+        enum vsir_data_type data_type, enum vsir_dimension dimension);
+void vsir_dst_operand_init_ssa_bool(struct vsir_dst_operand *dst, unsigned int idx);
 void vsir_dst_operand_init_ssa_f32(struct vsir_dst_operand *dst, unsigned int idx);
 void vsir_dst_operand_init_ssa_f32v4(struct vsir_dst_operand *dst, unsigned int idx);
 void vsir_dst_operand_init_temp_f32v4(struct vsir_dst_operand *dst, unsigned int idx);
@@ -1181,8 +1163,13 @@ void vsir_src_operand_init(struct vsir_src_operand *src, enum vsir_register_type
         enum vsir_data_type data_type, unsigned int idx_count);
 void vsir_src_operand_init_const_f32(struct vsir_src_operand *src, float value);
 void vsir_src_operand_init_label(struct vsir_src_operand *src, unsigned int label_id);
+void vsir_src_operand_init_parameter(struct vsir_src_operand *src, uint32_t idx, enum vsir_data_type type);
+void vsir_src_operand_init_parameter_vec4(struct vsir_src_operand *src, uint32_t idx, enum vsir_data_type type);
+void vsir_src_operand_init_resource(struct vsir_src_operand *src, unsigned int id, unsigned int idx);
+void vsir_src_operand_init_sampler(struct vsir_src_operand *src, unsigned int id, unsigned int idx);
 void vsir_src_operand_init_ssa(struct vsir_src_operand *src, unsigned int idx,
         enum vsir_data_type data_type, enum vsir_dimension dimension);
+void vsir_src_operand_init_ssa_bool(struct vsir_src_operand *src, unsigned int idx);
 void vsir_src_operand_init_ssa_f32(struct vsir_src_operand *src, unsigned int idx);
 void vsir_src_operand_init_ssa_f32v4(struct vsir_src_operand *src, unsigned int idx);
 void vsir_src_operand_init_temp_f32v4(struct vsir_src_operand *src, unsigned int idx);
@@ -1716,6 +1703,7 @@ struct vsir_compile_info
     uint32_t double_as_float_alias : 1;
     uint32_t const_global_uniforms : 1;
     uint32_t allow_half_globals : 1;
+    uint32_t allow_packoffset_overlap : 1;
     uint32_t fragment_origin_lower_left : 1;
     uint32_t feature_int64 : 1;
     uint32_t feature_float64 : 1;

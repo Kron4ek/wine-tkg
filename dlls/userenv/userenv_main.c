@@ -280,8 +280,8 @@ BOOL WINAPI CreateEnvironmentBlock( LPVOID* lpEnvironment,
     {
         TOKEN_USER *token_user = NULL;
         SID_NAME_USE use;
-        WCHAR *sidW;
-        DWORD size, tmp=0;
+        WCHAR *sidW, domain[MAX_PATH];
+        DWORD size, domain_size = ARRAY_SIZE(domain);
 
         if (GetTokenInformation(hToken, TokenUser, NULL, 0, &len) ||
                 GetLastError()!=ERROR_INSUFFICIENT_BUFFER ||
@@ -299,7 +299,7 @@ BOOL WINAPI CreateEnvironmentBlock( LPVOID* lpEnvironment,
 
         size = UNICODE_STRING_MAX_CHARS-len;
         if (LookupAccountSidW(NULL, token_user->User.Sid,
-                    buf+len, &size, NULL, &tmp, &use))
+                    buf+len, &size, domain, &domain_size, &use))
         {
             set_env_var(&env, L"USERNAME", buf+len);
             if (len) set_env_var(&env, L"USERPROFILE", buf);
@@ -406,7 +406,7 @@ BOOL WINAPI GetUserProfileDirectoryW( HANDLE hToken, LPWSTR lpProfileDir,
                      LPDWORD lpcchSize )
 {
     TOKEN_USER *t;
-    WCHAR *userW = NULL, *dirW = NULL;
+    WCHAR *userW = NULL, *dirW = NULL, *domainW = NULL;
     DWORD len, dir_len, domain_len;
     SID_NAME_USE use;
     BOOL ret = FALSE;
@@ -429,7 +429,8 @@ BOOL WINAPI GetUserProfileDirectoryW( HANDLE hToken, LPWSTR lpProfileDir,
     LookupAccountSidW( NULL, t->User.Sid, NULL, &len, NULL, &domain_len, NULL );
     if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) goto done;
     if (!(userW = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) ))) goto done;
-    if (!LookupAccountSidW( NULL, t->User.Sid, userW, &len, NULL, &domain_len, &use )) goto done;
+    if (!(domainW = HeapAlloc( GetProcessHeap(), 0, domain_len * sizeof(WCHAR) ))) goto done;
+    if (!LookupAccountSidW( NULL, t->User.Sid, userW, &len, domainW, &domain_len, &use )) goto done;
 
     dir_len = 0;
     GetProfilesDirectoryW( NULL, &dir_len );
@@ -452,6 +453,7 @@ BOOL WINAPI GetUserProfileDirectoryW( HANDLE hToken, LPWSTR lpProfileDir,
 
 done:
     HeapFree( GetProcessHeap(), 0, t );
+    HeapFree( GetProcessHeap(), 0, domainW );
     HeapFree( GetProcessHeap(), 0, userW );
     HeapFree( GetProcessHeap(), 0, dirW );
     return ret;

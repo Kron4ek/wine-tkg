@@ -1353,29 +1353,6 @@ static bool lower_calls(struct hlsl_ctx *ctx, struct hlsl_ir_node *instr, void *
     return true;
 }
 
-static struct hlsl_ir_node *add_zero_mipmap_level(struct hlsl_ctx *ctx, struct hlsl_block *block,
-        struct hlsl_ir_node *index, const struct vkd3d_shader_location *loc)
-{
-    unsigned int dim_count = index->data_type->e.numeric.dimx;
-    struct hlsl_deref coords_deref;
-    struct hlsl_ir_var *coords;
-    struct hlsl_ir_node *zero;
-
-    VKD3D_ASSERT(dim_count < 4);
-
-    if (!(coords = hlsl_new_synthetic_var(ctx, "coords",
-            hlsl_get_vector_type(ctx, HLSL_TYPE_UINT, dim_count + 1), loc)))
-        return NULL;
-
-    hlsl_deref_init_simple(&coords_deref, coords);
-    hlsl_block_add_store_index(ctx, block, &coords_deref, NULL, index, (1u << dim_count) - 1, loc);
-
-    zero = hlsl_block_add_uint_constant(ctx, block, 0, loc);
-    hlsl_block_add_store_index(ctx, block, &coords_deref, NULL, zero, 1u << dim_count, loc);
-
-    return hlsl_block_add_simple_load(ctx, block, coords, loc);
-}
-
 static struct hlsl_ir_node *lower_complex_casts(struct hlsl_ctx *ctx,
         struct hlsl_ir_node *instr, struct hlsl_block *block)
 {
@@ -1486,6 +1463,36 @@ static struct hlsl_ir_node *lower_matrix_swizzles(struct hlsl_ctx *ctx,
     return hlsl_block_add_simple_load(ctx, block, var, &instr->loc);
 }
 
+static struct hlsl_ir_node *validate_mips_slices(struct hlsl_ctx *ctx,
+        struct hlsl_ir_node *instr, struct hlsl_block *block)
+{
+    /* .mips[mip] is invalid regardless of whether or not it is used. */
+    if (instr->data_type && instr->data_type->class == HLSL_CLASS_MIPS
+            && instr->data_type->e.mips.mips_type == HLSL_MIPS_SLICE)
+        hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                ".mips can only be used in a two-element indexing expression .mips[mip][pos].");
+    return NULL;
+}
+
+static struct hlsl_ir_node *validate_mips_properties(struct hlsl_ctx *ctx,
+        struct hlsl_ir_node *instr, struct hlsl_block *block)
+{
+    /* .mips is invalid only if it is used. */
+    if (instr->data_type && instr->data_type->class == HLSL_CLASS_MIPS
+            && instr->data_type->e.mips.mips_type == HLSL_MIPS_PROPERTY && !list_empty(&instr->uses))
+        hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                ".mips can only be used in a two-element indexing expression .mips[mip][pos].");
+    return NULL;
+}
+
+static void validate_mips_access(struct hlsl_ctx *ctx, struct hlsl_block *block)
+{
+    /* Here we check for invalid uses of .mips in two passes, so that an invalid
+     * .mips[mip] slice would not cause two errors to be generated. */
+    replace_ir(ctx, validate_mips_slices, block);
+    replace_ir(ctx, validate_mips_properties, block);
+}
+
 /* Usually when INDEX nodes are constructed, it's a direct variable load
  * followed by the INDEX. As described below in lower_index_load(), we know in
  * that case that the variable in question is unmodified and we can convert the
@@ -1530,18 +1537,21 @@ static struct hlsl_ir_node *lower_index_load(struct hlsl_ctx *ctx, struct hlsl_i
 
     val = index->val.node;
 
+    if (hlsl_index_is_mips_slice(index))
+        return NULL;
+
     if (hlsl_index_is_resource_access(index))
     {
         unsigned int dim_count = hlsl_sampler_dim_count(val->data_type->sampler_dim);
-        struct hlsl_ir_node *coords = index->idx.node;
+        struct hlsl_ir_node *coords = index->idx.node, *zero_mip;
         struct hlsl_resource_load_params params = {0};
 
         VKD3D_ASSERT(coords->data_type->class == HLSL_CLASS_VECTOR);
         VKD3D_ASSERT(coords->data_type->e.numeric.type == HLSL_TYPE_UINT);
         VKD3D_ASSERT(coords->data_type->e.numeric.dimx == dim_count);
 
-        if (!(coords = add_zero_mipmap_level(ctx, block, coords, &instr->loc)))
-            return NULL;
+        zero_mip = hlsl_block_add_uint_constant(ctx, block, 0, &instr->loc);
+        coords = hlsl_block_add_mipmap_level(ctx, block, coords, zero_mip, &instr->loc);
 
         params.type = HLSL_RESOURCE_LOAD;
         params.resource = val;
@@ -3487,6 +3497,7 @@ static bool copy_propagation_transform_load(struct hlsl_ctx *ctx,
              * solve that problem for us, since we may be called on a partial
              * block, but DCE deletes dead stores, so it needs to be able to
              * see the whole program. */
+        case HLSL_CLASS_MIPS:
         case HLSL_CLASS_ERROR:
             return false;
 
@@ -3896,19 +3907,108 @@ struct vectorize_exprs_state
     size_t count, capacity;
 };
 
-static bool is_same_vectorizable_source(struct hlsl_ir_node *a, struct hlsl_ir_node *b)
+static bool nodes_are_equivalent(struct hlsl_ctx *ctx,
+        const struct hlsl_ir_node *c1, const struct hlsl_ir_node *c2);
+
+static bool derefs_are_same_vector(struct hlsl_ctx *ctx, const struct hlsl_deref *a, const struct hlsl_deref *b)
 {
-    /* TODO: We can also vectorize different constants. */
+    struct hlsl_type *type = a->var->data_type;
+
+    if (a->var != b->var)
+        return false;
+
+    for (unsigned int i = 0; type->class != HLSL_CLASS_VECTOR && i < a->path_len && i < b->path_len; ++i)
+    {
+        if (!nodes_are_equivalent(ctx, a->path[i].node, b->path[i].node))
+            return false;
+        type = hlsl_get_element_type_from_path_index(ctx, type, a->path[i].node);
+    }
+    return true;
+}
+
+static bool derefs_are_equivalent(struct hlsl_ctx *ctx, const struct hlsl_deref *a, const struct hlsl_deref *b)
+{
+    struct hlsl_type *type = a->var->data_type;
+
+    if (a->var != b->var)
+        return false;
+    if (a->path_len != b->path_len)
+        return false;
+
+    for (unsigned int i = 0; i < a->path_len; ++i)
+    {
+        if (!nodes_are_equivalent(ctx, a->path[i].node, b->path[i].node))
+            return false;
+        type = hlsl_get_element_type_from_path_index(ctx, type, a->path[i].node);
+    }
+    return true;
+}
+
+static bool nodes_are_equivalent(struct hlsl_ctx *ctx,
+        const struct hlsl_ir_node *c1, const struct hlsl_ir_node *c2)
+{
+    if (c1 == c2)
+        return true;
+
+    if (c1->type == HLSL_IR_LOAD && c2->type == HLSL_IR_LOAD)
+    {
+        const struct hlsl_ir_load *l1 = hlsl_ir_load(c1), *l2 = hlsl_ir_load(c2);
+
+        /* Loads to immutable variables are equivalent even if in different
+         * locations in the program. */
+        if (!l1->src.var->is_input_semantic && !l1->src.var->is_uniform && !l1->src.var->is_compile_time_const)
+            return false;
+        return derefs_are_equivalent(ctx, &l1->src, &l2->src);
+    }
+    else if (c1->type == HLSL_IR_CONSTANT && c2->type == HLSL_IR_CONSTANT)
+    {
+        const struct hlsl_ir_constant *k1 = hlsl_ir_constant(c1), *k2 = hlsl_ir_constant(c2);
+
+        if (!hlsl_types_are_equal(c1->data_type, c2->data_type))
+            return false;
+        for (unsigned int i = 0; i < c1->data_type->e.numeric.dimx; ++i)
+        {
+            if (k1->value.u[i].u != k2->value.u[i].u)
+                return false;
+        }
+        return true;
+    }
+    else if (c1->type == HLSL_IR_SWIZZLE && c2->type == HLSL_IR_SWIZZLE
+            && hlsl_types_are_equal(c1->data_type, c2->data_type))
+    {
+        const struct hlsl_ir_swizzle *s1 = hlsl_ir_swizzle(c1), *s2 = hlsl_ir_swizzle(c2);
+        size_t dimx = c1->data_type->e.numeric.dimx;
+        uint32_t sw1, sw2;
+
+        VKD3D_ASSERT(c1->data_type->class <= HLSL_CLASS_VECTOR);
+
+        sw1 = s1->u.vector;
+        sw2 = s2->u.vector;
+        if (dimx < 4)
+        {
+            sw1 &= (1u << VKD3D_SHADER_SWIZZLE_SHIFT(dimx)) - 1;
+            sw2 &= (1u << VKD3D_SHADER_SWIZZLE_SHIFT(dimx)) - 1;
+        }
+        if (sw1 == sw2 && nodes_are_equivalent(ctx, s1->val.node, s2->val.node))
+             return true;
+    }
+
+    return false;
+}
+
+static bool is_same_vectorizable_source(struct hlsl_ctx *ctx, struct hlsl_ir_node *a, struct hlsl_ir_node *b)
+{
+    /* TODO: We can also vectorize different constants, by only looking at the components after swizzling. */
 
     if (a->type == HLSL_IR_SWIZZLE)
         a = hlsl_ir_swizzle(a)->val.node;
     if (b->type == HLSL_IR_SWIZZLE)
         b = hlsl_ir_swizzle(b)->val.node;
 
-    return a == b;
+    return nodes_are_equivalent(ctx, a, b);
 }
 
-static bool is_same_vectorizable_expr(struct hlsl_ir_expr *a, struct hlsl_ir_expr *b)
+static bool is_same_vectorizable_expr(struct hlsl_ctx *ctx, struct hlsl_ir_expr *a, struct hlsl_ir_expr *b)
 {
     if (a->op != b->op)
         return false;
@@ -3917,7 +4017,7 @@ static bool is_same_vectorizable_expr(struct hlsl_ir_expr *a, struct hlsl_ir_exp
     {
         if (!a->operands[j].node)
             break;
-        if (!is_same_vectorizable_source(a->operands[j].node, b->operands[j].node))
+        if (!is_same_vectorizable_source(ctx, a->operands[j].node, b->operands[j].node))
             return false;
     }
 
@@ -3947,7 +4047,7 @@ static void record_vectorizable_expr(struct hlsl_ctx *ctx, struct hlsl_block *bl
 
         if (expr->node.data_type->e.numeric.dimx + group->component_count <= 4
                 && group->block == block
-                && is_same_vectorizable_expr(expr, other))
+                && is_same_vectorizable_expr(ctx, expr, other))
         {
             group->exprs[group->expr_count++] = expr;
             group->component_count += expr->node.data_type->e.numeric.dimx;
@@ -4113,6 +4213,166 @@ out:
     return progress;
 }
 
+/* Turn swizzles of a MUL operation, such as:
+ *
+ * @3: @1.osw1         , osw1 being an optional swizzle
+ * @4: @2.osw2         , osw2 being an optional swizzle
+ * @5: mul @3 @4
+ * @6: @5.sw3          , where sw3 is any swizzle.
+ *
+ * where @6 is the only user of @5, into:
+ *
+ * @6_1: @1.osw1.sw3     , where .osw1.sw3 is the combination of swizzle osw1 and sw3
+ * @6_2: @2.osw2.sw3     , where .osw2.sw3 is the combination of swizzle osw2 and sw3
+ * @6_3: mul @5_1 @5_2
+ *
+ * TODO: generalize to other elementwise binary operations.
+ */
+static struct hlsl_ir_node *raise_elementwise_op_swizzles(struct hlsl_ctx *ctx,
+        struct hlsl_ir_node *instr, struct hlsl_block *block)
+{
+    struct hlsl_ir_swizzle *swizzle, *operand_swizzle;
+    struct hlsl_ir_node *combined_swizzles[2];
+    struct hlsl_ir_expr *expr;
+    unsigned int i, dim;
+    uint32_t s;
+
+    if (instr->type != HLSL_IR_SWIZZLE)
+        return NULL;
+    swizzle = hlsl_ir_swizzle(instr);
+    dim = instr->data_type->e.numeric.dimx;
+
+    if (swizzle->val.node->type != HLSL_IR_EXPR)
+        return NULL;
+    expr = hlsl_ir_expr(swizzle->val.node);
+    if (expr->op != HLSL_OP2_MUL)
+        return NULL;
+    if (list_count(&swizzle->val.node->uses) != 1)
+        return NULL;
+
+    for (i = 0; i < 2; ++i)
+    {
+        if (expr->operands[i].node->type == HLSL_IR_SWIZZLE)
+        {
+            operand_swizzle = hlsl_ir_swizzle(expr->operands[i].node);
+            s = hlsl_combine_swizzles(operand_swizzle->u.vector, swizzle->u.vector, dim);
+            combined_swizzles[i] = hlsl_block_add_swizzle(ctx, block, s, dim,
+                    operand_swizzle->val.node, &instr->loc);
+        }
+        else
+        {
+            combined_swizzles[i] = hlsl_block_add_swizzle(ctx, block,
+                    swizzle->u.vector, dim, expr->operands[i].node, &instr->loc);
+        }
+    }
+
+    return hlsl_block_add_binary_expr(ctx, block, HLSL_OP2_MUL, combined_swizzles[0], combined_swizzles[1]);
+}
+
+static bool is_vectorizable_dot(struct hlsl_ctx *ctx,
+        const struct hlsl_ir_node *instr, struct hlsl_block *block,
+        struct hlsl_ir_swizzle **sw1, struct hlsl_ir_swizzle **sw2)
+{
+    struct hlsl_ir_expr *expr;
+
+    if (instr->data_type->class > HLSL_CLASS_VECTOR || instr->data_type->e.numeric.dimx > 1)
+        return false;
+
+    if (instr->type != HLSL_IR_EXPR)
+        return false;
+    expr = hlsl_ir_expr(instr);
+
+    VKD3D_ASSERT(instr->data_type->class <= HLSL_CLASS_VECTOR);
+
+    if (expr->op != HLSL_OP2_DOT && expr->op != HLSL_OP2_MUL)
+        return false;
+
+    if (expr->op == HLSL_OP2_MUL && instr->data_type->e.numeric.dimx > 1)
+        return false;
+
+    if (expr->operands[0].node->type != HLSL_IR_SWIZZLE
+            || expr->operands[1].node->type != HLSL_IR_SWIZZLE)
+        return false;
+
+    *sw1 = hlsl_ir_swizzle(expr->operands[0].node);
+    *sw2 = hlsl_ir_swizzle(expr->operands[1].node);
+    return true;
+}
+
+/* Turn sequences like
+ *
+ * @3: @1.sw1
+ * @4: @2.sw2
+ * @5: dot @3 @4         , where a scalar mul is also considered a dot.
+ * @6: @1.sw3
+ * @7: @2.sw4
+ * @8: dot @6 @7         , where a scalar mul is also considered a dot.
+ * @9: add @5 @8
+ *
+ * into
+ *
+ * @9_1: @1.sw1sw3       , where .sw1sw3 is the concatenation of swizzles .sw1 and .sw3.
+ * @9_2: @2.sw2sw4       , where .sw2sw4 is the concatenation of swizzles .sw2 and .sw4.
+ * @9_3: dot @9_1 @9_2
+ *
+ */
+static struct hlsl_ir_node *vectorize_dot_exprs(struct hlsl_ctx *ctx,
+        struct hlsl_ir_node *instr, struct hlsl_block *block)
+{
+    struct hlsl_ir_swizzle *arg1_sw1, *arg1_sw2, *arg2_sw1, *arg2_sw2, *aux;
+    struct hlsl_ir_node *args[HLSL_MAX_OPERANDS] = {0};
+    size_t new_dimx, arg1_dimx, arg2_dimx;
+    uint32_t new_swizzle1, new_swizzle2;
+    struct hlsl_ir_expr *expr;
+
+    if (instr->type != HLSL_IR_EXPR)
+        return NULL;
+    expr = hlsl_ir_expr(instr);
+    if (expr->op != HLSL_OP2_ADD)
+        return NULL;
+    VKD3D_ASSERT(instr->data_type->class <= HLSL_CLASS_VECTOR);
+    if (instr->data_type->e.numeric.dimx > 1 || !hlsl_type_is_floating_point(instr->data_type))
+        return NULL;
+
+    if (!is_vectorizable_dot(ctx, expr->operands[0].node, block, &arg1_sw1, &arg1_sw2))
+        return NULL;
+    VKD3D_ASSERT(arg1_sw1->node.data_type->e.numeric.dimx == arg1_sw2->node.data_type->e.numeric.dimx);
+    arg1_dimx = arg1_sw1->node.data_type->e.numeric.dimx;
+
+    if (!is_vectorizable_dot(ctx, expr->operands[1].node, block, &arg2_sw1, &arg2_sw2))
+        return NULL;
+    VKD3D_ASSERT(arg2_sw1->node.data_type->e.numeric.dimx == arg2_sw2->node.data_type->e.numeric.dimx);
+    arg2_dimx = arg2_sw1->node.data_type->e.numeric.dimx;
+
+    new_dimx = arg1_dimx + arg2_dimx;
+    if (new_dimx > 4)
+        return NULL;
+
+    if (!nodes_are_equivalent(ctx, arg1_sw1->val.node, arg2_sw1->val.node)
+            || !nodes_are_equivalent(ctx, arg1_sw2->val.node, arg2_sw2->val.node))
+    {
+        if (nodes_are_equivalent(ctx, arg1_sw1->val.node, arg2_sw2->val.node)
+                && nodes_are_equivalent(ctx, arg1_sw2->val.node, arg2_sw1->val.node))
+        {
+            aux = arg2_sw1;
+            arg2_sw1 = arg2_sw2;
+            arg2_sw2 = aux;
+        }
+        else
+        {
+            return NULL;
+        }
+    }
+
+    new_swizzle1 = hlsl_concat_swizzles(arg1_sw1->u.vector, arg1_dimx, arg2_sw1->u.vector, arg2_dimx);
+    args[0] = hlsl_block_add_swizzle(ctx, block, new_swizzle1, new_dimx, arg1_sw1->val.node, &instr->loc);
+
+    new_swizzle2 = hlsl_concat_swizzles(arg1_sw2->u.vector, arg1_dimx, arg2_sw2->u.vector, arg2_dimx);
+    args[1] = hlsl_block_add_swizzle(ctx, block, new_swizzle2, new_dimx, arg1_sw2->val.node, &instr->loc);
+
+    return hlsl_block_add_expr(ctx, block, HLSL_OP2_DOT, args, instr->data_type, &instr->loc);
+}
+
 struct vectorize_stores_state
 {
     struct vectorizable_stores_group
@@ -4180,23 +4440,6 @@ static bool can_vectorize_store(struct hlsl_ctx *ctx, struct hlsl_ir_store *stor
     return true;
 }
 
-static bool derefs_are_same_vector(struct hlsl_ctx *ctx, const struct hlsl_deref *a, const struct hlsl_deref *b)
-{
-    struct hlsl_type *type = a->var->data_type;
-
-    if (a->var != b->var)
-        return false;
-
-    for (unsigned int i = 0; type->class != HLSL_CLASS_VECTOR && i < a->path_len && i < b->path_len; ++i)
-    {
-        if (a->path[i].node != b->path[i].node)
-            return false;
-        type = hlsl_get_element_type_from_path_index(ctx, type, a->path[i].node);
-    }
-
-    return true;
-}
-
 static void record_vectorizable_store(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_ir_store *store, struct vectorize_stores_state *state)
 {
@@ -4235,7 +4478,7 @@ static void record_vectorizable_store(struct hlsl_ctx *ctx, struct hlsl_block *b
              * they're not executed in exactly the same flow, and
              * therefore can't be vectorized. */
             if (group->block == block
-                    && is_same_vectorizable_source(store->rhs.node, other->rhs.node))
+                    && is_same_vectorizable_source(ctx, store->rhs.node, other->rhs.node))
             {
                 if (group->store_count < ARRAY_SIZE(group->stores))
                 {
@@ -8771,37 +9014,40 @@ static void validate_buffer_offsets(struct hlsl_ctx *ctx)
     struct hlsl_ir_var *var1, *var2;
     struct hlsl_buffer *buffer;
 
-    LIST_FOR_EACH_ENTRY(var1, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+    if (!ctx->compile_info.allow_packoffset_overlap)
     {
-        if (!var1->is_uniform || hlsl_type_is_resource(var1->data_type))
-            continue;
-
-        buffer = var1->buffer;
-        if (!buffer->used_size)
-            continue;
-
-        LIST_FOR_EACH_ENTRY(var2, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+        LIST_FOR_EACH_ENTRY(var1, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
         {
-            unsigned int var1_reg_size, var2_reg_size;
-
-            if (!var2->is_uniform || hlsl_type_is_resource(var2->data_type))
+            if (!var1->is_uniform || hlsl_type_is_resource(var1->data_type))
                 continue;
 
-            if (var1 == var2 || var1->buffer != var2->buffer)
+            buffer = var1->buffer;
+            if (!buffer->used_size)
                 continue;
 
-            /* This is to avoid reporting the error twice for the same pair of overlapping variables. */
-            if (strcmp(var1->name, var2->name) >= 0)
-                continue;
+            LIST_FOR_EACH_ENTRY(var2, &ctx->extern_vars, struct hlsl_ir_var, extern_entry)
+            {
+                unsigned int var1_reg_size, var2_reg_size;
 
-            var1_reg_size = var1->data_type->reg_size[HLSL_REGSET_NUMERIC];
-            var2_reg_size = var2->data_type->reg_size[HLSL_REGSET_NUMERIC];
+                if (!var2->is_uniform || hlsl_type_is_resource(var2->data_type))
+                    continue;
 
-            if (var1->buffer_offset < var2->buffer_offset + var2_reg_size
-                    && var2->buffer_offset < var1->buffer_offset + var1_reg_size)
-                hlsl_error(ctx, &buffer->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
-                        "Invalid packoffset() reservation: Variables %s and %s overlap.",
-                        var1->name, var2->name);
+                if (var1 == var2 || var1->buffer != var2->buffer)
+                    continue;
+
+                /* This is to avoid reporting the error twice for the same pair of overlapping variables. */
+                if (strcmp(var1->name, var2->name) >= 0)
+                    continue;
+
+                var1_reg_size = var1->data_type->reg_size[HLSL_REGSET_NUMERIC];
+                var2_reg_size = var2->data_type->reg_size[HLSL_REGSET_NUMERIC];
+
+                if (var1->buffer_offset < var2->buffer_offset + var2_reg_size
+                        && var2->buffer_offset < var1->buffer_offset + var1_reg_size)
+                    hlsl_error(ctx, &buffer->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_RESERVATION,
+                            "Invalid packoffset() reservation: Variables %s and %s overlap.",
+                            var1->name, var2->name);
+            }
         }
     }
 
@@ -9312,32 +9558,94 @@ struct hlsl_reg hlsl_reg_from_deref(struct hlsl_ctx *ctx, const struct hlsl_dere
     return ret;
 }
 
-static bool get_integral_argument_value(struct hlsl_ctx *ctx, const struct hlsl_attribute *attr,
-        unsigned int i, int *value)
+/* Check that an attribute's arguments are all integral scalars.
+ * This validation needs to be done before evaluate_attribute_arguments()
+ * in order to reject int1/uint1 vector types. */
+static bool validate_integral_attribute_arguments(struct hlsl_ctx *ctx, const struct hlsl_attribute *attr)
 {
-    const struct hlsl_ir_node *instr = attr->args[i].node;
-    const struct hlsl_type *type = instr->data_type;
+    unsigned int i;
 
-    if (type->class != HLSL_CLASS_SCALAR
-            || (type->e.numeric.type != HLSL_TYPE_INT && type->e.numeric.type != HLSL_TYPE_UINT))
+    for (i = 0; i < attr->args_count; ++i)
     {
-        struct vkd3d_string_buffer *string;
+        const struct hlsl_ir_node *arg = attr->args[i].node;
+        const struct hlsl_type *type;
 
-        if ((string = hlsl_type_to_string(ctx, type)))
-            hlsl_error(ctx, &instr->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
-                    "Unexpected type for argument %u of [%s]: expected int or uint, but got %s.",
-                    i, attr->name, string->buffer);
-        hlsl_release_string_buffer(ctx, string);
+        if (!arg)
+            return false;
+
+        type = arg->data_type;
+        if (type->class != HLSL_CLASS_SCALAR
+                || (type->e.numeric.type != HLSL_TYPE_INT && type->e.numeric.type != HLSL_TYPE_UINT))
+        {
+            struct vkd3d_string_buffer *string;
+
+            if ((string = hlsl_type_to_string(ctx, type)))
+            {
+                hlsl_error(ctx, &arg->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_TYPE,
+                        "Unexpected type for argument %u of [%s]: expected int or uint, but got %s.",
+                        i, attr->name, string->buffer);
+                hlsl_release_string_buffer(ctx, string);
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool evaluate_attribute_arguments(struct hlsl_ctx *ctx, struct hlsl_attribute *attr)
+{
+    bool all_constant = true;
+    struct hlsl_block block;
+    unsigned int i;
+
+    for (i = 0; i < attr->args_count; ++i)
+    {
+        if (!attr->args[i].node)
+            return false;
+    }
+
+    if (hlsl_block_has_side_effects(&attr->instrs))
+    {
+        hlsl_error(ctx, &attr->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                "Expressions with side effects in [%s] initializer.", attr->name);
         return false;
     }
 
-    if (instr->type != HLSL_IR_CONSTANT)
-    {
-        hlsl_fixme(ctx, &instr->loc, "Non-constant expression in [%s] initializer.", attr->name);
+    for (i = 0; i < attr->args_count && all_constant; ++i)
+        all_constant = attr->args[i].node->type == HLSL_IR_CONSTANT;
+
+    if (all_constant)
+        return true;
+
+    if (!hlsl_clone_block(ctx, &block, &ctx->static_initializers))
         return false;
+
+    hlsl_block_add_block(&block, &attr->instrs);
+    hlsl_block_init(&attr->instrs);
+
+    hlsl_lower_index_loads(ctx, &block);
+    hlsl_run_const_passes(ctx, &block);
+
+    for (i = 0; i < attr->args_count; ++i)
+    {
+        if (attr->args[i].node->type != HLSL_IR_CONSTANT)
+        {
+            hlsl_error(ctx, &attr->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_SYNTAX,
+                    "Non-constant expression in [%s] initializer.", attr->name);
+
+            for (i = 0; i < attr->args_count; ++i)
+                hlsl_src_remove(&attr->args[i]);
+            hlsl_block_cleanup(&block);
+            return false;
+        }
     }
 
-    *value = hlsl_ir_constant(instr)->value.u[0].i;
+    for (i = 0; i < attr->args_count; ++i)
+    {
+        list_remove(&attr->args[i].node->entry);
+        hlsl_block_add_instr(&attr->instrs, attr->args[i].node);
+    }
+    hlsl_block_cleanup(&block);
     return true;
 }
 
@@ -9361,7 +9669,7 @@ static const char *get_string_argument_value(struct hlsl_ctx *ctx, const struct 
     return hlsl_ir_string_constant(instr)->string;
 }
 
-static void parse_numthreads_attribute(struct hlsl_ctx *ctx, const struct hlsl_attribute *attr)
+static void parse_numthreads_attribute(struct hlsl_ctx *ctx, struct hlsl_attribute *attr)
 {
     static const unsigned int limits[3] = {1024, 1024, 64};
     unsigned int i;
@@ -9375,15 +9683,16 @@ static void parse_numthreads_attribute(struct hlsl_ctx *ctx, const struct hlsl_a
         return;
     }
 
+    if (!validate_integral_attribute_arguments(ctx, attr) || !evaluate_attribute_arguments(ctx, attr))
+        return;
+
     for (i = 0; i < attr->args_count; ++i)
     {
-        int value;
-
-        if (!get_integral_argument_value(ctx, attr, i, &value))
-            return;
+        const struct hlsl_ir_node *arg = attr->args[i].node;
+        int value = hlsl_ir_constant(arg)->value.u[0].i;
 
         if (value < 1 || value > limits[i])
-            hlsl_error(ctx, &attr->args[i].node->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_THREAD_COUNT,
+            hlsl_error(ctx, &arg->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_THREAD_COUNT,
                     "Dimension %u of the thread count must be between 1 and %u.", i, limits[i]);
 
         ctx->thread_count[i] = value;
@@ -9420,7 +9729,7 @@ static void parse_domain_attribute(struct hlsl_ctx *ctx, const struct hlsl_attri
                 value);
 }
 
-static void parse_outputcontrolpoints_attribute(struct hlsl_ctx *ctx, const struct hlsl_attribute *attr)
+static void parse_outputcontrolpoints_attribute(struct hlsl_ctx *ctx, struct hlsl_attribute *attr)
 {
     int value;
 
@@ -9431,8 +9740,10 @@ static void parse_outputcontrolpoints_attribute(struct hlsl_ctx *ctx, const stru
         return;
     }
 
-    if (!get_integral_argument_value(ctx, attr, 0, &value))
+    if (!validate_integral_attribute_arguments(ctx, attr) || !evaluate_attribute_arguments(ctx, attr))
         return;
+
+    value = hlsl_ir_constant(attr->args[0].node)->value.u[0].i;
 
     if (value < 0 || value > 32)
         hlsl_error(ctx, &attr->args[0].node->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_CONTROL_POINT_COUNT,
@@ -9532,7 +9843,7 @@ static void parse_patchconstantfunc_attribute(struct hlsl_ctx *ctx, const struct
                 "Patch constant function \"%s\" is not defined.", name);
 }
 
-static void parse_maxvertexcount_attribute(struct hlsl_ctx *ctx, const struct hlsl_attribute *attr)
+static void parse_maxvertexcount_attribute(struct hlsl_ctx *ctx, struct hlsl_attribute *attr)
 {
     int value;
 
@@ -9543,8 +9854,10 @@ static void parse_maxvertexcount_attribute(struct hlsl_ctx *ctx, const struct hl
         return;
     }
 
-    if (!get_integral_argument_value(ctx, attr, 0, &value))
+    if (!validate_integral_attribute_arguments(ctx, attr) || !evaluate_attribute_arguments(ctx, attr))
         return;
+
+    value = hlsl_ir_constant(attr->args[0].node)->value.u[0].i;
 
     if (value < 1 || value > 1024)
         hlsl_error(ctx, &attr->args[0].node->loc, VKD3D_SHADER_ERROR_HLSL_INVALID_MAX_VERTEX_COUNT,
@@ -9560,7 +9873,7 @@ static void parse_entry_function_attributes(struct hlsl_ctx *ctx, struct hlsl_ir
 
     for (i = 0; i < entry_func->attr_count; ++i)
     {
-        const struct hlsl_attribute *attr = entry_func->attrs[i];
+        struct hlsl_attribute *attr = entry_func->attrs[i];
 
         if (!strcmp(attr->name, "numthreads") && profile->type == VKD3D_SHADER_TYPE_COMPUTE)
             parse_numthreads_attribute(ctx, attr);
@@ -10071,25 +10384,6 @@ static struct hlsl_ir_node *fold_unary_identities(struct hlsl_ctx *ctx,
     return NULL;
 }
 
-static bool nodes_are_equivalent(const struct hlsl_ir_node *c1, const struct hlsl_ir_node *c2)
-{
-    if (c1 == c2)
-        return true;
-
-    if (c1->type == HLSL_IR_SWIZZLE && c2->type == HLSL_IR_SWIZZLE
-            && hlsl_types_are_equal(c1->data_type, c2->data_type))
-    {
-        const struct hlsl_ir_swizzle *s1 = hlsl_ir_swizzle(c1), *s2 = hlsl_ir_swizzle(c2);
-
-        VKD3D_ASSERT(c1->data_type->class <= HLSL_CLASS_VECTOR);
-
-        if (s1->val.node == s2->val.node && s1->u.vector == s2->u.vector)
-            return true;
-    }
-
-    return false;
-}
-
 /* Replaces all conditionals in an expression chain of the form (cond ? x : y)
  * with x or y, assuming cond = cond_value. */
 static struct hlsl_ir_node *evaluate_conditionals_recurse(struct hlsl_ctx *ctx,
@@ -10106,7 +10400,7 @@ static struct hlsl_ir_node *evaluate_conditionals_recurse(struct hlsl_ctx *ctx,
         return NULL;
     expr = hlsl_ir_expr(instr);
 
-    if (expr->op == HLSL_OP3_TERNARY && nodes_are_equivalent(cond, expr->operands[0].node))
+    if (expr->op == HLSL_OP3_TERNARY && nodes_are_equivalent(ctx, cond, expr->operands[0].node))
     {
         struct hlsl_ir_node *x = cond_value ? expr->operands[1].node : expr->operands[2].node;
 
@@ -10156,7 +10450,7 @@ static struct hlsl_ir_node *fold_conditional_identities(struct hlsl_ctx *ctx,
     VKD3D_ASSERT(c->data_type->e.numeric.type == HLSL_TYPE_BOOL);
 
     /* c ? x : x -> x */
-    if (nodes_are_equivalent(x, y))
+    if (nodes_are_equivalent(ctx, x, y))
         return x;
 
     if (c->type == HLSL_IR_CONSTANT)
@@ -10261,6 +10555,9 @@ void hlsl_run_const_passes(struct hlsl_ctx *ctx, struct hlsl_block *body)
     {
         progress = hlsl_run_folding_passes(ctx, body);
         progress |= hlsl_transform_ir(ctx, flatten_conditional_branches, body, NULL);
+        progress |= replace_ir(ctx, raise_elementwise_op_swizzles, body);
+        if (hlsl_version_ge(ctx, 3, 0))
+            progress |= replace_ir(ctx, vectorize_dot_exprs, body);
     } while (progress);
 }
 
@@ -11850,6 +12147,7 @@ D3DXPARAMETER_CLASS hlsl_sm1_class(const struct hlsl_type *type)
         case HLSL_CLASS_GEOMETRY_SHADER:
         case HLSL_CLASS_BLEND_STATE:
         case HLSL_CLASS_STREAM_OUTPUT:
+        case HLSL_CLASS_MIPS:
         case HLSL_CLASS_NULL:
             break;
     }
@@ -11966,6 +12264,7 @@ D3DXPARAMETER_TYPE hlsl_sm1_base_type(const struct hlsl_type *type,
         case HLSL_CLASS_GEOMETRY_SHADER:
         case HLSL_CLASS_BLEND_STATE:
         case HLSL_CLASS_STREAM_OUTPUT:
+        case HLSL_CLASS_MIPS:
         case HLSL_CLASS_NULL:
             break;
     }
@@ -15114,6 +15413,7 @@ static D3D_SHADER_VARIABLE_CLASS sm4_class(const struct hlsl_type *type)
         case HLSL_CLASS_GEOMETRY_SHADER:
         case HLSL_CLASS_BLEND_STATE:
         case HLSL_CLASS_STREAM_OUTPUT:
+        case HLSL_CLASS_MIPS:
         case HLSL_CLASS_NULL:
             break;
     }
@@ -16732,6 +17032,8 @@ static void process_entry_function(struct hlsl_ctx *ctx, struct vsir_program *pr
     lower_return(ctx, entry_func, body, false);
 
     while (hlsl_transform_ir(ctx, lower_calls, body, NULL));
+
+    validate_mips_access(ctx, body);
 
     replace_ir(ctx, lower_complex_casts, body);
     replace_ir(ctx, lower_matrix_swizzles, body);

@@ -3376,6 +3376,7 @@ static void test_wglCreateContextAttribsARB( HDC hdc )
     GLint num, major, minor, expect_major, expect_minor, flags, profile;
     const GLubyte *extension;
     HGLRC ctx, tmp;
+    void *ptr;
 
 
     /* Try to pass an invalid HDC */
@@ -3537,6 +3538,11 @@ static void test_wglCreateContextAttribsARB( HDC hdc )
     glGetIntegerv( GL_CONTEXT_FLAGS, &flags );
     ok_ret( 0, glGetError() );
     ok_x4( flags, ==, 0 );
+
+    extension = glGetString( GL_EXTENSIONS );
+    ok_ret( 0, glGetError() );
+    ptr = strstr( (const char *)extension, "GL_ARB_compatibility" );
+    ok_ptr( ptr, !=, NULL );
 
     ok_ret( TRUE, wglDeleteContext( ctx ) );
 
@@ -3948,7 +3954,18 @@ static void test_framebuffer(void)
     ok_u4( format, >, 0 );
     ok_ret( TRUE, SetPixelFormat( hdc2, format, &pfd ) );
 
-    if (!broken( amd )) /* AMD allows to mix DCs with different pixel formats */
+    if (broken( amd )) /* AMD allows to mix DCs with different pixel formats */
+    {
+        SetLastError( 0xdeadbeef );
+        todo_wine ok_ret( TRUE, ext.wglMakeContextCurrentARB( hdc, hdc2, ctx2 ) );
+        todo_wine ok_ret( 0, LOWORD( GetLastError() ) );
+        ok_ret( TRUE, wglDeleteContext( ctx2 ) );
+        ctx2 = ext.wglCreateContextAttribsARB( hdc2, ctx, NULL );
+        ok_ptr( ctx2, !=, NULL );
+        todo_wine ok_ret( FALSE, ext.wglMakeContextCurrentARB( hdc, hdc2, ctx2 ) );
+        todo_wine ok_ret( ERROR_INVALID_HANDLE, LOWORD( GetLastError() ) );
+    }
+    else
     {
         SetLastError( 0xdeadbeef );
         todo_wine ok_ret( FALSE, ext.wglMakeContextCurrentARB( hdc, hdc2, ctx2 ) );

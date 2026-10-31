@@ -493,6 +493,9 @@ HRESULT WINAPI D3DCompile2VKD3D(const void *data, SIZE_T data_size, const char *
     else if (compiler_version >= 37)
         option->value = VKD3D_SHADER_COMPILE_OPTION_CONST_GLOBAL_UNIFORMS;
 
+    if (compiler_version < 37)
+        option->value |= VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_ALLOW_PACKOFFSET_OVERLAP;
+
     if (effect_flags & D3DCOMPILE_EFFECT_CHILD_EFFECT)
     {
         option = &options[compile_info.option_count++];

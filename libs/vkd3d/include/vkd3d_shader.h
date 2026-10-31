@@ -258,6 +258,17 @@ enum vkd3d_shader_compile_option_backward_compatibility
      */
     VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_ALLOW_HALF_GLOBALS = 0x00000008,
 
+    /**
+     *  Disables overlap checks for the 'packoffset' keyword. Without this
+     *  option, two or more variables occupying one or more shader constant
+     *  register components in common results in a compilation error.
+     *
+     *  This option is disabled by default.
+     *
+     *  \since 2.2
+     */
+    VKD3D_SHADER_COMPILE_OPTION_BACKCOMPAT_ALLOW_PACKOFFSET_OVERLAP = 0x00000010,
+
     VKD3D_FORCE_32_BIT_ENUM(VKD3D_SHADER_COMPILE_OPTION_BACKWARD_COMPATIBILITY),
 };
 

@@ -90,6 +90,7 @@ enum hlsl_type_class
     HLSL_CLASS_CONSTANT_BUFFER,
     HLSL_CLASS_BLEND_STATE,
     HLSL_CLASS_STREAM_OUTPUT,
+    HLSL_CLASS_MIPS,
     HLSL_CLASS_VOID,
     HLSL_CLASS_NULL,
     HLSL_CLASS_ERROR,
@@ -151,6 +152,12 @@ enum hlsl_array_type
     HLSL_ARRAY_GENERIC,
     HLSL_ARRAY_PATCH_INPUT,
     HLSL_ARRAY_PATCH_OUTPUT,
+};
+
+enum hlsl_mips_type
+{
+    HLSL_MIPS_PROPERTY,
+    HLSL_MIPS_SLICE,
 };
 
 /* An HLSL source-level data type, including anonymous structs and typedefs. */
@@ -222,6 +229,12 @@ struct hlsl_type
             struct hlsl_type *type;
             enum hlsl_so_object_type so_type;
         } so;
+        /* Additional information if type is HLSL_CLASS_MIPS. */
+        struct
+        {
+            struct hlsl_type *type;
+            enum hlsl_mips_type mips_type;
+        } mips;
     } e;
 
     /* Number of numeric register components used by one value of this type, for each regset.
@@ -402,6 +415,8 @@ struct hlsl_attribute
     struct hlsl_block instrs;
     struct vkd3d_shader_location loc;
     unsigned int args_count;
+    /* Argument nodes in instrs. They are set to NULL if they cannot be
+     * reduced to constants after evaluation. */
     struct hlsl_src args[];
 };
 
@@ -657,7 +672,7 @@ struct hlsl_ir_function_decl
     /* Array of attributes (like numthreads) specified just before the function declaration.
      * Not to be confused with the function parameters! */
     unsigned int attr_count;
-    const struct hlsl_attribute *const *attrs;
+    struct hlsl_attribute *const *attrs;
 
     bool early_depth_test;
 
@@ -770,6 +785,7 @@ enum hlsl_ir_expr_op
     HLSL_OP1_ISINF,
     HLSL_OP1_LOG2,
     HLSL_OP1_LOGIC_NOT,
+    HLSL_OP1_MIPS,
     HLSL_OP1_NOISE,
     HLSL_OP1_NEG,
     HLSL_OP1_RCP,
@@ -1058,13 +1074,21 @@ struct hlsl_scope
     /* Item entry for hlsl_ctx.scopes. */
     struct list entry;
 
+    /* Item entry for hlsl_scope.namespaces. */
+    struct list namespace_entry;
+
     /* List containing the variables declared in this scope; linked by hlsl_ir_var->scope_entry. */
     struct list vars;
+    /* List containing the namespaces declared in this scope; linked by hlsl_scope->namespace_entry. */
+    struct list namespaces;
     /* Tree map containing the types declared in this scope, using hlsl_tree.name as key.
      * The types are attached through the hlsl_type.scope_entry fields. */
     struct rb_tree types;
     /* Scope containing this scope. This value is NULL for the global scope. */
     struct hlsl_scope *upper;
+    /* Namespace name of the scope. This value is NULL for ordinary scopes. */
+    char *namespace;
+    struct vkd3d_shader_location namespace_loc;
     /* The scope was created for the loop statement. */
     bool loop;
     /* The scope was created for the switch statement. */
@@ -1634,6 +1658,8 @@ struct hlsl_ir_node *hlsl_block_add_load_parent(struct hlsl_ctx *ctx, struct hls
 void hlsl_block_add_loop(struct hlsl_ctx *ctx, struct hlsl_block *block,
         struct hlsl_block *iter, struct hlsl_block *body, enum hlsl_loop_unroll_type unroll_type,
         struct hlsl_ir_node *unroll_limit, const struct vkd3d_shader_location *loc);
+struct hlsl_ir_node *hlsl_block_add_mipmap_level(struct hlsl_ctx *ctx, struct hlsl_block *block,
+        struct hlsl_ir_node *index, struct hlsl_ir_node *mip, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_block_add_resource_load(struct hlsl_ctx *ctx, struct hlsl_block *block,
         const struct hlsl_resource_load_params *params, const struct vkd3d_shader_location *loc);
 struct hlsl_ir_node *hlsl_block_add_resource_store(struct hlsl_ctx *ctx, struct hlsl_block *block,
@@ -1664,6 +1690,7 @@ struct hlsl_ir_node *hlsl_block_add_ternary_expr(struct hlsl_ctx *ctx, struct hl
 struct hlsl_ir_node *hlsl_block_add_unary_expr(struct hlsl_ctx *ctx, struct hlsl_block *block,
         enum hlsl_ir_expr_op op, struct hlsl_ir_node *arg, const struct vkd3d_shader_location *loc);
 void hlsl_block_cleanup(struct hlsl_block *block);
+bool hlsl_block_has_side_effects(const struct hlsl_block *block);
 bool hlsl_clone_block(struct hlsl_ctx *ctx, struct hlsl_block *dst_block, const struct hlsl_block *src_block);
 struct hlsl_ir_node *hlsl_clone_instr(struct hlsl_ctx *ctx, const struct hlsl_ir_node *instr);
 
@@ -1714,6 +1741,7 @@ struct hlsl_ir_function_decl *hlsl_get_func_decl(struct hlsl_ctx *ctx, const cha
         const struct hlsl_func_parameters *parameters);
 const struct hlsl_profile_info *hlsl_get_target_info(const char *target);
 struct hlsl_type *hlsl_get_type(struct hlsl_scope *scope, const char *name, bool recursive, bool case_insensitive);
+struct hlsl_ir_var *hlsl_get_var_in_scope(struct hlsl_scope *scope, const char *name);
 struct hlsl_ir_var *hlsl_get_var(struct hlsl_scope *scope, const char *name);
 
 struct hlsl_type *hlsl_get_element_type_from_path_index(struct hlsl_ctx *ctx, const struct hlsl_type *type,
@@ -1741,6 +1769,8 @@ struct hlsl_ir_function_decl *hlsl_new_func_decl(struct hlsl_ctx *ctx, uint32_t 
 struct hlsl_ir_node *hlsl_new_if(struct hlsl_ctx *ctx, struct hlsl_ir_node *condition, struct hlsl_block *then_block,
         struct hlsl_block *else_block, enum hlsl_if_flatten_type flatten_type, bool is_loop_condition,
         const struct vkd3d_shader_location *loc);
+struct hlsl_type *hlsl_new_mips_type(struct hlsl_ctx *ctx, struct hlsl_type *resource_type,
+        enum hlsl_mips_type mips_type);
 struct hlsl_type *hlsl_new_stream_output_type(struct hlsl_ctx *ctx,
         enum hlsl_so_object_type so_type, struct hlsl_type *type);
 struct hlsl_ir_node *hlsl_new_ternary_expr(struct hlsl_ctx *ctx, enum hlsl_ir_expr_op op,
@@ -1755,6 +1785,7 @@ struct hlsl_ir_node *hlsl_add_load_component(struct hlsl_ctx *ctx, struct hlsl_b
         struct hlsl_ir_node *var_instr, unsigned int comp, const struct vkd3d_shader_location *loc);
 
 bool hlsl_index_is_noncontiguous(struct hlsl_ir_index *index);
+bool hlsl_index_is_mips_slice(struct hlsl_ir_index *index);
 bool hlsl_index_is_resource_access(struct hlsl_ir_index *index);
 struct hlsl_ir_index *hlsl_index_chain_find_resource_access(struct hlsl_ir_index *index);
 bool hlsl_index_chain_has_tgsm_access(struct hlsl_ir_index *index);
@@ -1818,6 +1849,9 @@ void hlsl_note_(struct hlsl_ctx *ctx, const struct vkd3d_shader_location *loc,
 void hlsl_push_scope(struct hlsl_ctx *ctx);
 void hlsl_pop_scope(struct hlsl_ctx *ctx);
 
+struct hlsl_scope *hlsl_get_namespace(const struct hlsl_scope *scope, const char *name);
+bool hlsl_push_namespace(struct hlsl_ctx *ctx, char *name, const struct vkd3d_shader_location *loc);
+
 bool hlsl_scope_add_type(struct hlsl_scope *scope, struct hlsl_type *type);
 
 bool hlsl_base_type_is_integer(enum hlsl_base_type type);
@@ -1854,6 +1888,7 @@ unsigned int hlsl_get_multiarray_size(const struct hlsl_type *type);
 const struct hlsl_type *hlsl_get_stream_output_type(const struct hlsl_type *type);
 
 uint32_t hlsl_combine_swizzles(uint32_t first, uint32_t second, unsigned int dim);
+uint32_t hlsl_concat_swizzles(uint32_t swizzle1, size_t dimx1, uint32_t swizzle2, size_t dimx2);
 unsigned int hlsl_combine_writemasks(unsigned int first, unsigned int second);
 uint32_t hlsl_map_swizzle(uint32_t swizzle, unsigned int writemask);
 uint32_t hlsl_swizzle_from_writemask(unsigned int writemask);
