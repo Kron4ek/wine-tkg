@@ -5,8 +5,8 @@ msgstr ""
 "Project-Id-Version: Wine\n"
 "Report-Msgid-Bugs-To: https://bugs.winehq.org\n"
 "POT-Creation-Date: N/A\n"
-"PO-Revision-Date: 2026-08-28 13:31+0300\n"
-"Last-Translator: Nikolay Sivov <nsivov@codeweavers.com>\n"
+"PO-Revision-Date: 2026-11-05 19:53+0300\n"
+"Last-Translator: Vitaly Lipatov <lav@etersoft.ru>\n"
 "Language-Team: Russian\n"
 "Language: ru\n"
 "MIME-Version: 1.0\n"
@@ -3485,10 +3485,8 @@ msgid "Show &Tabs"
 msgstr "Показать &вкладки"
 
 #: dlls/hhctrl.ocx/hhctrl.rc:39
-#, fuzzy
-#| msgid "Select Source"
 msgid "Select Topic"
-msgstr "Выберите источник"
+msgstr "Выбор раздела"
 
 #: dlls/hhctrl.ocx/hhctrl.rc:44
 msgid "Show"
@@ -3830,10 +3828,8 @@ msgid "&Disable"
 msgstr "&Отключить"
 
 #: dlls/joy.cpl/joy.rc:42
-#, fuzzy
-#| msgid "Edit Override"
 msgid "&Override"
-msgstr "Изменить замещение"
+msgstr "&Переопределить"
 
 #: dlls/joy.cpl/joy.rc:43
 msgid "&Enable"
@@ -3884,44 +3880,32 @@ msgid "Force Feedback Effect"
 msgstr "Эффект отдачи"
 
 #: dlls/joy.cpl/joy.rc:67
-#, fuzzy
-#| msgid ""
-#| "Press any button in the controller to activate the chosen effect. The "
-#| "effect direction can be changed with the controller axis."
 msgid ""
 "Hold any button in the controller to play the chosen effect. The effect "
 "direction can be changed with the controller axis."
 msgstr ""
-"Нажмите любую кнопку на контроллере, чтобы активировать выбранный эффект. "
-"Направление эффекта может быть изменено с помощью осей контроллера."
+"Удерживайте любую кнопку на контроллере, чтобы воспроизвести выбранный "
+"эффект. Направление эффекта может быть изменено с помощью осей контроллера."
 
 #: dlls/joy.cpl/joy.rc:73
 msgid "XInput"
 msgstr "XInput"
 
 #: dlls/joy.cpl/joy.rc:76
-#, fuzzy
-#| msgid "User"
 msgid "User #0"
-msgstr "Имя"
+msgstr "Пользователь №0"
 
 #: dlls/joy.cpl/joy.rc:77
-#, fuzzy
-#| msgid "User"
 msgid "User #1"
-msgstr "Имя"
+msgstr "Пользователь №1"
 
 #: dlls/joy.cpl/joy.rc:78
-#, fuzzy
-#| msgid "User"
 msgid "User #2"
-msgstr "Имя"
+msgstr "Пользователь №2"
 
 #: dlls/joy.cpl/joy.rc:79
-#, fuzzy
-#| msgid "User"
 msgid "User #3"
-msgstr "Имя"
+msgstr "Пользователь №3"
 
 #: dlls/joy.cpl/joy.rc:81
 msgid ""
@@ -4009,10 +3993,8 @@ msgid "Argument not optional"
 msgstr "Отсутствует обязательный аргумент"
 
 #: dlls/jscript/jscript.rc:37 dlls/vbscript/vbscript.rc:60
-#, fuzzy
-#| msgid "Object Class Violation"
 msgid "Object not a collection"
-msgstr "Нарушение класса объекта"
+msgstr "Объект не является коллекцией"
 
 #: dlls/jscript/jscript.rc:38 dlls/vbscript/vbscript.rc:69
 msgid "Syntax error"
@@ -4135,26 +4117,20 @@ msgid "JScript object expected"
 msgstr "Ожидается объект типа «JScript»"
 
 #: dlls/jscript/jscript.rc:65
-#, fuzzy
-#| msgid "Array object expected"
 msgid "Enumerator object expected"
-msgstr "Ожидается объект типа «Array»"
+msgstr "Ожидается объект типа «Enumerator»"
 
 #: dlls/jscript/jscript.rc:66
-#, fuzzy
-#| msgid "Boolean object expected"
 msgid "Regular Expression object expected"
-msgstr "Ожидается объект типа «bool»"
+msgstr "Ожидается объект регулярного выражения"
 
 #: dlls/jscript/jscript.rc:67
 msgid "Syntax error in regular expression"
 msgstr "Синтаксическая ошибка в регулярном выражении"
 
 #: dlls/jscript/jscript.rc:68
-#, fuzzy
-#| msgid "Expected identifier"
 msgid "Unexpected quantifier"
-msgstr "Ожидается идентификатор"
+msgstr "Неожиданный квантификатор"
 
 #: dlls/jscript/jscript.rc:69
 msgid "Exception thrown and not caught"
@@ -4177,10 +4153,8 @@ msgid "Precision is out of range"
 msgstr "Точность представления вне диапазона"
 
 #: dlls/jscript/jscript.rc:74
-#, fuzzy
-#| msgid "Array object expected"
 msgid "Array or arguments object expected"
-msgstr "Ожидается объект типа «Array»"
+msgstr "Ожидается объект типа «Array» или «arguments»"
 
 #: dlls/jscript/jscript.rc:75
 msgid "Array length must be a finite positive integer"
@@ -4233,10 +4207,8 @@ msgid "Invalid begin/end value in typed array subarray method"
 msgstr ""
 
 #: dlls/jscript/jscript.rc:87
-#, fuzzy
-#| msgid "Invalid module type for %1.\n"
 msgid "Invalid source in typed array set"
-msgstr "Неверный тип модуля в %1.\n"
+msgstr "Неверный источник для set типизированного массива"
 
 #: dlls/jscript/jscript.rc:88
 msgid "'this' is not a DataView object"
@@ -4263,10 +4235,8 @@ msgid "'key' is not an object"
 msgstr "«key» не является объектом"
 
 #: dlls/jscript/jscript.rc:94
-#, fuzzy
-#| msgid "Array object expected"
 msgid "ArrayBuffer object expected"
-msgstr "Ожидается объект типа «Array»"
+msgstr "Ожидается объект типа «ArrayBuffer»"
 
 #: dlls/jscript/jscript.rc:95
 msgid "Property cannot have both accessors and a value"
@@ -5057,10 +5027,8 @@ msgid "Invalid oplock message received.\n"
 msgstr "Получено неверное сообщение оп. блокировки.\n"
 
 #: dlls/kernelbase/winerror.mc:970
-#, fuzzy
-#| msgid "Disk is corrupt.\n"
 msgid "Disk is too fragmented.\n"
-msgstr "Диск повреждён.\n"
+msgstr "Диск слишком фрагментирован.\n"
 
 #: dlls/kernelbase/winerror.mc:975
 msgid "File cannot be opened because it is in the process of being deleted.\n"
@@ -5075,10 +5043,8 @@ msgid "Short names are not enabled on this volume.\n"
 msgstr ""
 
 #: dlls/kernelbase/winerror.mc:990
-#, fuzzy
-#| msgid "Floppy registers inconsistent.\n"
 msgid "Security stream is inconsistent.\n"
-msgstr "Несогласованность регистров дисковода.\n"
+msgstr "Поток безопасности несогласован.\n"
 
 #: dlls/kernelbase/winerror.mc:995
 msgid "File lock operation cannot be processed due to invalid byte range.\n"
@@ -5093,38 +5059,28 @@ msgid "Notification GUID is already defined.\n"
 msgstr ""
 
 #: dlls/kernelbase/winerror.mc:1010
-#, fuzzy
-#| msgid "Invalid icon handle.\n"
 msgid "Invalid exception handler.\n"
-msgstr "Неверный дескриптор значка.\n"
+msgstr "Неверный обработчик исключений.\n"
 
 #: dlls/kernelbase/winerror.mc:1015
-#, fuzzy
-#| msgid "Duplicate service name.\n"
 msgid "Duplicate privileges for the token.\n"
-msgstr "Имя службы должно быть уникальным.\n"
+msgstr "Повторяющиеся привилегии в маркере.\n"
 
 #: dlls/kernelbase/winerror.mc:1020
-#, fuzzy
-#| msgid "Not all objects could be exported.\n"
 msgid "No ranges could be processed.\n"
-msgstr "Невозможно экспортировать все объекты.\n"
+msgstr "Не удалось обработать ни один диапазон.\n"
 
 #: dlls/kernelbase/winerror.mc:1025
-#, fuzzy
-#| msgid "Operation canceled by user.\n"
 msgid "Operation not allowed on system file.\n"
-msgstr "Операция прервана пользователем.\n"
+msgstr "Операция не разрешена для системного файла.\n"
 
 #: dlls/kernelbase/winerror.mc:1030
 msgid "Disk resources have been exhausted.\n"
 msgstr ""
 
 #: dlls/kernelbase/winerror.mc:1035
-#, fuzzy
-#| msgid "Invalid key.\n"
 msgid "Invalid token.\n"
-msgstr "Неверный ключ реестра.\n"
+msgstr "Неверный маркер.\n"
 
 #: dlls/kernelbase/winerror.mc:1040
 msgid "Command feature not supported on the device.\n"
@@ -5139,20 +5095,16 @@ msgid "Scope not found.\n"
 msgstr "Контекст не найден.\n"
 
 #: dlls/kernelbase/winerror.mc:1055
-#, fuzzy
-#| msgid "The specified device handle is invalid."
 msgid "The specified Central Access Policy is undefined.\n"
-msgstr "Указанный идентификатор устройства (device handle) неверен."
+msgstr "Указанная централизованная политика доступа не определена.\n"
 
 #: dlls/kernelbase/winerror.mc:1060
 msgid "Central Access Policy from Active Directory is invalid.\n"
 msgstr ""
 
 #: dlls/kernelbase/winerror.mc:1065
-#, fuzzy
-#| msgid "Host unreachable.\n"
 msgid "Device is unreachable.\n"
-msgstr "Узел сети недоступен.\n"
+msgstr "Устройство недоступно.\n"
 
 #: dlls/kernelbase/winerror.mc:1070
 msgid "Target device has insufficient resources to complete the operation.\n"
@@ -7411,10 +7363,8 @@ msgid "Connection reset by peer.\n"
 msgstr "Соединение закрыто удалённым узлом.\n"
 
 #: dlls/kernelbase/winerror.mc:3915
-#, fuzzy
-#| msgid "Point not found.\n"
 msgid "Host not found.\n"
-msgstr "Точка не найдена.\n"
+msgstr "Узел не найден.\n"
 
 #: dlls/kernelbase/winerror.mc:3920
 msgid "Nonauthoritative host not found.\n"
@@ -7437,10 +7387,8 @@ msgid "Call failed.\n"
 msgstr "Сбой вызова.\n"
 
 #: dlls/kernelbase/winerror.mc:3937
-#, fuzzy
-#| msgid "Unable to unload media.\n"
 msgid "Unable to find matching object.\n"
-msgstr "Невозможно разблокировать носитель.\n"
+msgstr "Не удалось найти соответствующий объект.\n"
 
 #: dlls/kernelbase/winerror.mc:3944
 msgid "No Signature found in file.\n"
@@ -7463,10 +7411,8 @@ msgid "Letter Small"
 msgstr "Письмо маленькое"
 
 #: dlls/localspl/localspl.rc:39
-#, fuzzy
-#| msgid "&Table"
 msgid "Tabloid"
-msgstr "&таблицу"
+msgstr "Таблоид"
 
 #: dlls/localspl/localspl.rc:40
 msgid "Ledger"
@@ -7477,10 +7423,8 @@ msgid "Legal"
 msgstr ""
 
 #: dlls/localspl/localspl.rc:42
-#, fuzzy
-#| msgid "State"
 msgid "Statement"
-msgstr "Состояние"
+msgstr "Statement"
 
 #: dlls/localspl/localspl.rc:43
 msgid "Executive"
@@ -7647,11 +7591,8 @@ msgid "Envelope Invite"
 msgstr ""
 
 #: dlls/localspl/localspl.rc:84
-#, fuzzy
-#| msgctxt "Drive letter"
-#| msgid "Letter"
 msgid "Letter Extra"
-msgstr "Диск"
+msgstr "Письмо экстра"
 
 #: dlls/localspl/localspl.rc:85
 msgid "Legal Extra"
@@ -7686,11 +7627,8 @@ msgid "Super B"
 msgstr "Super B"
 
 #: dlls/localspl/localspl.rc:93
-#, fuzzy
-#| msgctxt "Drive letter"
-#| msgid "Letter"
 msgid "Letter Plus"
-msgstr "Диск"
+msgstr "Письмо Plus"
 
 #: dlls/localspl/localspl.rc:94
 msgid "A4 Plus"
@@ -9025,10 +8963,8 @@ msgid "Wine Video 1 video codec"
 msgstr "Видео кодек Wine Video 1"
 
 #: dlls/msxml3/msxml.mc:31
-#, fuzzy
-#| msgid "Undefined external error."
 msgid "Undefined reference\n"
-msgstr "Неизвестная ошибка."
+msgstr "Неопределённая ссылка\n"
 
 #: dlls/msxml3/msxml.mc:38
 msgid "Found self-referential entity\n"
@@ -9047,112 +8983,80 @@ msgid "Namespace prefix hasn't been declared\n"
 msgstr ""
 
 #: dlls/msxml3/msxml.mc:66
-#, fuzzy
-#| msgid "Expected '='"
 msgid "Expected '=' character\n"
-msgstr "Ожидается «=»"
+msgstr "Ожидается символ «=»\n"
 
 #: dlls/msxml3/msxml.mc:73
-#, fuzzy
-#| msgid "Expected an operator.\n"
 msgid "Expected a quote character\n"
-msgstr "Ожидается оператор.\n"
+msgstr "Ожидается символ кавычки\n"
 
 #: dlls/msxml3/msxml.mc:80
 msgid "Malformed comment\n"
 msgstr ""
 
 #: dlls/msxml3/msxml.mc:87
-#, fuzzy
-#| msgid "Invalid character"
 msgid "Invalid name start character\n"
-msgstr "Неверный символ"
+msgstr "Неверный первый символ имени\n"
 
 #: dlls/msxml3/msxml.mc:94
-#, fuzzy
-#| msgid "Invalid character"
 msgid "Invalid name character\n"
-msgstr "Неверный символ"
+msgstr "Неверный символ в имени\n"
 
 #: dlls/msxml3/msxml.mc:101
 msgid "The '<' character found in attribute value\n"
 msgstr ""
 
 #: dlls/msxml3/msxml.mc:108
-#, fuzzy
-#| msgid "Expected an operator.\n"
 msgid "Expected whitespace character\n"
-msgstr "Ожидается оператор.\n"
+msgstr "Ожидается пробельный символ\n"
 
 #: dlls/msxml3/msxml.mc:115
-#, fuzzy
-#| msgid "Expected an operator.\n"
 msgid "Expected end tag character '>'\n"
-msgstr "Ожидается оператор.\n"
+msgstr "Ожидается символ конца тега «>»\n"
 
 #: dlls/msxml3/msxml.mc:122
-#, fuzzy
-#| msgid "Invalid character(s) in path"
 msgid "Invalid character in DTD content\n"
-msgstr "Некорректный символ в записи пути"
+msgstr "Неверный символ в содержимом DTD\n"
 
 #: dlls/msxml3/msxml.mc:129
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected ';' character\n"
-msgstr "Ожидается «;»"
+msgstr "Ожидается символ «;»\n"
 
 #: dlls/msxml3/msxml.mc:136
-#, fuzzy
-#| msgid "Invalid character(s) in path"
 msgid "Invalid character in entity reference\n"
-msgstr "Некорректный символ в записи пути"
+msgstr "Неверный символ в ссылке на сущность\n"
 
 #: dlls/msxml3/msxml.mc:143
-#, fuzzy
-#| msgid "Invalid character(s) in path"
 msgid "Invalid character in mixed DTD content\n"
-msgstr "Некорректный символ в записи пути"
+msgstr "Неверный символ в смешанном содержимом DTD\n"
 
 #: dlls/msxml3/msxml.mc:150
-#, fuzzy
-#| msgid "Expected an operator.\n"
 msgid "Expected '*' character\n"
-msgstr "Ожидается оператор.\n"
+msgstr "Ожидается символ «*»\n"
 
 #: dlls/msxml3/msxml.mc:157
-#, fuzzy
-#| msgid "Expected an operator.\n"
 msgid "Expected parenthesis character\n"
-msgstr "Ожидается оператор.\n"
+msgstr "Ожидается символ скобки\n"
 
 #: dlls/msxml3/msxml.mc:164
-#, fuzzy
-#| msgid "Invalid character(s) in path"
 msgid "Invalid character in DTD enumeration\n"
-msgstr "Некорректный символ в записи пути"
+msgstr "Неверный символ в перечислении DTD\n"
 
 #: dlls/msxml3/msxml.mc:171
-#, fuzzy
-#| msgid "Invalid name syntax.\n"
 msgid "Invalid PI syntax\n"
-msgstr "Неверный синтаксис имени.\n"
+msgstr "Неверный синтаксис инструкции обработки\n"
 
 #: dlls/msxml3/msxml.mc:178
-#, fuzzy
-#| msgid "Expected an operator.\n"
 msgid "Expected closing quote character\n"
-msgstr "Ожидается оператор.\n"
+msgstr "Ожидается закрывающая кавычка\n"
 
 #: dlls/msxml3/msxml.mc:185
 msgid "Multiple colon character found\n"
 msgstr ""
 
 #: dlls/msxml3/msxml.mc:192
-#, fuzzy
-#| msgid "Invalid character"
 msgid "Invalid Unicode character\n"
-msgstr "Неверный символ"
+msgstr "Неверный символ Юникода\n"
 
 #: dlls/msxml3/msxml.mc:199
 msgid "Expected whitespace or '?' character\n"
@@ -9163,28 +9067,20 @@ msgid "Unexpected end tag '>' character\n"
 msgstr ""
 
 #: dlls/msxml3/msxml.mc:213
-#, fuzzy
-#| msgid "Invalid group attributes.\n"
 msgid "Found duplicate attribute\n"
-msgstr "Неверные атрибуты группы.\n"
+msgstr "Найден повторяющийся атрибут\n"
 
 #: dlls/msxml3/msxml.mc:220
-#, fuzzy
-#| msgid "Key is invalid.\n"
 msgid "Document root is invalid\n"
-msgstr "Неверный ключ.\n"
+msgstr "Неверный корневой элемент документа\n"
 
 #: dlls/msxml3/msxml.mc:227
-#, fuzzy
-#| msgid "Invalid handle operation.\n"
 msgid "Invalid xml declaration\n"
-msgstr "Неверная операция с дескриптором.\n"
+msgstr "Неверное объявление XML\n"
 
 #: dlls/msxml3/msxml.mc:234
-#, fuzzy
-#| msgid "Source is missing.\n"
 msgid "Document root is missing\n"
-msgstr "Отсутствует источник.\n"
+msgstr "Отсутствует корневой элемент документа\n"
 
 #: dlls/msxml3/msxml.mc:241
 msgid "Unexpected end of input data stream\n"
@@ -9211,40 +9107,28 @@ msgid "Use namespace prefix is reserved\n"
 msgstr ""
 
 #: dlls/msxml3/msxml.mc:283
-#, fuzzy
-#| msgid "The passwords do not match."
 msgid "End tag does not match\n"
-msgstr "Пароли не совпадают."
+msgstr "Закрывающий тег не соответствует открывающему\n"
 
 #: dlls/msxml3/msxml.mc:290
-#, fuzzy
-#| msgid "Invalid domain name.\n"
 msgid "Invalid encoding name\n"
-msgstr "Неверное имя домена.\n"
+msgstr "Неверное имя кодировки\n"
 
 #: dlls/msxml3/msxml.mc:297
-#, fuzzy
-#| msgid "Invalid media type.\n"
 msgid "Invalid model in DTD contentspec\n"
-msgstr "Неверный тип данных.\n"
+msgstr "Неверная модель в contentspec DTD\n"
 
 #: dlls/msxml3/msxml.mc:304
-#, fuzzy
-#| msgid "Invalid group attributes.\n"
 msgid "Invalid DTD attribute type\n"
-msgstr "Неверные атрибуты группы.\n"
+msgstr "Неверный тип атрибута DTD\n"
 
 #: dlls/msxml3/msxml.mc:311
-#, fuzzy
-#| msgid "Invalid handle operation.\n"
 msgid "Invalid standalone declaration\n"
-msgstr "Неверная операция с дескриптором.\n"
+msgstr "Неверное объявление standalone\n"
 
 #: dlls/msxml3/msxml.mc:318
-#, fuzzy
-#| msgid "Invalid version option.\n"
 msgid "Invalid xml version\n"
-msgstr "Неверный параметр версии.\n"
+msgstr "Неверная версия XML\n"
 
 #: dlls/oleacc/oleacc.rc:31
 msgid "unknown object"
@@ -9695,10 +9579,8 @@ msgid "Connection"
 msgstr "Подключение"
 
 #: dlls/oledb32/oledb32.rc:61
-#, fuzzy
-#| msgid "Select the data you want to connect to:"
 msgid "Specify the following to connect to ODBC data:"
-msgstr "Выберите формат для подключения:"
+msgstr "Укажите следующее для подключения к данным ODBC:"
 
 #: dlls/oledb32/oledb32.rc:62
 msgid "1. Specify the source of data:"
@@ -9706,7 +9588,7 @@ msgstr "1. Укажите источник данных:"
 
 #: dlls/oledb32/oledb32.rc:63
 msgid "Use &data source name"
-msgstr "Используйте имя источника данных"
+msgstr "Использовать &имя источника данных"
 
 #: dlls/oledb32/oledb32.rc:66
 msgid "Use c&onnection string"
@@ -9717,14 +9599,12 @@ msgid "&Connection string:"
 msgstr "Строка &подключения:"
 
 #: dlls/oledb32/oledb32.rc:69
-#, fuzzy
-#| msgid "A&dd..."
 msgid "B&uild..."
-msgstr "&Добавить..."
+msgstr "Пос&троить..."
 
 #: dlls/oledb32/oledb32.rc:70
 msgid "2. Enter information to log on to the server"
-msgstr "2. Введите информация для доступа к серверу"
+msgstr "2. Введите сведения для входа к серверу"
 
 #: dlls/oledb32/oledb32.rc:71
 msgid "User &name:"
@@ -9748,17 +9628,15 @@ msgstr "&Проверка подключения"
 
 #: dlls/oledb32/oledb32.rc:84
 msgid "Advanced"
-msgstr "Мастер"
+msgstr "Дополнительно"
 
 #: dlls/oledb32/oledb32.rc:87
 msgid "Network settings"
 msgstr "Сетевые настройки"
 
 #: dlls/oledb32/oledb32.rc:88
-#, fuzzy
-#| msgid "Bad impersonation level.\n"
 msgid "&Impersonation level:"
-msgstr "Ошибочный уровень олицетворения.\n"
+msgstr "&Уровень олицетворения:"
 
 #: dlls/oledb32/oledb32.rc:90
 msgid "P&rotection level:"
@@ -9788,7 +9666,7 @@ msgstr ""
 
 #: dlls/oledb32/oledb32.rc:107
 msgid "&Edit Value..."
-msgstr "&Изменить знаяение..."
+msgstr "&Изменить значение..."
 
 #: dlls/oledb32/oledb32.rc:41
 msgid "Data Link Error"
@@ -10030,16 +9908,12 @@ msgid "Manufacturer:"
 msgstr "Изготовитель:"
 
 #: dlls/sane.ds/sane.rc:60
-#, fuzzy
-#| msgid "Product Updates:"
 msgid "Product family:"
-msgstr "Обновления:"
+msgstr "Семейство продуктов:"
 
 #: dlls/sane.ds/sane.rc:62
-#, fuzzy
-#| msgid "Product Updates:"
 msgid "Product name:"
-msgstr "Обновления:"
+msgstr "Название продукта:"
 
 #: dlls/sane.ds/sane.rc:64
 msgid "Resolution:"
@@ -11056,1211 +10930,1153 @@ msgstr " сек"
 msgid "Select Source"
 msgstr "Выберите источник"
 
-#: dlls/tzres/tzres.rc:108
+#: dlls/tzres/tzres.rc:114
 msgctxt "maximum 31 characters"
 msgid "China Standard Time"
 msgstr "Китайское стандартное время"
 
-#: dlls/tzres/tzres.rc:109
+#: dlls/tzres/tzres.rc:115
 msgctxt "maximum 31 characters"
 msgid "China Daylight Time"
 msgstr "Китайское летнее время"
 
-#: dlls/tzres/tzres.rc:110
+#: dlls/tzres/tzres.rc:116
 msgid "(UTC+08:00) Beijing, Chongqing, Hong Kong, Urumqi"
 msgstr "(UTC+08:00) Пекин, Чунцин, Гонконг, Урумчи"
 
-#: dlls/tzres/tzres.rc:249
+#: dlls/tzres/tzres.rc:258
 msgctxt "maximum 31 characters"
 msgid "North Asia Standard Time"
 msgstr "Североазиатское стандартное время"
 
-#: dlls/tzres/tzres.rc:250
+#: dlls/tzres/tzres.rc:259
 msgctxt "maximum 31 characters"
 msgid "North Asia Daylight Time"
 msgstr "Североазиатское летнее время"
 
-#: dlls/tzres/tzres.rc:251
+#: dlls/tzres/tzres.rc:260
 msgid "(UTC+07:00) Krasnoyarsk"
 msgstr "(UTC+07:00) Красноярск"
 
-#: dlls/tzres/tzres.rc:150
+#: dlls/tzres/tzres.rc:156
 msgctxt "maximum 31 characters"
 msgid "Georgian Standard Time"
 msgstr "Грузинское стандартное время"
 
-#: dlls/tzres/tzres.rc:151
+#: dlls/tzres/tzres.rc:157
 msgctxt "maximum 31 characters"
 msgid "Georgian Daylight Time"
 msgstr "Грузинское летнее время"
 
-#: dlls/tzres/tzres.rc:152
+#: dlls/tzres/tzres.rc:158
 msgid "(UTC+04:00) Tbilisi"
 msgstr "(UTC+04:00) Тбилиси"
 
-#: dlls/tzres/tzres.rc:375 dlls/tzres/tzres.rc:376
+#: dlls/tzres/tzres.rc:384 dlls/tzres/tzres.rc:385
 msgctxt "maximum 31 characters"
 msgid "UTC+12"
 msgstr "UTC+12"
 
-#: dlls/tzres/tzres.rc:377
+#: dlls/tzres/tzres.rc:386
 msgid "(UTC+12:00) Coordinated Universal Time+12"
 msgstr "(UTC+12:00) Всемирное координированное время+12"
 
-#: dlls/tzres/tzres.rc:234
+#: dlls/tzres/tzres.rc:243
 msgctxt "maximum 31 characters"
 msgid "Nepal Standard Time"
 msgstr "Непальское стандартное время"
 
-#: dlls/tzres/tzres.rc:235
+#: dlls/tzres/tzres.rc:244
 msgctxt "maximum 31 characters"
 msgid "Nepal Daylight Time"
 msgstr "Непальское летнее время"
 
-#: dlls/tzres/tzres.rc:236
+#: dlls/tzres/tzres.rc:245
 msgid "(UTC+05:45) Kathmandu"
 msgstr "(UTC+05:45) Катманду"
 
-#: dlls/tzres/tzres.rc:72
+#: dlls/tzres/tzres.rc:78
 msgctxt "maximum 31 characters"
 msgid "Cape Verde Standard Time"
 msgstr "Кабо-Верде стандартное время"
 
-#: dlls/tzres/tzres.rc:73
+#: dlls/tzres/tzres.rc:79
 msgctxt "maximum 31 characters"
 msgid "Cape Verde Daylight Time"
 msgstr "Кабо-Верде летнее время"
 
-#: dlls/tzres/tzres.rc:74
+#: dlls/tzres/tzres.rc:80
 msgid "(UTC-01:00) Cabo Verde Is."
 msgstr "(UTC-01:00) Кабо-Верде о."
 
-#: dlls/tzres/tzres.rc:165
+#: dlls/tzres/tzres.rc:171
 msgctxt "maximum 31 characters"
 msgid "Haiti Standard Time"
 msgstr "Гаитянское стандартное время"
 
-#: dlls/tzres/tzres.rc:166
+#: dlls/tzres/tzres.rc:172
 msgctxt "maximum 31 characters"
 msgid "Haiti Daylight Time"
 msgstr "Гаитянское летнее время"
 
-#: dlls/tzres/tzres.rc:167
+#: dlls/tzres/tzres.rc:173
 msgid "(UTC-05:00) Haiti"
 msgstr "(UTC-05:00) Гаити"
 
-#: dlls/tzres/tzres.rc:93
+#: dlls/tzres/tzres.rc:99
 msgctxt "maximum 31 characters"
 msgid "Central European Standard Time"
 msgstr "Центральноевропейское стандартное время"
 
-#: dlls/tzres/tzres.rc:94
+#: dlls/tzres/tzres.rc:100
 msgctxt "maximum 31 characters"
 msgid "Central European Daylight Time"
 msgstr "Центральноевропейское летнее время"
 
-#: dlls/tzres/tzres.rc:95
+#: dlls/tzres/tzres.rc:101
 msgid "(UTC+01:00) Sarajevo, Skopje, Warsaw, Zagreb"
 msgstr "(UTC+01:00) Сараево, Скопье, Варшава, Загреб"
 
-#: dlls/tzres/tzres.rc:216
+#: dlls/tzres/tzres.rc:225
 msgctxt "maximum 31 characters"
 msgid "Morocco Standard Time"
 msgstr "Марокканское стандартное время"
 
-#: dlls/tzres/tzres.rc:217
+#: dlls/tzres/tzres.rc:226
 msgctxt "maximum 31 characters"
 msgid "Morocco Daylight Time"
 msgstr "Марокканское летнее время"
 
-#: dlls/tzres/tzres.rc:218
+#: dlls/tzres/tzres.rc:227
 msgid "(UTC+01:00) Casablanca"
 msgstr "(UTC+01:00) Касабланка"
 
-#: dlls/tzres/tzres.rc:384 dlls/tzres/tzres.rc:385
+#: dlls/tzres/tzres.rc:393 dlls/tzres/tzres.rc:394
 msgctxt "maximum 31 characters"
 msgid "UTC-08"
 msgstr "UTC-08"
 
-#: dlls/tzres/tzres.rc:386
+#: dlls/tzres/tzres.rc:395
 msgid "(UTC-08:00) Coordinated Universal Time-08"
 msgstr "(UTC-08:00) Всемирное координированное время-08"
 
-#: dlls/tzres/tzres.rc:21
+#: dlls/tzres/tzres.rc:24
 msgctxt "maximum 31 characters"
 msgid "Altai Standard Time"
 msgstr "Алтайское стандартное время"
 
-#: dlls/tzres/tzres.rc:22
+#: dlls/tzres/tzres.rc:25
 msgctxt "maximum 31 characters"
 msgid "Altai Daylight Time"
 msgstr "Алтайское летнее время"
 
-#: dlls/tzres/tzres.rc:23
+#: dlls/tzres/tzres.rc:26
 msgid "(UTC+07:00) Barnaul, Gorno-Altaysk"
 msgstr "(UTC+07:00) Барнаул, Горно-Алтайск"
 
-#: dlls/tzres/tzres.rc:90
+#: dlls/tzres/tzres.rc:96
 msgctxt "maximum 31 characters"
 msgid "Central Europe Standard Time"
 msgstr "Центральноевропейское стандартное время"
 
-#: dlls/tzres/tzres.rc:91
+#: dlls/tzres/tzres.rc:97
 msgctxt "maximum 31 characters"
 msgid "Central Europe Daylight Time"
 msgstr "Центральноевропейское летнее время"
 
-#: dlls/tzres/tzres.rc:92
+#: dlls/tzres/tzres.rc:98
 msgid "(UTC+01:00) Belgrade, Bratislava, Budapest, Ljubljana, Prague"
 msgstr "(UTC+01:00) Белград, Братислава, Будапешт, Любляна, Прага"
 
-#: dlls/tzres/tzres.rc:174
+#: dlls/tzres/tzres.rc:180
 msgctxt "maximum 31 characters"
 msgid "Iran Standard Time"
 msgstr "Иранское стандартное время"
 
-#: dlls/tzres/tzres.rc:175
+#: dlls/tzres/tzres.rc:181
 msgctxt "maximum 31 characters"
 msgid "Iran Daylight Time"
 msgstr "Иранское летнее время"
 
-#: dlls/tzres/tzres.rc:176
+#: dlls/tzres/tzres.rc:182
 msgid "(UTC+03:30) Tehran"
 msgstr "(UTC+03:30) Тегеран"
 
-#: dlls/tzres/tzres.rc:300
+#: dlls/tzres/tzres.rc:309
 msgctxt "maximum 31 characters"
 msgid "Saint Pierre Standard Time"
 msgstr "Сен-Пьер стандартное время"
 
-#: dlls/tzres/tzres.rc:301
+#: dlls/tzres/tzres.rc:310
 msgctxt "maximum 31 characters"
 msgid "Saint Pierre Daylight Time"
 msgstr "Сен-Пьер летнее время"
 
-#: dlls/tzres/tzres.rc:302
+#: dlls/tzres/tzres.rc:311
 msgid "(UTC-03:00) Saint Pierre and Miquelon"
 msgstr "(UTC-03:00) Сен-Пьер и Микелон"
 
-#: dlls/tzres/tzres.rc:309
+#: dlls/tzres/tzres.rc:318
 msgctxt "maximum 31 characters"
 msgid "Sao Tome Standard Time"
 msgstr "Сан-Томе стандартное время"
 
-#: dlls/tzres/tzres.rc:310
+#: dlls/tzres/tzres.rc:319
 msgctxt "maximum 31 characters"
 msgid "Sao Tome Daylight Time"
 msgstr "Сан-Томе летнее время"
 
-#: dlls/tzres/tzres.rc:311
+#: dlls/tzres/tzres.rc:320
 msgid "(UTC+00:00) Sao Tome"
 msgstr "(UTC+00:00) Сан-Томе"
 
-#: dlls/tzres/tzres.rc:231
+#: dlls/tzres/tzres.rc:240
 msgctxt "maximum 31 characters"
 msgid "Namibia Standard Time"
 msgstr "Намибийское стандартное время"
 
-#: dlls/tzres/tzres.rc:232
+#: dlls/tzres/tzres.rc:241
 msgctxt "maximum 31 characters"
 msgid "Namibia Daylight Time"
 msgstr "Намибийское летнее время"
 
-#: dlls/tzres/tzres.rc:233
+#: dlls/tzres/tzres.rc:242
 msgid "(UTC+02:00) Windhoek"
 msgstr "(UTC+02:00) Виндхук"
 
-#: dlls/tzres/tzres.rc:351
+#: dlls/tzres/tzres.rc:360
 msgctxt "maximum 31 characters"
 msgid "Tonga Standard Time"
 msgstr "Тонга стандартное время"
 
-#: dlls/tzres/tzres.rc:352
+#: dlls/tzres/tzres.rc:361
 msgctxt "maximum 31 characters"
 msgid "Tonga Daylight Time"
 msgstr "Тонга летнее время"
 
-#: dlls/tzres/tzres.rc:353
+#: dlls/tzres/tzres.rc:362
 msgid "(UTC+13:00) Nuku'alofa"
 msgstr "(UTC+13:00) Нукуалофа"
 
-#: dlls/tzres/tzres.rc:222
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Montevideo Standard Time"
+#: dlls/tzres/tzres.rc:231
 msgctxt "maximum 31 characters"
 msgid "Mountain Standard Time (Mexico)"
-msgstr "Монтевидео стандартное время"
+msgstr "Горное стандартное время (Мексика)"
 
-#: dlls/tzres/tzres.rc:223
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Montevideo Daylight Time"
+#: dlls/tzres/tzres.rc:232
 msgctxt "maximum 31 characters"
 msgid "Mountain Daylight Time (Mexico)"
-msgstr "Монтевидео летнее время"
+msgstr "Горное летнее время (Мексика)"
 
-#: dlls/tzres/tzres.rc:224
+#: dlls/tzres/tzres.rc:233
 msgid "(UTC-07:00) Chihuahua, La Paz, Mazatlan"
 msgstr "(UTC-07:00) Чиуауа, Ла-Пас, Масатлан"
 
-#: dlls/tzres/tzres.rc:153
+#: dlls/tzres/tzres.rc:159
 msgctxt "maximum 31 characters"
 msgid "GMT Standard Time"
 msgstr "Стандартное время GMT"
 
-#: dlls/tzres/tzres.rc:154
+#: dlls/tzres/tzres.rc:160
 msgctxt "maximum 31 characters"
 msgid "GMT Daylight Time"
 msgstr "Стандартное время GMT"
 
-#: dlls/tzres/tzres.rc:155
+#: dlls/tzres/tzres.rc:161
 msgid "(UTC+00:00) Dublin, Edinburgh, Lisbon, London"
 msgstr "(UTC+00:00) Дублин, Эдинбург, Лиссабон, Лондон"
 
-#: dlls/tzres/tzres.rc:324
+#: dlls/tzres/tzres.rc:333
 msgctxt "maximum 31 characters"
 msgid "South Sudan Standard Time"
 msgstr "Южный Судан стандартное время"
 
-#: dlls/tzres/tzres.rc:325
+#: dlls/tzres/tzres.rc:334
 msgctxt "maximum 31 characters"
 msgid "South Sudan Daylight Time"
 msgstr "Южный Судан летнее время"
 
-#: dlls/tzres/tzres.rc:326
+#: dlls/tzres/tzres.rc:335
 msgid "(UTC+02:00) Juba"
 msgstr "(UTC+02:00) Джуба"
 
-#: dlls/tzres/tzres.rc:84
+#: dlls/tzres/tzres.rc:90
 msgctxt "maximum 31 characters"
 msgid "Central Asia Standard Time"
 msgstr "Центральноазиатское стандартное время"
 
-#: dlls/tzres/tzres.rc:85
+#: dlls/tzres/tzres.rc:91
 msgctxt "maximum 31 characters"
 msgid "Central Asia Daylight Time"
 msgstr "Центральноазиатское летнее время"
 
-#: dlls/tzres/tzres.rc:86
+#: dlls/tzres/tzres.rc:92
 msgid "(UTC+06:00) Astana"
 msgstr "(UTC+06:00) Астана"
 
-#: dlls/tzres/tzres.rc:195
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Korea Standard Time"
+#: dlls/tzres/tzres.rc:201
 msgctxt "maximum 31 characters"
 msgid "Lord Howe Standard Time"
-msgstr "Корейское стандартное время"
+msgstr "Стандартное время Лорд-Хау"
 
-#: dlls/tzres/tzres.rc:196
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Korea Daylight Time"
+#: dlls/tzres/tzres.rc:202
 msgctxt "maximum 31 characters"
 msgid "Lord Howe Daylight Time"
-msgstr "Корейское летнее время"
+msgstr "Летнее время Лорд-Хау"
 
-#: dlls/tzres/tzres.rc:197
+#: dlls/tzres/tzres.rc:203
 msgid "(UTC+10:30) Lord Howe Island"
 msgstr "(UTC+10:30) Остров Лорд-Хау"
 
-#: dlls/tzres/tzres.rc:30
+#: dlls/tzres/tzres.rc:33
 msgctxt "maximum 31 characters"
 msgid "Arabic Standard Time"
 msgstr "Арабское стандартное время"
 
-#: dlls/tzres/tzres.rc:31
+#: dlls/tzres/tzres.rc:34
 msgctxt "maximum 31 characters"
 msgid "Arabic Daylight Time"
 msgstr "Арабское летнее время"
 
-#: dlls/tzres/tzres.rc:32
+#: dlls/tzres/tzres.rc:35
 msgid "(UTC+03:00) Baghdad"
 msgstr "(UTC+03:00) Багдад"
 
-#: dlls/tzres/tzres.rc:378 dlls/tzres/tzres.rc:379
+#: dlls/tzres/tzres.rc:387 dlls/tzres/tzres.rc:388
 msgctxt "maximum 31 characters"
 msgid "UTC+13"
 msgstr "UTC+13"
 
-#: dlls/tzres/tzres.rc:380
+#: dlls/tzres/tzres.rc:389
 msgid "(UTC+13:00) Coordinated Universal Time+13"
 msgstr "(UTC+13:00) Всемирное координированное время+13"
 
-#: dlls/tzres/tzres.rc:198
+#: dlls/tzres/tzres.rc:204
 msgctxt "maximum 31 characters"
 msgid "Magadan Standard Time"
 msgstr "Магаданское стандартное время"
 
-#: dlls/tzres/tzres.rc:199
+#: dlls/tzres/tzres.rc:205
 msgctxt "maximum 31 characters"
 msgid "Magadan Daylight Time"
 msgstr "Магаданское летнее время"
 
-#: dlls/tzres/tzres.rc:200
+#: dlls/tzres/tzres.rc:206
 msgid "(UTC+11:00) Magadan"
 msgstr "(UTC+11:00) Магадан"
 
-#: dlls/tzres/tzres.rc:240
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Greenland Standard Time"
+#: dlls/tzres/tzres.rc:249
 msgctxt "maximum 31 characters"
 msgid "Newfoundland Standard Time"
-msgstr "Гренландское стандартное время"
+msgstr "Стандартное время Ньюфаундленда"
 
-#: dlls/tzres/tzres.rc:241
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Greenland Daylight Time"
+#: dlls/tzres/tzres.rc:250
 msgctxt "maximum 31 characters"
 msgid "Newfoundland Daylight Time"
-msgstr "Гренландское летнее время"
+msgstr "Летнее время Ньюфаундленда"
 
-#: dlls/tzres/tzres.rc:242
+#: dlls/tzres/tzres.rc:251
 msgid "(UTC-03:30) Newfoundland"
 msgstr "(UTC-03:30) Ньюфаундленд"
 
-#: dlls/tzres/tzres.rc:330
+#: dlls/tzres/tzres.rc:339
 msgctxt "maximum 31 characters"
 msgid "Sudan Standard Time"
 msgstr "Суданское стандартное время"
 
-#: dlls/tzres/tzres.rc:331
+#: dlls/tzres/tzres.rc:340
 msgctxt "maximum 31 characters"
 msgid "Sudan Daylight Time"
 msgstr "Суданское летнее время"
 
-#: dlls/tzres/tzres.rc:332
+#: dlls/tzres/tzres.rc:341
 msgid "(UTC+02:00) Khartoum"
 msgstr "(UTC+02:00) Хартум"
 
-#: dlls/tzres/tzres.rc:420
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Standard Time"
+#: dlls/tzres/tzres.rc:429
 msgctxt "maximum 31 characters"
 msgid "West Pacific Standard Time"
-msgstr "Гаитянское стандартное время"
+msgstr "Западно-тихоокеанское стандартное время"
 
-#: dlls/tzres/tzres.rc:421
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Daylight Time"
+#: dlls/tzres/tzres.rc:430
 msgctxt "maximum 31 characters"
 msgid "West Pacific Daylight Time"
-msgstr "Гаитянское летнее время"
+msgstr "Западно-тихоокеанское летнее время"
 
-#: dlls/tzres/tzres.rc:422
+#: dlls/tzres/tzres.rc:431
 msgid "(UTC+10:00) Guam, Port Moresby"
 msgstr "(UTC+10:00) Гуам, Порт-Морсби"
 
-#: dlls/tzres/tzres.rc:261
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Standard Time"
+#: dlls/tzres/tzres.rc:270
 msgctxt "maximum 31 characters"
 msgid "Pacific Standard Time"
-msgstr "Гаитянское стандартное время"
+msgstr "Тихоокеанское стандартное время"
 
-#: dlls/tzres/tzres.rc:262
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Daylight Time"
+#: dlls/tzres/tzres.rc:271
 msgctxt "maximum 31 characters"
 msgid "Pacific Daylight Time"
-msgstr "Гаитянское летнее время"
+msgstr "Тихоокеанское летнее время"
 
-#: dlls/tzres/tzres.rc:263
+#: dlls/tzres/tzres.rc:272
 msgid "(UTC-08:00) Pacific Time (US & Canada)"
 msgstr "(UTC-08:00) Тихоокеанское время (США и Канада)"
 
-#: dlls/tzres/tzres.rc:51
+#: dlls/tzres/tzres.rc:54
 msgctxt "maximum 31 characters"
 msgid "Azerbaijan Standard Time"
 msgstr "Азербайджанское стандартное время"
 
-#: dlls/tzres/tzres.rc:52
+#: dlls/tzres/tzres.rc:55
 msgctxt "maximum 31 characters"
 msgid "Azerbaijan Daylight Time"
 msgstr "Азербайджанское летнее время"
 
-#: dlls/tzres/tzres.rc:53
+#: dlls/tzres/tzres.rc:56
 msgid "(UTC+04:00) Baku"
 msgstr "(UTC+04:00) Баку"
 
-#: dlls/tzres/tzres.rc:201
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Magadan Standard Time"
+#: dlls/tzres/tzres.rc:207
 msgctxt "maximum 31 characters"
 msgid "Magallanes Standard Time"
-msgstr "Магаданское стандартное время"
+msgstr "Стандартное время Магальянеса"
 
-#: dlls/tzres/tzres.rc:202
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Magadan Daylight Time"
+#: dlls/tzres/tzres.rc:208
 msgctxt "maximum 31 characters"
 msgid "Magallanes Daylight Time"
-msgstr "Магаданское летнее время"
+msgstr "Летнее время Магальянеса"
 
-#: dlls/tzres/tzres.rc:203
+#: dlls/tzres/tzres.rc:209
 msgid "(UTC-03:00) Punta Arenas"
 msgstr "(UTC-03:00) Пунта-Аренас"
 
-#: dlls/tzres/tzres.rc:306
+#: dlls/tzres/tzres.rc:315
 msgctxt "maximum 31 characters"
 msgid "Samoa Standard Time"
 msgstr "Стандартное время Самоа"
 
-#: dlls/tzres/tzres.rc:307
+#: dlls/tzres/tzres.rc:316
 msgctxt "maximum 31 characters"
 msgid "Samoa Daylight Time"
 msgstr "Летнее время Самоа"
 
-#: dlls/tzres/tzres.rc:308
+#: dlls/tzres/tzres.rc:317
 msgid "(UTC+13:00) Samoa"
 msgstr "(UTC+13:00) Самоа"
 
-#: dlls/tzres/tzres.rc:183
+#: dlls/tzres/tzres.rc:189
 msgctxt "maximum 31 characters"
 msgid "Kaliningrad Standard Time"
 msgstr "Калининградское стандартное время"
 
-#: dlls/tzres/tzres.rc:184
+#: dlls/tzres/tzres.rc:190
 msgctxt "maximum 31 characters"
 msgid "Kaliningrad Daylight Time"
 msgstr "Калининградское летнее время"
 
-#: dlls/tzres/tzres.rc:185
+#: dlls/tzres/tzres.rc:191
 msgid "(UTC+02:00) Kaliningrad"
 msgstr "(UTC+02:00) Калининград"
 
-#: dlls/tzres/tzres.rc:264
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Standard Time"
+#: dlls/tzres/tzres.rc:273
 msgctxt "maximum 31 characters"
 msgid "Pacific Standard Time (Mexico)"
-msgstr "Гаитянское стандартное время"
+msgstr "Тихоокеанское стандартное время (Мексика)"
 
-#: dlls/tzres/tzres.rc:265
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Daylight Time"
+#: dlls/tzres/tzres.rc:274
 msgctxt "maximum 31 characters"
 msgid "Pacific Daylight Time (Mexico)"
-msgstr "Гаитянское летнее время"
+msgstr "Тихоокеанское летнее время (Мексика)"
 
-#: dlls/tzres/tzres.rc:266
+#: dlls/tzres/tzres.rc:275
 msgid "(UTC-08:00) Baja California"
 msgstr "(UTC-08:00) Нижняя Калифорния"
 
-#: dlls/tzres/tzres.rc:210
+#: dlls/tzres/tzres.rc:219
 msgctxt "maximum 31 characters"
 msgid "Middle East Standard Time"
 msgstr "Ближневосточное стандартное время"
 
-#: dlls/tzres/tzres.rc:211
+#: dlls/tzres/tzres.rc:220
 msgctxt "maximum 31 characters"
 msgid "Middle East Daylight Time"
 msgstr "Ближневосточное летнее время"
 
-#: dlls/tzres/tzres.rc:212
+#: dlls/tzres/tzres.rc:221
 msgid "(UTC+02:00) Beirut"
 msgstr "(UTC+02:00) Бейрут"
 
-#: dlls/tzres/tzres.rc:345
+#: dlls/tzres/tzres.rc:354
 msgctxt "maximum 31 characters"
 msgid "Tokyo Standard Time"
 msgstr "Стандартное время Токио"
 
-#: dlls/tzres/tzres.rc:346
+#: dlls/tzres/tzres.rc:355
 msgctxt "maximum 31 characters"
 msgid "Tokyo Daylight Time"
 msgstr "Летнее время Токио"
 
-#: dlls/tzres/tzres.rc:347
+#: dlls/tzres/tzres.rc:356
 msgid "(UTC+09:00) Osaka, Sapporo, Tokyo"
 msgstr "(UTC+09:00) Осака, Саппоро, Токио"
 
-#: dlls/tzres/tzres.rc:192
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Greenland Standard Time"
+#: dlls/tzres/tzres.rc:198
 msgctxt "maximum 31 characters"
 msgid "Line Islands Standard Time"
-msgstr "Гренландское стандартное время"
+msgstr "Стандартное время островов Лайн"
 
-#: dlls/tzres/tzres.rc:193
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Greenland Daylight Time"
+#: dlls/tzres/tzres.rc:199
 msgctxt "maximum 31 characters"
 msgid "Line Islands Daylight Time"
-msgstr "Гренландское летнее время"
+msgstr "Летнее время островов Лайн"
 
-#: dlls/tzres/tzres.rc:194
+#: dlls/tzres/tzres.rc:200
 msgid "(UTC+14:00) Kiritimati Island"
 msgstr "(UTC+14:00) Кирибати"
 
-#: dlls/tzres/tzres.rc:111
+#: dlls/tzres/tzres.rc:117
 msgctxt "maximum 31 characters"
 msgid "Cuba Standard Time"
 msgstr "Кубинское стандартное время"
 
-#: dlls/tzres/tzres.rc:112
+#: dlls/tzres/tzres.rc:118
 msgctxt "maximum 31 characters"
 msgid "Cuba Daylight Time"
 msgstr "Кубинское летнее время"
 
-#: dlls/tzres/tzres.rc:113
+#: dlls/tzres/tzres.rc:119
 msgid "(UTC-05:00) Havana"
 msgstr "(UTC-05:00) Гавана"
 
-#: dlls/tzres/tzres.rc:180
+#: dlls/tzres/tzres.rc:186
 msgctxt "maximum 31 characters"
 msgid "Jordan Standard Time"
 msgstr "Иорданское стандартное время"
 
-#: dlls/tzres/tzres.rc:181
+#: dlls/tzres/tzres.rc:187
 msgctxt "maximum 31 characters"
 msgid "Jordan Daylight Time"
 msgstr "Иорданское летнее время"
 
-#: dlls/tzres/tzres.rc:182
+#: dlls/tzres/tzres.rc:188
 msgid "(UTC+02:00) Amman"
 msgstr "(UTC+02:00) Амман"
 
-#: dlls/tzres/tzres.rc:99
+#: dlls/tzres/tzres.rc:105
 msgctxt "maximum 31 characters"
 msgid "Central Standard Time"
 msgstr "Центральное время"
 
-#: dlls/tzres/tzres.rc:100
+#: dlls/tzres/tzres.rc:106
 msgctxt "maximum 31 characters"
 msgid "Central Daylight Time"
 msgstr "Центральное летнее время"
 
-#: dlls/tzres/tzres.rc:101
+#: dlls/tzres/tzres.rc:107
 msgid "(UTC-06:00) Central Time (US & Canada)"
 msgstr "(UTC-06:00) Центральное время (США и Канада)"
 
-#: dlls/tzres/tzres.rc:285 dlls/tzres/tzres.rc:286
+#: dlls/tzres/tzres.rc:294 dlls/tzres/tzres.rc:295
 msgctxt "maximum 31 characters"
 msgid "Russia Time Zone 3"
 msgstr "Россия часовой пояс 3"
 
-#: dlls/tzres/tzres.rc:287
+#: dlls/tzres/tzres.rc:296
 msgid "(UTC+04:00) Izhevsk, Samara"
 msgstr "(UTC+04:00) Ижевск, Самара"
 
-#: dlls/tzres/tzres.rc:399
+#: dlls/tzres/tzres.rc:408
 msgctxt "maximum 31 characters"
 msgid "Volgograd Standard Time"
 msgstr "Волгоградское стандартное время"
 
-#: dlls/tzres/tzres.rc:400
+#: dlls/tzres/tzres.rc:409
 msgctxt "maximum 31 characters"
 msgid "Volgograd Daylight Time"
 msgstr "Волгоградское летнее время"
 
-#: dlls/tzres/tzres.rc:401
+#: dlls/tzres/tzres.rc:410
 msgid "(UTC+04:00) Volgograd"
 msgstr "(UTC+04:00) Волгоград"
 
-#: dlls/tzres/tzres.rc:54
+#: dlls/tzres/tzres.rc:57
 msgctxt "maximum 31 characters"
 msgid "Azores Standard Time"
 msgstr "Азорское стандартное время"
 
-#: dlls/tzres/tzres.rc:55
+#: dlls/tzres/tzres.rc:58
 msgctxt "maximum 31 characters"
 msgid "Azores Daylight Time"
 msgstr "Азорское летнее время"
 
-#: dlls/tzres/tzres.rc:56
+#: dlls/tzres/tzres.rc:59
 msgid "(UTC-01:00) Azores"
 msgstr "(UTC-01:00) Азорские острова"
 
-#: dlls/tzres/tzres.rc:246
+#: dlls/tzres/tzres.rc:255
 msgctxt "maximum 31 characters"
 msgid "North Asia East Standard Time"
 msgstr "Вост.-североазиатское стандартное время"
 
-#: dlls/tzres/tzres.rc:247
+#: dlls/tzres/tzres.rc:256
 msgctxt "maximum 31 characters"
 msgid "North Asia East Daylight Time"
 msgstr "Вост.-североазиатское летнее время"
 
-#: dlls/tzres/tzres.rc:248
+#: dlls/tzres/tzres.rc:257
 msgid "(UTC+08:00) Irkutsk"
 msgstr "(UTC+08:00) Иркутск"
 
-#: dlls/tzres/tzres.rc:390 dlls/tzres/tzres.rc:391
+#: dlls/tzres/tzres.rc:399 dlls/tzres/tzres.rc:400
 msgctxt "maximum 31 characters"
 msgid "UTC-11"
 msgstr "UTC-11"
 
-#: dlls/tzres/tzres.rc:392
+#: dlls/tzres/tzres.rc:401
 msgid "(UTC-11:00) Coordinated Universal Time-11"
 msgstr "(UTC-11:00) Всемирное координированное время-11"
 
-#: dlls/tzres/tzres.rc:33
+#: dlls/tzres/tzres.rc:36
 msgctxt "maximum 31 characters"
 msgid "Argentina Standard Time"
 msgstr "Аргентинское стандартное время"
 
-#: dlls/tzres/tzres.rc:34
+#: dlls/tzres/tzres.rc:37
 msgctxt "maximum 31 characters"
 msgid "Argentina Daylight Time"
 msgstr "Аргентинское летнее время"
 
-#: dlls/tzres/tzres.rc:35
+#: dlls/tzres/tzres.rc:38
 msgid "(UTC-03:00) City of Buenos Aires"
 msgstr "(UTC-03:00) Буэнос-Айрес"
 
-#: dlls/tzres/tzres.rc:360
-#, fuzzy
-#| msgid "Turks And Caicos Standard Time"
+#: dlls/tzres/tzres.rc:369
 msgctxt "maximum 31 characters"
 msgid "Turks And Caicos Standard Time"
 msgstr "Теркс и Кайкос стандартное время"
 
-#: dlls/tzres/tzres.rc:361
+#: dlls/tzres/tzres.rc:370
 msgctxt "maximum 31 characters"
 msgid "Turks And Caicos Daylight Time"
 msgstr "Теркс и Кайкос летнее время"
 
-#: dlls/tzres/tzres.rc:362
+#: dlls/tzres/tzres.rc:371
 msgid "(UTC-05:00) Turks and Caicos"
 msgstr "(UTC-05:00) Теркс и Кайкос"
 
-#: dlls/tzres/tzres.rc:204
-#, fuzzy
-#| msgid "Marquesas Standard Time"
+#: dlls/tzres/tzres.rc:213
 msgctxt "maximum 31 characters"
 msgid "Marquesas Standard Time"
 msgstr "Маркизские острова стандартное время"
 
-#: dlls/tzres/tzres.rc:205
+#: dlls/tzres/tzres.rc:214
 msgctxt "maximum 31 characters"
 msgid "Marquesas Daylight Time"
 msgstr "Маркизские острова летнее время"
 
-#: dlls/tzres/tzres.rc:206
+#: dlls/tzres/tzres.rc:215
 msgid "(UTC-09:30) Marquesas Islands"
 msgstr "(UTC-09:30) Маркизские острова"
 
-#: dlls/tzres/tzres.rc:225
+#: dlls/tzres/tzres.rc:234
 msgctxt "maximum 31 characters"
 msgid "Myanmar Standard Time"
 msgstr "Мьянма стандартное время"
 
-#: dlls/tzres/tzres.rc:226
+#: dlls/tzres/tzres.rc:235
 msgctxt "maximum 31 characters"
 msgid "Myanmar Daylight Time"
 msgstr "Мьянма летнее время"
 
-#: dlls/tzres/tzres.rc:227
+#: dlls/tzres/tzres.rc:236
 msgid "(UTC+06:30) Yangon (Rangoon)"
 msgstr "(UTC+06:30) Янгон (Рангун)"
 
-#: dlls/tzres/tzres.rc:372 dlls/tzres/tzres.rc:373
+#: dlls/tzres/tzres.rc:381 dlls/tzres/tzres.rc:382
 msgctxt "maximum 31 characters"
 msgid "Coordinated Universal Time"
 msgstr "Всемирное координированное время"
 
-#: dlls/tzres/tzres.rc:374
+#: dlls/tzres/tzres.rc:383
 msgid "(UTC) Coordinated Universal Time"
 msgstr "(UTC) Всемирное координированное время"
 
-#: dlls/tzres/tzres.rc:171
+#: dlls/tzres/tzres.rc:177
 msgctxt "maximum 31 characters"
 msgid "India Standard Time"
 msgstr "Индийское стандартное время"
 
-#: dlls/tzres/tzres.rc:172
+#: dlls/tzres/tzres.rc:178
 msgctxt "maximum 31 characters"
 msgid "India Daylight Time"
 msgstr "Индийское летнее время"
 
-#: dlls/tzres/tzres.rc:173
+#: dlls/tzres/tzres.rc:179
 msgid "(UTC+05:30) Chennai, Kolkata, Mumbai, New Delhi"
 msgstr "(UTC+05:30) Ченнаи, Калькутта, Мумбаи, Нью-Дели"
 
-#: dlls/tzres/tzres.rc:162
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "GMT Standard Time"
+#: dlls/tzres/tzres.rc:168
 msgctxt "maximum 31 characters"
 msgid "GTB Standard Time"
-msgstr "Стандартное время GMT"
+msgstr "Стандартное время GTB"
 
-#: dlls/tzres/tzres.rc:163
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "GMT Daylight Time"
+#: dlls/tzres/tzres.rc:169
 msgctxt "maximum 31 characters"
 msgid "GTB Daylight Time"
-msgstr "Стандартное время GMT"
+msgstr "Летнее время GTB"
 
-#: dlls/tzres/tzres.rc:164
+#: dlls/tzres/tzres.rc:170
 msgid "(UTC+02:00) Athens, Bucharest"
 msgstr "(UTC+02:00) Афины, Бухарест"
 
-#: dlls/tzres/tzres.rc:357
+#: dlls/tzres/tzres.rc:366
 msgctxt "maximum 31 characters"
 msgid "Turkey Standard Time"
 msgstr "Турецкое стандартное время"
 
-#: dlls/tzres/tzres.rc:358
+#: dlls/tzres/tzres.rc:367
 msgctxt "maximum 31 characters"
 msgid "Turkey Daylight Time"
 msgstr "Турецкое летнее время"
 
-#: dlls/tzres/tzres.rc:359
+#: dlls/tzres/tzres.rc:368
 msgid "(UTC+03:00) Istanbul"
 msgstr "(UTC+03:00) Стамбул"
 
-#: dlls/tzres/tzres.rc:36
+#: dlls/tzres/tzres.rc:39
 msgctxt "maximum 31 characters"
 msgid "Astrakhan Standard Time"
 msgstr "Астраханское стандартное время"
 
-#: dlls/tzres/tzres.rc:37
+#: dlls/tzres/tzres.rc:40
 msgctxt "maximum 31 characters"
 msgid "Astrakhan Daylight Time"
 msgstr "Астраханское летнее время"
 
-#: dlls/tzres/tzres.rc:38
+#: dlls/tzres/tzres.rc:41
 msgid "(UTC+04:00) Astrakhan, Ulyanovsk"
 msgstr "(UTC+04:00) Астрахань, Ульяновск"
 
-#: dlls/tzres/tzres.rc:144
+#: dlls/tzres/tzres.rc:150
 msgctxt "maximum 31 characters"
 msgid "Fiji Standard Time"
 msgstr "Стандартное время Фиджи"
 
-#: dlls/tzres/tzres.rc:145
+#: dlls/tzres/tzres.rc:151
 msgctxt "maximum 31 characters"
 msgid "Fiji Daylight Time"
 msgstr "Летнее время Фиджи"
 
-#: dlls/tzres/tzres.rc:146
+#: dlls/tzres/tzres.rc:152
 msgid "(UTC+12:00) Fiji"
 msgstr "(UTC+12:00) Фиджи"
 
-#: dlls/tzres/tzres.rc:69
+#: dlls/tzres/tzres.rc:75
 msgctxt "maximum 31 characters"
 msgid "Canada Central Standard Time"
 msgstr "Центральное канадское время"
 
-#: dlls/tzres/tzres.rc:70
+#: dlls/tzres/tzres.rc:76
 msgctxt "maximum 31 characters"
 msgid "Canada Central Daylight Time"
 msgstr "Центральная Канада летнее время"
 
-#: dlls/tzres/tzres.rc:71
+#: dlls/tzres/tzres.rc:77
 msgid "(UTC-06:00) Saskatchewan"
 msgstr "(UTC-06:00) Саскачеван"
 
-#: dlls/tzres/tzres.rc:426
+#: dlls/tzres/tzres.rc:435
 msgctxt "maximum 31 characters"
 msgid "Yukon Standard Time"
 msgstr "Стандартное время Юкон"
 
-#: dlls/tzres/tzres.rc:427
+#: dlls/tzres/tzres.rc:436
 msgctxt "maximum 31 characters"
 msgid "Yukon Daylight Time"
 msgstr "Летнее время Юкон"
 
-#: dlls/tzres/tzres.rc:428
+#: dlls/tzres/tzres.rc:437
 msgid "(UTC-07:00) Yukon"
 msgstr "(UTC-07:00) Юкон"
 
-#: dlls/tzres/tzres.rc:336
+#: dlls/tzres/tzres.rc:345
 msgctxt "maximum 31 characters"
 msgid "Taipei Standard Time"
 msgstr "Тайбэйское стандартное время"
 
-#: dlls/tzres/tzres.rc:337
+#: dlls/tzres/tzres.rc:346
 msgctxt "maximum 31 characters"
 msgid "Taipei Daylight Time"
 msgstr "Тайбэйское летнее время"
 
-#: dlls/tzres/tzres.rc:338
+#: dlls/tzres/tzres.rc:347
 msgid "(UTC+08:00) Taipei"
 msgstr "(UTC+08:00) Тайбэй"
 
-#: dlls/tzres/tzres.rc:408
+#: dlls/tzres/tzres.rc:417
 msgctxt "maximum 31 characters"
 msgid "W. Europe Standard Time"
 msgstr "Западноевропейское стандартное время"
 
-#: dlls/tzres/tzres.rc:409
+#: dlls/tzres/tzres.rc:418
 msgctxt "maximum 31 characters"
 msgid "W. Europe Daylight Time"
 msgstr "Западноевропейское летнее время"
 
-#: dlls/tzres/tzres.rc:410
+#: dlls/tzres/tzres.rc:419
 msgid "(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna"
 msgstr "(UTC+01:00) Амстердам, Берлин, Берн, Стокгольм, Вена"
 
-#: dlls/tzres/tzres.rc:213
+#: dlls/tzres/tzres.rc:222
 msgctxt "maximum 31 characters"
 msgid "Montevideo Standard Time"
 msgstr "Монтевидео стандартное время"
 
-#: dlls/tzres/tzres.rc:214
+#: dlls/tzres/tzres.rc:223
 msgctxt "maximum 31 characters"
 msgid "Montevideo Daylight Time"
 msgstr "Монтевидео летнее время"
 
-#: dlls/tzres/tzres.rc:215
+#: dlls/tzres/tzres.rc:224
 msgid "(UTC-03:00) Montevideo"
 msgstr "(UTC-03:00) Монтевидео"
 
-#: dlls/tzres/tzres.rc:267
+#: dlls/tzres/tzres.rc:276
 msgctxt "maximum 31 characters"
 msgid "Pakistan Standard Time"
 msgstr "Пакистанское стандартное время"
 
-#: dlls/tzres/tzres.rc:268
+#: dlls/tzres/tzres.rc:277
 msgctxt "maximum 31 characters"
 msgid "Pakistan Daylight Time"
 msgstr "Пакистанское летнее время"
 
-#: dlls/tzres/tzres.rc:269
+#: dlls/tzres/tzres.rc:278
 msgid "(UTC+05:00) Islamabad, Karachi"
 msgstr "(UTC+05:00) Исламабад, Карачи"
 
-#: dlls/tzres/tzres.rc:348
+#: dlls/tzres/tzres.rc:357
 msgctxt "maximum 31 characters"
 msgid "Tomsk Standard Time"
 msgstr "Томское стандартное время"
 
-#: dlls/tzres/tzres.rc:349
+#: dlls/tzres/tzres.rc:358
 msgctxt "maximum 31 characters"
 msgid "Tomsk Daylight Time"
 msgstr "Томское летнее время"
 
-#: dlls/tzres/tzres.rc:350
+#: dlls/tzres/tzres.rc:359
 msgid "(UTC+07:00) Tomsk"
 msgstr "(UTC+07:00) Томск"
 
-#: dlls/tzres/tzres.rc:75
+#: dlls/tzres/tzres.rc:72
+msgctxt "maximum 31 characters"
+msgid "British Columbia Standard Time"
+msgstr "Стандартное время Британской Колумбии"
+
+#: dlls/tzres/tzres.rc:73
+msgctxt "maximum 31 characters"
+msgid "British Columbia Daylight Time"
+msgstr "Летнее время Британской Колумбии"
+
+#: dlls/tzres/tzres.rc:74
+msgid "(UTC-07:00) British Columbia"
+msgstr "(UTC-07:00) Британская Колумбия"
+
+#: dlls/tzres/tzres.rc:81
 msgctxt "maximum 31 characters"
 msgid "Caucasus Standard Time"
 msgstr "Кавказское стандартное время"
 
-#: dlls/tzres/tzres.rc:76
+#: dlls/tzres/tzres.rc:82
 msgctxt "maximum 31 characters"
 msgid "Caucasus Daylight Time"
 msgstr "Кавказское летнее время"
 
-#: dlls/tzres/tzres.rc:77
+#: dlls/tzres/tzres.rc:83
 msgid "(UTC+04:00) Yerevan"
 msgstr "(UTC+04:00) Ереван"
 
-#: dlls/tzres/tzres.rc:48
+#: dlls/tzres/tzres.rc:51
 msgctxt "maximum 31 characters"
 msgid "AUS Eastern Standard Time"
 msgstr "Восточноавстралийское стандартное время"
 
-#: dlls/tzres/tzres.rc:49
+#: dlls/tzres/tzres.rc:52
 msgctxt "maximum 31 characters"
 msgid "AUS Eastern Daylight Time"
 msgstr "Прилинейное летнее время"
 
-#: dlls/tzres/tzres.rc:50
+#: dlls/tzres/tzres.rc:53
 msgid "(UTC+10:00) Canberra, Melbourne, Sydney"
 msgstr "(UTC+10:00) Канберра, Мельбурн, Сидней"
 
-#: dlls/tzres/tzres.rc:228
-#, fuzzy
-#| msgid "Central Asia Standard Time"
+#: dlls/tzres/tzres.rc:237
 msgctxt "maximum 31 characters"
 msgid "N. Central Asia Standard Time"
-msgstr "Центральноазиатское стандартное время"
+msgstr "Сев.-центральноазиатское стандартное время"
 
-#: dlls/tzres/tzres.rc:229
-#, fuzzy
-#| msgid "Central Asia Daylight Time"
+#: dlls/tzres/tzres.rc:238
 msgctxt "maximum 31 characters"
 msgid "N. Central Asia Daylight Time"
-msgstr "Центральноазиатское летнее время"
+msgstr "Сев.-центральноазиатское летнее время"
 
-#: dlls/tzres/tzres.rc:230
+#: dlls/tzres/tzres.rc:239
 msgid "(UTC+07:00) Novosibirsk"
 msgstr "(UTC+07:00) Новосибирск"
 
-#: dlls/tzres/tzres.rc:132
+#: dlls/tzres/tzres.rc:138
 msgctxt "maximum 31 characters"
 msgid "Eastern Standard Time"
 msgstr "Восточное стандартное время"
 
-#: dlls/tzres/tzres.rc:133
+#: dlls/tzres/tzres.rc:139
 msgctxt "maximum 31 characters"
 msgid "Eastern Daylight Time"
 msgstr "Восточное летнее время"
 
-#: dlls/tzres/tzres.rc:134
+#: dlls/tzres/tzres.rc:140
 msgid "(UTC-05:00) Eastern Time (US & Canada)"
 msgstr "(UTC-05:00) Восточное время (США и Канада)"
 
-#: dlls/tzres/tzres.rc:354
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Tasmania Standard Time"
+#: dlls/tzres/tzres.rc:363
 msgctxt "maximum 31 characters"
 msgid "Transbaikal Standard Time"
-msgstr "Тасманийское стандартное время"
+msgstr "Забайкальское стандартное время"
 
-#: dlls/tzres/tzres.rc:355
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Tasmania Daylight Time"
+#: dlls/tzres/tzres.rc:364
 msgctxt "maximum 31 characters"
 msgid "Transbaikal Daylight Time"
-msgstr "Тасманийское летнее время"
+msgstr "Забайкальское летнее время"
 
-#: dlls/tzres/tzres.rc:356
+#: dlls/tzres/tzres.rc:365
 msgid "(UTC+09:00) Chita"
 msgstr "(UTC+09:00) Чита"
 
-#: dlls/tzres/tzres.rc:123
+#: dlls/tzres/tzres.rc:129
 msgctxt "maximum 31 characters"
 msgid "E. Europe Standard Time"
 msgstr "Восточноевропейское стандартное время"
 
-#: dlls/tzres/tzres.rc:124
+#: dlls/tzres/tzres.rc:130
 msgctxt "maximum 31 characters"
 msgid "E. Europe Daylight Time"
 msgstr "Восточноевропейское летнее время"
 
-#: dlls/tzres/tzres.rc:125
+#: dlls/tzres/tzres.rc:131
 msgid "(UTC+02:00) Chisinau"
 msgstr "(UTC+02:00) Кишинёв"
 
-#: dlls/tzres/tzres.rc:102
+#: dlls/tzres/tzres.rc:108
 msgctxt "maximum 31 characters"
 msgid "Central Standard Time (Mexico)"
 msgstr "Центральное время (Мексика)"
 
-#: dlls/tzres/tzres.rc:103
+#: dlls/tzres/tzres.rc:109
 msgctxt "maximum 31 characters"
 msgid "Central Daylight Time (Mexico)"
 msgstr "Центральное летнее время (Мексика)"
 
-#: dlls/tzres/tzres.rc:104
+#: dlls/tzres/tzres.rc:110
 msgid "(UTC-06:00) Guadalajara, Mexico City, Monterrey"
 msgstr "(UTC-06:00) Гвадалахара, Мехико, Монтеррей"
 
-#: dlls/tzres/tzres.rc:312
+#: dlls/tzres/tzres.rc:210
+msgctxt "maximum 31 characters"
+msgid "Manitoba Standard Time"
+msgstr "Стандартное время Манитобы"
+
+#: dlls/tzres/tzres.rc:211
+msgctxt "maximum 31 characters"
+msgid "Manitoba Daylight Time"
+msgstr "Летнее время Манитобы"
+
+#: dlls/tzres/tzres.rc:212
+msgid "(UTC-05:00) Manitoba"
+msgstr "(UTC-05:00) Манитоба"
+
+#: dlls/tzres/tzres.rc:321
 msgctxt "maximum 31 characters"
 msgid "Saratov Standard Time"
 msgstr "Саратовское стандартное время"
 
-#: dlls/tzres/tzres.rc:313
+#: dlls/tzres/tzres.rc:322
 msgctxt "maximum 31 characters"
 msgid "Saratov Daylight Time"
 msgstr "Саратовское летнее время"
 
-#: dlls/tzres/tzres.rc:314
+#: dlls/tzres/tzres.rc:323
 msgid "(UTC+04:00) Saratov"
 msgstr "(UTC+04:00) Саратов"
 
-#: dlls/tzres/tzres.rc:39
+#: dlls/tzres/tzres.rc:42
 msgctxt "maximum 31 characters"
 msgid "Atlantic Standard Time"
 msgstr "Атлантическое стандартное время"
 
-#: dlls/tzres/tzres.rc:40
+#: dlls/tzres/tzres.rc:43
 msgctxt "maximum 31 characters"
 msgid "Atlantic Daylight Time"
 msgstr "Атлантическое летнее время"
 
-#: dlls/tzres/tzres.rc:41
+#: dlls/tzres/tzres.rc:44
 msgid "(UTC-04:00) Atlantic Time (Canada)"
 msgstr "(UTC-04:00) Атлантическое время (Канада)"
 
-#: dlls/tzres/tzres.rc:219
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Sudan Standard Time"
+#: dlls/tzres/tzres.rc:228
 msgctxt "maximum 31 characters"
 msgid "Mountain Standard Time"
-msgstr "Суданское стандартное время"
+msgstr "Горное стандартное время"
 
-#: dlls/tzres/tzres.rc:220
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Sudan Daylight Time"
+#: dlls/tzres/tzres.rc:229
 msgctxt "maximum 31 characters"
 msgid "Mountain Daylight Time"
-msgstr "Суданское летнее время"
+msgstr "Горное летнее время"
 
-#: dlls/tzres/tzres.rc:221
+#: dlls/tzres/tzres.rc:230
 msgid "(UTC-07:00) Mountain Time (US & Canada)"
 msgstr "(UTC-07:00) Горное время (США и Канада)"
 
-#: dlls/tzres/tzres.rc:366
+#: dlls/tzres/tzres.rc:375
 msgctxt "maximum 31 characters"
 msgid "US Eastern Standard Time"
 msgstr "США восточное время"
 
-#: dlls/tzres/tzres.rc:367
+#: dlls/tzres/tzres.rc:376
 msgctxt "maximum 31 characters"
 msgid "US Eastern Daylight Time"
 msgstr "США восточное летнее время"
 
-#: dlls/tzres/tzres.rc:368
+#: dlls/tzres/tzres.rc:377
 msgid "(UTC-05:00) Indiana (East)"
 msgstr "(UTC-05:00) Индиана (запад)"
 
-#: dlls/tzres/tzres.rc:303
+#: dlls/tzres/tzres.rc:312
 msgctxt "maximum 31 characters"
 msgid "Sakhalin Standard Time"
 msgstr "Сахалинское стандартное время"
 
-#: dlls/tzres/tzres.rc:304
+#: dlls/tzres/tzres.rc:313
 msgctxt "maximum 31 characters"
 msgid "Sakhalin Daylight Time"
 msgstr "Сахалинское летнее время"
 
-#: dlls/tzres/tzres.rc:305
+#: dlls/tzres/tzres.rc:314
 msgid "(UTC+11:00) Sakhalin"
 msgstr "(UTC+11:00) Сахалин"
 
-#: dlls/tzres/tzres.rc:252
+#: dlls/tzres/tzres.rc:261
 msgctxt "maximum 31 characters"
 msgid "North Korea Standard Time"
 msgstr "Северокорейское стандартное время"
 
-#: dlls/tzres/tzres.rc:253
+#: dlls/tzres/tzres.rc:262
 msgctxt "maximum 31 characters"
 msgid "North Korea Daylight Time"
 msgstr "Северокорейское летнее время"
 
-#: dlls/tzres/tzres.rc:254
+#: dlls/tzres/tzres.rc:263
 msgid "(UTC+09:00) Pyongyang"
 msgstr "(UTC+09:00) Пхеньян"
 
-#: dlls/tzres/tzres.rc:339
+#: dlls/tzres/tzres.rc:348
 msgctxt "maximum 31 characters"
 msgid "Tasmania Standard Time"
 msgstr "Тасманийское стандартное время"
 
-#: dlls/tzres/tzres.rc:340
+#: dlls/tzres/tzres.rc:349
 msgctxt "maximum 31 characters"
 msgid "Tasmania Daylight Time"
 msgstr "Тасманийское летнее время"
 
-#: dlls/tzres/tzres.rc:341
+#: dlls/tzres/tzres.rc:350
 msgid "(UTC+10:00) Hobart"
 msgstr "(UTC+10:00) Хобарт"
 
-#: dlls/tzres/tzres.rc:81
+#: dlls/tzres/tzres.rc:87
 msgctxt "maximum 31 characters"
 msgid "Central America Standard Time"
 msgstr "Центральноамериканское стандартное время"
 
-#: dlls/tzres/tzres.rc:82
+#: dlls/tzres/tzres.rc:88
 msgctxt "maximum 31 characters"
 msgid "Central America Daylight Time"
 msgstr "Центральноамериканское летнее время"
 
-#: dlls/tzres/tzres.rc:83
+#: dlls/tzres/tzres.rc:89
 msgid "(UTC-06:00) Central America"
 msgstr "(UTC-06:00) Центральная Америка"
 
-#: dlls/tzres/tzres.rc:381 dlls/tzres/tzres.rc:382
+#: dlls/tzres/tzres.rc:390 dlls/tzres/tzres.rc:391
 msgctxt "maximum 31 characters"
 msgid "UTC-02"
 msgstr "UTC-02"
 
-#: dlls/tzres/tzres.rc:383
+#: dlls/tzres/tzres.rc:392
 msgid "(UTC-02:00) Coordinated Universal Time-02"
 msgstr "(UTC-02:00) Всемирное координированное время-02"
 
-#: dlls/tzres/tzres.rc:369
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Sudan Standard Time"
+#: dlls/tzres/tzres.rc:378
 msgctxt "maximum 31 characters"
 msgid "US Mountain Standard Time"
-msgstr "Суданское стандартное время"
+msgstr "Горное стандартное время (США)"
 
-#: dlls/tzres/tzres.rc:370
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Sudan Daylight Time"
+#: dlls/tzres/tzres.rc:379
 msgctxt "maximum 31 characters"
 msgid "US Mountain Daylight Time"
-msgstr "Суданское летнее время"
+msgstr "Горное летнее время (США)"
 
-#: dlls/tzres/tzres.rc:371
+#: dlls/tzres/tzres.rc:380
 msgid "(UTC-07:00) Arizona"
 msgstr "(UTC-07:00) Аризона"
 
-#: dlls/tzres/tzres.rc:321
+#: dlls/tzres/tzres.rc:330
 msgctxt "maximum 31 characters"
 msgid "South Africa Standard Time"
 msgstr "Южноафриканское стандартное время"
 
-#: dlls/tzres/tzres.rc:322
+#: dlls/tzres/tzres.rc:331
 msgctxt "maximum 31 characters"
 msgid "South Africa Daylight Time"
 msgstr "Южноафриканское летнее время"
 
-#: dlls/tzres/tzres.rc:323
+#: dlls/tzres/tzres.rc:332
 msgid "(UTC+02:00) Harare, Pretoria"
 msgstr "(UTC+02:00) Хараре, Претория"
 
-#: dlls/tzres/tzres.rc:78
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Central Standard Time"
+#: dlls/tzres/tzres.rc:84
 msgctxt "maximum 31 characters"
 msgid "Cen. Australia Standard Time"
-msgstr "Центральное время"
+msgstr "Центральноавстралийское стандартное время"
 
-#: dlls/tzres/tzres.rc:79
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Central Daylight Time"
+#: dlls/tzres/tzres.rc:85
 msgctxt "maximum 31 characters"
 msgid "Cen. Australia Daylight Time"
-msgstr "Центральное летнее время"
+msgstr "Центральноавстралийское летнее время"
 
-#: dlls/tzres/tzres.rc:80
+#: dlls/tzres/tzres.rc:86
 msgid "(UTC+09:30) Adelaide"
 msgstr "(UTC+09:30) Аделаида"
 
-#: dlls/tzres/tzres.rc:387 dlls/tzres/tzres.rc:388
+#: dlls/tzres/tzres.rc:396 dlls/tzres/tzres.rc:397
 msgctxt "maximum 31 characters"
 msgid "UTC-09"
 msgstr "UTC-09"
 
-#: dlls/tzres/tzres.rc:389
+#: dlls/tzres/tzres.rc:398
 msgid "(UTC-09:00) Coordinated Universal Time-09"
 msgstr "(UTC-09:00) Всемирное координированное время-09"
 
-#: dlls/tzres/tzres.rc:327
+#: dlls/tzres/tzres.rc:336
 msgctxt "maximum 31 characters"
 msgid "Sri Lanka Standard Time"
 msgstr "Шри-Ланка стандартное время"
 
-#: dlls/tzres/tzres.rc:328
+#: dlls/tzres/tzres.rc:337
 msgctxt "maximum 31 characters"
 msgid "Sri Lanka Daylight Time"
 msgstr "Шри-Ланка летнее время"
 
-#: dlls/tzres/tzres.rc:329
+#: dlls/tzres/tzres.rc:338
 msgid "(UTC+05:30) Sri Jayawardenepura"
 msgstr "(UTC+05:30) Шри-Джаяварденепура"
 
@@ -12278,310 +12094,294 @@ msgstr "Афганское летнее время"
 msgid "(UTC+04:30) Kabul"
 msgstr "(UTC+04:30) Кабул"
 
-#: dlls/tzres/tzres.rc:423
+#: dlls/tzres/tzres.rc:432
 msgctxt "maximum 31 characters"
 msgid "Yakutsk Standard Time"
 msgstr "Якутское стандартное время"
 
-#: dlls/tzres/tzres.rc:424
+#: dlls/tzres/tzres.rc:433
 msgctxt "maximum 31 characters"
 msgid "Yakutsk Daylight Time"
 msgstr "Якутское летнее время"
 
-#: dlls/tzres/tzres.rc:425
+#: dlls/tzres/tzres.rc:434
 msgid "(UTC+09:00) Yakutsk"
 msgstr "(UTC+09:00) Якутск"
 
-#: dlls/tzres/tzres.rc:291
+#: dlls/tzres/tzres.rc:300
 msgctxt "maximum 31 characters"
 msgid "SA Eastern Standard Time"
 msgstr "Восточноюжноамериканское стандартное время"
 
-#: dlls/tzres/tzres.rc:292
+#: dlls/tzres/tzres.rc:301
 msgctxt "maximum 31 characters"
 msgid "SA Eastern Daylight Time"
 msgstr "Восточноавстралийское летнее время"
 
-#: dlls/tzres/tzres.rc:293
+#: dlls/tzres/tzres.rc:302
 msgid "(UTC-03:00) Cayenne, Fortaleza"
 msgstr "(UTC-03:00) Кайенна, Форталеза"
 
-#: dlls/tzres/tzres.rc:24
+#: dlls/tzres/tzres.rc:27
 msgctxt "maximum 31 characters"
 msgid "Arab Standard Time"
 msgstr "Арабское стандартное время"
 
-#: dlls/tzres/tzres.rc:25
+#: dlls/tzres/tzres.rc:28
 msgctxt "maximum 31 characters"
 msgid "Arab Daylight Time"
 msgstr "Арабское летнее время"
 
-#: dlls/tzres/tzres.rc:26
+#: dlls/tzres/tzres.rc:29
 msgid "(UTC+03:00) Kuwait, Riyadh"
 msgstr "(UTC+03:00) Кувейт, Риад"
 
-#: dlls/tzres/tzres.rc:27
+#: dlls/tzres/tzres.rc:30
 msgctxt "maximum 31 characters"
 msgid "Arabian Standard Time"
 msgstr "Аравийское стандартное время"
 
-#: dlls/tzres/tzres.rc:28
+#: dlls/tzres/tzres.rc:31
 msgctxt "maximum 31 characters"
 msgid "Arabian Daylight Time"
 msgstr "Аравийское летнее время"
 
-#: dlls/tzres/tzres.rc:29
+#: dlls/tzres/tzres.rc:32
 msgid "(UTC+04:00) Abu Dhabi, Muscat"
 msgstr "(UTC+04:00) Абу-Даби, Мускат"
 
-#: dlls/tzres/tzres.rc:342
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Standard Time"
+#: dlls/tzres/tzres.rc:351
 msgctxt "maximum 31 characters"
 msgid "Tocantins Standard Time"
-msgstr "Гаитянское стандартное время"
+msgstr "Стандартное время Токантинса"
 
-#: dlls/tzres/tzres.rc:343
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Daylight Time"
+#: dlls/tzres/tzres.rc:352
 msgctxt "maximum 31 characters"
 msgid "Tocantins Daylight Time"
-msgstr "Гаитянское летнее время"
+msgstr "Летнее время Токантинса"
 
-#: dlls/tzres/tzres.rc:344
+#: dlls/tzres/tzres.rc:353
 msgid "(UTC-03:00) Araguaina"
 msgstr "(UTC-03:00) Арагуаина"
 
-#: dlls/tzres/tzres.rc:288
+#: dlls/tzres/tzres.rc:297
 msgctxt "maximum 31 characters"
 msgid "Russian Standard Time"
 msgstr "Российское стандартное время"
 
-#: dlls/tzres/tzres.rc:289
+#: dlls/tzres/tzres.rc:298
 msgctxt "maximum 31 characters"
 msgid "Russian Daylight Time"
 msgstr "Российское летнее время"
 
-#: dlls/tzres/tzres.rc:290
+#: dlls/tzres/tzres.rc:299
 msgid "(UTC+03:00) Moscow, St. Petersburg"
 msgstr "(UTC+03:00) Москва, Санкт-Петербург"
 
-#: dlls/tzres/tzres.rc:45
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Central Standard Time"
+#: dlls/tzres/tzres.rc:48
 msgctxt "maximum 31 characters"
 msgid "Aus Central W. Standard Time"
-msgstr "Центральное время"
+msgstr "Зап.-центральноавстр. стандартное время"
 
-#: dlls/tzres/tzres.rc:46
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Central Daylight Time"
+#: dlls/tzres/tzres.rc:49
 msgctxt "maximum 31 characters"
 msgid "Aus Central W. Daylight Time"
-msgstr "Центральное летнее время"
+msgstr "Зап.-центральноавстр. летнее время"
 
-#: dlls/tzres/tzres.rc:47
+#: dlls/tzres/tzres.rc:50
 msgid "(UTC+08:45) Eucla"
 msgstr "(UTC+08:45) Юкла"
 
-#: dlls/tzres/tzres.rc:276
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Jordan Standard Time"
+#: dlls/tzres/tzres.rc:285
 msgctxt "maximum 31 characters"
 msgid "Romance Standard Time"
-msgstr "Иорданское стандартное время"
+msgstr "Романское стандартное время"
 
-#: dlls/tzres/tzres.rc:277
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Jordan Daylight Time"
+#: dlls/tzres/tzres.rc:286
 msgctxt "maximum 31 characters"
 msgid "Romance Daylight Time"
-msgstr "Иорданское летнее время"
+msgstr "Романское летнее время"
 
-#: dlls/tzres/tzres.rc:278
+#: dlls/tzres/tzres.rc:287
 msgid "(UTC+01:00) Brussels, Copenhagen, Madrid, Paris"
 msgstr "(UTC+01:00) Брюссель, Копенгаген, Мадрид, Париж"
 
-#: dlls/tzres/tzres.rc:141
+#: dlls/tzres/tzres.rc:147
 msgctxt "maximum 31 characters"
 msgid "Ekaterinburg Standard Time"
 msgstr "Екатеринбургское стандартное время"
 
-#: dlls/tzres/tzres.rc:142
+#: dlls/tzres/tzres.rc:148
 msgctxt "maximum 31 characters"
 msgid "Ekaterinburg Daylight Time"
 msgstr "Екатеринбургское летнее время"
 
-#: dlls/tzres/tzres.rc:143
+#: dlls/tzres/tzres.rc:149
 msgid "(UTC+05:00) Ekaterinburg"
 msgstr "(UTC+05:00) Екатеринбург"
 
-#: dlls/tzres/tzres.rc:282 dlls/tzres/tzres.rc:283
+#: dlls/tzres/tzres.rc:291 dlls/tzres/tzres.rc:292
 msgctxt "maximum 31 characters"
 msgid "Russia Time Zone 11"
 msgstr "Россия часовой пояс 11"
 
-#: dlls/tzres/tzres.rc:284
+#: dlls/tzres/tzres.rc:293
 msgid "(UTC+12:00) Anadyr, Petropavlovsk-Kamchatsky"
 msgstr "(UTC+12:00) Анадырь, Петропавловск-Камчатский"
 
-#: dlls/tzres/tzres.rc:417
+#: dlls/tzres/tzres.rc:426
 msgctxt "maximum 31 characters"
 msgid "West Bank Standard Time"
 msgstr "Западный берег стандартное время"
 
-#: dlls/tzres/tzres.rc:418
+#: dlls/tzres/tzres.rc:427
 msgctxt "maximum 31 characters"
 msgid "West Bank Daylight Time"
 msgstr "Западный берег летнее время"
 
-#: dlls/tzres/tzres.rc:419
+#: dlls/tzres/tzres.rc:428
 msgid "(UTC+02:00) Gaza, Hebron"
 msgstr "(UTC+02:00) Газа, Хеврон"
 
-#: dlls/tzres/tzres.rc:333
+#: dlls/tzres/tzres.rc:342
 msgctxt "maximum 31 characters"
 msgid "Syria Standard Time"
 msgstr "Сирийское стандартное время"
 
-#: dlls/tzres/tzres.rc:334
+#: dlls/tzres/tzres.rc:343
 msgctxt "maximum 31 characters"
 msgid "Syria Daylight Time"
 msgstr "Сирийское летнее время"
 
-#: dlls/tzres/tzres.rc:335
+#: dlls/tzres/tzres.rc:344
 msgid "(UTC+02:00) Damascus"
 msgstr "(UTC+02:00) Дамаск"
 
-#: dlls/tzres/tzres.rc:42
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Central Standard Time"
+#: dlls/tzres/tzres.rc:45
 msgctxt "maximum 31 characters"
 msgid "AUS Central Standard Time"
-msgstr "Центральное время"
+msgstr "Центральноавстралийское стандартное время"
 
-#: dlls/tzres/tzres.rc:43
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Central Daylight Time"
+#: dlls/tzres/tzres.rc:46
 msgctxt "maximum 31 characters"
 msgid "AUS Central Daylight Time"
-msgstr "Центральное летнее время"
+msgstr "Центральноавстралийское летнее время"
 
-#: dlls/tzres/tzres.rc:44
+#: dlls/tzres/tzres.rc:47
 msgid "(UTC+09:30) Darwin"
 msgstr "(UTC+09:30) Дарвин"
 
-#: dlls/tzres/tzres.rc:159
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Greenland Standard Time"
+#: dlls/tzres/tzres.rc:165
 msgctxt "maximum 31 characters"
 msgid "Greenwich Standard Time"
-msgstr "Гренландское стандартное время"
+msgstr "Стандартное время по Гринвичу"
 
-#: dlls/tzres/tzres.rc:160
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Greenland Daylight Time"
+#: dlls/tzres/tzres.rc:166
 msgctxt "maximum 31 characters"
 msgid "Greenwich Daylight Time"
-msgstr "Гренландское летнее время"
+msgstr "Летнее время по Гринвичу"
 
-#: dlls/tzres/tzres.rc:161
+#: dlls/tzres/tzres.rc:167
 msgid "(UTC+00:00) Monrovia, Reykjavik"
 msgstr "(UTC+00:00) Монровия, Рейкьявик"
 
-#: dlls/tzres/tzres.rc:363
+#: dlls/tzres/tzres.rc:372
 msgctxt "maximum 31 characters"
 msgid "Ulaanbaatar Standard Time"
 msgstr "Улан-Баторское стандартное время"
 
-#: dlls/tzres/tzres.rc:364
+#: dlls/tzres/tzres.rc:373
 msgctxt "maximum 31 characters"
 msgid "Ulaanbaatar Daylight Time"
 msgstr "Улан-Баторское летнее время"
 
-#: dlls/tzres/tzres.rc:365
+#: dlls/tzres/tzres.rc:374
 msgid "(UTC+08:00) Ulaanbaatar"
 msgstr "(UTC+08:00) Улан-Батор"
 
-#: dlls/tzres/tzres.rc:243
+#: dlls/tzres/tzres.rc:252
 msgctxt "maximum 31 characters"
 msgid "Norfolk Standard Time"
 msgstr "Норфолк стандартное время"
 
-#: dlls/tzres/tzres.rc:244
+#: dlls/tzres/tzres.rc:253
 msgctxt "maximum 31 characters"
 msgid "Norfolk Daylight Time"
 msgstr "Норфолк летнее время"
 
-#: dlls/tzres/tzres.rc:245
+#: dlls/tzres/tzres.rc:254
 msgid "(UTC+11:00) Norfolk Island"
 msgstr "(UTC+11:00) Остров Норфолк"
 
-#: dlls/tzres/tzres.rc:177
+#: dlls/tzres/tzres.rc:183
 msgctxt "maximum 31 characters"
 msgid "Israel Standard Time"
 msgstr "Израильское стандартное время"
 
-#: dlls/tzres/tzres.rc:178
+#: dlls/tzres/tzres.rc:184
 msgctxt "maximum 31 characters"
 msgid "Israel Daylight Time"
 msgstr "Израильское летнее время"
 
-#: dlls/tzres/tzres.rc:179
+#: dlls/tzres/tzres.rc:185
 msgid "(UTC+02:00) Jerusalem"
 msgstr "(UTC+02:00) Иерусалим"
 
-#: dlls/tzres/tzres.rc:60
+#: dlls/tzres/tzres.rc:63
 msgctxt "maximum 31 characters"
 msgid "Bangladesh Standard Time"
 msgstr "Бангладеш стандартное время"
 
-#: dlls/tzres/tzres.rc:61
+#: dlls/tzres/tzres.rc:64
 msgctxt "maximum 31 characters"
 msgid "Bangladesh Daylight Time"
 msgstr "Бангладеш летнее время"
 
-#: dlls/tzres/tzres.rc:62
+#: dlls/tzres/tzres.rc:65
 msgid "(UTC+06:00) Dhaka"
 msgstr "(UTC+06:00) Дакка"
 
-#: dlls/tzres/tzres.rc:294
+#: dlls/tzres/tzres.rc:303
 msgctxt "maximum 31 characters"
 msgid "SA Pacific Standard Time"
 msgstr "Тихоокеанское стандартное время"
 
-#: dlls/tzres/tzres.rc:295
+#: dlls/tzres/tzres.rc:304
 msgctxt "maximum 31 characters"
 msgid "SA Pacific Daylight Time"
 msgstr "Тихоокеанское летнее время"
 
-#: dlls/tzres/tzres.rc:296
+#: dlls/tzres/tzres.rc:305
 msgid "(UTC-05:00) Bogota, Lima, Quito, Rio Branco"
 msgstr "(UTC-05:00) Богота, Лима, Кито, Риу-Бранку"
 
-#: dlls/tzres/tzres.rc:414
+#: dlls/tzres/tzres.rc:423
 msgctxt "maximum 31 characters"
 msgid "West Asia Standard Time"
 msgstr "Западноазиатское стандартное время"
 
-#: dlls/tzres/tzres.rc:415
+#: dlls/tzres/tzres.rc:424
 msgctxt "maximum 31 characters"
 msgid "West Asia Daylight Time"
 msgstr "Западноазиатское летнее время"
 
-#: dlls/tzres/tzres.rc:416
+#: dlls/tzres/tzres.rc:425
 msgid "(UTC+05:00) Ashgabat, Tashkent"
 msgstr "(UTC+05:00) Ашхабад, Ташкент"
+
+#: dlls/tzres/tzres.rc:18
+msgctxt "maximum 31 characters"
+msgid "Alberta Standard Time"
+msgstr "Стандартное время Альберты"
+
+#: dlls/tzres/tzres.rc:19
+msgctxt "maximum 31 characters"
+msgid "Alberta Daylight Time"
+msgstr "Летнее время Альберты"
+
+#: dlls/tzres/tzres.rc:20
+msgid "(UTC-07:00) Alberta"
+msgstr "(UTC-07:00) Альберта"
 
 #: dlls/tzres/tzres.rc:15
 msgctxt "maximum 31 characters"
@@ -12597,540 +12397,474 @@ msgstr "Аляска летнее время"
 msgid "(UTC-09:00) Alaska"
 msgstr "(UTC-09:00) Аляска"
 
-#: dlls/tzres/tzres.rc:270
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Iran Standard Time"
+#: dlls/tzres/tzres.rc:279
 msgctxt "maximum 31 characters"
 msgid "Paraguay Standard Time"
-msgstr "Иранское стандартное время"
+msgstr "Парагвайское стандартное время"
 
-#: dlls/tzres/tzres.rc:271
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Iran Daylight Time"
+#: dlls/tzres/tzres.rc:280
 msgctxt "maximum 31 characters"
 msgid "Paraguay Daylight Time"
-msgstr "Иранское летнее время"
+msgstr "Парагвайское летнее время"
 
-#: dlls/tzres/tzres.rc:272
+#: dlls/tzres/tzres.rc:281
 msgid "(UTC-04:00) Asuncion"
 msgstr "(UTC-04:00) Асунсьон"
 
-#: dlls/tzres/tzres.rc:114
+#: dlls/tzres/tzres.rc:120
 msgctxt "maximum 31 characters"
 msgid "Dateline Standard Time"
 msgstr "Прилинейное стандартное время"
 
-#: dlls/tzres/tzres.rc:115
+#: dlls/tzres/tzres.rc:121
 msgctxt "maximum 31 characters"
 msgid "Dateline Daylight Time"
 msgstr "Прилинейное летнее время"
 
-#: dlls/tzres/tzres.rc:116
+#: dlls/tzres/tzres.rc:122
 msgid "(UTC-12:00) International Date Line West"
 msgstr ""
 
-#: dlls/tzres/tzres.rc:189
+#: dlls/tzres/tzres.rc:195
 msgctxt "maximum 31 characters"
 msgid "Libya Standard Time"
 msgstr "Ливийское стандартное время"
 
-#: dlls/tzres/tzres.rc:190
+#: dlls/tzres/tzres.rc:196
 msgctxt "maximum 31 characters"
 msgid "Libya Daylight Time"
 msgstr "Ливийское летнее время"
 
-#: dlls/tzres/tzres.rc:191
+#: dlls/tzres/tzres.rc:197
 msgid "(UTC+02:00) Tripoli"
 msgstr "(UTC+02:00) Триполи"
 
-#: dlls/tzres/tzres.rc:57
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "China Standard Time"
+#: dlls/tzres/tzres.rc:60
 msgctxt "maximum 31 characters"
 msgid "Bahia Standard Time"
-msgstr "Китайское стандартное время"
+msgstr "Стандартное время Баии"
 
-#: dlls/tzres/tzres.rc:58
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "China Daylight Time"
+#: dlls/tzres/tzres.rc:61
 msgctxt "maximum 31 characters"
 msgid "Bahia Daylight Time"
-msgstr "Китайское летнее время"
+msgstr "Летнее время Баии"
 
-#: dlls/tzres/tzres.rc:59
+#: dlls/tzres/tzres.rc:62
 msgid "(UTC-03:00) Salvador"
 msgstr "(UTC-03:00) Сальвадор"
 
-#: dlls/tzres/tzres.rc:393
+#: dlls/tzres/tzres.rc:402
 msgctxt "maximum 31 characters"
 msgid "Venezuela Standard Time"
 msgstr "Венесуэльское стандартное время"
 
-#: dlls/tzres/tzres.rc:394
+#: dlls/tzres/tzres.rc:403
 msgctxt "maximum 31 characters"
 msgid "Venezuela Daylight Time"
 msgstr "Венесуэльское летнее время"
 
-#: dlls/tzres/tzres.rc:395
+#: dlls/tzres/tzres.rc:404
 msgid "(UTC-04:00) Caracas"
 msgstr "(UTC-04:00) Каракас"
 
-#: dlls/tzres/tzres.rc:66
+#: dlls/tzres/tzres.rc:69
 msgctxt "maximum 31 characters"
 msgid "Bougainville Standard Time"
 msgstr "Бугенвиль стандартное время"
 
-#: dlls/tzres/tzres.rc:67
+#: dlls/tzres/tzres.rc:70
 msgctxt "maximum 31 characters"
 msgid "Bougainville Daylight Time"
 msgstr "Бугенвиль летнее время"
 
-#: dlls/tzres/tzres.rc:68
+#: dlls/tzres/tzres.rc:71
 msgid "(UTC+11:00) Bougainville Island"
 msgstr "(UTC+11:00) Остров Бугенвиль"
 
-#: dlls/tzres/tzres.rc:168
+#: dlls/tzres/tzres.rc:174
 msgctxt "maximum 31 characters"
 msgid "Hawaiian Standard Time"
 msgstr "Гавайское стандартное время"
 
-#: dlls/tzres/tzres.rc:169
+#: dlls/tzres/tzres.rc:175
 msgctxt "maximum 31 characters"
 msgid "Hawaiian Daylight Time"
 msgstr "Гавайское летнее время"
 
-#: dlls/tzres/tzres.rc:170
+#: dlls/tzres/tzres.rc:176
 msgid "(UTC-10:00) Hawaii"
 msgstr "(UTC-10:00) Гавайи"
 
-#: dlls/tzres/tzres.rc:315
+#: dlls/tzres/tzres.rc:324
 msgctxt "maximum 31 characters"
 msgid "SE Asia Standard Time"
-msgstr "Юговосточная Азия стандартное время"
+msgstr "Юго-восточноазиатское стандартное время"
 
-#: dlls/tzres/tzres.rc:316
+#: dlls/tzres/tzres.rc:325
 msgctxt "maximum 31 characters"
 msgid "SE Asia Daylight Time"
-msgstr "Юговосточная Азия летнее время"
+msgstr "Юго-восточноазиатское летнее время"
 
-#: dlls/tzres/tzres.rc:317
+#: dlls/tzres/tzres.rc:326
 msgid "(UTC+07:00) Bangkok, Hanoi, Jakarta"
 msgstr "(UTC+07:00) Бангкок, Ханой, Джакарта"
 
-#: dlls/tzres/tzres.rc:273
+#: dlls/tzres/tzres.rc:282
 msgctxt "maximum 31 characters"
 msgid "Qyzylorda Standard Time"
 msgstr "Кызылорда стандартное время"
 
-#: dlls/tzres/tzres.rc:274
+#: dlls/tzres/tzres.rc:283
 msgctxt "maximum 31 characters"
 msgid "Qyzylorda Daylight Time"
 msgstr "Кызылорда летнее время"
 
-#: dlls/tzres/tzres.rc:275
+#: dlls/tzres/tzres.rc:284
 msgid "(UTC+05:00) Qyzylorda"
 msgstr "(UTC+05:00) Кызылорда"
 
-#: dlls/tzres/tzres.rc:411
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Tonga Standard Time"
+#: dlls/tzres/tzres.rc:420
 msgctxt "maximum 31 characters"
 msgid "W. Mongolia Standard Time"
-msgstr "Тонга стандартное время"
+msgstr "Западномонгольское стандартное время"
 
-#: dlls/tzres/tzres.rc:412
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Tonga Daylight Time"
+#: dlls/tzres/tzres.rc:421
 msgctxt "maximum 31 characters"
 msgid "W. Mongolia Daylight Time"
-msgstr "Тонга летнее время"
+msgstr "Западномонгольское летнее время"
 
-#: dlls/tzres/tzres.rc:413
+#: dlls/tzres/tzres.rc:422
 msgid "(UTC+07:00) Hovd"
 msgstr "(UTC+07:00) Ховд"
 
-#: dlls/tzres/tzres.rc:237
+#: dlls/tzres/tzres.rc:246
 msgctxt "maximum 31 characters"
 msgid "New Zealand Standard Time"
 msgstr "Новая Зеландия стандартное время"
 
-#: dlls/tzres/tzres.rc:238
+#: dlls/tzres/tzres.rc:247
 msgctxt "maximum 31 characters"
 msgid "New Zealand Daylight Time"
 msgstr "Новая Зеландия летнее время"
 
-#: dlls/tzres/tzres.rc:239
+#: dlls/tzres/tzres.rc:248
 msgid "(UTC+12:00) Auckland, Wellington"
 msgstr "(UTC+12:00) Окленд, Веллингтон"
 
-#: dlls/tzres/tzres.rc:18
+#: dlls/tzres/tzres.rc:21
 msgctxt "maximum 31 characters"
 msgid "Aleutian Standard Time"
 msgstr "Алеутское стандартное время"
 
-#: dlls/tzres/tzres.rc:19
+#: dlls/tzres/tzres.rc:22
 msgctxt "maximum 31 characters"
 msgid "Aleutian Daylight Time"
 msgstr "Алеутское летнее время"
 
-#: dlls/tzres/tzres.rc:20
+#: dlls/tzres/tzres.rc:23
 msgid "(UTC-10:00) Aleutian Islands"
 msgstr "(UTC-10:00) Алеутские острова"
 
-#: dlls/tzres/tzres.rc:255
+#: dlls/tzres/tzres.rc:264
 msgctxt "maximum 31 characters"
 msgid "Omsk Standard Time"
 msgstr "Омское стандартное время"
 
-#: dlls/tzres/tzres.rc:256
+#: dlls/tzres/tzres.rc:265
 msgctxt "maximum 31 characters"
 msgid "Omsk Daylight Time"
 msgstr "Омское летнее время"
 
-#: dlls/tzres/tzres.rc:257
+#: dlls/tzres/tzres.rc:266
 msgid "(UTC+06:00) Omsk"
 msgstr "(UTC+06:00) Омск"
 
-#: dlls/tzres/tzres.rc:87
-#, fuzzy
-#| msgid "Central Asia Standard Time"
+#: dlls/tzres/tzres.rc:93
 msgctxt "maximum 31 characters"
 msgid "Central Brazilian Standard Time"
-msgstr "Центральноазиатское стандартное время"
+msgstr "Центральнобразильское стандартное время"
 
-#: dlls/tzres/tzres.rc:88
-#, fuzzy
-#| msgid "Central Asia Daylight Time"
+#: dlls/tzres/tzres.rc:94
 msgctxt "maximum 31 characters"
 msgid "Central Brazilian Daylight Time"
-msgstr "Центральноазиатское летнее время"
+msgstr "Центральнобразильское летнее время"
 
-#: dlls/tzres/tzres.rc:89
+#: dlls/tzres/tzres.rc:95
 msgid "(UTC-04:00) Cuiaba"
 msgstr "(UTC-04:00) Куяба"
 
-#: dlls/tzres/tzres.rc:63
+#: dlls/tzres/tzres.rc:66
 msgctxt "maximum 31 characters"
 msgid "Belarus Standard Time"
 msgstr "Белорусское стандартное время"
 
-#: dlls/tzres/tzres.rc:64
+#: dlls/tzres/tzres.rc:67
 msgctxt "maximum 31 characters"
 msgid "Belarus Daylight Time"
 msgstr "Белорусское летнее время"
 
-#: dlls/tzres/tzres.rc:65
+#: dlls/tzres/tzres.rc:68
 msgid "(UTC+03:00) Minsk"
 msgstr "(UTC+03:00) Минск"
 
-#: dlls/tzres/tzres.rc:297
+#: dlls/tzres/tzres.rc:306
 msgctxt "maximum 31 characters"
 msgid "SA Western Standard Time"
 msgstr "Западноюжноамериканское стандартное время"
 
-#: dlls/tzres/tzres.rc:298
+#: dlls/tzres/tzres.rc:307
 msgctxt "maximum 31 characters"
 msgid "SA Western Daylight Time"
 msgstr "Западноюжноамериканское летнее время"
 
-#: dlls/tzres/tzres.rc:299
+#: dlls/tzres/tzres.rc:308
 msgid "(UTC-04:00) Georgetown, La Paz, Manaus, San Juan"
 msgstr ""
 
-#: dlls/tzres/tzres.rc:156
+#: dlls/tzres/tzres.rc:162
 msgctxt "maximum 31 characters"
 msgid "Greenland Standard Time"
 msgstr "Гренландское стандартное время"
 
-#: dlls/tzres/tzres.rc:157
+#: dlls/tzres/tzres.rc:163
 msgctxt "maximum 31 characters"
 msgid "Greenland Daylight Time"
 msgstr "Гренландское летнее время"
 
-#: dlls/tzres/tzres.rc:158
+#: dlls/tzres/tzres.rc:164
 msgid "(UTC-03:00) Greenland"
 msgstr "(UTC-03:00) Гренландия"
 
-#: dlls/tzres/tzres.rc:129
+#: dlls/tzres/tzres.rc:135
 msgctxt "maximum 31 characters"
 msgid "Easter Island Standard Time"
 msgstr "Стандартное время острова Пасхи"
 
-#: dlls/tzres/tzres.rc:130
+#: dlls/tzres/tzres.rc:136
 msgctxt "maximum 31 characters"
 msgid "Easter Island Daylight Time"
 msgstr "Летнее время острова Пасхи"
 
-#: dlls/tzres/tzres.rc:131
+#: dlls/tzres/tzres.rc:137
 msgid "(UTC-06:00) Easter Island"
 msgstr "(UTC-06:00) Остров Пасхи"
 
-#: dlls/tzres/tzres.rc:279 dlls/tzres/tzres.rc:280
+#: dlls/tzres/tzres.rc:288 dlls/tzres/tzres.rc:289
 msgctxt "maximum 31 characters"
 msgid "Russia Time Zone 10"
 msgstr "Россия часовой пояс 10"
 
-#: dlls/tzres/tzres.rc:281
+#: dlls/tzres/tzres.rc:290
 msgid "(UTC+11:00) Chokurdakh"
 msgstr "(UTC+11:00) Чокурдах"
 
-#: dlls/tzres/tzres.rc:138
+#: dlls/tzres/tzres.rc:144
 msgctxt "maximum 31 characters"
 msgid "Egypt Standard Time"
 msgstr "Египетское стандартное время"
 
-#: dlls/tzres/tzres.rc:139
+#: dlls/tzres/tzres.rc:145
 msgctxt "maximum 31 characters"
 msgid "Egypt Daylight Time"
 msgstr "Египетское летнее время"
 
-#: dlls/tzres/tzres.rc:140
+#: dlls/tzres/tzres.rc:146
 msgid "(UTC+02:00) Cairo"
 msgstr "(UTC+02:00) Каир"
 
-#: dlls/tzres/tzres.rc:135
+#: dlls/tzres/tzres.rc:141
 msgctxt "maximum 31 characters"
 msgid "Eastern Standard Time (Mexico)"
 msgstr "Восточномексиканское стандартное время"
 
-#: dlls/tzres/tzres.rc:136
+#: dlls/tzres/tzres.rc:142
 msgctxt "maximum 31 characters"
 msgid "Eastern Daylight Time (Mexico)"
 msgstr "Восточномексиканское летнее время"
 
-#: dlls/tzres/tzres.rc:137
+#: dlls/tzres/tzres.rc:143
 msgid "(UTC-05:00) Chetumal"
 msgstr "(UTC-05:00) Четумаль"
 
-#: dlls/tzres/tzres.rc:207
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Standard Time"
+#: dlls/tzres/tzres.rc:216
 msgctxt "maximum 31 characters"
 msgid "Mauritius Standard Time"
-msgstr "Гаитянское стандартное время"
+msgstr "Стандартное время Маврикия"
 
-#: dlls/tzres/tzres.rc:208
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Daylight Time"
+#: dlls/tzres/tzres.rc:217
 msgctxt "maximum 31 characters"
 msgid "Mauritius Daylight Time"
-msgstr "Гаитянское летнее время"
+msgstr "Летнее время Маврикия"
 
-#: dlls/tzres/tzres.rc:209
+#: dlls/tzres/tzres.rc:218
 msgid "(UTC+04:00) Port Louis"
 msgstr "(UTC+04:00) Порт-Луи"
 
-#: dlls/tzres/tzres.rc:396
+#: dlls/tzres/tzres.rc:405
 msgctxt "maximum 31 characters"
 msgid "Vladivostok Standard Time"
 msgstr "Владивостокское стандартное время"
 
-#: dlls/tzres/tzres.rc:397
+#: dlls/tzres/tzres.rc:406
 msgctxt "maximum 31 characters"
 msgid "Vladivostok Daylight Time"
 msgstr "Владивостокское летнее время"
 
-#: dlls/tzres/tzres.rc:398
+#: dlls/tzres/tzres.rc:407
 msgid "(UTC+10:00) Vladivostok"
 msgstr "(UTC+10:00) Владивосток"
 
-#: dlls/tzres/tzres.rc:318
+#: dlls/tzres/tzres.rc:327
 msgctxt "maximum 31 characters"
 msgid "Singapore Standard Time"
 msgstr "Сингапурское стандартное время"
 
-#: dlls/tzres/tzres.rc:319
+#: dlls/tzres/tzres.rc:328
 msgctxt "maximum 31 characters"
 msgid "Singapore Daylight Time"
 msgstr "Сингапурское летнее время"
 
-#: dlls/tzres/tzres.rc:320
+#: dlls/tzres/tzres.rc:329
 msgid "(UTC+08:00) Kuala Lumpur, Singapore"
 msgstr "(UTC+08:00) Куала-Лумпур, Сингапур"
 
-#: dlls/tzres/tzres.rc:186
+#: dlls/tzres/tzres.rc:192
 msgctxt "maximum 31 characters"
 msgid "Korea Standard Time"
 msgstr "Корейское стандартное время"
 
-#: dlls/tzres/tzres.rc:187
+#: dlls/tzres/tzres.rc:193
 msgctxt "maximum 31 characters"
 msgid "Korea Daylight Time"
 msgstr "Корейское летнее время"
 
-#: dlls/tzres/tzres.rc:188
+#: dlls/tzres/tzres.rc:194
 msgid "(UTC+09:00) Seoul"
 msgstr "(UTC+09:00) Сеул"
 
-#: dlls/tzres/tzres.rc:105
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Caucasus Standard Time"
+#: dlls/tzres/tzres.rc:111
 msgctxt "maximum 31 characters"
 msgid "Chatham Islands Standard Time"
-msgstr "Кавказское стандартное время"
+msgstr "Стандартное время островов Чатем"
 
-#: dlls/tzres/tzres.rc:106
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Caucasus Daylight Time"
+#: dlls/tzres/tzres.rc:112
 msgctxt "maximum 31 characters"
 msgid "Chatham Islands Daylight Time"
-msgstr "Кавказское летнее время"
+msgstr "Летнее время островов Чатем"
 
-#: dlls/tzres/tzres.rc:107
+#: dlls/tzres/tzres.rc:113
 msgid "(UTC+12:45) Chatham Islands"
 msgstr "(UTC+12:45) Острова Чатем"
 
-#: dlls/tzres/tzres.rc:117
-#, fuzzy
-#| msgid "South Africa Standard Time"
+#: dlls/tzres/tzres.rc:123
 msgctxt "maximum 31 characters"
 msgid "E. Africa Standard Time"
-msgstr "Южноафриканское стандартное время"
+msgstr "Восточноафриканское стандартное время"
 
-#: dlls/tzres/tzres.rc:118
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "South Africa Daylight Time"
+#: dlls/tzres/tzres.rc:124
 msgctxt "maximum 31 characters"
 msgid "E. Africa Daylight Time"
-msgstr "Южноафриканское летнее время"
+msgstr "Восточноафриканское летнее время"
 
-#: dlls/tzres/tzres.rc:119
+#: dlls/tzres/tzres.rc:125
 msgid "(UTC+03:00) Nairobi"
 msgstr "(UTC+03:00) Найроби"
 
-#: dlls/tzres/tzres.rc:147
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Fiji Standard Time"
+#: dlls/tzres/tzres.rc:153
 msgctxt "maximum 31 characters"
 msgid "FLE Standard Time"
-msgstr "Стандартное время Фиджи"
+msgstr "Стандартное время FLE"
 
-#: dlls/tzres/tzres.rc:148
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Fiji Daylight Time"
+#: dlls/tzres/tzres.rc:154
 msgctxt "maximum 31 characters"
 msgid "FLE Daylight Time"
-msgstr "Летнее время Фиджи"
+msgstr "Летнее время FLE"
 
-#: dlls/tzres/tzres.rc:149
+#: dlls/tzres/tzres.rc:155
 msgid "(UTC+02:00) Helsinki, Kyiv, Riga, Sofia, Tallinn, Vilnius"
 msgstr "(UTC+02:00) Хельсинки, Киев, Рига, София, Таллин, Вильнюс"
 
-#: dlls/tzres/tzres.rc:126
-#, fuzzy
-#| msgid "South Africa Standard Time"
+#: dlls/tzres/tzres.rc:132
 msgctxt "maximum 31 characters"
 msgid "E. South America Standard Time"
-msgstr "Южноафриканское стандартное время"
+msgstr "Восточноюжноамериканское стандартное время"
 
-#: dlls/tzres/tzres.rc:127
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "South Africa Daylight Time"
+#: dlls/tzres/tzres.rc:133
 msgctxt "maximum 31 characters"
 msgid "E. South America Daylight Time"
-msgstr "Южноафриканское летнее время"
+msgstr "Восточноюжноамериканское летнее время"
 
-#: dlls/tzres/tzres.rc:128
+#: dlls/tzres/tzres.rc:134
 msgid "(UTC-03:00) Brasilia"
 msgstr "(UTC-03:00) Бразилиа"
 
-#: dlls/tzres/tzres.rc:96
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Central Standard Time"
+#: dlls/tzres/tzres.rc:102
 msgctxt "maximum 31 characters"
 msgid "Central Pacific Standard Time"
-msgstr "Центральное время"
+msgstr "Центрально-тихоокеанское стандартное время"
 
-#: dlls/tzres/tzres.rc:97
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Central Daylight Time"
+#: dlls/tzres/tzres.rc:103
 msgctxt "maximum 31 characters"
 msgid "Central Pacific Daylight Time"
-msgstr "Центральное летнее время"
+msgstr "Центрально-тихоокеанское летнее время"
 
-#: dlls/tzres/tzres.rc:98
+#: dlls/tzres/tzres.rc:104
 msgid "(UTC+11:00) Solomon Is., New Caledonia"
 msgstr ""
 
-#: dlls/tzres/tzres.rc:405
-#, fuzzy
-#| msgid "Central America Standard Time"
+#: dlls/tzres/tzres.rc:414
 msgctxt "maximum 31 characters"
 msgid "W. Central Africa Standard Time"
-msgstr "Центральноамериканское стандартное время"
+msgstr "Западно-центральноафриканское стандартное время"
 
-#: dlls/tzres/tzres.rc:406
-#, fuzzy
-#| msgid "Central America Daylight Time"
+#: dlls/tzres/tzres.rc:415
 msgctxt "maximum 31 characters"
 msgid "W. Central Africa Daylight Time"
-msgstr "Центральноамериканское летнее время"
+msgstr "Западно-центральноафриканское летнее время"
 
-#: dlls/tzres/tzres.rc:407
+#: dlls/tzres/tzres.rc:416
 msgid "(UTC+01:00) West Central Africa"
 msgstr ""
 
-#: dlls/tzres/tzres.rc:258
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Standard Time"
+#: dlls/tzres/tzres.rc:267
 msgctxt "maximum 31 characters"
 msgid "Pacific SA Standard Time"
-msgstr "Гаитянское стандартное время"
+msgstr "Тихоокеанское стандартное время (Юж. Америка)"
 
-#: dlls/tzres/tzres.rc:259
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Haiti Daylight Time"
+#: dlls/tzres/tzres.rc:268
 msgctxt "maximum 31 characters"
 msgid "Pacific SA Daylight Time"
-msgstr "Гаитянское летнее время"
+msgstr "Тихоокеанское летнее время (Юж. Америка)"
 
-#: dlls/tzres/tzres.rc:260
+#: dlls/tzres/tzres.rc:269
 msgid "(UTC-04:00) Santiago"
 msgstr "(UTC-04:00) Сантьяго"
 
-#: dlls/tzres/tzres.rc:120
+#: dlls/tzres/tzres.rc:126
 msgctxt "maximum 31 characters"
 msgid "E. Australia Standard Time"
 msgstr "Восточно-австралийское стандартное время"
 
-#: dlls/tzres/tzres.rc:121
+#: dlls/tzres/tzres.rc:127
 msgctxt "maximum 31 characters"
 msgid "E. Australia Daylight Time"
 msgstr "Восточно-австралийское летнее время"
 
-#: dlls/tzres/tzres.rc:122
+#: dlls/tzres/tzres.rc:128
 msgid "(UTC+10:00) Brisbane"
 msgstr ""
 
-#: dlls/tzres/tzres.rc:402
+#: dlls/tzres/tzres.rc:411
 msgctxt "maximum 31 characters"
 msgid "W. Australia Standard Time"
 msgstr "Западно-австралийское стандартное время"
 
-#: dlls/tzres/tzres.rc:403
+#: dlls/tzres/tzres.rc:412
 msgctxt "maximum 31 characters"
 msgid "W. Australia Daylight Time"
 msgstr "Западно-австралийское летнее время"
 
-#: dlls/tzres/tzres.rc:404
+#: dlls/tzres/tzres.rc:413
 msgid "(UTC+08:00) Perth"
 msgstr "(UTC+08:00) Перт"
 
@@ -13168,13 +12902,11 @@ msgstr "Установить"
 
 #: dlls/urlmon/urlmon.rc:58
 msgid "Local intranet"
-msgstr "Локальный сеть"
+msgstr "Местная интрасеть"
 
 #: dlls/urlmon/urlmon.rc:60
-#, fuzzy
-#| msgid "Trusted Publishers"
 msgid "Trusted sites"
-msgstr "Доверенные издатели"
+msgstr "Надёжные сайты"
 
 #: dlls/urlmon/urlmon.rc:62
 msgid "Internet"
@@ -13327,10 +13059,8 @@ msgid "Object variable not set"
 msgstr "Значение переменной (значение не задано)"
 
 #: dlls/vbscript/vbscript.rc:46
-#, fuzzy
-#| msgid "Object is not initialized.\n"
 msgid "For loop not initialized"
-msgstr "Объект не инициализирован.\n"
+msgstr "Цикл For не инициализирован"
 
 #: dlls/vbscript/vbscript.rc:47
 msgid "Invalid use of Null"
@@ -13393,148 +13123,104 @@ msgid "Invalid or unqualified reference"
 msgstr "Некорректная или неполная ссылка"
 
 #: dlls/vbscript/vbscript.rc:68
-#, fuzzy
-#| msgid "Class does not exist.\n"
 msgid "Class not defined"
-msgstr "Класс не существует.\n"
+msgstr "Класс не определён"
 
 #: dlls/vbscript/vbscript.rc:71
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected ']'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «]»"
 
 #: dlls/vbscript/vbscript.rc:75
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'If'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «If»"
 
 #: dlls/vbscript/vbscript.rc:76
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'To'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «To»"
 
 #: dlls/vbscript/vbscript.rc:77
-#, fuzzy
-#| msgid "Expected '@end'"
 msgid "Expected 'End'"
-msgstr "Ожидается «@end»"
+msgstr "Ожидается «End»"
 
 #: dlls/vbscript/vbscript.rc:78
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'Function'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «Function»"
 
 #: dlls/vbscript/vbscript.rc:79
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'Sub'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «Sub»"
 
 #: dlls/vbscript/vbscript.rc:80
-#, fuzzy
-#| msgid "Expected '@end'"
 msgid "Expected 'Then'"
-msgstr "Ожидается «@end»"
+msgstr "Ожидается «Then»"
 
 #: dlls/vbscript/vbscript.rc:81
-#, fuzzy
-#| msgid "Expected '@end'"
 msgid "Expected 'Wend'"
-msgstr "Ожидается «@end»"
+msgstr "Ожидается «Wend»"
 
 #: dlls/vbscript/vbscript.rc:82
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'Loop'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «Loop»"
 
 #: dlls/vbscript/vbscript.rc:83
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'Next'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «Next»"
 
 #: dlls/vbscript/vbscript.rc:84
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'Case'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «Case»"
 
 #: dlls/vbscript/vbscript.rc:85
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'Select'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «Select»"
 
 #: dlls/vbscript/vbscript.rc:86
-#, fuzzy
-#| msgid "Expected '@end'"
 msgid "Expected statement"
-msgstr "Ожидается «@end»"
+msgstr "Ожидается инструкция"
 
 #: dlls/vbscript/vbscript.rc:87
-#, fuzzy
-#| msgid "Expected an operand.\n"
 msgid "Expected end of statement"
-msgstr "Ожидается операнд.\n"
+msgstr "Ожидается конец инструкции"
 
 #: dlls/vbscript/vbscript.rc:88
-#, fuzzy
-#| msgid "Unterminated string constant"
 msgid "Expected integer constant"
-msgstr "Незавершённая строковая константа"
+msgstr "Ожидается целочисленная константа"
 
 #: dlls/vbscript/vbscript.rc:89
 msgid "Expected 'While', 'Until' or end of statement"
 msgstr ""
 
 #: dlls/vbscript/vbscript.rc:91
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'With'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «With»"
 
 #: dlls/vbscript/vbscript.rc:90
-#, fuzzy
-#| msgid "Secret too long.\n"
 msgid "Identifier too long"
-msgstr "Слишком длинные секретные данные.\n"
+msgstr "Слишком длинный идентификатор"
 
 #: dlls/vbscript/vbscript.rc:92
-#, fuzzy
-#| msgid "Invalid flag number.\n"
 msgid "Invalid number"
-msgstr "Неверный номер флага.\n"
+msgstr "Неверное число"
 
 #: dlls/vbscript/vbscript.rc:95
-#, fuzzy
-#| msgid "Invalid use of Null"
 msgid "Invalid use of 'Me' keyword"
-msgstr "Некорректное использование Null"
+msgstr "Некорректное использование ключевого слова «Me»"
 
 #: dlls/vbscript/vbscript.rc:96
 msgid "'loop' without 'do'"
 msgstr ""
 
 #: dlls/vbscript/vbscript.rc:97
-#, fuzzy
-#| msgid "Invalid printer state.\n"
 msgid "Invalid 'exit' statement"
-msgstr "Неверное состояние принтера.\n"
+msgstr "Неверная инструкция «Exit»"
 
 #: dlls/vbscript/vbscript.rc:98
 msgid "Invalid 'for' loop control variable"
 msgstr ""
 
 #: dlls/vbscript/vbscript.rc:99
-#, fuzzy
-#| msgid "Label redefined"
 msgid "Name redefined"
-msgstr "Метка переопределена"
+msgstr "Имя переопределено"
 
 #: dlls/vbscript/vbscript.rc:100
 msgid "Must be first statement on the line"
@@ -13545,22 +13231,16 @@ msgid "Cannot use parentheses when calling a Sub"
 msgstr ""
 
 #: dlls/vbscript/vbscript.rc:102
-#, fuzzy
-#| msgid "Expected an operator.\n"
 msgid "Expected literal constant"
-msgstr "Ожидается оператор.\n"
+msgstr "Ожидается литеральная константа"
 
 #: dlls/vbscript/vbscript.rc:103
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'In'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «In»"
 
 #: dlls/vbscript/vbscript.rc:104
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'Class'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «Class»"
 
 #: dlls/vbscript/vbscript.rc:105
 msgid "Must be defined inside a Class"
@@ -13571,10 +13251,8 @@ msgid "Expected Let or Set or Get in property declaration"
 msgstr ""
 
 #: dlls/vbscript/vbscript.rc:107
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected 'Property'"
-msgstr "Ожидается «;»"
+msgstr "Ожидается «Property»"
 
 #: dlls/vbscript/vbscript.rc:108
 msgid "Number of arguments must be consistent across properties specification"
@@ -13593,10 +13271,8 @@ msgid "Property set or let must have at least one argument"
 msgstr ""
 
 #: dlls/vbscript/vbscript.rc:112
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Unexpected 'Next'"
-msgstr "Ожидается «;»"
+msgstr "Неожиданное «Next»"
 
 #: dlls/vbscript/vbscript.rc:113
 msgid "'Default' specification must also specify 'Public'"
@@ -14702,10 +14378,8 @@ msgstr ""
 "  /D  Обрабатывает также папки.\n"
 
 #: programs/attrib/attrib.rc:32
-#, fuzzy
-#| msgid "Parameter error\n"
 msgid "Parameter format not correct\n"
-msgstr "Неверный параметр\n"
+msgstr "Неверный формат параметра\n"
 
 #: programs/chcp.com/chcp.rc:28
 msgid "Active code page: %1!u!\n"
@@ -15376,7 +15050,7 @@ msgstr ""
 "MORE\t\tВыводит данные по страницам\n"
 "MOVE\t\tПеремещает файл, несколько файлов или дерево каталогов\n"
 "PATH\t\tПоказывает или изменяет путь поиска программ\n"
-"PAUSE\t\tОстанавливает исполнение bat-файлa\n"
+"PAUSE\t\tОстанавливает исполнение bat-файла\n"
 "POPD\t\tВосстанавливает предыдущий текущий каталог, сохранённый с\n"
 "\t\tпомощью\n"
 "PROMPT\t\tИзменяет приглашение командной строки\n"
@@ -15592,10 +15266,8 @@ msgid "End of file"
 msgstr "Конец файла"
 
 #: programs/cmd/cmd.rc:410
-#, fuzzy
-#| msgid "%1!d! file(s) copied\n"
 msgid "%t%1!u! file(s) copied\n"
-msgstr "Скопировано %1!d! файл(ов)\n"
+msgstr "%tСкопировано файлов: %1!u!\n"
 
 #: programs/cmd/cmd.rc:411 programs/xcopy/xcopy.rc:83
 msgid "File cannot be copied onto itself.\n"
@@ -15779,10 +15451,8 @@ msgid "Input Error: There is no script file specified.\n"
 msgstr ""
 
 #: programs/wscript/wscript.rc:48
-#, fuzzy
-#| msgid "Error: Could not find process \"%1\".\n"
 msgid "Input Error: Can not find script file \"%1\".\n"
-msgstr "Ошибка: не удалось найти Процесс «%1».\n"
+msgstr "Ошибка ввода: не удаётся найти файл сценария «%1».\n"
 
 #: programs/wscript/wscript.rc:49
 msgid "CScript Error: Loading script \"%1\" failed (%2).\n"
@@ -15819,27 +15489,23 @@ msgid "E&xit desktop"
 msgstr "Вы&ход из рабочего стола"
 
 #: programs/explorer/explorer.rc:37
-#, fuzzy
-#| msgid "Are you sure you want to delete these values?"
 msgid ""
 "Are you sure you want to close all programs and exit the virtual desktop?"
-msgstr "Вы уверены что хотите удалить эти значения?"
+msgstr ""
+"Вы уверены, что хотите закрыть все программы и выйти из виртуального "
+"рабочего стола?"
 
 #: programs/explorer/explorer.rc:38
 msgid "Wine Desktop"
 msgstr "Рабочий стол Wine"
 
 #: programs/findstr/findstr.rc:28
-#, fuzzy
-#| msgid "Use c&onnection string"
 msgid "Usage: findstr /options string\n"
-msgstr "Использовать &строку подключения"
+msgstr "Использование: findstr /параметры строка\n"
 
 #: programs/findstr/findstr.rc:29
-#, fuzzy
-#| msgid "Invalid command line.\n"
 msgid "FINDSTR: Bad command line\n"
-msgstr "Неверная командная строка.\n"
+msgstr "FINDSTR: неверная командная строка\n"
 
 #: programs/findstr/findstr.rc:30
 msgid "FINDSTR: Cannot open %s\n"
@@ -15966,21 +15632,16 @@ msgid "Unknown error\n"
 msgstr "Неизвестная ошибка\n"
 
 #: programs/klist/klist.rc:30
-#, fuzzy
-#| msgid "Start Menu"
 msgid "Start Time"
-msgstr "Главное меню"
+msgstr "Время начала"
 
 #: programs/klist/klist.rc:31
-#, fuzzy
-#| msgctxt "maximum 31 characters"
-#| msgid "Fiji Standard Time"
 msgid "End Time"
-msgstr "Стандартное время Фиджи"
+msgstr "Время окончания"
 
 #: programs/klist/klist.rc:32
 msgid "Renew Time"
-msgstr "Обновить время"
+msgstr "Время продления"
 
 #: programs/klist/klist.rc:33
 msgid "Ticket Flags"
@@ -15991,22 +15652,16 @@ msgid "Cached Tickets"
 msgstr ""
 
 #: programs/klist/klist.rc:36
-#, fuzzy
-#| msgid "Encryption Type"
 msgid "KerbTicket Encryption Type"
-msgstr "Тип шифрования"
+msgstr "Тип шифрования KerbTicket"
 
 #: programs/klist/klist.rc:37
-#, fuzzy
-#| msgid "Current Connections"
 msgid "Current LogonId is"
-msgstr "Текущих подключений"
+msgstr "Текущий LogonId:"
 
 #: programs/klist/klist.rc:38
-#, fuzzy
-#| msgid "client"
 msgid "Client"
-msgstr "клиент"
+msgstr "Клиент"
 
 #: programs/msinfo32/msinfo32.rc:28
 msgid "System Information"
@@ -18139,38 +17794,6 @@ msgid "regsvr32: Successfully uninstalled DLL '%1'\n"
 msgstr "regsvr32: DLL «%1» успешно удалена\n"
 
 #: programs/start/start.rc:56
-#, fuzzy
-#| msgid ""
-#| "Start a program, or open a document in the program normally used for "
-#| "files\n"
-#| "with that suffix.\n"
-#| "Usage:\n"
-#| "start [options] program_filename [...]\n"
-#| "start [options] document_filename\n"
-#| "\n"
-#| "Options:\n"
-#| "\"title\"        Specifies the title of the child windows.\n"
-#| "/d directory   Start the program in the specified directory.\n"
-#| "/b             Don't create a new console for the program.\n"
-#| "/i             Start the program with fresh environment variables.\n"
-#| "/min           Start the program minimized.\n"
-#| "/max           Start the program maximized.\n"
-#| "/low           Start the program in the idle priority class.\n"
-#| "/normal        Start the program in the normal priority class.\n"
-#| "/high          Start the program in the high priority class.\n"
-#| "/realtime      Start the program in the realtime priority class.\n"
-#| "/abovenormal   Start the program in the abovenormal priority class.\n"
-#| "/belownormal   Start the program in the belownormal priority class.\n"
-#| "/node n        Start the program on the specified NUMA node.\n"
-#| "/affinity mask Start the program with the specified affinity mask.\n"
-#| "/wait          Wait for the started program to finish, then exit with "
-#| "its\n"
-#| "exit code.\n"
-#| "/unix          Use a Unix filename and start the file like Windows\n"
-#| "Explorer.\n"
-#| "/exec          Exec the specified file (for internal Wine usage).\n"
-#| "/ProgIDOpen    Open a document using the specified progID.\n"
-#| "/?             Display this help and exit.\n"
 msgid ""
 "Start a program, or open a document in the program normally used for files\n"
 "with that suffix.\n"
@@ -18223,9 +17846,10 @@ msgstr ""
 "/belownormal   Запустить программу с приоритетом ниже нормального.\n"
 "/node n        Запустить программу на указанном узле NUMA.\n"
 "/affinity mask Запустить программу с указанной маской.\n"
+"/machine arch  Использовать указанную архитектуру (x86,arm,amd64,arm64).\n"
 "/wait          Подождать завершения программы и вернуть её код возврата.\n"
-"/unix          Использовать Unix-имя файла и запустить как Windows\n"
-"               Explorer.\n"
+"/unix          Использовать Unix-имя файла и запустить как Проводник "
+"Windows.\n"
 "/exec          Выполнить указанный файл (для внутреннего использования в "
 "Wine).\n"
 "/ProgIDOpen    Открывает документ с помощью указанного progID.\n"
@@ -18317,7 +17941,7 @@ msgstr ""
 
 #: programs/tasklist/tasklist.rc:29
 msgid "Usage: tasklist [/?]\n"
-msgstr "Ипользование: tasklist [/?]\n"
+msgstr "Использование: tasklist [/?]\n"
 
 #: programs/tasklist/tasklist.rc:30 programs/taskmgr/taskmgr.rc:272
 msgid "Image Name"
@@ -18328,36 +17952,28 @@ msgid "PID"
 msgstr "PID"
 
 #: programs/tasklist/tasklist.rc:32
-#, fuzzy
-#| msgid "Session ID"
 msgid "Session Name"
-msgstr "Код сеанса"
+msgstr "Имя сеанса"
 
 #: programs/tasklist/tasklist.rc:33
-#, fuzzy
-#| msgid "Session ID"
 msgid "Session#"
-msgstr "Код сеанса"
+msgstr "№ сеанса"
 
 #: programs/tasklist/tasklist.rc:34 programs/taskmgr/taskmgr.rc:276
 msgid "Mem Usage"
 msgstr "Память"
 
 #: programs/tasklist/tasklist.rc:35
-#, fuzzy
-#| msgid "OK"
 msgid "K"
-msgstr "ОК"
+msgstr "КБ"
 
 #: programs/tasklist/tasklist.rc:36
 msgid "ERROR: Invalid syntax\n"
 msgstr "ОШИБКА: неверный синтаксис\n"
 
 #: programs/tasklist/tasklist.rc:37
-#, fuzzy
-#| msgid "The filename cannot be resolved.\n"
 msgid "ERROR: The search filter cannot be recognized.\n"
-msgstr "Не удалось разобрать имя файла.\n"
+msgstr "ОШИБКА: не удалось распознать фильтр поиска.\n"
 
 #: programs/taskmgr/taskmgr.rc:37 programs/taskmgr/taskmgr.rc:108
 msgid "&New Task (Run...)"
@@ -19154,10 +18770,8 @@ msgid "Usage: timeout /T <timeout> [</NOBREAK>]\n"
 msgstr ""
 
 #: programs/timeout/timeout.rc:29
-#, fuzzy
-#| msgid "Invalid command line.\n"
 msgid "TIMEOUT: Bad command line\n"
-msgstr "Неверная командная строка.\n"
+msgstr "TIMEOUT: неверная командная строка\n"
 
 #: programs/timeout/timeout.rc:30
 msgid "waiting since %d sec. "
@@ -19168,10 +18782,8 @@ msgid "press CTRL+C..."
 msgstr ""
 
 #: programs/timeout/timeout.rc:32
-#, fuzzy
-#| msgid "Press any key to continue... "
 msgid "press a key to continue..."
-msgstr "Нажмите любую клавишу для продолжения... "
+msgstr "нажмите любую клавишу для продолжения..."
 
 #: programs/timeout/timeout.rc:33
 msgid "ERROR: not possible to redirect input\n"
@@ -20175,10 +19787,8 @@ msgid "&Beginner"
 msgstr "Нови&чок"
 
 #: programs/winemine/winemine.rc:45
-#, fuzzy
-#| msgid "Interface"
 msgid "&Intermediate"
-msgstr "Интерфейс"
+msgstr "Люб&итель"
 
 #: programs/winemine/winemine.rc:46
 msgid "&Expert"
@@ -20209,10 +19819,8 @@ msgid "Beginner"
 msgstr "Новичок"
 
 #: programs/winemine/winemine.rc:65
-#, fuzzy
-#| msgid "Interface"
 msgid "Intermediate"
-msgstr "Интерфейс"
+msgstr "Любитель"
 
 #: programs/winemine/winemine.rc:66
 msgid "Expert"
@@ -20351,10 +19959,8 @@ msgid "Help topics: "
 msgstr "Содержание: "
 
 #: programs/wmic/wmic.rc:28
-#, fuzzy
-#| msgid "Error: Command line not supported\n"
 msgid "Error: Command not supported\n"
-msgstr "Ошибка: командная строка не поддерживается\n"
+msgstr "Ошибка: команда не поддерживается\n"
 
 #: programs/wmic/wmic.rc:29
 msgid "Error: Alias not found\n"
@@ -20369,10 +19975,8 @@ msgid "Error: Invalid syntax for PATH\n"
 msgstr "Ошибка: неверный синтаксис PATH\n"
 
 #: programs/wmic/wmic.rc:32
-#, fuzzy
-#| msgid "Bad command.\n"
 msgid "Supply a command\n"
-msgstr "Неверная команда.\n"
+msgstr "Укажите команду\n"
 
 #: programs/wmic/wmic.rc:33
 msgid "Example usage: wmic ALIAS get PROPERTY[,PROPERTY2,...]\n"

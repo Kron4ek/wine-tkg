@@ -632,7 +632,7 @@ static void test_LoadingImages(void)
 
     bm = (GpBitmap *)0xdeadbeef;
     stat = GdipCreateBitmapFromFile(L"nonexistent", &bm);
-    todo_wine expect(InvalidParameter, stat);
+    expect(InvalidParameter, stat);
     ok(!bm, "returned %p\n", bm);
 
     stat = GdipLoadImageFromFile(0, 0);
@@ -645,7 +645,7 @@ static void test_LoadingImages(void)
 
     img = (GpImage *)0xdeadbeef;
     stat = GdipLoadImageFromFile(L"nonexistent", &img);
-    todo_wine expect(OutOfMemory, stat);
+    expect(OutOfMemory, stat);
     ok(!img, "returned %p\n", img);
 
     stat = GdipLoadImageFromFileICM(0, 0);
@@ -658,7 +658,7 @@ static void test_LoadingImages(void)
 
     img = (GpImage *)0xdeadbeef;
     stat = GdipLoadImageFromFileICM(L"nonexistent", &img);
-    todo_wine expect(OutOfMemory, stat);
+    expect(OutOfMemory, stat);
     ok(!img, "returned %p\n", img);
 
     create_test_resource(filename_ico, 5);
@@ -922,6 +922,28 @@ static void test_SavingMultiPageTiff(void)
         GdipDisposeImage((GpImage*)check_bm);
         ok(DeleteFileA(filename2A), "Delete 2.tif failed.\n");
     }
+}
+
+static void test_encoder_parameter_list_size(void)
+{
+    static const CLSID CLSID_PngEncoder =
+        { 0x557cf406, 0x1a04, 0x11d3, { 0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e } };
+    GpBitmap *bitmap;
+    GpStatus stat;
+    UINT size;
+
+    stat = GdipCreateBitmapFromScan0(1, 1, 0, PixelFormat24bppRGB, NULL, &bitmap);
+    expect(Ok, stat);
+
+    size = 0xdeadbeef;
+    stat = GdipGetEncoderParameterListSize(NULL, &CLSID_PngEncoder, &size);
+    expect(InvalidParameter, stat);
+    stat = GdipGetEncoderParameterListSize((GpImage *)bitmap, NULL, &size);
+    expect(InvalidParameter, stat);
+    stat = GdipGetEncoderParameterListSize((GpImage *)bitmap, &CLSID_PngEncoder, NULL);
+    expect(InvalidParameter, stat);
+
+    GdipDisposeImage((GpImage *)bitmap);
 }
 
 static void test_encoders(void)
@@ -2110,8 +2132,8 @@ static void test_loadwmf(void)
     if (stat == Ok)
     {
         expect(MetafileTypeWmfPlaceable, header.Type);
-        todo_wine expect(sizeof(wmfimage)-sizeof(WmfPlaceableFileHeader), header.Size);
-        todo_wine expect(0x300, header.Version);
+        expect(sizeof(wmfimage)-sizeof(WmfPlaceableFileHeader), header.Size);
+        expect(0x300, header.Version);
         expect(0, header.EmfPlusFlags);
         expectf(1440.0, header.DpiX);
         expectf(1440.0, header.DpiY);
@@ -2168,8 +2190,8 @@ static void test_createfromwmf(void)
     if (stat == Ok)
     {
         expect(MetafileTypeWmfPlaceable, header.Type);
-        todo_wine expect(sizeof(wmfimage)-sizeof(WmfPlaceableFileHeader), header.Size);
-        todo_wine expect(0x300, header.Version);
+        expect(sizeof(wmfimage)-sizeof(WmfPlaceableFileHeader), header.Size);
+        expect(0x300, header.Version);
         expect(0, header.EmfPlusFlags);
         expectf(1440.0, header.DpiX);
         expectf(1440.0, header.DpiY);
@@ -7462,6 +7484,7 @@ START_TEST(image)
     test_SavingImages();
     test_SavingMultiPageTiff();
     test_encoders();
+    test_encoder_parameter_list_size();
     test_LockBits();
     test_LockBits_UserBuf();
     test_GdipCreateBitmapFromHBITMAP();

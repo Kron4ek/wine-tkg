@@ -115,6 +115,7 @@
 #include "winioctl.h"
 #include "winternl.h"
 #include "ddk/ntddk.h"
+#include "ntddscsi.h"
 #include "ddk/ntddser.h"
 #include "ddk/ntifs.h"
 #include "ddk/wdm.h"
@@ -5049,16 +5050,28 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
 }
 
 
+static NTSTATUS server_set_file_info( HANDLE handle, IO_STATUS_BLOCK *io,
+                                      void *ptr, ULONG len, FILE_INFORMATION_CLASS class );
+
+
 /******************************************************************************
  *              NtSetInformationFile   (NTDLL.@)
  */
 NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                                       void *ptr, ULONG len, FILE_INFORMATION_CLASS class )
 {
-    int fd, needs_close;
+    int fd, needs_close = 0;
     unsigned int status = STATUS_SUCCESS;
+    unsigned int access = (class == FileValidDataLengthInformation) ? FILE_WRITE_DATA : 0;
 
     TRACE( "(%p,%p,%p,0x%08x,0x%08x)\n", handle, io, ptr, len, class );
+
+    if (class != FileCompletionInformation &&
+        (status = server_get_unix_fd( handle, access, &fd, &needs_close, NULL, NULL )))
+    {
+        if (status != STATUS_BAD_DEVICE_TYPE) return io->Status = status;
+        return server_set_file_info( handle, io, ptr, len, class );
+    }
 
     switch (class)
     {
@@ -5068,9 +5081,6 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             const FILE_BASIC_INFORMATION *info = ptr;
             LARGE_INTEGER mtime, atime;
             char *unix_name;
-
-            if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
-                return io->Status = status;
 
             if (server_get_unix_name( handle, &unix_name )) unix_name = NULL;
 
@@ -5084,7 +5094,6 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                 status = fd_set_file_info( fd, info->FileAttributes,
                                            unix_name && is_hidden_file( unix_name ));
 
-            if (needs_close) close( fd );
             free( unix_name );
         }
         else status = STATUS_INVALID_PARAMETER_3;
@@ -5095,69 +5104,10 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         {
             const FILE_POSITION_INFORMATION *info = ptr;
 
-            if ((status = server_get_unix_fd( handle, 0, &fd, &needs_close, NULL, NULL )))
-                return io->Status = status;
-
             if (lseek( fd, info->CurrentByteOffset.QuadPart, SEEK_SET ) == (off_t)-1)
                 status = errno_to_status( errno );
-
-            if (needs_close) close( fd );
         }
         else status = STATUS_INVALID_PARAMETER_3;
-        break;
-
-    case FileEndOfFileInformation:
-        if (len >= sizeof(FILE_END_OF_FILE_INFORMATION))
-        {
-            const FILE_END_OF_FILE_INFORMATION *info = ptr;
-
-            SERVER_START_REQ( set_fd_eof_info )
-            {
-                req->handle   = wine_server_obj_handle( handle );
-                req->eof      = info->EndOfFile.QuadPart;
-                status = wine_server_call( req );
-            }
-            SERVER_END_REQ;
-        }
-        else status = STATUS_INVALID_PARAMETER_3;
-        break;
-
-    case FilePipeInformation:
-        if (len >= sizeof(FILE_PIPE_INFORMATION))
-        {
-            FILE_PIPE_INFORMATION *info = ptr;
-
-            if ((info->CompletionMode | info->ReadMode) & ~1)
-            {
-                status = STATUS_INVALID_PARAMETER;
-                break;
-            }
-
-            SERVER_START_REQ( set_named_pipe_info )
-            {
-                req->handle = wine_server_obj_handle( handle );
-                req->flags  = (info->CompletionMode ? NAMED_PIPE_NONBLOCKING_MODE    : 0) |
-                              (info->ReadMode       ? NAMED_PIPE_MESSAGE_STREAM_READ : 0);
-                status = wine_server_call( req );
-            }
-            SERVER_END_REQ;
-        }
-        else status = STATUS_INVALID_PARAMETER_3;
-        break;
-
-    case FileMailslotSetInformation:
-        {
-            FILE_MAILSLOT_SET_INFORMATION *info = ptr;
-
-            SERVER_START_REQ( set_mailslot_info )
-            {
-                req->handle = wine_server_obj_handle( handle );
-                req->flags = MAILSLOT_SET_READ_TIMEOUT;
-                req->read_timeout = info->ReadTimeout.QuadPart;
-                status = wine_server_call( req );
-            }
-            SERVER_END_REQ;
-        }
         break;
 
     case FileCompletionInformation:
@@ -5175,25 +5125,6 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             SERVER_END_REQ;
         }
         else status = STATUS_INVALID_PARAMETER_3;
-        break;
-
-    case FileIoCompletionNotificationInformation:
-        if (len >= sizeof(FILE_IO_COMPLETION_NOTIFICATION_INFORMATION))
-        {
-            FILE_IO_COMPLETION_NOTIFICATION_INFORMATION *info = ptr;
-
-            if (info->Flags & FILE_SKIP_SET_USER_EVENT_ON_FAST_IO)
-                FIXME( "FILE_SKIP_SET_USER_EVENT_ON_FAST_IO not supported\n" );
-
-            SERVER_START_REQ( set_fd_completion_mode )
-            {
-                req->handle   = wine_server_obj_handle( handle );
-                req->flags    = info->Flags;
-                status = wine_server_call( req );
-            }
-            SERVER_END_REQ;
-        }
-        else status = STATUS_INFO_LENGTH_MISMATCH;
         break;
 
     case FileIoPriorityHintInformation:
@@ -5218,9 +5149,6 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             struct stat st;
             const FILE_VALID_DATA_LENGTH_INFORMATION *info = ptr;
 
-            if ((status = server_get_unix_fd( handle, FILE_WRITE_DATA, &fd, &needs_close, NULL, NULL )))
-                return io->Status = status;
-
             if (fstat( fd, &st ) == -1) status = errno_to_status( errno );
             else if (info->ValidDataLength.QuadPart <= 0 || (off_t)info->ValidDataLength.QuadPart > st.st_size)
                 status = STATUS_INVALID_PARAMETER;
@@ -5237,7 +5165,6 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
                 WARN( "setting valid data length not supported\n" );
 #endif
             }
-            if (needs_close) close( fd );
         }
         else status = STATUS_INVALID_PARAMETER_3;
         break;
@@ -5368,10 +5295,11 @@ NTSTATUS WINAPI NtSetInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
         break;
 
     default:
-        FIXME("Unsupported class (%d)\n", class);
-        status = STATUS_NOT_IMPLEMENTED;
-        break;
+        if (needs_close) close( fd );
+        return server_set_file_info( handle, io, ptr, len, class );
     }
+
+    if (needs_close) close( fd );
     io->Information = 0;
     return io->Status = status;
 }
@@ -5415,6 +5343,15 @@ struct async_irp
     struct async_fileio io;
     void               *buffer;   /* buffer for output */
     ULONG               size;     /* size of buffer */
+};
+
+struct async_scsi_pass_through_direct
+{
+    struct async_fileio io;
+    const void         *orig_input;
+    void               *orig_output;
+    void               *buffer;
+    ULONG               size;
 };
 
 static struct async_fileio *fileio_freelist;
@@ -5461,6 +5398,100 @@ static BOOL irp_completion( void *user, ULONG_PTR *info, unsigned int *status )
         }
         SERVER_END_REQ;
     }
+    release_fileio( &async->io );
+    return TRUE;
+}
+
+typedef struct _SCSI_PASS_THROUGH32
+{
+    USHORT Length;
+    UCHAR ScsiStatus;
+    UCHAR PathId;
+    UCHAR TargetId;
+    UCHAR Lun;
+    UCHAR CdbLength;
+    UCHAR SenseInfoLength;
+    UCHAR DataIn;
+    ULONG DataTransferLength;
+    ULONG TimeOutValue;
+    ULONG DataBufferOffset;
+    ULONG SenseInfoOffset;
+    UCHAR Cdb[16];
+} SCSI_PASS_THROUGH32;
+
+typedef struct _SCSI_PASS_THROUGH_DIRECT32
+{
+    USHORT Length;
+    UCHAR ScsiStatus;
+    UCHAR PathId;
+    UCHAR TargetId;
+    UCHAR Lun;
+    UCHAR CdbLength;
+    UCHAR SenseInfoLength;
+    UCHAR DataIn;
+    ULONG DataTransferLength;
+    ULONG TimeOutValue;
+    ULONG DataBuffer;
+    ULONG SenseInfoOffset;
+    UCHAR Cdb[16];
+} SCSI_PASS_THROUGH_DIRECT32;
+
+/* special callback for IOCTL_SCSI_PASS_THROUGH_DIRECT irp completion */
+static BOOL scsi_pass_through_direct_completion( void *user, ULONG_PTR *info, unsigned int *status )
+{
+    struct async_scsi_pass_through_direct *async = user;
+
+    if (*status == STATUS_ALERTED)
+    {
+        SERVER_START_REQ( get_async_result )
+        {
+            req->user_arg = wine_server_client_ptr( async );
+            wine_server_set_reply( req, async->buffer, async->size );
+            *status = wine_server_call( req );
+        }
+        SERVER_END_REQ;
+
+        if (!NT_ERROR(*status))
+        {
+            if (in_wow64_call())
+            {
+                const SCSI_PASS_THROUGH_DIRECT32 *orig_input = async->orig_input;
+                SCSI_PASS_THROUGH_DIRECT32 *orig_output = async->orig_output;
+                const SCSI_PASS_THROUGH32 *output = async->buffer;
+                ULONG sense_offset = orig_input->SenseInfoOffset;
+                ULONG data_buffer = orig_input->DataBuffer;
+
+                memcpy( orig_output, output, sizeof(*orig_output) );
+                orig_output->SenseInfoOffset = sense_offset;
+                memcpy( (char *)orig_output + sense_offset, output + 1, output->SenseInfoLength );
+                orig_output->DataBuffer = data_buffer;
+                memcpy( UlongToPtr( data_buffer ), (char *)output + output->DataBufferOffset, output->DataTransferLength );
+                if (orig_output->SenseInfoLength)
+                    *info = orig_output->SenseInfoOffset + orig_output->SenseInfoLength;
+                else
+                    *info = sizeof(*orig_output);
+            }
+            else
+            {
+                const SCSI_PASS_THROUGH_DIRECT *orig_input = async->orig_input;
+                SCSI_PASS_THROUGH_DIRECT *orig_output = async->orig_output;
+                const SCSI_PASS_THROUGH *output = async->buffer;
+                ULONG sense_offset = orig_input->SenseInfoOffset;
+                void *data_buffer = orig_input->DataBuffer;
+
+                memcpy( orig_output, output, sizeof(*orig_output) );
+                orig_output->SenseInfoOffset = sense_offset;
+                memcpy( (char *)orig_output + sense_offset, output + 1, output->SenseInfoLength );
+                orig_output->DataBuffer = data_buffer;
+                memcpy( data_buffer, (char *)output + output->DataBufferOffset, output->DataTransferLength );
+                if (orig_output->SenseInfoLength)
+                    *info = orig_output->SenseInfoOffset + orig_output->SenseInfoLength;
+                else
+                    *info = sizeof(*orig_output);
+            }
+        }
+    }
+
     release_fileio( &async->io );
     return TRUE;
 }
@@ -5625,7 +5656,7 @@ static unsigned int server_read_file( HANDLE handle, HANDLE event, PIO_APC_ROUTI
     SERVER_START_REQ( read )
     {
         req->async = server_async( handle, &async->io, event, apc, apc_context, iosb_client_ptr(io) );
-        req->pos   = offset ? offset->QuadPart : 0;
+        req->pos   = offset ? offset->QuadPart : FILE_USE_FILE_POINTER_POSITION;
         wine_server_set_reply( req, buffer, size );
         status = virtual_locked_server_call( req );
         wait_handle = wine_server_ptr_handle( reply->wait );
@@ -5660,13 +5691,97 @@ static unsigned int server_write_file( HANDLE handle, HANDLE event, PIO_APC_ROUT
     SERVER_START_REQ( write )
     {
         req->async = server_async( handle, &async->io, event, apc, apc_context, iosb_client_ptr(io) );
-        req->pos   = offset ? offset->QuadPart : 0;
+        req->pos   = offset ? offset->QuadPart : FILE_USE_FILE_POINTER_POSITION;
         wine_server_add_data( req, buffer, size );
         status = wine_server_call( req );
         wait_handle = wine_server_ptr_handle( reply->wait );
         options     = reply->options;
         if (wait_handle && status != STATUS_PENDING)
             set_sync_iosb( io, status, reply->size, options );
+    }
+    SERVER_END_REQ;
+
+    if (status != STATUS_PENDING) free( async );
+
+    if (wait_handle) status = wait_async( wait_handle, (options & FILE_SYNCHRONOUS_IO_ALERT) );
+    return status;
+}
+
+
+/* IOCTL_SCSI_PASS_THROUGH_DIRECT has a pointer in it, so we convert it to
+ * IOCTL_SCSI_PASS_THROUGH */
+static NTSTATUS ioctl_scsi_pass_through_direct( HANDLE handle, HANDLE event,
+                                                PIO_APC_ROUTINE apc, void *apc_context,
+                                                IO_STATUS_BLOCK *io,
+                                                const void *in_buffer, UINT in_size,
+                                                void *out_buffer, UINT out_size )
+{
+    struct async_scsi_pass_through_direct *async;
+    struct async_fileio *fileio;
+    unsigned int status;
+    HANDLE wait_handle;
+    ULONG options;
+
+    if (!(fileio = alloc_fileio( sizeof(*async), scsi_pass_through_direct_completion )))
+        return STATUS_NO_MEMORY;
+    async = CONTAINING_RECORD( fileio, struct async_scsi_pass_through_direct, io );
+    async->orig_input = in_buffer;
+    async->orig_output = out_buffer;
+
+    if (in_wow64_call())
+    {
+        const SCSI_PASS_THROUGH_DIRECT32 *in_direct = in_buffer;
+        SCSI_PASS_THROUGH32 *input;
+
+        async->size = sizeof(*input) + in_direct->DataTransferLength + in_direct->SenseInfoLength;
+        if (!(input = malloc( async->size )))
+        {
+            free( fileio );
+            return STATUS_NO_MEMORY;
+        }
+        async->buffer = input;
+
+        /* The structures are bitwise identical except that the DataBuffer
+         * member is a pointer instead of a ULONG_PTR. */
+        memcpy( input, in_direct, sizeof(*input) );
+        input->SenseInfoOffset = sizeof(*input);
+        memcpy( input + 1, (char *)in_direct + in_direct->SenseInfoOffset, in_direct->SenseInfoLength );
+        input->DataBufferOffset = sizeof(*input) + input->SenseInfoLength;
+        memcpy( (char *)input + input->DataBufferOffset, UlongToPtr( in_direct->DataBuffer ), in_direct->DataTransferLength );
+    }
+    else
+    {
+        const SCSI_PASS_THROUGH_DIRECT *in_direct = in_buffer;
+        SCSI_PASS_THROUGH *input;
+
+        async->size = sizeof(*input) + in_direct->DataTransferLength + in_direct->SenseInfoLength;
+        if (!(input = malloc( async->size )))
+        {
+            free( fileio );
+            return STATUS_NO_MEMORY;
+        }
+        async->buffer = input;
+
+        /* The structures are bitwise identical except that the DataBuffer
+         * member is a pointer instead of a ULONG_PTR. */
+        memcpy( input, in_direct, sizeof(*input) );
+        input->SenseInfoOffset = sizeof(*input);
+        memcpy( input + 1, (char *)in_direct + in_direct->SenseInfoOffset, in_direct->SenseInfoLength );
+        input->DataBufferOffset = sizeof(*input) + input->SenseInfoLength;
+        memcpy( (char *)input + input->DataBufferOffset, in_direct->DataBuffer, in_direct->DataTransferLength );
+    }
+
+    SERVER_START_REQ( ioctl )
+    {
+        req->code        = IOCTL_SCSI_PASS_THROUGH;
+        req->async       = server_async( handle, fileio, event, apc, apc_context, iosb_client_ptr(io) );
+        wine_server_add_data( req, async->buffer, async->size );
+        wine_server_set_reply( req, async->buffer, async->size );
+        status = wine_server_call( req );
+        wait_handle = wine_server_ptr_handle( reply->wait );
+        options     = reply->options;
+        if (wait_handle && status != STATUS_PENDING)
+            set_sync_iosb( io, status, wine_server_reply_size( reply ), options );
     }
     SERVER_END_REQ;
 
@@ -5687,6 +5802,9 @@ static NTSTATUS server_ioctl_file( HANDLE handle, HANDLE event,
     unsigned int status;
     HANDLE wait_handle;
     ULONG options;
+
+    if (code == IOCTL_SCSI_PASS_THROUGH_DIRECT)
+        return ioctl_scsi_pass_through_direct( handle, event, apc, apc_context, io, in_buffer, in_size, out_buffer, out_size );
 
     if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion )))
         return STATUS_NO_MEMORY;
@@ -6512,6 +6630,44 @@ NTSTATUS WINAPI NtWriteFileGather( HANDLE file, HANDLE event, PIO_APC_ROUTINE ap
         if (status != STATUS_PENDING && event) NtResetEvent( event, NULL );
     }
     return status;
+}
+
+
+static NTSTATUS server_set_file_info( HANDLE handle, IO_STATUS_BLOCK *io,
+                                      void *ptr, ULONG len, FILE_INFORMATION_CLASS class )
+{
+    struct async_irp *async;
+    HANDLE wait_handle;
+    NTSTATUS ret;
+
+    if (!(async = (struct async_irp *)alloc_fileio( sizeof(*async), irp_completion )))
+        return STATUS_NO_MEMORY;
+    async->buffer  = NULL;
+    async->size    = 0;
+
+    SERVER_START_REQ( set_file_info )
+    {
+        req->async = server_async( handle, &async->io, NULL, NULL, NULL, iosb_client_ptr(io) );
+        req->handle = wine_server_obj_handle( handle );
+        req->info_class = class;
+        wine_server_add_data( req, ptr, len );
+        ret = wine_server_call( req );
+        wait_handle = wine_server_ptr_handle( reply->wait );
+        if (wait_handle && ret != STATUS_PENDING)
+        {
+            io->Status      = ret;
+            io->Information = 0;
+        }
+    }
+    SERVER_END_REQ;
+
+    if (ret != STATUS_PENDING) free( async );
+
+    if (wait_handle) ret = wait_async( wait_handle, FALSE );
+
+    if (ret == STATUS_NOT_IMPLEMENTED)
+        FIXME( "unimplemented class %#x\n", class );
+    return ret;
 }
 
 

@@ -1468,7 +1468,7 @@ GpStatus WINGDIPAPI GdipCreateBitmapFromFile(GDIPCONST WCHAR* filename,
     stat = GdipCreateStreamOnFile(filename, GENERIC_READ, &stream);
 
     if(stat != Ok)
-        return stat;
+        return InvalidParameter;
 
     stat = GdipCreateBitmapFromStream(stream, bitmap);
 
@@ -3007,7 +3007,7 @@ GpStatus WINGDIPAPI GdipLoadImageFromFile(GDIPCONST WCHAR* filename,
     stat = GdipCreateStreamOnFile(filename, GENERIC_READ, &stream);
 
     if (stat != Ok)
-        return stat;
+        return OutOfMemory;
 
     stat = GdipLoadImageFromStream(stream, image);
 
@@ -5485,6 +5485,9 @@ GpStatus WINGDIPAPI GdipGetEncoderParameterListSize(GpImage *image,
     static int calls;
 
     TRACE("(%p,%s,%p)\n", image, debugstr_guid(clsidEncoder), size);
+
+    if(!image || !clsidEncoder || !size)
+        return InvalidParameter;
 
     if(!(calls++))
         FIXME("not implemented\n");

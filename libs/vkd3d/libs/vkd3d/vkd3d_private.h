@@ -388,6 +388,8 @@ struct vkd3d_signaled_semaphore
     const struct vkd3d_queue *signalling_queue;
 };
 
+typedef void (*PFN_vkd3d_waiting_event_cleanup)(HANDLE event);
+
 /* ID3D12Fence */
 struct d3d12_fence
 {
@@ -405,6 +407,7 @@ struct d3d12_fence
     struct vkd3d_waiting_event
     {
         HANDLE event;
+        PFN_vkd3d_waiting_event_cleanup cleanup;
         PFN_vkd3d_signal_event signal;
         uint64_t value;
     } *events;
@@ -426,8 +429,8 @@ struct d3d12_fence
     struct vkd3d_private_store private_store;
 };
 
-bool d3d12_fence_add_waiting_event(struct d3d12_fence *fence,
-        HANDLE event, PFN_vkd3d_signal_event signal, uint64_t value);
+bool d3d12_fence_add_waiting_event(struct d3d12_fence *fence, HANDLE event,
+        PFN_vkd3d_waiting_event_cleanup cleanup, PFN_vkd3d_signal_event signal, uint64_t value);
 HRESULT d3d12_fence_create(struct d3d12_device *device, uint64_t initial_value,
         D3D12_FENCE_FLAGS flags, struct d3d12_fence **fence);
 struct d3d12_fence *unsafe_impl_from_ID3D12Fence(ID3D12Fence *iface);

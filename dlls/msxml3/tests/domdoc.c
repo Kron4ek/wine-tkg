@@ -1219,6 +1219,22 @@ SZ_EMAIL_DTD
 "   <attachment id=\"patch1\">0001-msxml3-tests-DTD-validation.patch</attachment>"
 "</email>";
 
+static const CHAR szEmailXML_200[] =
+"<?xml version=\"1.0\"?>"
+SZ_EMAIL_DTD
+"<email attachments=\"patch1\">"
+"   <recipients>"
+"       <to>wine-patches@winehq.org</to>"
+"   </recipients>"
+"   <from name=\"Anonymous\">user@localhost</from>"
+"   <subject>msxml3/tests: DTD validation (try 87)</subject>"
+"   <body>"
+"       Duplicated ID 0xc00ce200"
+"   </body>"
+"   <attachment id=\"patch1\">0001-msxml3-tests-DTD-validation.patch</attachment>"
+"   <attachment id=\"patch1\">0001-msxml3-tests-DTD-validation.patch</attachment>"
+"</email>";
+
 static const char xpath_simple_list[] =
 "<?xml version=\"1.0\"?>"
 "<root>"
@@ -7662,6 +7678,7 @@ static const struct query_test xslpattern_test[] =
     { "root//elem[$not$ $any$ end()]", "E1.E2.D1 E2.E2.D1 E3.E2.D1" },
     { "root//elem[not($any$ end())]", "E1.E2.D1 E2.E2.D1 E3.E2.D1" },
     { "root//elem[$not$ end()]", "E1.E2.D1 E2.E2.D1 E3.E2.D1" },
+    { "root//elem[not\t ( end())]", "E1.E2.D1 E2.E2.D1 E3.E2.D1" },
     { "root//elem[index() != 0]", "E2.E2.D1 E3.E2.D1 E4.E2.D1" },
     { "root//elem[$any$ (index() != 0)]", "E2.E2.D1 E3.E2.D1 E4.E2.D1" },
     { "root//elem[index() $ne$ 0]", "E2.E2.D1 E3.E2.D1 E4.E2.D1" },
@@ -7750,6 +7767,10 @@ static const struct query_test xslpattern_test[] =
 
     /* Predicate at different levels requiring index fixup vs XPath */
     { "root//elem[0][0]", "E1.E2.D1" },
+
+    /* Failing queries */
+    { "$any$", NULL },
+
     { NULL }
 };
 
@@ -14478,6 +14499,58 @@ static void test_merging_text(void)
     free_bstrs();
 }
 
+static const WCHAR transform_xsldecl_copy_utf16_xsl[] =
+L"<?xml version=\"1.0\" encoding=\"utf-16\"?>\n"
+"<xsl:stylesheet xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\" version=\"1.0\">\n"
+"<xsl:output method=\"xml\" version=\"1.0\" encoding=\"utf-16\"/>"
+"<xsl:template match=\"@* | node()\" >"
+"    <xsl:copy>"
+"        <xsl:apply-templates select=\"@* | node()\" />"
+"    </xsl:copy>"
+"</xsl:template>"
+"</xsl:stylesheet>";
+
+static const char transform_xsldecl_copy_utf8_xsl[] =
+"<?xml version=\"1.0\"?>\n"
+"<xsl:stylesheet xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\" version=\"1.0\">\n"
+"<xsl:output method=\"xml\" version=\"1.0\" encoding=\"utf-8\"/>"
+"<xsl:template match=\"@* | node()\" >"
+"    <xsl:copy>"
+"        <xsl:apply-templates select=\"@* | node()\" />"
+"    </xsl:copy>"
+"</xsl:template>"
+"</xsl:stylesheet>";
+
+static const char transform_xsldecl_and_omit_xsl[] =
+"<?xml version=\"1.0\"?>\n"
+"<xsl:stylesheet xmlns:xsl=\"http://www.w3.org/1999/XSL/Transform\" version=\"1.0\">\n"
+"<xsl:output method=\"xml\" version=\"1.0\" encoding=\"utf-8\" omit-xml-declaration=\"yes\"/>"
+"<xsl:template match=\"@* | node()\" >"
+"    <xsl:copy>"
+"        <xsl:apply-templates select=\"@* | node()\" />"
+"    </xsl:copy>"
+"</xsl:template>"
+"</xsl:stylesheet>";
+
+static const char transform_xmldecl_utf8_doc[] =
+"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+"<a>"
+"    <item>item1</item>"
+"    <item>item2</item>"
+"</a>";
+
+static const char transform_utf8_omit_ret[] =
+"<a><item>item1</item><item>item2</item></a>";
+
+static const char transform_utf8_ret[] =
+"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+"<a><item>item1</item><item>item2</item></a>";
+
+static const WCHAR transform_utf16_ret[] =
+L"<?xml version=\"1.0\" encoding=\"utf-16\"?>"
+"<a><item>item1</item><item>item2</item></a>";
+
+
 static HRESULT WINAPI transformdest_QueryInterface(IUnknown *iface, REFIID riid, void **obj)
 {
     BOOL known_iid = IsEqualIID(riid, &IID_IHTMLObjectElement) ||
@@ -14516,11 +14589,13 @@ static void test_transformNodeToObject(void)
     ISequentialStream *sstream;
     LARGE_INTEGER off;
     WCHAR buffer[256];
+    char bufferA[256];
     IStream *istream;
     VARIANT_BOOL b;
     ULONG nread;
     HRESULT hr;
     VARIANT v;
+    BSTR bstr;
 
     doc = create_document(&IID_IXMLDOMDocument);
     doc2 = create_document(&IID_IXMLDOMDocument);
@@ -14594,6 +14669,83 @@ static void test_transformNodeToObject(void)
     ok(buffer[0] == 0xfeff, "got %x\n", buffer[0]);
     ok(compareIgnoreReturns(&buffer[1], _bstr_(szTransformOutput)), "got output %s\n", wine_dbgstr_w(buffer));
     ISequentialStream_Release(sstream);
+    IStream_Release(istream);
+
+    /* omitting declaration overrides specifying xml declaration */
+    hr = IXMLDOMDocument_loadXML(doc, _bstr_(transform_xmldecl_utf8_doc), &b);
+    ok(hr == S_OK, "Failed to load document, hr %#lx.\n", hr);
+    hr = IXMLDOMDocument_loadXML(doc2, _bstr_(transform_xsldecl_and_omit_xsl), &b);
+    ok(hr == S_OK, "Failed to load document, hr %#lx.\n", hr);
+
+    istream = SHCreateMemStream(NULL, 0);
+    V_VT(&v) = VT_UNKNOWN;
+    V_UNKNOWN(&v) = (IUnknown*)istream;
+    hr = IXMLDOMDocument_transformNodeToObject(doc, (IXMLDOMNode*)doc2, v);
+    ok(hr == S_OK, "Failed to transform node, hr %#lx.\n", hr);
+
+    off.QuadPart = 0;
+    hr = IStream_Seek(istream, off, STREAM_SEEK_SET, NULL);
+    ok(hr == S_OK, "Failed to seek, hr %#lx.\n", hr);
+
+    nread = 0;
+    memset(bufferA, 0xcc, sizeof(bufferA));
+    hr = IStream_Read(istream, bufferA, sizeof(bufferA), &nread);
+    ok(hr == S_OK, "Failed to read, hr %#lx.\n", hr);
+    bufferA[nread] = 0;
+    ok(!strcmp(bufferA, transform_utf8_omit_ret), "got output %s\n", wine_dbgstr_a(bufferA));
+    IStream_Release(istream);
+
+    /* duplicate xml declarations are removed */
+    hr = IXMLDOMDocument_loadXML(doc, _bstr_(transform_xmldecl_utf8_doc), &b);
+    ok(hr == S_OK, "Failed to load document, hr %#lx.\n", hr);
+    hr = IXMLDOMDocument_loadXML(doc2, _bstr_(transform_xsldecl_copy_utf8_xsl), &b);
+    ok(hr == S_OK, "Failed to load document, hr %#lx.\n", hr);
+
+    istream = SHCreateMemStream(NULL, 0);
+    V_VT(&v) = VT_UNKNOWN;
+    V_UNKNOWN(&v) = (IUnknown*)istream;
+    hr = IXMLDOMDocument_transformNodeToObject(doc, (IXMLDOMNode*)doc2, v);
+    ok(hr == S_OK, "Failed to transform node, hr %#lx.\n", hr);
+
+    off.QuadPart = 0;
+    hr = IStream_Seek(istream, off, STREAM_SEEK_SET, NULL);
+    ok(hr == S_OK, "Failed to seek, hr %#lx.\n", hr);
+
+    nread = 0;
+    memset(bufferA, 0xcc, sizeof(bufferA));
+    hr = IStream_Read(istream, bufferA, sizeof(bufferA), &nread);
+    ok(hr == S_OK, "Failed to read, hr %#lx.\n", hr);
+    bufferA[nread] = 0;
+    ok(!strcmp(bufferA, transform_utf8_ret), "got output %s\n", wine_dbgstr_a(bufferA));
+    IStream_Release(istream);
+
+    /* encoding in xsl overrides encoding from xml */
+    hr = IXMLDOMDocument_loadXML(doc, _bstr_(transform_xmldecl_utf8_doc), &b);
+    ok(hr == S_OK, "Failed to load document, hr %#lx.\n", hr);
+    bstr = SysAllocString(transform_xsldecl_copy_utf16_xsl);
+    hr = IXMLDOMDocument_loadXML(doc2, bstr, &b);
+    ok(hr == S_OK, "Failed to load document, hr %#lx.\n", hr);
+    SysFreeString(bstr);
+
+    istream = SHCreateMemStream(NULL, 0);
+    V_VT(&v) = VT_UNKNOWN;
+    V_UNKNOWN(&v) = (IUnknown*)istream;
+    hr = IXMLDOMDocument_transformNodeToObject(doc, (IXMLDOMNode*)doc2, v);
+    ok(hr == S_OK, "Failed to transform node, hr %#lx.\n", hr);
+
+    off.QuadPart = 0;
+    hr = IStream_Seek(istream, off, STREAM_SEEK_SET, NULL);
+    ok(hr == S_OK, "Failed to seek, hr %#lx.\n", hr);
+
+    nread = 0;
+    memset(buffer, 0xcc, sizeof(buffer));
+    hr = IStream_Read(istream, buffer, sizeof(buffer), &nread);
+    ok(hr == S_OK, "Failed to read, hr %#lx.\n", hr);
+    buffer[nread / 2] = 0;
+    ok(buffer[0] == 0xfeff, "got %x\n", buffer[0]);
+    bstr = SysAllocString(transform_utf16_ret);
+    ok(compareIgnoreReturns(&buffer[1], bstr), "got output %s\n", wine_dbgstr_w(buffer));
+    SysFreeString(bstr);
     IStream_Release(istream);
 
     IXMLDOMDocument_Release(doc3);
@@ -18181,7 +18333,7 @@ static void test_dtd_validation(void)
     hr = IXMLDOMParseError_get_errorCode(err, &res);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_ELEMENT_ID_NOT_FOUND */
-    todo_wine ok(res == 0xC00CE00E, "Unexpected code %#lx.\n", res);
+    ok(res == 0xc00ce00e, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(szEmailXML_11), NULL);
@@ -18193,7 +18345,7 @@ static void test_dtd_validation(void)
     hr = IXMLDOMParseError_get_errorCode(err, &res);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_EMPTY_NOT_ALLOWED */
-    todo_wine ok(res == 0xC00CE011, "Unexpected code %#lx.\n", res);
+    ok(res == 0xc00ce011, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(szEmailXML_13), NULL);
@@ -18217,7 +18369,7 @@ static void test_dtd_validation(void)
     hr = IXMLDOMParseError_get_errorCode(err, &res);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_INVALID_CONTENT */
-    todo_wine ok(res == 0xC00CE014, "Unexpected code %#lx.\n", res);
+    ok(res == 0xc00ce014, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(szEmailXML_14_1), NULL);
@@ -18290,7 +18442,7 @@ static void test_dtd_validation(void)
     hr = IXMLDOMParseError_get_errorCode(err, &res);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_ILLEGAL_TEXT */
-    todo_wine ok(res == 0xC00CE018, "Unexpected code %#lx.\n", res);
+    ok(res == 0xc00ce018, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     hr = IXMLDOMDocument2_loadXML(doc, _bstr_(szEmailXML_18_1), NULL);
@@ -18315,6 +18467,18 @@ static void test_dtd_validation(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* XML_REQUIRED_ATTRIBUTE_MISSING */
     ok(res == 0xc00ce020, "Unexpected code %#lx.\n", res);
+    IXMLDOMParseError_Release(err);
+
+    hr = IXMLDOMDocument2_loadXML(doc, _bstr_(szEmailXML_200), NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    err = NULL;
+    hr = IXMLDOMDocument2_validate(doc, &err);
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    res = 0;
+    hr = IXMLDOMParseError_get_errorCode(err, &res);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    /* Duplicated ID */
+    ok(res == 0xc00ce200, "Unexpected code %#lx.\n", res);
     IXMLDOMParseError_Release(err);
 
     IXMLDOMDocument2_Release(doc);
@@ -19369,6 +19533,132 @@ static void test_document_stream(void)
     IXMLDOMDocument_Release(doc);
 }
 
+static void test_nodeFromID(void)
+{
+    static const char id_xml[] =
+        "<?xml version=\"1.0\"?>"
+        "<!DOCTYPE root ["
+        "   <!ELEMENT root ANY>"
+        "   <!ELEMENT e1 ANY>"
+        "   <!ATTLIST e1 attr1 ID #REQUIRED >"
+        "   <!ELEMENT e2 ANY>"
+        "   <!ATTLIST e2 attr2 IDREF #REQUIRED >"
+        "   <!ELEMENT e3 ANY>"
+        "   <!ATTLIST e3 attr3 IDREFS #REQUIRED >"
+        "   <!ELEMENT e4 ANY>"
+        "   <!ATTLIST e4 attr4 ID #REQUIRED >"
+        "]>"
+        "<root>"
+        "   <e1 attr1=\"attr1-value1\" />"
+        "   <e1 attr1=\"attr1-value2\" />"
+        "   <e2 attr2=\"attr1-value1\" />"
+        "   <e2 attr2=\"attr1-value2\" />"
+        "   <e3 attr3=\"attr1-value1 attr1-value2\" />"
+        "   <e3 attr3=\"attr1-value2 attr1-value1\" />"
+        "   <e4 attr4=\"attr4-value1\" />"
+        "</root>";
+
+    IXMLDOMElement *root, *elem;
+    IXMLDOMDocument *doc;
+    IXMLDOMNode *node;
+    HRESULT hr;
+    VARIANT v;
+    BSTR str;
+
+    doc = create_document(&IID_IXMLDOMDocument);
+
+    hr = IXMLDOMDocument_loadXML(doc, _bstr_(id_xml), NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument_nodeFromID(doc, NULL, NULL);
+    todo_wine
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    node = (void *)0x1;
+    hr = IXMLDOMDocument_nodeFromID(doc, NULL, &node);
+    todo_wine
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+    ok(node == (void *)0x1, "Unexpected node %p.\n", node);
+
+    hr = IXMLDOMDocument_nodeFromID(doc, _bstr_("attr1"), NULL);
+    todo_wine
+    ok(hr == E_INVALIDARG, "Unexpected hr %#lx.\n", hr);
+
+    node = (void *)0x1;
+    hr = IXMLDOMDocument_nodeFromID(doc, _bstr_("attr1"), &node);
+    todo_wine
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    todo_wine
+    ok(!node, "Unexpected node %p.\n", node);
+
+    hr = IXMLDOMDocument_nodeFromID(doc, _bstr_("attr1-value1"), &node);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+if (hr == S_OK)
+{
+    hr = IXMLDOMNode_get_xml(node, &str);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(str, L"<e1 attr1=\"attr1-value1\"/>"), "Unexpected name %s.\n", debugstr_w(str));
+    SysFreeString(str);
+    IXMLDOMNode_Release(node);
+}
+    hr = IXMLDOMDocument_nodeFromID(doc, _bstr_("attr1-value2"), &node);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+if (hr == S_OK)
+{
+    hr = IXMLDOMNode_get_xml(node, &str);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(str, L"<e1 attr1=\"attr1-value2\"/>"), "Unexpected name %s.\n", debugstr_w(str));
+    SysFreeString(str);
+    IXMLDOMNode_Release(node);
+}
+    hr = IXMLDOMDocument_nodeFromID(doc, _bstr_("attr4-value1"), &node);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+if (hr == S_OK)
+{
+    hr = IXMLDOMNode_get_xml(node, &str);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(str, L"<e4 attr4=\"attr4-value1\"/>"), "Unexpected name %s.\n", debugstr_w(str));
+    SysFreeString(str);
+    IXMLDOMNode_Release(node);
+}
+    hr = IXMLDOMDocument_nodeFromID(doc, _bstr_("attr1-value1 attr1-value2"), &node);
+    todo_wine
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument_get_documentElement(doc, &root);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMDocument_createElement(doc, _bstr_("e4"), &elem);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr );
+    V_VT(&v) = VT_BSTR;
+    V_BSTR(&v) = _bstr_("attr4-value2");
+    hr = IXMLDOMElement_setAttribute(elem, _bstr_("attr4"), v);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IXMLDOMDocument_nodeFromID(doc, _bstr_("attr4-value2"), &node);
+    todo_wine
+    ok(hr == S_FALSE, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMElement_appendChild(root, (IXMLDOMNode *)elem, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IXMLDOMDocument_nodeFromID(doc, _bstr_("attr4-value2"), &node);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+if (hr == S_OK)
+{
+    hr = IXMLDOMNode_get_xml(node, &str);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(!wcscmp(str, L"<e4 attr4=\"attr4-value2\"/>"), "Unexpected name %s.\n", debugstr_w(str));
+    SysFreeString(str);
+    IXMLDOMNode_Release(node);
+}
+    IXMLDOMElement_Release(root);
+    IXMLDOMElement_Release(elem);
+
+    IXMLDOMDocument_Release(doc);
+    free_bstrs();
+}
+
 START_TEST(domdoc)
 {
     HRESULT hr;
@@ -19485,6 +19775,7 @@ START_TEST(domdoc)
     test_dtd_entity();
     test_element_setNamedItem();
     test_document_stream();
+    test_nodeFromID();
 
     if (is_clsid_supported(&CLSID_MXNamespaceManager40, &IID_IMXNamespaceManager))
     {

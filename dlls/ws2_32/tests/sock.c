@@ -14930,6 +14930,8 @@ static void test_afunix(void)
     ULONG zero = 0;
     ULONG one = 1;
     int ret;
+    DWORD pid;
+    DWORD bytesReturned;
 
     /* Test connection and send/recv */
     listener = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -15022,6 +15024,9 @@ static void test_afunix(void)
     ret = recvfrom(server, serverBuf, sizeof(clientBuf), 0, NULL, 0);
     ok(ret == sizeof(serverBuf), "Incorrect return value from recvfrom: %d\n", ret);
     ok(!memcmp(serverBuf, clientBuf, sizeof(clientBuf)), "Data mismatch over Unix socket\n");
+
+    ret = WSAIoctl(client,  SIO_AF_UNIX_GETPEERPID, NULL, 0, &pid, sizeof(pid), &bytesReturned, NULL, NULL);
+    ok(!ret, "failed to get WSAioctl, error %u\n", WSAGetLastError());
 
     closesocket(listener);
     closesocket(client);

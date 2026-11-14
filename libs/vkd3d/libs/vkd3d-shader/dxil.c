@@ -9230,7 +9230,10 @@ static void metadata_attachment_record_apply(const struct dxil_record *record, e
 
                 for (; ins; ins = vsir_program_iterator_next(it))
                 {
-                    ins->flags |= sm6_type_is_scalar(dst->type) ? VKD3DSI_PRECISE_X : VKD3DSI_PRECISE_XYZW;
+                    for (j = 0; j < ins->dst_count; ++j)
+                    {
+                        ins->flags |= ins->dst[j].write_mask << VKD3DSI_PRECISE_SHIFT;
+                    }
                 }
             }
         }

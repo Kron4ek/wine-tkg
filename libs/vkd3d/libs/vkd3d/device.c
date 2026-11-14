@@ -5054,6 +5054,23 @@ struct waiting_event_semaphore
     uint32_t value;
 };
 
+static void waiting_event_semaphore_cleanup(HANDLE h)
+{
+    struct waiting_event_semaphore *s = h;
+
+    if (vkd3d_atomic_decrement_u32(&s->value))
+        return;
+    vkd3d_free(s);
+}
+
+static void waiting_event_semaphore_all_cleanup(HANDLE h)
+{
+    struct waiting_event_semaphore *s = h;
+
+    vkd3d_atomic_exchange_ptr(&s->event, NULL);
+    waiting_event_semaphore_cleanup(h);
+}
+
 static HRESULT waiting_event_semaphore_signal(HANDLE h)
 {
     struct waiting_event_semaphore *s = h;
@@ -5094,6 +5111,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_SetEventOnMultipleFenceCompletion(
         D3D12_MULTIPLE_FENCE_WAIT_FLAGS flags, HANDLE event)
 {
     struct d3d12_device *device = impl_from_ID3D12Device9(iface);
+    PFN_vkd3d_waiting_event_cleanup cleanup;
     struct vkd3d_null_event null_event;
     struct waiting_event_semaphore *s;
     PFN_vkd3d_signal_event signal;
@@ -5134,9 +5152,15 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_SetEventOnMultipleFenceCompletion(
     s->value = fence_count;
 
     if (flags & D3D12_MULTIPLE_FENCE_WAIT_FLAG_ANY)
+    {
+        cleanup = waiting_event_semaphore_cleanup;
         signal = waiting_event_semaphore_signal_first;
+    }
     else
+    {
+        cleanup = waiting_event_semaphore_all_cleanup;
         signal = waiting_event_semaphore_signal;
+    }
 
     for (i = 0; i < fence_count; ++i)
     {
@@ -5151,7 +5175,7 @@ static HRESULT STDMETHODCALLTYPE d3d12_device_SetEventOnMultipleFenceCompletion(
             continue;
         }
 
-        if (!d3d12_fence_add_waiting_event(fence, s, signal, values[i]))
+        if (!d3d12_fence_add_waiting_event(fence, s, cleanup, signal, values[i]))
         {
             WARN("Failed to add event.\n");
             /* If the event was already signalled, we don't need to fail here.

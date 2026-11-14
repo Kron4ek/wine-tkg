@@ -2320,9 +2320,23 @@ static void transform_write_text(xmlDocPtr result, xsltStylesheetPtr style, xmlO
         st = xsltNextImport(st);                        \
     }}
 
+static void xmldoc_unlink_xmldecl(xmlDocPtr doc)
+{
+    xmlNodePtr first;
+
+    first = doc->children;
+    if (first && first->type == XML_PI_NODE && xmlStrEqual(first->name, BAD_CAST "xml"))
+    {
+        xmlUnlinkNode( first );
+        xmlFreeNode( first );
+    }
+}
+
 static void transform_write_xmldecl(xmlDocPtr result, xsltStylesheetPtr style, BOOL omit_encoding, xmlOutputBufferPtr output)
 {
     int omit_xmldecl, standalone;
+
+    xmldoc_unlink_xmldecl(result);
 
     XSLT_GET_IMPORT_INT(omit_xmldecl, style, omitXmlDeclaration);
     if (omit_xmldecl == 1) return;
@@ -4951,29 +4965,23 @@ HRESULT create_attribute_node(const WCHAR *name, const WCHAR *uri, struct domnod
     return create_node(attr, ret);
 }
 
-static void LIBXML2_LOG_CALLBACK validate_error(void* ctx, char const* msg, ...)
-{
-    va_list ap;
-    va_start(ap, msg);
-    LIBXML2_CALLBACK_ERR(domdoc_validateNode, msg, ap);
-    va_end(ap);
-}
-
-static void LIBXML2_LOG_CALLBACK validate_warning(void* ctx, char const* msg, ...)
-{
-    va_list ap;
-    va_start(ap, msg);
-    LIBXML2_CALLBACK_WARN(domdoc_validateNode, msg, ap);
-    va_end(ap);
-}
-
-static HRESULT return_validation_error(LONG code, IXMLDOMParseError **err)
+static HRESULT return_validation_error(struct validation_context *ctxt, IXMLDOMParseError **err)
 {
     HRESULT hr;
 
+    for (size_t i = 0; i < ctxt->id.count; ++i)
+        SysFreeString(ctxt->id.values[i]);
+    free(ctxt->id.values);
+    memset(&ctxt->id, 0, sizeof(ctxt->id));
+
+    for (size_t i = 0; i < ctxt->idref.count; ++i)
+        SysFreeString(ctxt->idref.refs[i].value);
+    free(ctxt->idref.refs);
+    memset(&ctxt->idref, 0, sizeof(ctxt->idref));
+
     if (err)
     {
-        if (FAILED(hr = create_parse_error(code, NULL, err)))
+        if (FAILED(hr = create_parse_error(ctxt->code, NULL, err)))
             return hr;
     }
 
@@ -5095,7 +5103,6 @@ HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseEr
     struct validation_context ctxt = { 0 };
     struct domnode *node, *root, *dtd;
     IXMLDOMSchemaCollection2 *schema;
-    LONG err_code = 0;
     HRESULT hr = S_OK;
     int validated = 0;
     xmlDocPtr xmldoc;
@@ -5108,7 +5115,7 @@ HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseEr
 
         if (node->owner != doc && node != doc)
         {
-            return_validation_error(err_code, err);
+            return_validation_error(&ctxt, err);
             return E_FAIL;
         }
 
@@ -5117,7 +5124,8 @@ HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseEr
             case NODE_DOCUMENT:
             case NODE_DOCUMENT_TYPE:
             case NODE_DOCUMENT_FRAGMENT:
-                return return_validation_error(E_DOM_INVALIDTYPE, err);
+                ctxt.code = E_DOM_INVALIDTYPE;
+                return return_validation_error(&ctxt, err);
             default:
                 ;
         }
@@ -5130,47 +5138,40 @@ HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseEr
     if (node->type == NODE_DOCUMENT)
     {
         if (!node_validate_root(&ctxt, node))
-            return return_validation_error(ctxt.code, err);
+            return return_validation_error(&ctxt, err);
     }
 
     if ((dtd = domnode_get_dtd(node_get_doc(node))))
     {
         if (node->type == NODE_DOCUMENT)
+        {
             root = domnode_get_root_element(node);
+        }
         else
+        {
             root = node;
 
-        if (!node_dtd_validate_node(&ctxt, dtd->dtd, root))
-            return return_validation_error(ctxt.code, err);
-    }
-
-    xmldoc = create_xmldoc_from_domdoc(node, &xmlnode);
-
-    /* DTD validation */
-    if (xmldoc->intSubset || xmldoc->extSubset)
-    {
-        xmlValidCtxtPtr vctx = xmlNewValidCtxt();
-        int ret;
-
-        vctx->error = validate_error;
-        vctx->warning = validate_warning;
-        ++validated;
-
-        ret = node->type == NODE_DOCUMENT ? xmlValidateDocument(vctx, xmldoc) : xmlValidateElement(vctx, xmldoc, xmlnode);
-        if (!ret)
-        {
-            /* TODO: get a real error code here */
-            TRACE("DTD validation failed\n");
-            err_code = E_XML_INVALID;
-            hr = S_FALSE;
+            /* Collect ID values, unless we're validating a root node. */
+            if (node->parent != node_get_doc(node))
+                parser_dtd_collect_ids(&ctxt, dtd->dtd, node);
         }
-        xmlFreeValidCtxt(vctx);
+
+        if (!node_dtd_validate_node(&ctxt, dtd->dtd, root))
+            return return_validation_error(&ctxt, err);
+
+        ++validated;
     }
+
+    /* References are accumulated along with id's and have to be cross-checked
+       at the end. */
+    if (!parser_dtd_validate_references(&ctxt))
+        return return_validation_error(&ctxt, err);
 
     /* Schema validation */
     schema = doc->properties->schemaCache;
     if (hr == S_OK && schema)
     {
+        xmldoc = create_xmldoc_from_domdoc(node, &xmlnode);
 
         hr = SchemaCache_validate_tree(schema, xmlnode);
         if (SUCCEEDED(hr))
@@ -5184,7 +5185,7 @@ HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseEr
             else
             {
                 WARN("schema validation failed\n");
-                err_code = E_XML_INVALID;
+                ctxt.code = E_XML_INVALID;
             }
         }
         else
@@ -5192,17 +5193,18 @@ HRESULT node_validate(struct domnode *doc, IXMLDOMNode *node_obj, IXMLDOMParseEr
             /* not really OK, just didn't find a schema for the ns */
             hr = S_OK;
         }
+
+        xmlFreeDoc(xmldoc);
     }
-    xmlFreeDoc(xmldoc);
 
     if (!validated)
     {
         WARN("no DTD or schema found\n");
-        err_code = E_XML_NODTD;
+        ctxt.code = E_XML_NODTD;
         hr = S_FALSE;
     }
 
-    return_validation_error(err_code, err);
+    return_validation_error(&ctxt, err);
 
     return hr;
 }

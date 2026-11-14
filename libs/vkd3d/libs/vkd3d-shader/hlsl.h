@@ -984,8 +984,6 @@ struct hlsl_ir_constant
     {
         union hlsl_constant_value_component u[4];
     } value;
-    /* Constant register of type 'c' where the constant value is stored for SM1. */
-    struct hlsl_reg reg;
 };
 
 struct hlsl_ir_string_constant
@@ -1096,6 +1094,21 @@ struct hlsl_scope
     /* The scope contains annotation variables. */
     bool annotations;
 };
+
+struct hlsl_identifier
+{
+    /* Scope in which the identifier was found, or NULL if the lexer returned NEW_IDENTIFIER. */
+    struct hlsl_scope *scope;
+    /* Identifier name as written, including any qualifiers, e.g. "::A::B::x". */
+    char *qualified_name;
+    /* Unqualified identifier name. This is a just pointer that points into qualified_name. */
+    const char *name;
+};
+
+static inline bool hlsl_identifier_is_qualified(const struct hlsl_identifier *identifier)
+{
+    return identifier->name != identifier->qualified_name;
+}
 
 struct hlsl_profile_info
 {
@@ -1225,25 +1238,6 @@ struct hlsl_ctx
 
     /* List of the instruction nodes for initializing static variables. */
     struct hlsl_block static_initializers;
-
-    /* Dynamic array of constant values that appear in the shader, associated
-     * to the 'c' and 'i' registers. Only used for SM1 profiles. */
-    struct hlsl_constant_defs
-    {
-        struct hlsl_constant_register
-        {
-            bool is_int;
-            uint32_t index;
-            uint32_t allocated_mask;
-            union hlsl_constant_value_component value[4];
-            struct vkd3d_shader_location loc;
-        } *regs;
-        size_t count, size;
-    } constant_defs;
-    /* 'c' registers where the constants expected by SM2 sincos are stored. */
-    struct hlsl_reg d3dsincosconst1, d3dsincosconst2;
-    /* 'i' register allocated by SM3 to keep the maximum number of iterations. */
-    struct hlsl_reg d3d255intconst;
 
     /* Number of allocated registers, used in translation to vsir. */
     unsigned int ssa_count, temp_count, indexable_temp_count;
@@ -1850,7 +1844,10 @@ void hlsl_push_scope(struct hlsl_ctx *ctx);
 void hlsl_pop_scope(struct hlsl_ctx *ctx);
 
 struct hlsl_scope *hlsl_get_namespace(const struct hlsl_scope *scope, const char *name);
+struct hlsl_scope *hlsl_get_namespace_n(const struct hlsl_scope *scope, const char *name, size_t len);
 bool hlsl_push_namespace(struct hlsl_ctx *ctx, char *name, const struct vkd3d_shader_location *loc);
+
+void hlsl_identifier_cleanup(struct hlsl_identifier *identifier);
 
 bool hlsl_scope_add_type(struct hlsl_scope *scope, struct hlsl_type *type);
 

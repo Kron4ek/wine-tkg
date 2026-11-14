@@ -1560,10 +1560,17 @@ static void fd_destroy( struct object *obj )
     if (fd->sync) release_object( fd->sync );
 }
 
+static inline bool is_replace_file_disposition( unsigned int disposition )
+{
+    return (disposition == FILE_SUPERSEDE ||
+            disposition == FILE_OVERWRITE ||
+            disposition == FILE_OVERWRITE_IF);
+}
+
 /* check if the desired access is possible without violating */
 /* the sharing mode of other opens of the same file */
 static unsigned int check_sharing( struct fd *fd, unsigned int access, unsigned int sharing,
-                                   unsigned int open_flags, unsigned int options )
+                                   unsigned int disposition, unsigned int options )
 {
     /* only a few access bits are meaningful wrt sharing */
     const unsigned int read_access = FILE_READ_DATA | FILE_EXECUTE;
@@ -1594,7 +1601,7 @@ static unsigned int check_sharing( struct fd *fd, unsigned int access, unsigned 
         return STATUS_SHARING_VIOLATION;
     if ((existing_access & FILE_MAPPING_IMAGE) && (options & FILE_DELETE_ON_CLOSE))
         return STATUS_CANNOT_DELETE;
-    if ((existing_access & FILE_MAPPING_ACCESS) && (open_flags & O_TRUNC))
+    if ((existing_access & FILE_MAPPING_ACCESS) && is_replace_file_disposition( disposition ))
         return STATUS_USER_MAPPED_FILE;
     if (!(access & all_access))
         return 0;  /* if access mode is 0, sharing mode is ignored (except for mappings) */
@@ -1775,7 +1782,7 @@ struct fd *dup_fd_object( struct fd *orig, unsigned int access, unsigned int sha
         fd->closed = closed;
         fd->inode = (struct inode *)grab_object( orig->inode );
         list_add_head( &fd->inode->open, &fd->inode_entry );
-        if ((err = check_sharing( fd, access, sharing, 0, options )))
+        if ((err = check_sharing( fd, access, sharing, FILE_OPEN, options )))
         {
             set_error( err );
             goto failed;
@@ -1868,20 +1875,34 @@ struct unicode_str get_nt_name( struct fd *fd )
     return name;
 }
 
+static int open_file_or_dir( const char *name, unsigned int access, int flags, mode_t mode )
+{
+    int fd, rw_mode = O_RDONLY;
+
+    if (access & (FILE_WRITE_DATA | FILE_APPEND_DATA))
+        rw_mode = (access & FILE_READ_DATA) ? O_RDWR : O_WRONLY;
+
+    fd = open( name, rw_mode | flags | O_NONBLOCK, mode );
+
+    /* if we tried to open a directory for write access, retry read-only */
+    if (fd == -1 && errno == EISDIR && (rw_mode != O_RDONLY || (flags & O_CREAT)))
+        fd = open( name, O_RDONLY | O_NONBLOCK, mode );
+
+    return fd;
+}
+
 /* open() wrapper that returns a struct fd with no fd user set */
 struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_name,
-                    int flags, mode_t *mode, unsigned int access,
-                    unsigned int sharing, unsigned int options )
+                    mode_t *mode, unsigned int access, unsigned int sharing,
+                    unsigned int disposition, unsigned int options )
 {
     struct stat st;
     struct closed_fd *closed_fd;
     struct fd *fd;
     int root_fd = -1;
-    int rw_mode;
     char *path;
 
-    if (((options & FILE_DELETE_ON_CLOSE) && !(access & DELETE)) ||
-        ((options & FILE_DIRECTORY_FILE) && (flags & O_TRUNC)))
+    if ((options & FILE_DELETE_ON_CLOSE) && !(access & DELETE))
     {
         set_error( STATUS_INVALID_PARAMETER );
         return NULL;
@@ -1907,88 +1928,102 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
         }
     }
 
-    /* create the directory if needed */
-    if ((options & FILE_DIRECTORY_FILE) && (flags & O_CREAT))
+    if (options & FILE_DIRECTORY_FILE)
     {
-        if (mkdir( name, *mode ) == -1)
+        switch (disposition)
         {
-            if (errno != EEXIST || (flags & O_EXCL))
-            {
-                file_set_error();
-                goto error;
-            }
+        case FILE_CREATE:
+        case FILE_OPEN_IF:
+            if (mkdir( name, *mode ) != -1) break;
+            if (errno == EEXIST && disposition == FILE_OPEN_IF) break;
+            file_set_error();
+            goto error;
+        case FILE_OPEN:
+            break;
+        case FILE_SUPERSEDE:
+        case FILE_OVERWRITE:
+        case FILE_OVERWRITE_IF:
+            set_error( STATUS_INVALID_PARAMETER );
+            goto error;
         }
-        flags &= ~(O_CREAT | O_EXCL | O_TRUNC);
+        fd->unix_fd = open( name, O_RDONLY | O_NONBLOCK, *mode );
+    }
+    else
+    {
+        switch (disposition)
+        {
+        case FILE_OPEN:
+            fd->unix_fd = open_file_or_dir( name, access, 0, *mode );
+            break;
+        case FILE_CREATE:
+            fd->unix_fd = open_file_or_dir( name, access, O_CREAT | O_EXCL, *mode );
+            break;
+        case FILE_OVERWRITE:
+            fd->unix_fd = open_file_or_dir( name, access | FILE_WRITE_DATA, 0, *mode );
+            break;
+        case FILE_OVERWRITE_IF:
+            fd->unix_fd = open_file_or_dir( name, access | FILE_WRITE_DATA, O_CREAT, *mode );
+            break;
+        case FILE_OPEN_IF:
+        case FILE_SUPERSEDE:
+            fd->unix_fd = open_file_or_dir( name, access, O_CREAT, *mode );
+            break;
+        }
     }
 
-    if ((access & FILE_UNIX_WRITE_ACCESS) && !(options & FILE_DIRECTORY_FILE))
+    if (fd->unix_fd == -1)
     {
-        if (access & FILE_UNIX_READ_ACCESS) rw_mode = O_RDWR;
-        else rw_mode = O_WRONLY;
-    }
-    else rw_mode = O_RDONLY;
+        int open_errno = errno;
 
-    if ((fd->unix_fd = open( name, rw_mode | (flags & ~O_TRUNC), *mode )) == -1)
-    {
-        /* if we tried to open a directory for write access, retry read-only */
-        if (errno == EISDIR)
+        /* check for trailing slash on file path */
+        if ((errno == ENOENT || (errno == ENOTDIR && !(options & FILE_DIRECTORY_FILE))) && name[strlen(name) - 1] == '/')
         {
-            if ((access & FILE_UNIX_WRITE_ACCESS) || (flags & O_CREAT))
-                fd->unix_fd = open( name, O_RDONLY | (flags & ~(O_TRUNC | O_CREAT | O_EXCL)), *mode );
+            set_error( STATUS_OBJECT_NAME_INVALID );
+            goto error;
         }
 
-        if (fd->unix_fd == -1)
+        if (stat( name, &st ))
         {
-            /* check for trailing slash on file path */
-            if ((errno == ENOENT || (errno == ENOTDIR && !(options & FILE_DIRECTORY_FILE))) && name[strlen(name) - 1] == '/')
-            {
-                set_error( STATUS_OBJECT_NAME_INVALID );
-                goto error;
-            }
+            file_set_error();
+            goto error;
+        }
 
-            if (stat( name, &st ))
-            {
-                file_set_error();
-                goto error;
-            }
-
-            /* POSIX requires that open(2) throws EOPNOTSUPP when `path` is a Unix
-             * socket. BSD throws EOPNOTSUPP in this case and the additional case of
-             * O_SHLOCK or O_EXLOCK being passed when `path` resides on a filesystem
-             * without lock support. Contrary to POSIX, Linux returns ENXIO in this
-             * case, so we also check that error code here.
+        /* POSIX requires that open(2) throws EOPNOTSUPP when `path` is a Unix
+         * socket. BSD throws EOPNOTSUPP in this case and the additional case of
+         * O_SHLOCK or O_EXLOCK being passed when `path` resides on a filesystem
+         * without lock support. Contrary to POSIX, Linux returns ENXIO in this
+         * case, so we also check that error code here.
+         */
+        if ((open_errno == EOPNOTSUPP || open_errno == ENXIO) && S_ISSOCK(st.st_mode))
+        {
+            /* Windows exposes a bound AF_UNIX socket as a reparse point: opening it
+             * without FILE_OPEN_REPARSE_POINT fails with STATUS_IO_REPARSE_TAG_NOT_HANDLED,
+             * and with the flag it yields a handle that only carries metadata, which is
+             * what O_PATH gives us here.
              */
-            if ((errno == EOPNOTSUPP || errno == ENXIO) && S_ISSOCK(st.st_mode))
+            if (options & FILE_DELETE_ON_CLOSE)
+                ; /* no error, go to regular deletion code path */
+            else if (!(options & FILE_OPEN_REPARSE_POINT))
             {
-                /* Windows exposes a bound AF_UNIX socket as a reparse point: opening it
-                 * without FILE_OPEN_REPARSE_POINT fails with STATUS_IO_REPARSE_TAG_NOT_HANDLED,
-                 * and with the flag it yields a handle that only carries metadata, which is
-                 * what O_PATH gives us here.
-                 */
-                if (options & FILE_DELETE_ON_CLOSE)
-                    ; /* no error, go to regular deletion code path */
-                else if (!(options & FILE_OPEN_REPARSE_POINT))
-                {
-                    set_error( STATUS_IO_REPARSE_TAG_NOT_HANDLED );
-                    goto error;
-                }
-                else
-                {
-#ifdef O_PATH
-                    fd->unix_fd = open( name, O_PATH );
-#endif
-                    if (fd->unix_fd == -1)
-                    {
-                        file_set_error();
-                        goto error;
-                    }
-                }
+                set_error( STATUS_IO_REPARSE_TAG_NOT_HANDLED );
+                goto error;
             }
             else
             {
-                file_set_error();
-                goto error;
+#ifdef O_PATH
+                fd->unix_fd = open( name, O_PATH );
+#endif
+                if (fd->unix_fd == -1)
+                {
+                    file_set_error();
+                    goto error;
+                }
             }
+        }
+        else
+        {
+            file_set_error();
+            goto error;
         }
     }
 
@@ -2039,23 +2074,24 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
             set_error( STATUS_FILE_IS_A_DIRECTORY );
             goto error;
         }
-        if ((err = check_sharing( fd, access, sharing, flags, options )))
+        if ((err = check_sharing( fd, access, sharing, disposition, options )))
         {
             set_error( err );
             goto error;
         }
 
         /* can't unlink files if we don't have permission to access */
-        if ((options & FILE_DELETE_ON_CLOSE) && !(flags & O_CREAT) &&
+        if ((options & FILE_DELETE_ON_CLOSE) &&
+            (disposition == FILE_OPEN || disposition == FILE_OVERWRITE) &&
             !(st.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)))
         {
             set_error( STATUS_CANNOT_DELETE );
             goto error;
         }
 
-        fd->closed->disp_flags = (options & FILE_DELETE_ON_CLOSE) ?
-            FILE_DISPOSITION_DELETE : 0;
-        if (flags & O_TRUNC)
+        fd->closed->disp_flags = (options & FILE_DELETE_ON_CLOSE) ? FILE_DISPOSITION_DELETE : 0;
+
+        if (is_replace_file_disposition( disposition ))
         {
             if (S_ISDIR(st.st_mode))
             {
@@ -2683,6 +2719,89 @@ void default_fd_get_file_info( struct fd *fd, obj_handle_t handle, unsigned int 
     }
 }
 
+static void set_fd_eof( struct fd *fd, file_pos_t eof )
+{
+    struct stat st;
+
+    if (!fd->inode)
+    {
+        set_error( STATUS_OBJECT_TYPE_MISMATCH );
+        return;
+    }
+
+    if (fd->unix_fd == -1)
+    {
+        set_error( fd->no_fd_status );
+        return;
+    }
+    if (fstat( fd->unix_fd, &st) == -1)
+    {
+        file_set_error();
+        return;
+    }
+    if (eof < st.st_size)
+    {
+        struct fd *fd_ptr;
+        LIST_FOR_EACH_ENTRY( fd_ptr, &fd->inode->open, struct fd, inode_entry )
+        {
+            if (fd_ptr->access & FILE_MAPPING_ACCESS)
+            {
+                set_error( STATUS_USER_MAPPED_FILE );
+                return;
+            }
+        }
+        if (ftruncate( fd->unix_fd, eof ) == -1) file_set_error();
+    }
+    else grow_file( fd->unix_fd, eof );
+}
+
+/* default set_file_info() routine */
+void default_fd_set_file_info( struct fd *fd, struct async *async, unsigned int info_class )
+{
+    switch (info_class)
+    {
+    case FileIoCompletionNotificationInformation:
+        {
+            const FILE_IO_COMPLETION_NOTIFICATION_INFORMATION *info = get_req_data();
+
+            if (get_req_data_size() < sizeof(*info))
+            {
+                set_error( STATUS_INFO_LENGTH_MISMATCH );
+                return;
+            }
+
+            if (is_fd_overlapped( fd ))
+            {
+                if (info->Flags & FILE_SKIP_SET_EVENT_ON_HANDLE)
+                    set_fd_signaled( fd, 0 );
+                /* removing flags is not allowed */
+                fd->comp_flags |= info->Flags & ( FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
+                                                | FILE_SKIP_SET_EVENT_ON_HANDLE
+                                                | FILE_SKIP_SET_USER_EVENT_ON_FAST_IO );
+            }
+            else set_error( STATUS_INVALID_PARAMETER );
+            break;
+        }
+
+    case FileEndOfFileInformation:
+        {
+            const FILE_END_OF_FILE_INFORMATION *info = get_req_data();
+
+            if (get_req_data_size() < sizeof(*info))
+            {
+                set_error( STATUS_INVALID_PARAMETER_3 );
+                return;
+            }
+
+            set_fd_eof( fd, info->EndOfFile.QuadPart );
+            break;
+        }
+
+    default:
+        set_error( STATUS_NOT_IMPLEMENTED );
+    }
+}
+
 /* default ioctl() routine */
 void default_fd_ioctl( struct fd *fd, ioctl_code_t code, struct async *async )
 {
@@ -2932,42 +3051,6 @@ failed:
     free( name );
 }
 
-static void set_fd_eof( struct fd *fd, file_pos_t eof )
-{
-    struct stat st;
-
-    if (!fd->inode)
-    {
-        set_error( STATUS_OBJECT_TYPE_MISMATCH );
-        return;
-    }
-
-    if (fd->unix_fd == -1)
-    {
-        set_error( fd->no_fd_status );
-        return;
-    }
-    if (fstat( fd->unix_fd, &st) == -1)
-    {
-        file_set_error();
-        return;
-    }
-    if (eof < st.st_size)
-    {
-        struct fd *fd_ptr;
-        LIST_FOR_EACH_ENTRY( fd_ptr, &fd->inode->open, struct fd, inode_entry )
-        {
-            if (fd_ptr->access & FILE_MAPPING_ACCESS)
-            {
-                set_error( STATUS_USER_MAPPED_FILE );
-                return;
-            }
-        }
-        if (ftruncate( fd->unix_fd, eof ) == -1) file_set_error();
-    }
-    else grow_file( fd->unix_fd, eof );
-}
-
 struct completion *fd_get_completion( struct fd *fd, apc_param_t *p_key )
 {
     *p_key = fd->comp_key;
@@ -3010,6 +3093,33 @@ DECL_HANDLER(get_file_info)
         else set_error( STATUS_OBJECT_TYPE_MISMATCH );
         release_object( fd );
     }
+}
+
+static unsigned int get_set_info_class_access( unsigned int class )
+{
+    switch (class)
+    {
+        case FilePipeInformation: return FILE_WRITE_ATTRIBUTES;
+        default: return 0;
+    }
+}
+
+/* set file info */
+DECL_HANDLER(set_file_info)
+{
+    struct fd *fd = get_handle_fd_obj( current->process, req->handle, get_set_info_class_access( req->info_class ));
+    struct async *async;
+
+    if (!fd) return;
+
+    if ((async = create_request_async( fd, &req->async, 0 )))
+    {
+        if (fd->fd_ops->set_file_info) fd->fd_ops->set_file_info( fd, async, req->info_class );
+        else set_error( STATUS_OBJECT_TYPE_MISMATCH );
+        reply->wait = async_handoff( async, NULL, 1 );
+        release_object( async );
+    }
+    release_object( fd );
 }
 
 /* query volume info */
@@ -3227,27 +3337,6 @@ DECL_HANDLER(add_fd_completion)
     }
 }
 
-/* set fd completion information */
-DECL_HANDLER(set_fd_completion_mode)
-{
-    struct fd *fd = get_handle_fd_obj( current->process, req->handle, 0 );
-    if (fd)
-    {
-        if (is_fd_overlapped( fd ))
-        {
-            if (req->flags & FILE_SKIP_SET_EVENT_ON_HANDLE)
-                set_fd_signaled( fd, 0 );
-            /* removing flags is not allowed */
-            fd->comp_flags |= req->flags & ( FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
-                                           | FILE_SKIP_SET_EVENT_ON_HANDLE
-                                           | FILE_SKIP_SET_USER_EVENT_ON_FAST_IO );
-        }
-        else
-            set_error( STATUS_INVALID_PARAMETER );
-        release_object( fd );
-    }
-}
-
 /* set fd disposition information */
 DECL_HANDLER(set_fd_disp_info)
 {
@@ -3290,17 +3379,6 @@ DECL_HANDLER(set_fd_name_info)
         release_object( fd );
     }
     if (root_fd) release_object( root_fd );
-}
-
-/* set fd eof information */
-DECL_HANDLER(set_fd_eof_info)
-{
-    struct fd *fd = get_handle_fd_obj( current->process, req->handle, 0 );
-    if (fd)
-    {
-        set_fd_eof( fd, req->eof );
-        release_object( fd );
-    }
 }
 
 DECL_HANDLER(unmount_device)

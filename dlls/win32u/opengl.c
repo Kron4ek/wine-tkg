@@ -44,8 +44,6 @@ struct opengl_thread_data
     struct opengl_context  *core_context;    /* dummy core context when no client context is active */
     struct opengl_context  *compat_context;  /* dummy COMPATIBILITY context when no client context is active */
     struct opengl_context  *noerror_context; /* dummy NO_ERROR context when no client context is active */
-
-    struct opengl_drawable *null_surface;  /* dummy surface when no client context is active */
     BOOL                    client_current; /* whether the client context is current */
 };
 
@@ -257,25 +255,30 @@ static void parse_current_extensions( int major, BOOLEAN extensions[GL_EXTENSION
 
 static struct opengl_context *internal_context_create( struct opengl_context_attrs attrs, struct opengl_context *root )
 {
-    struct opengl_context *context;
+    struct opengl_context *context = NULL;
 
-    for (attrs.format = 1; attrs.format <= formats_count; attrs.format++)
+    /* create a context with the requested format or try to use a standard RGB format */
+    if (attrs.format) context = driver_funcs->p_context_create( &attrs, root );
+    if (!context) for (attrs.format = 1; attrs.format <= formats_count; attrs.format++)
     {
         struct wgl_pixel_format *desc = pixel_formats + attrs.format - 1;
         if (!(desc->pfd.dwFlags & PFD_SUPPORT_OPENGL)) continue;
         if (desc->pfd.iPixelType != PFD_TYPE_RGBA) continue;
         if (desc->pfd.cColorBits < 24) continue;
 
-        if (!(context = driver_funcs->p_context_create( &attrs, root ))) continue;
-        context->root_context = root ? root : context;
-        context->attrs = attrs;
-
-        TRACE( "Created internal %s context %p with attrs %s\n", root ? "thread" : "root", context, debugstr_opengl_context_attrs( &attrs ) );
-        return context;
+        if ((context = driver_funcs->p_context_create( &attrs, root ))) break;
     }
 
-    ERR( "Failed to create internal %s context with attrs %s\n", root ? "thread" : "root", debugstr_opengl_context_attrs( &attrs ) );
-    return calloc( 1, sizeof(*context) ); /* return a valid pointer nonetheless */
+    if (!context)
+    {
+        ERR( "Failed to create internal %s context with attrs %s\n", root ? "thread" : "root", debugstr_opengl_context_attrs( &attrs ) );
+        if (!(context = calloc( 1, sizeof(*context) ))) return NULL;
+    }
+    context->root_context = root ? root : context;
+    context->attrs = attrs;
+
+    TRACE( "Created internal %s context %p with attrs %s\n", root ? "thread" : "root", context, debugstr_opengl_context_attrs( &attrs ) );
+    return context;
 }
 
 static struct opengl_context *get_root_context( struct opengl_context_attrs attrs )
@@ -453,31 +456,27 @@ static BOOL opengl_drawable_swap( struct opengl_drawable *drawable )
     return drawable->funcs->swap( drawable );
 }
 
-static struct opengl_drawable *get_null_surface( struct opengl_context *context )
+static struct opengl_context *get_thread_context( struct opengl_context *root, struct opengl_drawable *drawable )
 {
-    struct opengl_thread_data *data = get_opengl_thread_data();
-
-    if (!driver_funcs->p_null_surface_create) return NULL;
-    if (!data->null_surface || data->null_surface->format != context->attrs.format)
-    {
-        if (data->null_surface) opengl_drawable_release( data->null_surface );
-        driver_funcs->p_null_surface_create( context->attrs.format, &data->null_surface );
-        TRACE( "created null surface %p with format %d\n", data->null_surface, context->attrs.format );
-    }
-
-    return data->null_surface;
-}
-
-static struct opengl_context *get_thread_context( struct opengl_context_attrs attrs )
-{
+    struct opengl_context_attrs attrs = root ? root->attrs : core_attrs;
     struct opengl_thread_data *data = get_opengl_thread_data();
     struct opengl_context **context;
+
+    if (!root && !(root = get_root_context( attrs ))) return NULL;
 
     if (attrs.profile & WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB && driver_funcs->broken_sharing) context = &data->compat_context;
     else if (attrs.no_error) context = &data->noerror_context;
     else context = &data->core_context;
 
-    if (!*context) *context = internal_context_create( attrs, get_root_context( attrs ) );
+    /* re-create the context if the drawable we want to activate uses a different format */
+    if (drawable && driver_funcs->context_format) attrs.format = drawable->format;
+    if (*context && (*context)->attrs.format != attrs.format)
+    {
+        driver_funcs->p_context_destroy( *context );
+        *context = NULL;
+    }
+
+    if (!*context) *context = internal_context_create( attrs, root );
     return *context;
 }
 
@@ -493,8 +492,6 @@ static void context_exchange_drawables( struct opengl_context *context, struct o
 static BOOL make_internal_context_current( struct opengl_context *context, struct opengl_drawable *drawable )
 {
     struct opengl_drawable *old_draw, *old_read;
-
-    if (!drawable) drawable = get_null_surface( context );
 
     if (!driver_funcs->p_context_activate( context, drawable, drawable )) return FALSE;
     if (!context->initialized) opengl_context_init( context );
@@ -513,7 +510,7 @@ static BOOL make_internal_context_current( struct opengl_context *context, struc
 
 static BOOL make_thread_context_current( struct opengl_context *root, struct opengl_drawable *drawable )
 {
-    return make_internal_context_current( get_thread_context( root ? root->attrs : core_attrs ), drawable );
+    return make_internal_context_current( get_thread_context( root, drawable ), drawable );
 }
 
 struct vertex
@@ -687,7 +684,7 @@ static struct opengl_drawable *get_target( struct opengl_drawable *drawable, str
     if (drawable->funcs == &framebuffer_surface_funcs)
     {
         struct framebuffer_surface *surface = framebuffer_from_opengl_drawable( drawable );
-        return surface->target ? surface->target : get_null_surface( context );
+        return surface->target;
     }
     return drawable;
 }
@@ -3092,23 +3089,27 @@ static struct opengl_context *win32u_context_create( HDC hdc, struct opengl_cont
         RtlSetLastWin32Error( ERROR_INVALID_PROFILE_ARB );
         return FALSE;
     }
-    if (attrs.flags & ~WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB)
+    if (attrs.flags & ~(WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB | WGL_CONTEXT_DEBUG_BIT_ARB))
     {
-        FIXME( "Unknown WGL_CONTEXT_FLAGS_ARB %#x\n", attrs.flags & ~WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB );
-        attrs.flags &= WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB;
+        FIXME( "Unknown WGL_CONTEXT_FLAGS_ARB %#x\n", attrs.flags & ~(WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB | WGL_CONTEXT_DEBUG_BIT_ARB) );
+        attrs.flags &= (WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB | WGL_CONTEXT_DEBUG_BIT_ARB);
     }
 
-    if ((attrs.major >= 0 && attrs.major < 3) || (attrs.major == 3 && attrs.minor <= 1 && !attrs.flags))
+    if ((attrs.major >= 0 && attrs.major < 3) || (attrs.major == 3 && attrs.minor <= 1 && !(attrs.flags & WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB)))
     {
         WARN( "Ignoring legacy OpenGL version %d.%d\n", attrs.major, attrs.minor == -1 ? 0 : attrs.minor );
         attrs.profile = WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
         attrs.major = attrs.minor = -1;
-        attrs.flags = 0;
+        attrs.flags &= ~WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB;
     }
     else if ((attrs.major > 3 || attrs.minor >= 2) && !attrs.profile)
     {
         WARN( "Using default core profile for context version %d.%d\n", attrs.major, attrs.minor );
         attrs.profile = WGL_CONTEXT_CORE_PROFILE_BIT_ARB;
+    }
+    else if (!attrs.profile)
+    {
+        attrs.profile = WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
     }
 
     if (!(root = get_root_context( attrs )) || (share && share->root_context != root))
@@ -3501,7 +3502,8 @@ static void display_funcs_init(void)
 
     init_enabled_extensions();
 
-    if (egl_init( &driver_funcs )) TRACE( "Initialized EGL library\n" );
+    if (!use_egl) WARN( "EGL is disabled, skipping initialization\n" );
+    else if (egl_init( &driver_funcs )) TRACE( "Initialized EGL library\n" );
 
     if ((status = user_driver->pOpenGLInit( WINE_OPENGL_DRIVER_VERSION, &display_funcs, &driver_funcs )))
         WARN( "Failed to initialize the driver OpenGL functions, status %#x\n", status );
@@ -3677,7 +3679,6 @@ void cleanup_opengl_thread(void)
     if (data->core_context) win32u_context_destroy( data->core_context );
     if (data->compat_context) win32u_context_destroy( data->compat_context );
     if (data->noerror_context) win32u_context_destroy( data->noerror_context );
-    if (data->null_surface) opengl_drawable_release( data->null_surface );
     free( data );
 }
 

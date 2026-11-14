@@ -871,6 +871,8 @@ BOOL wined3d_texture_vk_prepare_texture(struct wined3d_texture_vk *texture_vk,
     if (!wined3d_context_vk_create_image(context_vk, &desc, &texture_vk->image))
         return FALSE;
 
+    ++texture_vk->image_generation;
+
     /* We can't use a zero src access mask without synchronization2. Set the last-used bind mask to something
      * non-zero to avoid this. */
     texture_vk->bind_mask = resource->bind_flags;
@@ -1180,7 +1182,7 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
     unsigned int layer_count;
     VkClearColorValue *c;
     VkResult vr;
-    RECT r;
+    RECT r, framebuffer_rect = *draw_rect;
 
     TRACE("context_vk %p, rt_count %u, fb %p, rect_count %u, clear_rects %p, "
             "draw_rect %s, flags %#x, colour %s, depth %.8e, stencil %#x.\n",
@@ -1238,6 +1240,8 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
 
         if (view->layer_count > layer_count)
             layer_count = view->layer_count;
+        framebuffer_rect.right = min(framebuffer_rect.right, (LONG)view->width);
+        framebuffer_rect.bottom = min(framebuffer_rect.bottom, (LONG)view->height);
 
         ++attachment_count;
     }
@@ -1247,6 +1251,7 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
 
     if (flags & (WINED3DCLEAR_ZBUFFER | WINED3DCLEAR_STENCIL) && (view = fb->depth_stencil))
     {
+        unsigned int rt_sample_count = 0, ds_sample_count;
         DWORD full_flags = 0;
 
         /* Vulkan can clear only depth or stencil, but at the moment we can't put the depth and
@@ -1258,7 +1263,18 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
         if (view->format->stencil_size)
             full_flags |= WINED3DCLEAR_STENCIL;
 
-        if (!wined3d_rendertarget_view_is_full_clear(view, draw_rect, clear_rects) || (flags & full_flags) != full_flags
+        if (rt_count && fb->render_targets[0])
+            rt_sample_count = max(1, wined3d_resource_get_sample_count(fb->render_targets[0]->resource));
+        ds_sample_count = max(1, wined3d_resource_get_sample_count(view->resource));
+
+        if (rt_sample_count && rt_sample_count != ds_sample_count)
+        {
+            WARN("Colour buffers have %u samples, depth stencil has %u samples, disabling ds buffer.\n",
+                    rt_sample_count, ds_sample_count);
+            flags &= ~(WINED3DCLEAR_ZBUFFER | WINED3DCLEAR_STENCIL);
+        }
+        else if (!wined3d_rendertarget_view_is_full_clear(view, draw_rect, clear_rects)
+                || (flags & full_flags) != full_flags
                 || (wined3d_format_is_typeless(view->resource->format) && (depth || stencil)))
         {
             wined3d_rendertarget_view_load_location(view, &context_vk->c, view->resource->draw_binding);
@@ -1275,6 +1291,8 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
 
             if (view->layer_count > layer_count)
                 layer_count = view->layer_count;
+            framebuffer_rect.right = min(framebuffer_rect.right, (LONG)view->width);
+            framebuffer_rect.bottom = min(framebuffer_rect.bottom, (LONG)view->height);
 
             depth_stencil = true;
             ++attachment_count;
@@ -1320,8 +1338,8 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
     fb_desc.renderPass = vk_render_pass;
     fb_desc.attachmentCount = attachment_count;
     fb_desc.pAttachments = views;
-    fb_desc.width = draw_rect->right - draw_rect->left;
-    fb_desc.height = draw_rect->bottom - draw_rect->top;
+    fb_desc.width = framebuffer_rect.right;
+    fb_desc.height = framebuffer_rect.bottom;
     fb_desc.layers = layer_count;
     if ((vr = VK_CALL(vkCreateFramebuffer(device_vk->vk_device, &fb_desc, NULL, &vk_framebuffer))) < 0)
     {
@@ -1342,8 +1360,8 @@ static void vk_blitter_clear_rendertargets(struct wined3d_context_vk *context_vk
     {
         r.left = max(clear_rects[i].left, draw_rect->left);
         r.top = max(clear_rects[i].top, draw_rect->top);
-        r.right = min(clear_rects[i].right, draw_rect->right);
-        r.bottom = min(clear_rects[i].bottom, draw_rect->bottom);
+        r.right = min(clear_rects[i].right, framebuffer_rect.right);
+        r.bottom = min(clear_rects[i].bottom, framebuffer_rect.bottom);
 
         if (r.left >= r.right || r.top >= r.bottom)
             continue;

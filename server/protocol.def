@@ -168,7 +168,7 @@ struct context_data
                  unsigned char regs[80]; } i386_regs;
         struct { struct { unsigned __int64 low, high; } fpregs[32]; } x86_64_regs;
         struct { unsigned __int64 d[32]; unsigned int fpscr; } arm_regs;
-        struct { struct { unsigned __int64 low, high; } q[32]; unsigned int fpcr, fpsr; } arm64_regs;
+        struct { struct { unsigned __int64 low, high; } q[16]; unsigned int fpcr, fpsr; } arm64_regs;
     } fp;  /* selected by SERVER_CTX_FLOATING_POINT */
     union
     {
@@ -187,8 +187,9 @@ struct context_data
     } exec_space;                /* selected by SERVER_CTX_EXEC_SPACE */
     union
     {
-        struct { struct { unsigned __int64 low, high; } ymm_high[16]; } regs;
-    } ymm;                       /* selected by SERVER_CTX_YMM_REGISTERS */
+        struct { struct { unsigned __int64 low, high; } ymm_high[16]; } ymm_regs;
+        struct { struct { unsigned __int64 low, high; } q16[16]; } arm64_regs;
+    } vector;                    /* selected by SERVER_CTX_VECTOR_REGISTERS */
     union
     {
         unsigned __int64 arm64_x18;
@@ -201,7 +202,7 @@ struct context_data
 #define SERVER_CTX_FLOATING_POINT     0x0008
 #define SERVER_CTX_DEBUG_REGISTERS    0x0010
 #define SERVER_CTX_EXTENDED_REGISTERS 0x0020
-#define SERVER_CTX_YMM_REGISTERS      0x0040
+#define SERVER_CTX_VECTOR_REGISTERS   0x0040
 #define SERVER_CTX_EXEC_SPACE         0x0080
 #define SERVER_CTX_TLS                0x0100
 
@@ -773,6 +774,7 @@ enum irp_type
     IRP_CALL_CLOSE,
     IRP_CALL_READ,
     IRP_CALL_WRITE,
+    IRP_CALL_SET_INFO,
     IRP_CALL_FLUSH,
     IRP_CALL_IOCTL,
     IRP_CALL_VOLUME,
@@ -814,6 +816,12 @@ union irp_params
         client_ptr_t     file;      /* opaque ptr for the file object */
         file_pos_t       pos;       /* file position */
     } write;
+    struct
+    {
+        enum irp_type    type;      /* IRP_CALL_SET_INFO */
+        int              class;     /* information class */
+        client_ptr_t     file;      /* opaque ptr for the file object */
+    } set_info;
     struct
     {
         enum irp_type    type;      /* IRP_CALL_FLUSH */
@@ -1723,6 +1731,16 @@ enum server_fd_type
     unsigned int info_class;    /* queried information class */
 @REPLY
     VARARG(data,bytes);         /* file info data */
+@END
+
+/* Set file information */
+@REQ(set_file_info)
+    obj_handle_t handle;        /* handle to the file */
+    struct async_data async;    /* async I/O parameters */
+    unsigned int info_class;    /* queried information class */
+    VARARG(data,bytes);         /* file info data */
+@REPLY
+    obj_handle_t wait;          /* handle to wait on for blocking read */
 @END
 
 /* Query volume information */
@@ -2652,12 +2670,6 @@ enum message_type
 #define NAMED_PIPE_MESSAGE_STREAM_READ  0x0002
 #define NAMED_PIPE_NONBLOCKING_MODE     0x0004
 #define NAMED_PIPE_SERVER_END           0x8000
-
-/* Set named pipe information by handle */
-@REQ(set_named_pipe_info)
-    obj_handle_t   handle;
-    unsigned int   flags;
-@END
 
 /* Create a window */
 @REQ(create_window)
@@ -3681,18 +3693,6 @@ struct handle_info
 @END
 
 
-/* Set mailslot information */
-@REQ(set_mailslot_info)
-    obj_handle_t   handle;        /* handle to the mailslot */
-    timeout_t      read_timeout;
-    unsigned int   flags;
-@REPLY
-    timeout_t      read_timeout;
-    unsigned int   max_msgsize;
-@END
-#define MAILSLOT_SET_READ_TIMEOUT  1
-
-
 /* Create a directory object */
 @REQ(create_directory)
     unsigned int   access;        /* access flags */
@@ -4002,13 +4002,6 @@ struct handle_info
 @END
 
 
-/* set fd completion information */
-@REQ(set_fd_completion_mode)
-    obj_handle_t handle;          /* handle to a file or directory */
-    unsigned int flags;           /* completion notification flags */
-@END
-
-
 /* set fd disposition information */
 @REQ(set_fd_disp_info)
     obj_handle_t handle;          /* handle to a file or directory */
@@ -4025,13 +4018,6 @@ struct handle_info
     unsigned int flags;           /* FILE_RENAME_* flags */
     VARARG(name,unicode_str,namelen); /* NT name */
     VARARG(filename,string);      /* new file name */
-@END
-
-
-/* set fd eof information */
-@REQ(set_fd_eof_info)
-    obj_handle_t handle;        /* handle to a file or directory */
-    file_pos_t   eof;           /* offset of eof of file */
 @END
 
 

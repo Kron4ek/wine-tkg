@@ -400,10 +400,7 @@ enum vsir_opcode
     VSIR_OP_DCL_UAV_TYPED,
     VSIR_OP_DCL_VERTICES_OUT,
     VSIR_OP_DDIV,
-    VSIR_OP_DEF,
     VSIR_OP_DEFAULT,
-    VSIR_OP_DEFB,
-    VSIR_OP_DEFI,
     VSIR_OP_DEQO,
     VSIR_OP_DFMA,
     VSIR_OP_DGEO,
@@ -659,18 +656,15 @@ enum vsir_register_type
 {
     VSIR_REGISTER_TEMP,
     VSIR_REGISTER_INPUT,
-    VSIR_REGISTER_CONST,
     VSIR_REGISTER_ADDR,
     VSIR_REGISTER_TEXTURE,
     VSIR_REGISTER_RASTOUT,
     VSIR_REGISTER_ATTROUT,
     VSIR_REGISTER_TEXCRDOUT,
     VSIR_REGISTER_OUTPUT,
-    VSIR_REGISTER_CONSTINT,
     VSIR_REGISTER_COLOROUT,
     VSIR_REGISTER_DEPTHOUT,
     VSIR_REGISTER_COMBINED_SAMPLER,
-    VSIR_REGISTER_CONSTBOOL,
     VSIR_REGISTER_LOOP,
     VSIR_REGISTER_MISCTYPE,
     VSIR_REGISTER_LABEL,
@@ -1145,7 +1139,10 @@ void vsir_dst_operand_init_ssa(struct vsir_dst_operand *dst, unsigned int idx,
 void vsir_dst_operand_init_ssa_bool(struct vsir_dst_operand *dst, unsigned int idx);
 void vsir_dst_operand_init_ssa_f32(struct vsir_dst_operand *dst, unsigned int idx);
 void vsir_dst_operand_init_ssa_f32v4(struct vsir_dst_operand *dst, unsigned int idx);
+void vsir_dst_operand_init_ssa_scalar(struct vsir_dst_operand *dst,
+        unsigned int idx, enum vsir_data_type data_type);
 void vsir_dst_operand_init_temp_f32v4(struct vsir_dst_operand *dst, unsigned int idx);
+void vsir_dst_operand_init_temp_u32(struct vsir_dst_operand *dst, unsigned int idx);
 
 /* This structure is used by vsir_src_operand_compare(); changes to the
  * structure should be reflected by the comparison function as well. */
@@ -1162,6 +1159,7 @@ struct vsir_src_operand
 void vsir_src_operand_init(struct vsir_src_operand *src, enum vsir_register_type reg_type,
         enum vsir_data_type data_type, unsigned int idx_count);
 void vsir_src_operand_init_const_f32(struct vsir_src_operand *src, float value);
+void vsir_src_operand_init_const_u32(struct vsir_src_operand *src, uint32_t value);
 void vsir_src_operand_init_label(struct vsir_src_operand *src, unsigned int label_id);
 void vsir_src_operand_init_parameter(struct vsir_src_operand *src, uint32_t idx, enum vsir_data_type type);
 void vsir_src_operand_init_parameter_vec4(struct vsir_src_operand *src, uint32_t idx, enum vsir_data_type type);
@@ -1172,7 +1170,10 @@ void vsir_src_operand_init_ssa(struct vsir_src_operand *src, unsigned int idx,
 void vsir_src_operand_init_ssa_bool(struct vsir_src_operand *src, unsigned int idx);
 void vsir_src_operand_init_ssa_f32(struct vsir_src_operand *src, unsigned int idx);
 void vsir_src_operand_init_ssa_f32v4(struct vsir_src_operand *src, unsigned int idx);
+void vsir_src_operand_init_ssa_scalar(struct vsir_src_operand *src,
+        unsigned int idx, enum vsir_data_type data_type);
 void vsir_src_operand_init_temp_f32v4(struct vsir_src_operand *src, unsigned int idx);
+void vsir_src_operand_init_temp_u32(struct vsir_src_operand *src, unsigned int idx);
 
 struct vkd3d_shader_index_range
 {
@@ -2234,6 +2235,20 @@ static inline uint32_t vsir_swizzle_from_writemask(unsigned int writemask)
 
     return swizzles[writemask & 0xf];
 }
+
+static inline uint32_t vsir_combine_swizzles(uint32_t first, uint32_t second)
+{
+    uint32_t ret = 0;
+
+    for (unsigned int i = 0; i < VKD3D_VEC4_SIZE; ++i)
+    {
+        unsigned int s = vsir_swizzle_get_component(second, i);
+        vsir_swizzle_set_component(&ret, i, vsir_swizzle_get_component(first, s));
+    }
+    return ret;
+}
+
+uint32_t vsir_map_swizzle(uint32_t swizzle, unsigned int writemask);
 
 struct vkd3d_struct
 {

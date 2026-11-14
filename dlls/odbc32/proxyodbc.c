@@ -1114,6 +1114,7 @@ static SQLRETURN col_attribute_win32_a( struct statement *stmt, SQLUSMALLINT col
         case SQL_COLUMN_NAME:
         case SQL_COLUMN_TYPE:
         case SQL_COLUMN_DISPLAY_SIZE:
+        case SQL_COLUMN_UNSIGNED:
         case SQL_MAX_COLUMNS_IN_TABLE:
             break;
 
@@ -1918,6 +1919,9 @@ static SQLRETURN describe_col_win32_a( struct statement *stmt, SQLUSMALLINT col_
                                        SQLULEN *col_size, SQLSMALLINT *decimal_digits, SQLSMALLINT *nullable )
 {
     SQLRETURN ret = SQL_ERROR;
+    SQLSMALLINT tmp;
+
+    if (!retlen) retlen = &tmp;
 
     if (stmt->hdr.win32_funcs->SQLDescribeCol)
     {
@@ -1926,17 +1930,14 @@ static SQLRETURN describe_col_win32_a( struct statement *stmt, SQLUSMALLINT col_
     }
     else if (stmt->hdr.win32_funcs->SQLDescribeColW)
     {
-        SQLWCHAR *nameW;
+        SQLWCHAR *nameW = NULL;
         SQLSMALLINT lenW;
 
-        if (!(nameW = malloc( buflen * sizeof(WCHAR) ))) return SQL_ERROR;
+        if (col_name && !(nameW = malloc( buflen * sizeof(WCHAR) ))) return SQL_ERROR;
         ret = stmt->hdr.win32_funcs->SQLDescribeColW( stmt->hdr.win32_handle, col_number, nameW, buflen, &lenW,
                                                       data_type, col_size, decimal_digits, nullable );
-        if (SUCCESS( ret ))
-        {
-            int len = WideCharToMultiByte( CP_ACP, 0, nameW, -1, (char *)col_name, buflen, NULL, NULL );
-            if (retlen) *retlen = len - 1;
-        }
+        if (nameW && SUCCESS( ret ))
+            *retlen = WideCharToMultiByte( CP_ACP, 0, nameW, -1, (char *)col_name, buflen, NULL, NULL ) - 1;
         free( nameW );
     }
 
@@ -6488,6 +6489,9 @@ static SQLRETURN describe_col_win32_w( struct statement *stmt, SQLUSMALLINT col_
                                        SQLULEN *col_size, SQLSMALLINT *decimal_digits, SQLSMALLINT *nullable )
 {
     SQLRETURN ret = SQL_ERROR;
+    SQLSMALLINT tmp;
+
+    if (!name_len) name_len = &tmp;
 
     if (stmt->hdr.win32_funcs->SQLDescribeColW)
     {
@@ -6496,16 +6500,19 @@ static SQLRETURN describe_col_win32_w( struct statement *stmt, SQLUSMALLINT col_
     }
     else if (stmt->hdr.win32_funcs->SQLDescribeCol)
     {
-        SQLCHAR *name = (SQLCHAR*)strdupWA( (WCHAR*)col_name );
+        SQLCHAR *nameA = NULL;
+        SQLSMALLINT lenA;
 
-        ret = stmt->hdr.win32_funcs->SQLDescribeCol( stmt->hdr.win32_handle, col_number, name, buf_len, name_len,
-                                                        data_type, col_size, decimal_digits, nullable);
-        free(name);
+        if (col_name && !(nameA = malloc( buf_len ))) return SQL_ERROR;
+        ret = stmt->hdr.win32_funcs->SQLDescribeCol( stmt->hdr.win32_handle, col_number, nameA, buf_len,
+                &lenA, data_type, col_size, decimal_digits, nullable );
+        if (nameA && SUCCESS(ret))
+            *name_len = MultiByteToWideChar( CP_ACP, 0, (const char *)nameA, -1, col_name, buf_len ) - 1;
+        free( nameA );
     }
 
     if (SUCCESS( ret ) && data_type)
         *data_type = map_type( stmt, FALSE, *data_type );
-
     return ret;
 }
 
@@ -6935,6 +6942,7 @@ static SQLRETURN col_attribute_win32_w( struct statement *stmt, SQLUSMALLINT col
         case SQL_COLUMN_NAME:
         case SQL_COLUMN_TYPE:
         case SQL_COLUMN_DISPLAY_SIZE:
+        case SQL_COLUMN_UNSIGNED:
         case SQL_MAX_COLUMNS_IN_TABLE:
             break;
 

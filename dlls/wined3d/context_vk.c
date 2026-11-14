@@ -2405,7 +2405,7 @@ static void wined3d_context_vk_init_graphics_pipeline_key(struct wined3d_context
     if (vk_info->dynamic_state2)
     {
         dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY_EXT;
-        if (!(context_vk->c.d3d_info->wined3d_creation_flags & WINED3D_NO_PRIMITIVE_RESTART))
+        if (!(context_vk->c.d3d_info->wined3d_creation_flags & WINED3D_LEGACY))
             dynamic_states[dynamic_state_count++] = VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE_EXT;
     }
     if (vk_info->dynamic_patch_vertex_count)
@@ -2866,7 +2866,7 @@ static bool wined3d_context_vk_update_graphics_pipeline_key(struct wined3d_conte
         if (key->ia_desc.topology != vk_topology)
         {
             key->ia_desc.topology = vk_topology;
-            key->ia_desc.primitiveRestartEnable = !(d3d_info->wined3d_creation_flags & WINED3D_NO_PRIMITIVE_RESTART)
+            key->ia_desc.primitiveRestartEnable = !(d3d_info->wined3d_creation_flags & WINED3D_LEGACY)
                     && !wined3d_primitive_type_is_list(state->primitive_type);
 
             update = true;
@@ -2971,7 +2971,8 @@ static bool wined3d_context_vk_update_graphics_pipeline_key(struct wined3d_conte
 }
 
 static bool wined3d_context_vk_begin_render_pass(struct wined3d_context_vk *context_vk,
-        const struct wined3d_state *state, const struct wined3d_vk_info *vk_info)
+        const struct wined3d_state *state, struct wined3d_rendertarget_view *dsv,
+        const struct wined3d_vk_info *vk_info)
 {
     struct wined3d_device_vk *device_vk = wined3d_device_vk(context_vk->c.device);
     VkClearValue clear_values[WINED3D_MAX_RENDER_TARGETS + 1];
@@ -3045,7 +3046,7 @@ static bool wined3d_context_vk_begin_render_pass(struct wined3d_context_vk *cont
         ++attachment_count;
     }
 
-    if ((view = state->fb.depth_stencil))
+    if ((view = dsv))
     {
         rtv_vk = wined3d_rendertarget_view_vk(view);
 
@@ -3094,7 +3095,7 @@ static bool wined3d_context_vk_begin_render_pass(struct wined3d_context_vk *cont
     }
 
     if (!(context_vk->vk_render_pass = wined3d_context_vk_get_render_pass(context_vk, &state->fb,
-            ARRAY_SIZE(state->fb.render_targets), !!state->fb.depth_stencil, 0)))
+            ARRAY_SIZE(state->fb.render_targets), !!dsv, 0)))
     {
         ERR("Failed to get render pass.\n");
         return false;
@@ -3463,16 +3464,7 @@ static bool wined3d_shader_descriptor_writes_vk_add_srv_write(struct wined3d_sha
     }
     else
     {
-        struct wined3d_texture_vk *texture_vk = wined3d_texture_vk(texture_from_resource(resource));
-
-        if (view_vk->u.vk_image_info.imageView)
-        {
-            image_info = &view_vk->u.vk_image_info;
-            if (image_info->imageLayout != texture_vk->layout)
-                wined3d_shader_resource_view_vk_update_layout(srv_vk, texture_vk->layout);
-        }
-        else
-            image_info = wined3d_texture_vk_get_default_image_info(texture_vk, context_vk);
+        image_info = wined3d_shader_resource_view_vk_get_image_info(srv_vk, context_vk);
         buffer_view = NULL;
         type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     }
@@ -4019,6 +4011,21 @@ VkCommandBuffer wined3d_context_vk_apply_draw_state(struct wined3d_context_vk *c
 
     if ((dsv = state->fb.depth_stencil))
     {
+        sample_count = max(1, wined3d_resource_get_sample_count(dsv->resource));
+        if (!context_vk->sample_count)
+        {
+            context_vk->sample_count = sample_count;
+        }
+        else if (context_vk->sample_count != sample_count)
+        {
+            WARN("Colour buffers have %u samples, depth stencil has %u samples, disabling ds buffer.\n",
+                    context_vk->sample_count, sample_count);
+            dsv = NULL;
+        }
+    }
+
+    if (dsv)
+    {
         if (wined3d_state_uses_depth_buffer(state))
             wined3d_context_vk_prepare_used_rtv(context_vk, dsv);
         else
@@ -4026,12 +4033,6 @@ VkCommandBuffer wined3d_context_vk_apply_draw_state(struct wined3d_context_vk *c
 
         if (!state->depth_stencil_state || state->depth_stencil_state->writes_ds)
             invalidate_ds = true;
-
-        sample_count = max(1, wined3d_resource_get_sample_count(dsv->resource));
-        if (!context_vk->sample_count)
-            context_vk->sample_count = sample_count;
-        else if (context_vk->sample_count != sample_count)
-            FIXME("Inconsistent sample counts (%u != %u).\n", context_vk->sample_count, sample_count);
     }
 
     if (!context_vk->sample_count)
@@ -4059,7 +4060,7 @@ VkCommandBuffer wined3d_context_vk_apply_draw_state(struct wined3d_context_vk *c
     if (wined3d_context_is_graphics_state_dirty(&context_vk->c, STATE_FRAMEBUFFER))
         wined3d_context_vk_end_current_render_pass(context_vk);
 
-    if (!wined3d_context_vk_begin_render_pass(context_vk, state, vk_info))
+    if (!wined3d_context_vk_begin_render_pass(context_vk, state, dsv, vk_info))
     {
         ERR("Failed to begin render pass.\n");
         return VK_NULL_HANDLE;
@@ -4237,7 +4238,7 @@ VkCommandBuffer wined3d_context_vk_apply_draw_state(struct wined3d_context_vk *c
     if (vk_info->dynamic_state2 && context_vk->c.update_primitive_type)
     {
         VK_CALL(vkCmdSetPrimitiveTopologyEXT(vk_command_buffer, vk_topology_from_wined3d(state->primitive_type)));
-        if (!(d3d_info->wined3d_creation_flags & WINED3D_NO_PRIMITIVE_RESTART))
+        if (!(d3d_info->wined3d_creation_flags & WINED3D_LEGACY))
             VK_CALL(vkCmdSetPrimitiveRestartEnableEXT(vk_command_buffer,
                     !wined3d_primitive_type_is_list(state->primitive_type)));
         context_vk->c.update_primitive_type = 0;

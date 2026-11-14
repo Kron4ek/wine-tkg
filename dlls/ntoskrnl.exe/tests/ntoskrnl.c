@@ -1235,7 +1235,11 @@ static void test_object_info(void)
     OBJECT_TYPE_INFORMATION *type_info = (OBJECT_TYPE_INFORMATION *)buffer;
     FILE_FS_VOLUME_INFORMATION *volume_info = (FILE_FS_VOLUME_INFORMATION *)buffer;
     FILE_NAME_INFORMATION *file_info = (FILE_NAME_INFORMATION *)buffer;
+    FILE_POSITION_INFORMATION position_info;
     FILE_FS_DEVICE_INFORMATION device_info;
+    LARGE_INTEGER offset;
+    LONGLONG ret_offset;
+    unsigned int position;
     HANDLE file;
     NTSTATUS status;
     IO_STATUS_BLOCK io;
@@ -1273,6 +1277,74 @@ static void test_object_info(void)
     ok(device_info.DeviceType == FILE_DEVICE_UNKNOWN, "Got type %#lx.\n", device_info.DeviceType);
     ok(device_info.Characteristics == (FILE_DEVICE_SECURE_OPEN | FILE_FLOPPY_DISKETTE | FILE_PORTABLE_DEVICE),
             "Got characteristics %#lx.\n", device_info.Characteristics);
+
+    io.Status = 0xdeadf00d;
+    io.Information = 0xdeadf00d;
+    position_info.CurrentByteOffset.QuadPart = 0x1234;
+    status = NtSetInformationFile(device, &io, &position_info, sizeof(position_info), FilePositionInformation);
+    ok(!status, "got %#lx\n", status);
+    ok(!io.Status, "got status %#lx\n", io.Status);
+    ok(!io.Information, "got information %Iu\n", io.Information);
+
+    position = 0xbeef;
+    status = NtDeviceIoControlFile(device, NULL, NULL, NULL, &io, IOCTL_WINETEST_GET_POSITION, NULL, 0, &position, sizeof(position));
+    ok(!status, "got %#lx\n", status);
+    ok(position == 0x1234, "got %#x\n", position);
+
+    file = CreateFileA("\\\\.\\WineTestDriver", FILE_READ_DATA | FILE_WRITE_DATA, 0, NULL, OPEN_EXISTING, 0, NULL);
+    ok(file != INVALID_HANDLE_VALUE, "got error %lu\n", GetLastError());
+
+    position_info.CurrentByteOffset.QuadPart = 0x55;
+    status = NtSetInformationFile(file, &io, &position_info, sizeof(position_info), FilePositionInformation);
+    ok(!status, "got %#lx\n", status);
+
+    io.Status = 0xdeadf00d;
+    io.Information = 0xdeadf00d;
+    position_info.CurrentByteOffset.QuadPart = 0xab;
+    status = NtSetInformationFile(file, &io, &position_info, sizeof(position_info), FileEndOfFileInformation);
+    ok(!status, "got %#lx\n", status);
+    ok(!io.Status, "got status %#lx\n", io.Status);
+    ok(!io.Information, "got information %Iu\n", io.Information);
+
+    position = 0xbeef;
+    status = NtDeviceIoControlFile(file, NULL, NULL, NULL, &io, IOCTL_WINETEST_GET_POSITION, NULL, 0, &position, sizeof(position));
+    ok(!status, "got %#lx\n", status);
+    ok(position == 0x55, "got %#x\n", position);
+
+    ret_offset = 0xdeadbeef;
+    status = NtReadFile(file, NULL, NULL, NULL, &io, &ret_offset, sizeof(ret_offset), NULL, NULL);
+    ok(!status, "got status %#lx\n", status);
+    ok(ret_offset == 0x55, "got %#I64x\n", ret_offset);
+
+    ret_offset = 0xdeadbeef;
+    offset.QuadPart = 0x2345;
+    status = NtReadFile(file, NULL, NULL, NULL, &io, &ret_offset, sizeof(ret_offset), &offset, NULL);
+    ok(!status, "got status %#lx\n", status);
+    ok(ret_offset == 0x2345, "got %#I64x\n", ret_offset);
+
+    position = 0xbeef;
+    status = NtDeviceIoControlFile(file, NULL, NULL, NULL, &io, IOCTL_WINETEST_GET_POSITION, NULL, 0, &position, sizeof(position));
+    ok(!status, "got %#lx\n", status);
+    ok(position == 0x55, "got %#x\n", position);
+
+    ret_offset = 0xdeadbeef;
+    offset.QuadPart = (LONGLONG)-2; /* FILE_USE_FILE_POINTER_POSITION */
+    status = NtReadFile(file, NULL, NULL, NULL, &io, &ret_offset, sizeof(ret_offset), &offset, NULL);
+    ok(!status, "got status %#lx\n", status);
+    ok(ret_offset == 0x55, "got %#I64x\n", ret_offset);
+
+    position = 0xbeef;
+    status = NtDeviceIoControlFile(file, NULL, NULL, NULL, &io, IOCTL_WINETEST_GET_POSITION, NULL, 0, &position, sizeof(position));
+    ok(!status, "got %#lx\n", status);
+    ok(position == 0x55, "got %#x\n", position);
+
+    io.Information = 0xdeadbeef;
+    offset.QuadPart = (LONGLONG)-1; /* FILE_WRITE_TO_END_OF_FILE */
+    status = NtWriteFile(file, NULL, NULL, NULL, &io, buffer, sizeof(buffer), &offset, NULL);
+    ok(!status, "got status %#lx\n", status);
+    ok(io.Information == 1, "got %#Ix\n", io.Information);
+
+    CloseHandle(file);
 
     file = CreateFileA("\\\\.\\WineTestDriver\\subfile", 0, 0, NULL, OPEN_EXISTING, 0, NULL);
     todo_wine ok(file != INVALID_HANDLE_VALUE, "got error %lu\n", GetLastError());
@@ -1713,9 +1785,14 @@ static LRESULT WINAPI device_notify_proc(HWND window, UINT message, WPARAM wpara
             ok(!iface->dbcc_reserved, "got reserved %#lx\n", iface->dbcc_reserved);
             if (IsEqualGUID(&iface->dbcc_classguid, &bus_class))
             {
+                static const char *expected_iface;
+
                 ++got_bus_arrival;
-                ok(!strcmp(iface->dbcc_name, "\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}"),
-                        "got name %s\n", debugstr_a(iface->dbcc_name));
+                if (got_bus_arrival == 1)
+                    expected_iface = "\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}";
+                else
+                    expected_iface = "\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}\\Iface2";
+                ok(!strcmp(iface->dbcc_name, expected_iface), "got name %s\n", debugstr_a(iface->dbcc_name));
             }
             else if (IsEqualGUID(&iface->dbcc_classguid, &child_class))
             {
@@ -1741,9 +1818,14 @@ static LRESULT WINAPI device_notify_proc(HWND window, UINT message, WPARAM wpara
             ok(!iface->dbcc_reserved, "got reserved %#lx\n", iface->dbcc_reserved);
             if (IsEqualGUID(&iface->dbcc_classguid, &bus_class))
             {
+                static const char *expected_iface;
+
                 ++got_bus_removal;
-                ok(!strcmp(iface->dbcc_name, "\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}"),
-                        "got name %s\n", debugstr_a(iface->dbcc_name));
+                if (got_bus_removal == 1)
+                    expected_iface = "\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}";
+                else
+                    expected_iface = "\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}\\Iface2";
+                ok(!strcmp(iface->dbcc_name, expected_iface), "got name %s\n", debugstr_a(iface->dbcc_name));
             }
             else if (IsEqualGUID(&iface->dbcc_classguid, &child_class))
             {
@@ -1928,8 +2010,9 @@ static void CALLBACK devquery_notify_callback(HDEVQUERY devquery, void *user_dat
             trace("%s\n", debugstr_DEV_QUERY_RESULT_ACTION_DATA(action_data));
         if (obj->ObjectType != DevObjectTypeDeviceInterfaceDisplay)
             break;
-        ok(!wcsicmp(obj->pszObjectId, L"\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}") ||
-                !wcsicmp(obj->pszObjectId, L"\\\\?\\Wine#Test#1#{deadbeef-29ef-4538-a5fd-b69573a362c2}"),
+        ok(!wcscmp(obj->pszObjectId, L"\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}") ||
+                !wcscmp(obj->pszObjectId, L"\\\\?\\Wine#Test#1#{deadbeef-29ef-4538-a5fd-b69573a362c2}") ||
+                !wcscmp(obj->pszObjectId, L"\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}\\Iface2"),
             "got pszObjectId %s\n", debugstr_w(obj->pszObjectId));
         ok(obj->cPropertyCount == 1, "got cPropertyCount %lu\n", obj->cPropertyCount);
         ok(!!obj->pProperties, "got pProperties %p\n", obj->pProperties);
@@ -1943,11 +2026,21 @@ static void CALLBACK devquery_notify_callback(HDEVQUERY devquery, void *user_dat
         if (prop->BufferSize == sizeof(DEVPROP_BOOLEAN) && prop->Type == DEVPROP_TYPE_BOOLEAN &&
             !*(DEVPROP_BOOLEAN *)prop->Buffer)
         {
-            if (!wcsicmp(obj->pszObjectId, L"\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}"))
+            if (!wcscmp(obj->pszObjectId, L"\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}") ||
+                    !wcscmp(obj->pszObjectId, L"\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}\\Iface2"))
                 data->bus_dev_removed++;
-            else if (!wcsicmp(obj->pszObjectId, L"\\\\?\\Wine#Test#1#{deadbeef-29ef-4538-a5fd-b69573a362c2}"))
+            else if (!wcscmp(obj->pszObjectId, L"\\\\?\\Wine#Test#1#{deadbeef-29ef-4538-a5fd-b69573a362c2}"))
                 data->child_dev_removed++;
             ReleaseSemaphore(data->device_removed_sem, 1, NULL);
+        }
+        else if (prop->BufferSize == sizeof(DEVPROP_BOOLEAN) && prop->Type == DEVPROP_TYPE_BOOLEAN &&
+                *(DEVPROP_BOOLEAN *)prop->Buffer)
+        {
+            if (!wcscmp(obj->pszObjectId, L"\\\\?\\ROOT#WINETEST#0#{deadbeef-29ef-4538-a5fd-b69573a362c1}\\Iface2"))
+            {
+                data->bus_dev_added++;
+                ReleaseSemaphore(data->device_added_sem, 1, NULL);
+            }
         }
         break;
     }
@@ -2129,17 +2222,32 @@ static void test_pnp_devices(void)
     ok(iface.Flags == SPINT_ACTIVE, "got flags %#lx\n", iface.Flags);
     SetupDiDestroyDeviceInfoList(set);
 
+    /* Enable interface of same class but with a refstr. */
+    ret = DeviceIoControl(bus, IOCTL_WINETEST_BUS_ENABLE_REFSTR_IFACE, NULL, 0, NULL, 0, &size, NULL);
+    ok(ret, "got error %lu\n", GetLastError());
+
+    pump_messages();
+    todo_wine ok(got_bus_arrival == 2, "got %u bus arrival messages\n", got_bus_arrival);
+    ok(!got_bus_removal, "got %u bus removal messages\n", got_bus_removal);
+    if (have_devquery && got_bus_arrival == 2)
+    {
+        status = WaitForSingleObject(devquery_data.device_added_sem, 1000);
+        ok(!status, "WaitForSingleObject failed, error %lu\n", status);
+        ok(devquery_data.bus_dev_added == 2, "got %lu new bus device objects\n", devquery_data.bus_dev_added);
+        ok(!devquery_data.bus_dev_removed, "got %lu bus device object removals\n", devquery_data.bus_dev_removed);
+    }
+
     ret = DeviceIoControl(bus, IOCTL_WINETEST_BUS_DISABLE_IFACE, NULL, 0, NULL, 0, &size, NULL);
     ok(ret, "got error %lu\n", GetLastError());
 
     pump_messages();
-    ok(got_bus_arrival == 1, "got %u bus arrival messages\n", got_bus_arrival);
+    todo_wine ok(got_bus_arrival == 2, "got %u bus arrival messages\n", got_bus_arrival);
     ok(got_bus_removal == 1, "got %u bus removal messages\n", got_bus_removal);
     if (have_devquery)
     {
         status = WaitForSingleObject(devquery_data.device_removed_sem, 1000);
         ok(!status, "WaitForSingleObject failed, error %lu\n", status);
-        ok(devquery_data.bus_dev_added == 1, "got %lu new bus device objects\n", devquery_data.bus_dev_added);
+        todo_wine ok(devquery_data.bus_dev_added == 2, "got %lu new bus device objects\n", devquery_data.bus_dev_added);
         ok(devquery_data.bus_dev_removed == 1, "got %lu bus device object removals\n", devquery_data.bus_dev_removed);
     }
 
@@ -2151,6 +2259,20 @@ static void test_pnp_devices(void)
             "wrong class %s\n", debugstr_guid(&iface.InterfaceClassGuid));
     ok(!iface.Flags, "got flags %#lx\n", iface.Flags);
     SetupDiDestroyDeviceInfoList(set);
+
+    ret = DeviceIoControl(bus, IOCTL_WINETEST_BUS_DISABLE_REFSTR_IFACE, NULL, 0, NULL, 0, &size, NULL);
+    ok(ret, "got error %lu\n", GetLastError());
+
+    pump_messages();
+    todo_wine ok(got_bus_arrival == 2, "got %u bus arrival messages\n", got_bus_arrival);
+    todo_wine ok(got_bus_removal == 2, "got %u bus removal messages\n", got_bus_removal);
+    if (have_devquery && got_bus_removal == 2)
+    {
+        status = WaitForSingleObject(devquery_data.device_removed_sem, 1000);
+        ok(!status, "WaitForSingleObject failed, error %lu\n", status);
+        ok(devquery_data.bus_dev_added == 2, "got %lu new bus device objects\n", devquery_data.bus_dev_added);
+        ok(devquery_data.bus_dev_removed == 2, "got %lu bus device object removals\n", devquery_data.bus_dev_removed);
+    }
 
     set = SetupDiGetClassDevsA(&bus_class, NULL, NULL, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
     ok(set != INVALID_HANDLE_VALUE, "failed to get device list, error %#lx\n", GetLastError());

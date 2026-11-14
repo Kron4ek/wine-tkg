@@ -148,6 +148,18 @@ typedef struct _wine_modref
     BOOL                  system;
 } WINE_MODREF;
 
+/* context passed around when resolving imports */
+struct import_context
+{
+    const WCHAR            *load_path;
+    WINE_MODREF            *importer;
+    HMODULE                 module;
+    IMAGE_EXPORT_DIRECTORY *exports;
+    DWORD                   exp_size;
+    BOOL                    dynamic;
+    int                     fwd_depth;
+};
+
 static UINT tls_module_count = 32;     /* number of modules with TLS directory */
 static IMAGE_TLS_DIRECTORY *tls_dirs;  /* array of TLS directories */
 
@@ -198,12 +210,8 @@ static LDR_DDAG_NODE *node_ntdll, *node_kernel32;
 
 static NTSTATUS load_dll( const WCHAR *load_path, const WCHAR *libname, DWORD flags, WINE_MODREF** pwm, BOOL system );
 static NTSTATUS process_attach( LDR_DDAG_NODE *node, LPVOID lpReserved );
-static FARPROC find_ordinal_export( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,
-                                    DWORD exp_size, DWORD ordinal, LPCWSTR load_path,
-                                    WINE_MODREF *importer, BOOL is_dynamic );
-static FARPROC find_named_export( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports, DWORD exp_size,
-                                  const char *name, int hint, LPCWSTR load_path,
-                                  WINE_MODREF *importer, BOOL is_dynamic );
+static NTSTATUS find_ordinal_export( const struct import_context *context, DWORD ordinal, FARPROC *proc );
+static NTSTATUS find_named_export( const struct import_context *context, const char *name, int hint, FARPROC *proc );
 
 /* check whether the file name contains a path */
 static inline BOOL contains_path( LPCWSTR name )
@@ -953,28 +961,29 @@ static NTSTATUS walk_node_dependencies( LDR_DDAG_NODE *node, void *context,
  * Find the final function pointer for a forwarded function.
  * The loader_section must be locked while calling this function.
  */
-static FARPROC find_forwarded_export( HMODULE module, const char *forward, LPCWSTR load_path, WINE_MODREF *importer, BOOL is_dynamic )
+static NTSTATUS find_forwarded_export( const struct import_context *imp_context, const char *forward,
+                                       FARPROC *proc )
 {
-    const IMAGE_EXPORT_DIRECTORY *exports;
-    DWORD exp_size;
     WINE_MODREF *wm;
     WCHAR mod_name[256];
     const char *end = strrchr(forward, '.');
-    FARPROC proc = NULL;
+    NTSTATUS status = STATUS_PROCEDURE_NOT_FOUND;
     BOOL wm_loaded = FALSE;
+    struct import_context context = *imp_context;
 
-    if (!end) return NULL;
-    if (build_import_name( importer, mod_name, forward, end - forward )) return NULL;
+    if (!end) return status;
+    if (build_import_name( context.importer, mod_name, forward, end - forward )) return status;
+    if (context.fwd_depth++ >= 32) return STATUS_INVALID_IMAGE_FORMAT;
 
     if (!(wm = find_basename_module( mod_name )))
     {
-        WINE_MODREF *imp = get_modref( module );
+        WINE_MODREF *imp = get_modref( imp_context->module );
         TRACE( "delay loading %s for '%s'\n", debugstr_w(mod_name), forward );
-        if (load_dll( load_path, mod_name, 0, &wm, imp->system ) != STATUS_SUCCESS)
+        if (load_dll( context.load_path, mod_name, 0, &wm, imp->system ) != STATUS_SUCCESS)
         {
             ERR( "module not found for forward '%s' used by %s\n",
                  forward, debugstr_w(imp->ldr.FullDllName.Buffer) );
-            return NULL;
+            return status;
         }
         wm_loaded = TRUE;
     }
@@ -983,38 +992,32 @@ static FARPROC find_forwarded_export( HMODULE module, const char *forward, LPCWS
     {
         /* Prepare for the callee stealing the reference */
         if (!wm_loaded && wm->ldr.LoadCount != -1) wm->ldr.LoadCount++;
-        add_module_dependency( importer->ldr.DdagNode, wm->ldr.DdagNode );
-        if (is_dynamic && wm_loaded && process_attach( wm->ldr.DdagNode, NULL ) != STATUS_SUCCESS)
+        add_module_dependency( context.importer->ldr.DdagNode, wm->ldr.DdagNode );
+        if (context.dynamic && wm_loaded && process_attach( wm->ldr.DdagNode, NULL ) != STATUS_SUCCESS)
         {
             ERR( "process_attach failed for forward '%s' used by %s\n",
-                 forward, debugstr_w(get_modref( module )->ldr.FullDllName.Buffer) );
+                 forward, debugstr_w( get_modref(imp_context->module)->ldr.FullDllName.Buffer ));
             LdrUnloadDll( wm->ldr.DllBase );
-            return NULL;
+            return status;
         }
     }
 
-    if ((exports = RtlImageDirectoryEntryToData( wm->ldr.DllBase, TRUE,
-                                                 IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size )))
+    context.module = wm->ldr.DllBase;
+    if ((context.exports = RtlImageDirectoryEntryToData( context.module, TRUE,
+                                                         IMAGE_DIRECTORY_ENTRY_EXPORT, &context.exp_size )))
     {
         const char *name = end + 1;
 
-        if (*name == '#') { /* ordinal */
-            proc = find_ordinal_export( wm->ldr.DllBase, exports, exp_size,
-                                        atoi(name+1) - exports->Base, load_path,
-                                        importer, is_dynamic );
-        } else
-            proc = find_named_export( wm->ldr.DllBase, exports, exp_size, name, -1, load_path,
-                                      importer, is_dynamic );
+        if (*name == '#') /* ordinal */
+            status = find_ordinal_export( &context, atoi(name + 1) - context.exports->Base, proc );
+        else
+            status = find_named_export( &context, name, -1, proc );
     }
 
-    if (!proc)
-    {
-        ERR("function not found for forward '%s' used by %s."
-            " If you are using builtin %s, try using the native one instead.\n",
-            forward, debugstr_w(get_modref(module)->ldr.FullDllName.Buffer),
-            debugstr_w(get_modref(module)->ldr.BaseDllName.Buffer) );
-    }
-    return proc;
+    if (status) ERR( "function not found for forward '%s' used by %s.\n",
+                     forward, debugstr_w( get_modref(imp_context->module)->ldr.FullDllName.Buffer ));
+
+    return status;
 }
 
 
@@ -1025,38 +1028,35 @@ static FARPROC find_forwarded_export( HMODULE module, const char *forward, LPCWS
  * The exports base must have been subtracted from the ordinal already.
  * The loader_section must be locked while calling this function.
  */
-static FARPROC find_ordinal_export( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,
-                                    DWORD exp_size, DWORD ordinal, LPCWSTR load_path,
-                                    WINE_MODREF *importer, BOOL is_dynamic )
+static NTSTATUS find_ordinal_export( const struct import_context *context, DWORD ordinal, FARPROC *ret )
 {
     FARPROC proc;
-    const DWORD *functions = get_rva( module, exports->AddressOfFunctions );
+    const DWORD *functions = get_rva( context->module, context->exports->AddressOfFunctions );
 
-    if (ordinal >= exports->NumberOfFunctions)
-    {
-        TRACE("	ordinal %ld out of range!\n", ordinal + exports->Base );
-        return NULL;
-    }
-    if (!functions[ordinal]) return NULL;
+    if (ordinal >= context->exports->NumberOfFunctions) return STATUS_PROCEDURE_NOT_FOUND;
+    if (!functions[ordinal]) return STATUS_PROCEDURE_NOT_FOUND;
 
-    proc = get_rva( module, functions[ordinal] );
+    proc = get_rva( context->module, functions[ordinal] );
 
     /* if the address falls into the export dir, it's a forward */
-    if (((const char *)proc >= (const char *)exports) && 
-        ((const char *)proc < (const char *)exports + exp_size))
-        return find_forwarded_export( module, (const char *)proc, load_path, importer, is_dynamic );
+    if ((const char *)proc >= (const char *)context->exports &&
+        (const char *)proc < (const char *)context->exports + context->exp_size)
+        return find_forwarded_export( context, (const char *)proc, ret );
 
     if (TRACE_ON(snoop))
     {
-        const WCHAR *user = !is_dynamic ? importer->ldr.BaseDllName.Buffer : NULL;
-        proc = SNOOP_GetProcAddress( module, exports, exp_size, proc, ordinal, user );
+        const WCHAR *user = !context->dynamic ? context->importer->ldr.BaseDllName.Buffer : NULL;
+        proc = SNOOP_GetProcAddress( context->module, context->exports, context->exp_size,
+                                     proc, ordinal, user );
     }
     if (TRACE_ON(relay))
     {
-        const WCHAR *user = !is_dynamic ? importer->ldr.BaseDllName.Buffer : NULL;
-        proc = RELAY_GetProcAddress( module, exports, exp_size, proc, ordinal, user );
+        const WCHAR *user = !context->dynamic ? context->importer->ldr.BaseDllName.Buffer : NULL;
+        proc = RELAY_GetProcAddress( context->module, context->exports, context->exp_size,
+                                     proc, ordinal, user );
     }
-    return proc;
+    *ret = proc;
+    return STATUS_SUCCESS;
 }
 
 
@@ -1089,26 +1089,25 @@ static int find_name_in_exports( HMODULE module, const IMAGE_EXPORT_DIRECTORY *e
  * Find an exported function by name.
  * The loader_section must be locked while calling this function.
  */
-static FARPROC find_named_export( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports, DWORD exp_size,
-                                  const char *name, int hint, LPCWSTR load_path, WINE_MODREF *importer,
-                                  BOOL is_dynamic )
+static NTSTATUS find_named_export( const struct import_context *context, const char *name, int hint,
+                                   FARPROC *proc )
 {
-    const WORD *ordinals = get_rva( module, exports->AddressOfNameOrdinals );
-    const DWORD *names = get_rva( module, exports->AddressOfNames );
+    const WORD *ordinals = get_rva( context->module, context->exports->AddressOfNameOrdinals );
+    const DWORD *names = get_rva( context->module, context->exports->AddressOfNames );
     int ordinal;
 
     /* first check the hint */
-    if (hint >= 0 && hint < exports->NumberOfNames)
+    if (hint >= 0 && hint < context->exports->NumberOfNames)
     {
-        char *ename = get_rva( module, names[hint] );
+        char *ename = get_rva( context->module, names[hint] );
         if (!strcmp( ename, name ))
-            return find_ordinal_export( module, exports, exp_size, ordinals[hint], load_path, importer, is_dynamic );
+            return find_ordinal_export( context, ordinals[hint], proc );
     }
 
     /* then do a binary search */
-    if ((ordinal = find_name_in_exports( module, exports, name )) == -1) return NULL;
-    return find_ordinal_export( module, exports, exp_size, ordinal, load_path, importer, is_dynamic );
-
+    if ((ordinal = find_name_in_exports( context->module, context->exports, name )) == -1)
+        return STATUS_PROCEDURE_NOT_FOUND;
+    return find_ordinal_export( context, ordinal, proc );
 }
 
 
@@ -1151,9 +1150,6 @@ static BOOL import_dll( WINE_MODREF *wm, const IMAGE_IMPORT_DESCRIPTOR *descr, L
     BOOL system = wm->system || (wm->ldr.Flags & LDR_WINE_INTERNAL);
     NTSTATUS status;
     WINE_MODREF *wmImp;
-    HMODULE imp_mod;
-    const IMAGE_EXPORT_DIRECTORY *exports;
-    DWORD exp_size;
     const IMAGE_THUNK_DATA *import_list;
     IMAGE_THUNK_DATA *thunk_list;
     WCHAR buffer[256];
@@ -1162,6 +1158,7 @@ static BOOL import_dll( WINE_MODREF *wm, const IMAGE_IMPORT_DESCRIPTOR *descr, L
     PVOID protect_base;
     SIZE_T protect_size = 0;
     DWORD protect_old;
+    struct import_context context = { .load_path = load_path, .importer = wm };
 
     thunk_list = get_rva( module, (DWORD)descr->FirstThunk );
     if (descr->OriginalFirstThunk)
@@ -1198,10 +1195,9 @@ static BOOL import_dll( WINE_MODREF *wm, const IMAGE_IMPORT_DESCRIPTOR *descr, L
     NtProtectVirtualMemory( NtCurrentProcess(), &protect_base,
                             &protect_size, PAGE_READWRITE, &protect_old );
 
-    imp_mod = wmImp->ldr.DllBase;
-    exports = RtlImageDirectoryEntryToData( imp_mod, TRUE, IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size );
-
-    if (!exports)
+    context.module = wmImp->ldr.DllBase;
+    if (!(context.exports = RtlImageDirectoryEntryToData( context.module, TRUE,
+                                                          IMAGE_DIRECTORY_ENTRY_EXPORT, &context.exp_size )))
     {
         /* set all imported function to deadbeef */
         while (import_list->u1.Ordinal)
@@ -1233,9 +1229,8 @@ static BOOL import_dll( WINE_MODREF *wm, const IMAGE_IMPORT_DESCRIPTOR *descr, L
         {
             int ordinal = IMAGE_ORDINAL(import_list->u1.Ordinal);
 
-            thunk_list->u1.Function = (ULONG_PTR)find_ordinal_export( imp_mod, exports, exp_size,
-                                                                      ordinal - exports->Base, load_path, wm, FALSE );
-            if (!thunk_list->u1.Function)
+            if (find_ordinal_export( &context, ordinal - context.exports->Base,
+                                     (FARPROC *)&thunk_list->u1.Function ))
             {
                 thunk_list->u1.Function = allocate_stub( name, IntToPtr(ordinal) );
                 WARN("No implementation for %s.%d imported from %s, setting to %p\n",
@@ -1246,12 +1241,9 @@ static BOOL import_dll( WINE_MODREF *wm, const IMAGE_IMPORT_DESCRIPTOR *descr, L
         }
         else  /* import by name */
         {
-            IMAGE_IMPORT_BY_NAME *pe_name;
-            pe_name = get_rva( module, (DWORD)import_list->u1.AddressOfData );
-            thunk_list->u1.Function = (ULONG_PTR)find_named_export( imp_mod, exports, exp_size,
-                                                                    (const char*)pe_name->Name,
-                                                                    pe_name->Hint, load_path, wm, FALSE );
-            if (!thunk_list->u1.Function)
+            IMAGE_IMPORT_BY_NAME *pe_name = get_rva( module, (DWORD)import_list->u1.AddressOfData );
+            if (find_named_export( &context, (const char*)pe_name->Name, pe_name->Hint,
+                                   (FARPROC *)&thunk_list->u1.Function ))
             {
                 thunk_list->u1.Function = allocate_stub( name, (const char*)pe_name->Name );
                 WARN("No implementation for %s.%s imported from %s, setting to %p\n",
@@ -2162,30 +2154,29 @@ static BOOL is_hidden_export( void *proc )
 NTSTATUS WINAPI LdrGetProcedureAddress(HMODULE module, const ANSI_STRING *name,
                                        ULONG ord, PVOID *address)
 {
-    IMAGE_EXPORT_DIRECTORY *exports;
-    WINE_MODREF *wm;
-    DWORD exp_size;
     NTSTATUS ret = STATUS_PROCEDURE_NOT_FOUND;
+    struct import_context context = { .module = module, .dynamic = TRUE };
 
     RtlEnterCriticalSection( &loader_section );
 
     /* check if the module itself is invalid to return the proper error */
-    if (!(wm = get_modref( module ))) ret = STATUS_DLL_NOT_FOUND;
-    else if ((exports = RtlImageDirectoryEntryToData( module, TRUE,
-                                                      IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size )))
+    if (!(context.importer = get_modref( module ))) ret = STATUS_DLL_NOT_FOUND;
+    else if ((context.exports = RtlImageDirectoryEntryToData( module, TRUE, IMAGE_DIRECTORY_ENTRY_EXPORT,
+                                                              &context.exp_size )))
     {
-        void *proc = name ? find_named_export( module, exports, exp_size, name->Buffer, -1, NULL, wm, TRUE )
-                          : find_ordinal_export( module, exports, exp_size, ord - exports->Base, NULL, wm, TRUE );
-        if (proc && !is_hidden_export( proc ))
-        {
-            *address = proc;
-            ret = STATUS_SUCCESS;
-        }
+        if (name)
+            ret = find_named_export( &context, name->Buffer, -1, (FARPROC *)address );
         else
+            ret = find_ordinal_export( &context, ord - context.exports->Base, (FARPROC *)address );
+
+        if (address && is_hidden_export( address ))
         {
-            WARN( "%s (ordinal %lu) not found in %s\n", debugstr_a(name ? name->Buffer : NULL),
-                  ord, debugstr_us(&wm->ldr.FullDllName) );
+            *address = NULL;
+            ret = STATUS_PROCEDURE_NOT_FOUND;
         }
+
+        if (ret) WARN( "%s (ordinal %lu) not found in %s\n", debugstr_a(name ? name->Buffer : NULL),
+                       ord, debugstr_us(&context.importer->ldr.FullDllName) );
     }
 
     RtlLeaveCriticalSection( &loader_section );
@@ -4639,7 +4630,7 @@ void loader_init( CONTEXT *context, void **entry )
     else
     {
 #ifdef _WIN64
-        if (NtCurrentTeb()->WowTebOffset) init_wow64( context );
+        if (NtCurrentTeb()->WowTebOffset && !((ULONG_PTR)*entry >> 32)) init_wow64( context );
 #endif
 #ifdef __arm64ec__
         arm64ec_thread_init();
